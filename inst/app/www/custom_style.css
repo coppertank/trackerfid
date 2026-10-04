@@ -1,0 +1,469 @@
+/* Stili della Dashboard RFID Bidoni Rifiuti */
+
+/* ---------- Intestazione ---------- */
+.skin-green .main-header .logo {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+/* ---------- Barra laterale: chiara, con scorrimento indipendente ---------- */
+.skin-green .main-sidebar,
+.skin-green .left-side {
+  background-color: #f4f6f8;
+  border-right: 1px solid #d5dbe1;
+}
+
+@media (min-width: 768px) {
+  .main-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    overflow-y: auto;
+  }
+}
+
+section.sidebar {
+  color: #2c3e50;
+  padding: 10px 12px 24px;
+}
+
+.skin-green .sidebar a {
+  color: #0b7a43;
+}
+
+.skin-green .sidebar a:hover {
+  text-decoration: underline;
+}
+
+.sezione-sidebar {
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.titolo-sezione {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #00703c;
+  margin-bottom: 10px;
+}
+
+.titolo-sezione i {
+  margin-right: 6px;
+}
+
+/* shinydashboard assume una barra scura e input a tutta larghezza */
+section.sidebar .shiny-input-container {
+  padding: 0;
+  margin-bottom: 12px;
+  width: 100%;
+}
+
+section.sidebar .shiny-bound-input.action-button,
+section.sidebar .shiny-bound-input.action-link {
+  margin: 0;
+}
+
+section.sidebar .shiny-bound-input.action-link {
+  display: inline-block;
+}
+
+section.sidebar .control-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+section.sidebar .checkbox {
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+section.sidebar .shiny-input-checkboxgroup {
+  margin-bottom: 2px;
+}
+
+section.sidebar .form-group {
+  margin-bottom: 12px;
+}
+
+/* Le etichette delle date sporgono dai cursori: serve margine ai lati. */
+section.sidebar .irs {
+  margin: 0 22px;
+}
+
+.sidebar .irs-min,
+.sidebar .irs-max {
+  color: #5f6b76;
+}
+
+/* La barra di avanzamento del caricamento occupa spazio anche da nascosta. */
+section.sidebar .shiny-file-input-progress {
+  margin-bottom: 8px;
+}
+
+section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
+  margin-bottom: 0;
+}
+
+.irs--shiny .irs-bar {
+  background: #00a65a;
+  border-top-color: #00a65a;
+  border-bottom-color: #00a65a;
+}
+
+.irs--shiny .irs-from,
+.irs--shiny .irs-to,
+.irs--shiny .irs-single {
+  background-color: #00703c;
+}
+
+.suggerimento {
+  color: #5f6b76;
+  font-size: 13px;
+  margin: 0;
+}
+
+.pulsanti-ricerca {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- Esiti di caricamento e ricerca ---------- */
+.esito-caricamento,
+.esito-ricerca {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-left: 4px solid;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.esito-ok {
+  background: #eafaf1;
+  border-color: #2ecc71;
+}
+
+.esito-errore {
+  background: #fdedec;
+  border-color: #e74c3c;
+}
+
+.esito-avviso {
+  background: #fef5e7;
+  border-color: #f39c12;
+}
+
+.esito-file,
+.esito-non-trovati {
+  color: #5f6b76;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.esito-file {
+  margin-bottom: 4px;
+}
+
+.esito-non-trovati {
+  margin-top: 4px;
+}
+
+.esito-caricamento ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.esito-avvisi {
+  color: #9c640c;
+}
+
+/* ---------- Statistiche ---------- */
+.stat-box {
+  padding: 12px 15px;
+  background: #f5f5f5;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.stat-titolo {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.stat-totale,
+.stat-riga {
+  display: flex;
+  justify-content: space-between;
+}
+
+.stat-totale {
+  font-size: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #dcdcdc;
+}
+
+.stat-gruppo {
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.stat-riga {
+  padding-left: 12px;
+}
+
+.stat-vuoto {
+  color: #7b8794;
+  font-style: italic;
+}
+
+/* ---------- Dettaglio del bidone ---------- */
+.chiudi-info {
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.info-codice {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.info-letture {
+  color: #5f6b76;
+  font-size: 12px;
+}
+
+.info-blocco {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 4px solid;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.info-blocco p {
+  margin: 0 0 6px;
+}
+
+.info-blocco p:last-child {
+  margin-bottom: 0;
+}
+
+.info-titolo {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.info-ok {
+  background: #eafaf1;
+  border-color: #2ecc71;
+}
+
+.info-attenzione {
+  background: #fef5e7;
+  border-color: #f39c12;
+}
+
+.info-errore {
+  background: #fdedec;
+  border-color: #e74c3c;
+}
+
+.info-informazione {
+  background: #eaf2f8;
+  border-color: #3498db;
+}
+
+.info-cronologia {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.info-cronologia li {
+  padding: 2px 0;
+}
+
+.info-cronologia li.attuale {
+  font-weight: 600;
+}
+
+.cronologia-data,
+.stima-pct {
+  font-variant-numeric: tabular-nums;
+}
+
+.info-stima {
+  margin-bottom: 6px;
+}
+
+.stima-riga {
+  display: grid;
+  grid-template-columns: 78px 38px 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.stima-pct {
+  text-align: right;
+}
+
+.stima-barra {
+  display: block;
+  height: 10px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stima-riempimento {
+  display: block;
+  height: 100%;
+  background: #566573;
+  border-radius: 3px;
+}
+
+p.info-avvertenza {
+  color: #5f6b76;
+  font-size: 12px;
+}
+
+/* ---------- Mappe ---------- */
+.content {
+  padding: 12px 12px 0;
+}
+
+.nav-tabs-custom {
+  margin-bottom: 0;
+}
+
+.nav-tabs-custom > .tab-content {
+  padding: 10px;
+}
+
+.mappa-intestazione {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-height: 24px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #44515e;
+}
+
+.badge-stato {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  background: #00703c;
+}
+
+.badge-rfid {
+  background: #2471a3;
+}
+
+.badge-utenza {
+  background: #7d3c98;
+}
+
+.mappa-contenitore {
+  position: relative;
+  height: calc(100vh - 170px);
+  min-height: 420px;
+}
+
+.mappa-messaggio {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  max-width: 80%;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #d5dbe1;
+  border-radius: 6px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.2);
+  font-size: 13px;
+  text-align: center;
+}
+
+.cluster-rfid {
+  background: transparent;
+  border: none;
+}
+
+/* ---------- Legenda ---------- */
+.leaflet-control.legenda-rfid {
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.93);
+  border-radius: 5px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+  color: #2c3e50;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.legenda-rfid summary {
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.legenda-titolo {
+  font-weight: 700;
+  margin: 6px 0 3px;
+}
+
+.legenda-voce {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.legenda-icona {
+  display: inline-flex;
+  justify-content: center;
+  width: 18px;
+}
+
+.legenda-gradiente,
+.legenda-scala {
+  width: 130px;
+}
+
+.legenda-gradiente {
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legenda-scala {
+  display: flex;
+  justify-content: space-between;
+}
+
+.legenda-riquadro {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border: 2px solid gray;
+}
