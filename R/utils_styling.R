@@ -16,16 +16,70 @@ colori_stato <- function() {
   )
 }
 
-#' Configurazione dei servizi: icona Font Awesome, colore del glifo, emoji
+#' Tipologie di servizio: icona Font Awesome, colore del glifo, emoji
+#'
+#' PUNTO UNICO DA MODIFICARE per aggiungere servizi o cambiare icone.
+#' Ogni tipologia raggruppa i nomi che condividono la stessa icona: i valori
+#' di `servizio_transponder` e i nomi dei giri usati in `servizio_atteso`
+#' (PAP = porta a porta). Per un nuovo nome basta aggiungerlo al vettore
+#' `servizi` della tipologia giusta; per una nuova tipologia si aggiunge una
+#' voce alla lista. I nomi vanno scritti in maiuscolo, come dopo il caricamento
+#' del CSV. Le icone sono nomi Font Awesome (https://fontawesome.com/icons).
+#' L'ordine qui è anche l'ordine di filtri, statistiche e legenda.
+#' @noRd
+tipologie_servizio <- function() {
+  list(
+    list(
+      tipologia = "Secco", icona = "trash-can", colore = "#7f8c8d", emoji = "\U0001F5D1\ufe0f",
+      servizi = c("SECCO", "SECCO PAP")
+    ),
+    list(
+      tipologia = "Carta", icona = "file-lines", colore = "#8e5b2e", emoji = "\U0001F4C4",
+      servizi = c("CARTA", "CARTA CONT.STRADALI", "CARTA/CARTONE PAP")
+    ),
+    list(
+      tipologia = "Vetro", icona = "wine-bottle", colore = "#2471a3", emoji = "\U0001F37E",
+      servizi = c("VETRO", "VETRO PAP")
+    ),
+    list(
+      tipologia = "Umido", icona = "leaf", colore = "#1e8449", emoji = "\U0001F342",
+      servizi = c("UMIDO", "UMIDO CONT.STRADALI", "UMIDO PAP")
+    ),
+    list(
+      tipologia = "Plastica e metalli", icona = "recycle", colore = "#0e9aa7", emoji = "\u267b\ufe0f",
+      servizi = c("PLASTICA E METALLI", "PLAST.CONT.STRADALI", "PLASTICA PAP")
+    ),
+    list(
+      tipologia = "Verde e ramaglie", icona = "tree", colore = "#6b8e23", emoji = "\U0001F333",
+      servizi = c("VERDE E RAMAGLIE", "VERDE PAP")
+    ),
+    list(
+      tipologia = "Assistente servizi", icona = "user-gear", colore = "#5d6d7e", emoji = "\U0001F6E0\ufe0f",
+      servizi = "ASSISTENTE SERVIZI"
+    ),
+    list(
+      tipologia = "Pulizia territorio", icona = "broom", colore = "#b9770e", emoji = "\U0001F9F9",
+      servizi = "PULIZIA TERRIT."
+    ),
+    list(
+      tipologia = "Servizi mercati", icona = "store", colore = "#884ea0", emoji = "\U0001F3EA",
+      servizi = "SERVIZI MERCATI"
+    )
+  )
+}
+
+#' Configurazione dei servizi: una riga per nome di servizio
+#'
+#' Tabella derivata da `tipologie_servizio()`.
 #' @noRd
 servizi_config <- function() {
-  data.frame(
-    servizio = c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA"),
-    icona = c("trash-can", "file-lines", "wine-bottle", "leaf", "recycle"),
-    colore = c("#7f8c8d", "#8e5b2e", "#2471a3", "#1e8449", "#0e9aa7"),
-    emoji = c("\U0001F5D1\ufe0f", "\U0001F4C4", "\U0001F37E", "\U0001F342", "\u267b\ufe0f"),
-    stringsAsFactors = FALSE
-  )
+  righe <- purrr::map(tipologie_servizio(), function(tp) {
+    data.frame(
+      servizio = tp$servizi, tipologia = tp$tipologia, icona = tp$icona,
+      colore = tp$colore, emoji = tp$emoji, stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, righe)
 }
 
 #' Icona, colore ed emoji di uno o più servizi
@@ -246,15 +300,13 @@ html_legenda <- function(modalita = "cluster") {
     tags$div(class = "legenda-voce", tags$span(class = "legenda-icona", icona), tags$span(testo))
   }
 
-  config <- servizi_config()
-  voci_servizio <- purrr::map(
-    c(config$servizio, NA),
-    function(s) {
-      voce(
-        immagine(svg_icona_servizio(s), 14, 14),
-        if (is.na(s)) "Non censito" else s
-      )
-    }
+  # Una voce per tipologia: i servizi con la stessa icona sono raggruppati.
+  voci_servizio <- purrr::map(tipologie_servizio(), function(tp) {
+    voce(immagine(svg_icona_servizio(tp$servizi[1]), 14, 14), tp$tipologia)
+  })
+  voci_servizio <- c(
+    voci_servizio,
+    list(voce(immagine(svg_icona_servizio(NA), 14, 14), "Non censito"))
   )
 
   extra <- switch(modalita,

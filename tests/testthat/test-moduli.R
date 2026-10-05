@@ -6,9 +6,9 @@ test_that("il caricamento restituisce il dataset validato", {
       name = "letture.csv", datapath = percorso_dataset_esempio(), stringsAsFactors = FALSE
     ))
     dati <- session$getReturned()()
-    expect_equal(nrow(dati), 736)
+    expect_equal(nrow(dati), 728)
     html <- as.character(output$esito$html)
-    expect_match(html, "<b>736</b>\\s*righe caricate")
+    expect_match(html, "<b>728</b>\\s*righe caricate")
     expect_match(html, "<b>236</b>\\s*RFID univoci")
     expect_match(html, "Periodo:")
     expect_match(html, "01/09/2025")
@@ -20,7 +20,7 @@ test_that("un file non valido azzera il dataset e mostra l'errore", {
   errato <- scrivi_csv(c("giorno_lettura,RFID", "2025-09-15 08:30:00,R1"))
   shiny::testServer(mod_caricamento_server, {
     session$setInputs(carica_esempio = 1)
-    expect_equal(nrow(session$getReturned()()), 736)
+    expect_equal(nrow(session$getReturned()()), 728)
 
     session$setInputs(file_upload = data.frame(
       name = "errato.csv", datapath = errato, stringsAsFactors = FALSE

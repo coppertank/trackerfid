@@ -36,7 +36,11 @@ test_that("distribuzioni vicine a quelle richieste", {
   expect_equal(calcola_pct_presente(ultimi), 0.85, tolerance = 0.02)
 
   quote <- prop.table(table(ultimi$servizio_transponder))
-  attese <- c(SECCO = 0.45, CARTA = 0.30, VETRO = 0.12, UMIDO = 0.10, PLASTICA = 0.03)
+  attese <- c(
+    SECCO = 0.40, CARTA = 0.27, VETRO = 0.11, UMIDO = 0.10,
+    "PLASTICA E METALLI" = 0.07, "VERDE E RAMAGLIE" = 0.05
+  )
+  expect_setequal(names(quote), names(attese))
   expect_equal(as.numeric(quote[names(attese)]), unname(attese), tolerance = 0.1)
 
   n_letture <- table(d$RFID)
@@ -52,6 +56,18 @@ test_that("distribuzioni vicine a quelle richieste", {
   attesi <- d$servizio_atteso[d$presente_a_database == "Non Presente"]
   expect_gt(sum(is.na(attesi)), 0)
   expect_gt(sum(!is.na(attesi)), 0)
+})
+
+test_that("i servizi attesi sono i nomi dei giri e hanno tutti un'icona", {
+  d <- dati_esempio()
+  giri <- c(
+    "ASSISTENTE SERVIZI", "CARTA CONT.STRADALI", "CARTA/CARTONE PAP", "PLAST.CONT.STRADALI",
+    "PLASTICA PAP", "PULIZIA TERRIT.", "SECCO PAP", "SERVIZI MERCATI", "UMIDO CONT.STRADALI",
+    "UMIDO PAP", "VERDE PAP", "VETRO PAP"
+  )
+  expect_setequal(unique(stats::na.omit(d$servizio_atteso)), giri)
+  presenti <- unique(stats::na.omit(c(d$servizio_transponder, d$servizio_atteso)))
+  expect_true(all(presenti %in% servizi_config()$servizio))
 })
 
 test_that("casi speciali presenti", {
@@ -70,7 +86,7 @@ test_that("casi speciali presenti", {
 
   con_stima <- letture("RFD20250915201")
   expect_equal(nrow(con_stima), 4)
-  expect_true(all(con_stima$servizio_atteso == "SECCO"))
+  expect_true(all(con_stima$servizio_atteso == "SECCO PAP"))
 
   senza_stima <- letture("RFD20250920250")
   expect_equal(nrow(senza_stima), 2)

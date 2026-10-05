@@ -17,12 +17,29 @@ test_that("il colore del cluster interpola rosso, giallo e verde", {
 })
 
 test_that("ogni servizio ha la sua icona, con ripiego per i non censiti", {
-  info <- info_servizio(c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA", NA, "ALTRO"))
+  info <- info_servizio(c(
+    "SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA E METALLI", "VERDE E RAMAGLIE", NA, "ALTRO"
+  ))
   expect_identical(
     info$icona,
-    c("trash-can", "file-lines", "wine-bottle", "leaf", "recycle", "question", "question")
+    c("trash-can", "file-lines", "wine-bottle", "leaf", "recycle", "tree", "question", "question")
   )
-  expect_equal(anyDuplicated(info$colore[1:6]), 0)
+  expect_equal(anyDuplicated(info$colore[1:7]), 0)
+
+  # i giri del servizio atteso condividono l'icona della tipologia corrispondente
+  giri <- info_servizio(c(
+    "SECCO PAP", "CARTA CONT.STRADALI", "CARTA/CARTONE PAP", "VETRO PAP", "UMIDO CONT.STRADALI",
+    "UMIDO PAP", "PLAST.CONT.STRADALI", "PLASTICA PAP", "VERDE PAP",
+    "ASSISTENTE SERVIZI", "PULIZIA TERRIT.", "SERVIZI MERCATI"
+  ))
+  expect_identical(
+    giri$icona,
+    c(
+      "trash-can", "file-lines", "file-lines", "wine-bottle", "leaf", "leaf", "recycle",
+      "recycle", "tree", "user-gear", "broom", "store"
+    )
+  )
+  expect_equal(anyDuplicated(servizi_config()$servizio), 0)
   expect_equal(nrow(info_servizio(character(0))), 0)
 })
 
@@ -72,7 +89,7 @@ test_that("la legenda cambia con la modalita", {
   expect_match(html_legenda("cluster"), "Cluster: % censiti", fixed = TRUE)
   expect_match(html_legenda("rfid"), "Ultima lettura", fixed = TRUE)
   expect_no_match(html_legenda("utenza"), "Cluster", fixed = TRUE)
-  for (servizio in servizi_config()$servizio) {
-    expect_match(html_legenda("utenza"), servizio, fixed = TRUE)
+  for (tipologia in unique(servizi_config()$tipologia)) {
+    expect_match(html_legenda("utenza"), tipologia, fixed = TRUE)
   }
 })

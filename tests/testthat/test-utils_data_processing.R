@@ -265,7 +265,7 @@ test_that("i casi speciali del dataset di esempio sono riconosciuti", {
 
   stima <- caso("RFD20250915201")
   expect_identical(stima$caso, "non_censito_con_stima")
-  expect_identical(stima$stima$servizio, "SECCO")
+  expect_identical(stima$stima$servizio, "SECCO PAP")
   expect_equal(stima$stima$pct, 100)
 
   expect_identical(caso("RFD20250920250")$caso, "non_censito_senza_stima")

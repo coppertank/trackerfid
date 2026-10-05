@@ -39,8 +39,8 @@ Il file deve contenere questi 10 campi. L'ordine delle colonne e le maiuscole ne
 | `matricola_veicolo` | testo | Matricola aziendale del mezzo, in relazione 1:1 con la targa |
 | `RFID` | testo | Identificativo del chip, ripetuto a ogni lettura |
 | `presente_a_database` | testo | `Presente` oppure `Non Presente` |
-| `servizio_transponder` | testo | Tipologia secondo il database (`SECCO`, `CARTA`, `VETRO`, `UMIDO`, `PLASTICA`), vuoto se non censito |
-| `servizio_atteso` | testo | Tipologia stimata dal calendario del mezzo, solo per i non censiti |
+| `servizio_transponder` | testo | Tipologia secondo il database (`SECCO`, `CARTA`, `VETRO`, `UMIDO`, `PLASTICA E METALLI`, `VERDE E RAMAGLIE`), vuoto se non censito |
+| `servizio_atteso` | testo | Nome del giro previsto dal calendario del mezzo (ad esempio `SECCO PAP`, `CARTA CONT.STRADALI`), solo per i non censiti |
 | `id_utenza` | testo | Utenza proprietaria, vuoto se non censito |
 | `latitudine` | numero | Latitudine in gradi decimali |
 | `longitudine` | numero | Longitudine in gradi decimali |
@@ -88,11 +88,31 @@ Entrambe le ricerche ignorano la differenza tra maiuscole e minuscole.
 |---|---|
 | Marker verde a goccia | Bidone presente a database |
 | Marker rosso squadrato | Bidone non presente a database |
-| Icona nel marker | Servizio: bidone (SECCO), foglio (CARTA), bottiglia (VETRO), foglia (UMIDO), riciclo (PLASTICA), punto di domanda (non censito) |
+| Icona nel marker | Servizio del transponder, vedi la tabella delle tipologie qui sotto. Punto di domanda se non censito |
 | Colore del cluster | Percentuale di censiti: rosso 0%, giallo 50%, verde 100% |
 | Numeri nel cluster | Bidoni raggruppati e percentuale di censiti |
 
 Lo stato è indicato sia dal colore sia dalla forma, così resta leggibile anche per chi non distingue rosso e verde.
+
+### Tipologie di servizio e icone
+
+I nomi di `servizio_atteso` derivano dal giro dei mezzi (PAP = porta a porta) e sono diversi da quelli di `servizio_transponder`. I nomi della stessa tipologia condividono icona e colore.
+
+| Tipologia | Icona | `servizio_transponder` | `servizio_atteso` |
+|---|---|---|---|
+| Secco | bidone | `SECCO` | `SECCO PAP` |
+| Carta | foglio | `CARTA` | `CARTA CONT.STRADALI`, `CARTA/CARTONE PAP` |
+| Vetro | bottiglia | `VETRO` | `VETRO PAP` |
+| Umido | foglia | `UMIDO` | `UMIDO CONT.STRADALI`, `UMIDO PAP` |
+| Plastica e metalli | riciclo | `PLASTICA E METALLI` | `PLAST.CONT.STRADALI`, `PLASTICA PAP` |
+| Verde e ramaglie | albero | `VERDE E RAMAGLIE` | `VERDE PAP` |
+| Assistente servizi | operatore | | `ASSISTENTE SERVIZI` |
+| Pulizia territorio | scopa | | `PULIZIA TERRIT.` |
+| Servizi mercati | negozio | | `SERVIZI MERCATI` |
+
+Un nome non previsto viene comunque caricato e mostrato con il punto di domanda.
+
+**Aggiungere una tipologia o cambiare un'icona.** Si modifica solo la funzione `tipologie_servizio()` in `R/utils_styling.R`. Per un nuovo nome basta aggiungerlo, in maiuscolo, al vettore `servizi` della tipologia giusta. Per una nuova tipologia si aggiunge una voce con nome, icona [Font Awesome](https://fontawesome.com/icons), colore ed emoji. Marker, legenda, filtri e statistiche si aggiornano da soli.
 
 ### Dettaglio del bidone
 
@@ -105,7 +125,7 @@ Un click su un marker apre il popup con i dati della lettura e, nella barra late
 
 ## Dataset di esempio
 
-`inst/extdata/sample_rfid_dataset.csv` contiene 736 letture di 236 bidoni, relative a settembre 2025, cinque mezzi e 50 utenze nell'area di Roma. Lo genera lo script `data-raw/genera_sample_dataset.R`, che ha un seed fisso e ne verifica la conformità prima di scrivere il file.
+`inst/extdata/sample_rfid_dataset.csv` contiene 728 letture di 236 bidoni, relative a settembre 2025, cinque mezzi e 50 utenze nell'area di Roma. Lo genera lo script `data-raw/genera_sample_dataset.R`, che ha un seed fisso e ne verifica la conformità prima di scrivere il file.
 
 Casi utili da provare:
 
@@ -113,7 +133,7 @@ Casi utili da provare:
 |---|---|
 | `RFD20250901001` | Cambio di servizio: CARTA, poi SECCO, poi di nuovo CARTA |
 | `RFD20250901050` | Cambio di utenza da `UTZ001` a `UTZ025` |
-| `RFD20250915201` | Non censito con stima 100% SECCO |
+| `RFD20250915201` | Non censito con stima 100% SECCO PAP |
 | `RFD20250920250` | Non censito senza elementi per la stima |
 | `RFD20250905100` | Bidone spostato di molto, con riquadro ampio |
 

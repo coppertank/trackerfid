@@ -17,21 +17,34 @@ veicoli <- data.frame(
 )
 
 # Calendario dei mezzi: giorni della settimana (1 = lunedi' ... 7 = domenica),
-# fascia oraria [da, a) e servizio svolto nel turno.
+# fascia oraria [da, a), nome del giro (diventa il `servizio_atteso`; PAP =
+# porta a porta) e tipologia di contenitore raccolta nel giro (`s`, NA per i
+# giri che non raccolgono una tipologia precisa).
+turno <- function(m, giorni, da, a, giro, s = NA_character_) {
+  list(m = m, giorni = giorni, da = da, a = a, giro = giro, s = s)
+}
 turni <- list(
-  list(m = "VEH001", giorni = c(1, 3, 5), da = 6, a = 13, s = "SECCO"),
-  list(m = "VEH001", giorni = c(2, 4, 6), da = 6, a = 13, s = "CARTA"),
-  list(m = "VEH001", giorni = 7, da = 7, a = 12, s = "CARTA"),
-  list(m = "VEH002", giorni = c(1, 3, 5), da = 7, a = 14, s = "CARTA"),
-  list(m = "VEH002", giorni = c(2, 4, 6), da = 7, a = 14, s = "VETRO"),
-  list(m = "VEH003", giorni = 1:6, da = 6, a = 12, s = "UMIDO"),
-  list(m = "VEH003", giorni = c(2, 5), da = 13, a = 18, s = "PLASTICA"),
-  list(m = "VEH004", giorni = 1:6, da = 12, a = 19, s = "SECCO"),
-  list(m = "VEH005", giorni = c(1, 3, 5), da = 13, a = 19, s = "VETRO")
+  turno("VEH001", c(1, 3, 5), 6, 13, "SECCO PAP", "SECCO"),
+  turno("VEH001", c(2, 4, 6), 6, 13, "CARTA/CARTONE PAP", "CARTA"),
+  turno("VEH001", 7, 7, 12, "CARTA CONT.STRADALI", "CARTA"),
+  turno("VEH002", c(1, 3, 5), 7, 14, "CARTA CONT.STRADALI", "CARTA"),
+  turno("VEH002", c(2, 4, 6), 7, 14, "VETRO PAP", "VETRO"),
+  turno("VEH003", 1:6, 6, 12, "UMIDO PAP", "UMIDO"),
+  turno("VEH003", c(1, 4), 13, 18, "UMIDO CONT.STRADALI", "UMIDO"),
+  turno("VEH003", c(2, 5), 13, 18, "PLASTICA PAP", "PLASTICA E METALLI"),
+  turno("VEH003", c(3, 6), 13, 18, "VERDE PAP", "VERDE E RAMAGLIE"),
+  turno("VEH004", 1:6, 12, 19, "SECCO PAP", "SECCO"),
+  turno("VEH005", c(1, 3), 6, 12, "ASSISTENTE SERVIZI"),
+  turno("VEH005", c(2, 4), 6, 12, "PULIZIA TERRIT."),
+  turno("VEH005", 6, 6, 12, "SERVIZI MERCATI"),
+  turno("VEH005", c(1, 3, 5), 13, 19, "VETRO PAP", "VETRO"),
+  turno("VEH005", c(2, 4), 13, 19, "PLAST.CONT.STRADALI", "PLASTICA E METALLI")
 )
 
-servizi <- c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA")
-quote_servizi <- c(SECCO = 0.45, CARTA = 0.30, VETRO = 0.12, UMIDO = 0.10, PLASTICA = 0.03)
+# Tipologie di `servizio_transponder` e loro quota tra i contenitori censiti.
+servizi <- c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA E METALLI", "VERDE E RAMAGLIE")
+quote_servizi <- c(0.40, 0.27, 0.11, 0.10, 0.07, 0.05)
+names(quote_servizi) <- servizi
 
 n_presenti <- 200
 n_non_presenti <- 36
@@ -44,7 +57,7 @@ istante <- function(data, ore_decimali) {
   as.POSIXct(paste(format(data), "00:00:00"), tz = "UTC") + round(ore_decimali * 3600)
 }
 
-# Servizio previsto dal calendario per un mezzo in un dato istante (NA se il
+# Giro previsto dal calendario per un mezzo in un dato istante (NA se il
 # mezzo non ha un turno in quel giorno/orario: stima non determinabile).
 servizio_da_calendario <- function(matricola, quando) {
   gs <- giorno_settimana(as.Date(quando, tz = "UTC"))
@@ -52,7 +65,7 @@ servizio_da_calendario <- function(matricola, quando) {
     as.numeric(format(quando, "%M", tz = "UTC")) / 60
   for (t in turni) {
     if (t$m == matricola && gs %in% t$giorni && ora >= t$da && ora < t$a) {
-      return(t$s)
+      return(t$giro)
     }
   }
   NA_character_
@@ -63,7 +76,7 @@ uscite_servizio <- function(servizio) {
   out <- list()
   for (i in seq_along(turni)) {
     t <- turni[[i]]
-    if (t$s != servizio) next
+    if (is.na(t$s) || t$s != servizio) next
     giorni <- giorni_periodo[giorno_settimana(giorni_periodo) %in% t$giorni]
     out[[length(out) + 1]] <- data.frame(data = giorni, turno = i)
   }
@@ -102,6 +115,22 @@ lettura_fuori_turno <- function(giorni_ammessi = giorni_periodo) {
       return(data.frame(giorno_lettura = quando, matricola_veicolo = m, stringsAsFactors = FALSE))
     }
   }
+}
+
+# Lettura durante un giro che non raccoglie una tipologia precisa (assistenza,
+# pulizia del territorio, mercati).
+lettura_giro_generico <- function() {
+  lettura_turno(turni[[sample(which(vapply(turni, function(t) is.na(t$s), logical(1))), 1)]])
+}
+
+# Lettura in un giorno e orario casuali di un turno.
+lettura_turno <- function(t) {
+  giorni <- giorni_periodo[giorno_settimana(giorni_periodo) %in% t$giorni]
+  data.frame(
+    giorno_lettura = istante(giorni[sample.int(length(giorni), 1)], orario_turno(t)),
+    matricola_veicolo = t$m,
+    stringsAsFactors = FALSE
+  )
 }
 
 # ---- Posizioni: quartieri (cluster urbani) + punti periferici ----------------
@@ -178,7 +207,8 @@ bidoni$servizio[da_assegnare] <- sample(rep(servizi, times = conteggi - as.integ
 # Per i non censiti il servizio "reale" e' ignoto all'azienda: serve solo a
 # simulare letture plausibili.
 np <- which(!bidoni$presente)
-bidoni$servizio[np] <- sample(servizi, length(np), replace = TRUE, prob = quote_servizi)
+# Tipologie bilanciate, cosi' nel servizio atteso compaiono tutti i giri.
+bidoni$servizio[np] <- sample(rep_len(servizi, length(np)))
 bidoni$servizio[c(k_np_esempio, k_np_stima)] <- "SECCO"
 
 # Utenze: 50 utenze, alcune con molti contenitori e altre con uno solo.
@@ -201,6 +231,8 @@ bidoni$lng <- pos[, "lng"]
 # ---- Generazione delle letture ----------------------------------------------
 
 rumore_gps <- function(n) stats::rnorm(n, 0, 0.00015)
+
+turno_garantito <- 0
 
 genera_letture <- function(b) {
   if (b$chiave == k_cambio_servizio) {
@@ -241,7 +273,7 @@ genera_letture <- function(b) {
       stringsAsFactors = FALSE
     )
   } else if (b$chiave == k_np_senza_stima) {
-    # VEH005 non ha turni di sabato: stima non determinabile.
+    # VEH005 non ha turni il sabato pomeriggio: stima non determinabile.
     out <- data.frame(
       giorno_lettura = as.POSIXct(c("2025-09-20 15:44:02", "2025-09-27 16:08:37"), tz = "UTC"),
       matricola_veicolo = "VEH005",
@@ -265,12 +297,20 @@ genera_letture <- function(b) {
     out <- letture_servizio(b$servizio, b$n_letture)
   } else {
     # Non censito: letture per lo piu' nel giro del proprio servizio, a volte
-    # nel giro di un altro servizio o fuori turno (stima non determinabile).
+    # in un giro generico, nel giro di un altro servizio o fuori turno (stima
+    # non determinabile).
     misto <- b$n_letture >= 3 && stats::runif(1) < 0.45
+    # La prima lettura segue a rotazione tutti i turni del calendario, cosi'
+    # nel dataset compare ogni giro almeno una volta.
+    turno_garantito <<- turno_garantito %% length(turni) + 1
     righe <- lapply(seq_len(b$n_letture), function(i) {
       u <- stats::runif(1)
-      if (u < 0.14) {
+      if (i == 1) {
+        lettura_turno(turni[[turno_garantito]])
+      } else if (u < 0.12) {
         lettura_fuori_turno()
+      } else if (u < 0.22) {
+        lettura_giro_generico()
       } else if (misto && u < 0.50) {
         letture_servizio(sample(setdiff(servizi, b$servizio), 1), 1)
       } else {
@@ -412,7 +452,11 @@ stopifnot(
   identical(per_rfid$RFD20250901001$servizio_transponder, c("CARTA", "SECCO", "CARTA")),
   identical(substr(per_rfid$RFD20250901001$giorno_lettura, 1, 10), c("2025-09-01", "2025-09-15", "2025-09-28")),
   identical(per_rfid$RFD20250901050$id_utenza, c("UTZ001", "UTZ001", "UTZ025", "UTZ025")),
-  identical(per_rfid$RFD20250915201$servizio_atteso, rep("SECCO", 4)),
+  identical(per_rfid$RFD20250915201$servizio_atteso, rep("SECCO PAP", 4)),
+  finale$servizio_atteso[3] == "SECCO PAP",
+  all(finale$servizio_transponder %in% c(servizi, NA)),
+  all(finale$servizio_atteso %in% c(vapply(turni, function(t) t$giro, ""), NA)),
+  length(unique(stats::na.omit(finale$servizio_atteso))) == 12,
   nrow(per_rfid$RFD20250920250) == 2, all(is.na(per_rfid$RFD20250920250$servizio_atteso)),
   identical(per_rfid$RFD20250905100$latitudine, c("41.8500", "42.0000")),
   identical(per_rfid$RFD20250905100$longitudine, c("12.3500", "12.5000")),
