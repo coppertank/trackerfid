@@ -1,7 +1,8 @@
 #' The application server-side
 #'
-#' Collega i moduli: il dataset caricato alimenta filtri e ricerche, che a loro
-#' volta alimentano le tre mappe. Il click su un marker apre il dettaglio del
+#' Collega i moduli: il dataset caricato viene ristretto al periodo di analisi,
+#' che alimenta filtri, ricerche e mappe. L'analisi dei cluster lavora sullo
+#' stesso periodo. Il click su un marker o su un cluster apre il dettaglio del
 #' bidone nella barra laterale.
 #'
 #' @param input,output,session Internal parameters for {shiny}.
@@ -13,26 +14,51 @@ app_server <- function(input, output, session) {
   # I file di letture superano facilmente il limite predefinito di 5 MB.
   options(shiny.maxRequestSize = 100 * 1024^2)
 
-  dati <- mod_caricamento_server("caricamento")
-  filtri <- mod_filtri_server("filtri", dati = dati)
+  dati_caricati <- mod_caricamento_server("caricamento")
+  periodo <- mod_periodo_server("periodo", dati = dati_caricati)
+  # Letture del periodo di analisi: da qui in poi tutta l'app lavora su queste.
+  dati <- periodo$dati
+  filtri <- mod_filtri_server("filtri", dati = dati, azzera = dati_caricati)
   ricerca_rfid <- mod_ricerca_server("ricerca_rfid", dati = dati, tipo = "rfid")
   ricerca_utenza <- mod_ricerca_server("ricerca_utenza", dati = dati, tipo = "utenza")
 
+  output$titolo <- renderText({
+    intervallo <- periodo$periodo()
+    if (is.null(intervallo)) {
+      return("DASHBOARD RFID BIDONI RIFIUTI")
+    }
+    etichetta <- periodo$etichetta()
+    # Un periodo personalizzato va scritto in breve per restare nel titolo.
+    if (!startsWith(etichetta, "Anno")) {
+      etichetta <- paste(format(intervallo, "%d/%m/%y"), collapse = "-")
+    }
+    toupper(paste("Dashboard RFID -", etichetta))
+  })
+
   # --- Avvisi mostrati sopra le mappe quando non c'è nulla da disegnare -------
-  senza_dati <- "Carica un file CSV dal pannello laterale per visualizzare i bidoni sulla mappa."
   vuoto <- function(df) is.null(df) || nrow(df) == 0
+  # Avviso comune a tutte le mappe quando mancano dataset o letture del periodo.
+  senza_dati <- reactive({
+    if (is.null(dati_caricati())) {
+      "Carica un file CSV dal pannello laterale per visualizzare i bidoni sulla mappa."
+    } else if (is.null(dati())) {
+      "Scegli un periodo di analisi valido nel pannello laterale."
+    } else if (nrow(dati()) == 0) {
+      "Nessuna lettura nel periodo di analisi selezionato."
+    }
+  })
 
   messaggio_principale <- reactive({
-    if (is.null(dati())) {
-      senza_dati
+    if (!is.null(senza_dati())) {
+      senza_dati()
     } else if (vuoto(filtri$dati_filtrati())) {
       "Nessun bidone corrisponde ai filtri selezionati."
     }
   })
   messaggio_ricerca <- function(ricerca, invito, nessun_risultato) {
     reactive({
-      if (is.null(dati())) {
-        senza_dati
+      if (!is.null(senza_dati())) {
+        senza_dati()
       } else if (length(ricerca$codici()) == 0) {
         invito
       } else if (vuoto(ricerca$risultati())) {
@@ -48,7 +74,7 @@ app_server <- function(input, output, session) {
     "mappa_principale",
     dati = filtri$dati_filtrati,
     modalita = "cluster",
-    # La vista si adatta al dataset, non a ogni modifica dei filtri.
+    # La vista si adatta al periodo, non a ogni modifica dei filtri.
     dati_vista = dati,
     attiva = scheda_attiva("mappa"),
     messaggio = messaggio_principale
@@ -76,10 +102,18 @@ app_server <- function(input, output, session) {
     )
   )
 
+  # --- Analisi dei cluster spaziali ---------------------------------------------
+  clic_cluster <- mod_cluster_analysis_server(
+    "cluster",
+    dati = dati_caricati,
+    periodo = periodo$periodo,
+    etichetta = periodo$etichetta
+  )
+
   # --- Dettaglio del bidone selezionato ------------------------------------------
   rfid_selezionato <- reactiveVal(NULL)
 
-  purrr::walk(list(clic_principale, clic_rfid, clic_utenza), function(clic) {
+  purrr::walk(list(clic_principale, clic_rfid, clic_utenza, clic_cluster), function(clic) {
     observeEvent(clic(), {
       rfid_selezionato(clic()$rfid)
       # Porta il pannello in vista dopo che è stato aggiornato.
@@ -88,7 +122,7 @@ app_server <- function(input, output, session) {
       })
     })
   })
-  observeEvent(dati(), rfid_selezionato(NULL), ignoreNULL = FALSE)
+  observeEvent(dati_caricati(), rfid_selezionato(NULL), ignoreNULL = FALSE)
   observeEvent(input$chiudi_info, rfid_selezionato(NULL))
 
   output$info_panel <- renderUI({
@@ -101,7 +135,7 @@ app_server <- function(input, output, session) {
     if (vuoto(letture)) {
       return(sezione_sidebar(
         "Dettaglio Bidone", "circle-info",
-        p(class = "suggerimento", "Clicca su un marker della mappa per vedere il dettaglio del bidone.")
+        p(class = "suggerimento", "Clicca su un marker della mappa per vedere il dettaglio del bidone nel periodo.")
       ))
     }
     sezione_sidebar(

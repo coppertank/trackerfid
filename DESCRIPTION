@@ -1,6 +1,6 @@
 Package: trackerfid
 Title: Dashboard RFID Bidoni Rifiuti
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: 
     person(given = "Aldo",
            family = "Caumo",
@@ -10,20 +10,25 @@ Description: Applicazione Shiny, costruita con il framework golem, per
     visualizzare, filtrare e analizzare su mappa le letture RFID dei bidoni
     per rifiuti raccolte dai mezzi aziendali. Distingue i contenitori censiti
     da quelli non censiti, segnala i cambi di servizio e di utenza e permette
-    la ricerca per RFID o per utenza.
+    la ricerca per RFID o per utenza. Include l'analisi dei cluster spaziali
+    delle letture di ogni contenitore, con indicatori e indice di fiducia.
 License: What license is it under?
 Depends:
     R (>= 4.1.0)
 Imports: 
     config,
     data.table,
+    dbscan,
     dplyr,
+    DT,
     fontawesome,
+    geosphere,
     golem,
     htmltools,
     htmlwidgets,
     leaflet,
     lubridate,
+    plotly,
     purrr,
     rlang,
     shiny,
@@ -31,6 +36,10 @@ Imports:
     stringr,
     tidyr
 Suggests: 
+    ggplot2,
+    knitr,
+    pkgload,
+    rmarkdown,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

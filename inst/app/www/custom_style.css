@@ -467,3 +467,81 @@ p.info-avvertenza {
   height: 10px;
   border: 2px solid gray;
 }
+
+.legenda-nota {
+  max-width: 150px;
+  margin-top: 4px;
+  color: #5f6b76;
+  font-size: 10px;
+}
+
+/* ---------- Periodo di analisi ---------- */
+section.sidebar .input-daterange input {
+  font-size: 13px;
+}
+
+/* ---------- Analisi cluster spaziale ---------- */
+.badge-cluster {
+  background: #37474f;
+}
+
+.cluster-invito {
+  margin-top: 30px;
+  padding: 24px;
+  background: #f4f6f8;
+  border: 1px dashed #c5ced6;
+  border-radius: 6px;
+  color: #44515e;
+  font-size: 14px;
+  text-align: center;
+}
+
+.pannello-cluster {
+  min-height: calc(100vh - 135px);
+}
+
+.pannello-cluster .nav-pills {
+  margin-bottom: 10px;
+}
+
+.pannello-cluster .nav-pills > li > a {
+  padding: 5px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+}
+
+.pannello-cluster .nav-pills > li.active > a,
+.pannello-cluster .nav-pills > li.active > a:focus,
+.pannello-cluster .nav-pills > li.active > a:hover {
+  background-color: #37474f;
+  border-top-color: transparent;
+}
+
+.vista-cluster {
+  font-size: 12px;
+}
+
+.vista-cluster table.dataTable thead th {
+  font-size: 11px;
+}
+
+.mappa-cluster {
+  height: calc(100vh - 225px);
+}
+
+.nota-grafico {
+  margin: 4px 0 0;
+  color: #5f6b76;
+  font-size: 12px;
+}
+
+details.parametri-dbscan {
+  margin: 8px 0 12px;
+  font-size: 13px;
+}
+
+details.parametri-dbscan summary {
+  margin-bottom: 8px;
+  color: #0b7a43;
+  cursor: pointer;
+}

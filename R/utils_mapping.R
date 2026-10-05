@@ -58,12 +58,14 @@ pulisci_mappa <- function(map) {
 #' @param rialzo Priorità di sovrapposizione (zIndexOffset).
 #' @noRd
 aggiungi_marker <- function(map, df, cluster = FALSE, stile = "normale", opacita = 1, rialzo = 0) {
+  # Per i non censiti l'icona segue il servizio atteso prevalente dell'RFID.
+  servizio <- if ("servizio_icona" %in% names(df)) df$servizio_icona else df$servizio_transponder
   leaflet::addMarkers(
     map,
     lng = df$longitudine,
     lat = df$latitudine,
     layerId = as.character(seq_len(nrow(df))),
-    icon = get_leaflet_icon(df$servizio_transponder, df$presente_a_database, stile),
+    icon = get_leaflet_icon(servizio, df$presente_a_database, stile),
     popup = create_popup_html(
       rfid = df$RFID,
       servizio = df$servizio_transponder,

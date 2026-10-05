@@ -1,13 +1,12 @@
 #' Modulo filtri laterali: interfaccia
 #'
-#' Filtri per periodo, stato a database e servizio, pulsante di reset e
-#' riquadro con le statistiche del dataset filtrato.
+#' Filtri per stato a database e servizio, pulsante di reset e riquadro con le
+#' statistiche del dataset filtrato. Il periodo si sceglie nel modulo dedicato.
 #'
 #' @param id Identificativo del modulo.
 #' @noRd
 mod_filtri_ui <- function(id) {
   ns <- NS(id)
-  oggi <- Sys.Date()
   tagList(
     sezione_sidebar(
       "Filtri", "filter",
@@ -19,12 +18,6 @@ mod_filtri_ui <- function(id) {
       conditionalPanel(
         "output.caricato",
         ns = ns,
-        # L'intervallo reale viene impostato al caricamento del dataset.
-        sliderInput(
-          ns("date_range"), "Filtro Periodo",
-          min = oggi - 30, max = oggi, value = c(oggi - 30, oggi),
-          timeFormat = "%d/%m/%Y", ticks = FALSE, width = "100%"
-        ),
         checkboxGroupInput(
           ns("presente_filter"), "Filtro Stato Database",
           choices = stati_database(), selected = stati_database(), inline = FALSE

@@ -2,8 +2,10 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   esito <- carica_dataset(percorso_dataset_esempio())
   dati <- esito$dati
 
-  expect_identical(names(dati), colonne_obbligatorie())
+  expect_identical(names(dati), colonne_dataset())
   expect_s3_class(dati$giorno_lettura, "POSIXct")
+  expect_type(dati$volume_previsto, "double")
+  expect_type(dati$numero_raccolte_annue_previste, "double")
   expect_type(dati$latitudine, "double")
   expect_type(dati$longitudine, "double")
   expect_type(dati$RFID, "character")
@@ -42,7 +44,7 @@ test_that("i nomi delle colonne non dipendono da maiuscole e ordine", {
     "R1,2025-09-15 08:30:00,AB123CD,VEH001,Presente,CARTA,NA,UTZ001,12.4964,41.9028,x"
   ))
   dati <- carica_dataset(percorso)$dati
-  expect_identical(names(dati), colonne_obbligatorie())
+  expect_identical(names(dati), colonne_dataset())
   expect_equal(dati$latitudine, 41.9028)
 })
 
@@ -87,7 +89,7 @@ test_that("le righe senza campi essenziali sono scartate con un avviso", {
   ))
   esito <- carica_dataset(percorso)
   expect_identical(esito$dati$RFID, "R1")
-  expect_match(esito$avvisi, "2 righe scartate")
+  expect_true(any(grepl("2 righe scartate", esito$avvisi)))
 })
 
 test_that("le incoerenze del dataset generano avvisi non bloccanti", {
@@ -98,9 +100,10 @@ test_that("le incoerenze del dataset generano avvisi non bloccanti", {
   ))
   esito <- carica_dataset(percorso)
   expect_equal(nrow(esito$dati), 2)
-  expect_length(esito$avvisi, 2)
-  expect_match(esito$avvisi[1], "Non Presente")
-  expect_match(esito$avvisi[2], "univoca")
+  expect_length(esito$avvisi, 3)
+  expect_match(esito$avvisi[1], "Colonne facoltative assenti")
+  expect_match(esito$avvisi[2], "Non Presente")
+  expect_match(esito$avvisi[3], "univoca")
 })
 
 test_that("la deduplica mantiene solo l'ultima lettura di ogni RFID", {
@@ -276,4 +279,115 @@ test_that("la stima del servizio atteso somma a 100", {
   stima <- stima_servizio_atteso(letture)
   expect_identical(stima$servizio, c("SECCO", "CARTA"))
   expect_equal(stima$pct, c(75, 25))
+})
+
+test_that("le colonne facoltative sono convertite se presenti e create vuote se assenti", {
+  con <- scrivi_csv(c(
+    paste0(intestazione_csv, ",numero_raccolte_annue_previste,VOLUME_PREVISTO"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,41.9,12.5,26,1100",
+    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Non Presente,NA,SECCO PAP,NA,41.9,12.5,NA,"
+  ))
+  esito <- carica_dataset(con)
+  expect_equal(esito$dati$volume_previsto, c(1100, NA))
+  expect_equal(esito$dati$numero_raccolte_annue_previste, c(26, NA))
+  expect_length(esito$avvisi, 0)
+
+  senza <- carica_dataset(scrivi_csv(c(
+    intestazione_csv,
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,41.9,12.5"
+  )))
+  expect_identical(names(senza$dati), colonne_dataset())
+  expect_true(all(is.na(senza$dati$volume_previsto)))
+  expect_match(senza$avvisi, "Colonne facoltative assenti: volume_previsto, numero_raccolte_annue_previste")
+
+  errato <- scrivi_csv(c(
+    paste0(intestazione_csv, ",volume_previsto"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,41.9,12.5,grande"
+  ))
+  errore <- expect_error(carica_dataset(errato), class = "errore_validazione")
+  expect_match(conditionMessage(errore), "volume_previsto: 1 valori non numerici")
+})
+
+test_that("anni e periodi di analisi", {
+  expect_identical(anni_disponibili(dati_esempio()), c(2025, 2024))
+  expect_identical(periodo_anno(2025), as.Date(c("2025-01-01", "2025-12-31")))
+  expect_identical(etichetta_periodo(periodo_anno(2024)), "Anno 2024")
+  expect_identical(
+    etichetta_periodo(as.Date(c("2025-03-15", "2025-09-30"))),
+    "15/03/2025 - 30/09/2025"
+  )
+  expect_null(etichetta_periodo(NULL))
+
+  nel_2024 <- filtra_periodo(dati_esempio(), periodo_anno(2024))
+  expect_true(all(lubridate::year(nel_2024$giorno_lettura) == 2024))
+  expect_gt(nrow(nel_2024), 0)
+})
+
+# Letture non censite con i servizi attesi indicati.
+non_censito <- function(rfid, attesi) {
+  dplyr::tibble(
+    RFID = rfid, presente_a_database = "Non Presente",
+    servizio_transponder = NA_character_, servizio_atteso = attesi
+  )
+}
+
+test_that("il servizio prevalente dei non censiti richiede almeno l'80%", {
+  # esempi della specifica: 5 su 6 (83%) e 2 su 4 (50%)
+  dati <- dplyr::bind_rows(
+    non_censito("ALTO", c(rep("CARTA CONT.STRADALI", 5), "SECCO PAP")),
+    non_censito("BASSO", c("CARTA CONT.STRADALI", "CARTA CONT.STRADALI", "SECCO PAP", "UMIDO PAP")),
+    non_censito("SOGLIA", c(rep("VETRO PAP", 4), "SECCO PAP")),
+    non_censito("VUOTO", c(NA, NA)),
+    non_censito("CON_NA", c("SECCO PAP", "SECCO PAP", NA, NA, NA))
+  )
+  expect_identical(get_icon_for_uncensored_rfid("ALTO", dati), "CARTA CONT.STRADALI")
+  expect_identical(get_icon_for_uncensored_rfid("BASSO", dati), NA_character_)
+  # esattamente 80%: la soglia è inclusa
+  expect_identical(get_icon_for_uncensored_rfid("SOGLIA", dati), "VETRO PAP")
+  # nessuna stima disponibile
+  expect_identical(get_icon_for_uncensored_rfid("VUOTO", dati), NA_character_)
+  expect_identical(get_icon_for_uncensored_rfid("INESISTENTE", dati), NA_character_)
+  # le letture senza stima non entrano nel calcolo della quota
+  expect_identical(get_icon_for_uncensored_rfid("CON_NA", dati), "SECCO PAP")
+  # soglia configurabile
+  expect_identical(get_icon_for_uncensored_rfid("BASSO", dati, soglia = 0.5), "CARTA CONT.STRADALI")
+
+  prevalenti <- servizio_prevalente_non_censiti(dati)
+  expect_setequal(prevalenti$RFID, c("ALTO", "BASSO", "SOGLIA", "CON_NA"))
+  expect_equal(prevalenti$quota[prevalenti$RFID == "ALTO"], 5 / 6)
+})
+
+test_that("la quota del servizio prevalente si calcola per tipologia", {
+  # due giri della carta: nessuno arriva all'80%, la tipologia sì
+  dati <- non_censito("MISTO", c(rep("CARTA CONT.STRADALI", 3), rep("CARTA/CARTONE PAP", 2)))
+  prevalente <- get_icon_for_uncensored_rfid("MISTO", dati)
+  expect_identical(prevalente, "CARTA CONT.STRADALI")
+  expect_identical(info_servizio(prevalente)$icona, "file-lines")
+})
+
+test_that("i contenitori censiti non usano il servizio atteso per l'icona", {
+  dati <- dplyr::bind_rows(
+    non_censito("N1", rep("SECCO PAP", 3)),
+    non_censito("N2", c("SECCO PAP", "VETRO PAP")),
+    dplyr::tibble(
+      RFID = "C1", presente_a_database = "Presente",
+      servizio_transponder = "UMIDO", servizio_atteso = NA_character_
+    )
+  )
+  con_icona <- aggiungi_servizio_icona(dati)
+  expect_identical(
+    con_icona$servizio_icona,
+    c(rep("SECCO PAP", 3), NA, NA, "UMIDO")
+  )
+  expect_identical(get_icon_for_uncensored_rfid("C1", dati), NA_character_)
+
+  # dataset di esempio: stima netta, stima assente
+  esempio <- aggiungi_servizio_icona(dati_esempio())
+  expect_true(all(esempio$servizio_icona[esempio$RFID == "RFD20250915201"] == "SECCO PAP"))
+  expect_true(all(is.na(esempio$servizio_icona[esempio$RFID == "RFD20250920250"])))
+  censiti <- esempio$presente_a_database == "Presente"
+  expect_identical(esempio$servizio_icona[censiti], esempio$servizio_transponder[censiti])
+  non_censiti <- esempio[!censiti & !duplicated(esempio$RFID), ]
+  expect_gt(sum(!is.na(non_censiti$servizio_icona)), 5)
+  expect_gt(sum(is.na(non_censiti$servizio_icona)), 5)
 })

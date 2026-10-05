@@ -102,6 +102,17 @@ info_servizio <- function(servizio) {
   )
 }
 
+#' Tipologia di uno o più servizi
+#'
+#' @param servizio Vettore di servizi.
+#' @return La tipologia di ciascun servizio; un nome non previsto fa tipologia a sé.
+#' @noRd
+tipologia_servizio <- function(servizio) {
+  config <- servizi_config()
+  indice <- match(servizio, config$servizio)
+  ifelse(is.na(indice), servizio, config$tipologia[indice])
+}
+
 #' Colore del marker in base allo stato a database
 #'
 #' @param presente Vettore con i valori di `presente_a_database`.
@@ -306,7 +317,10 @@ html_legenda <- function(modalita = "cluster") {
   })
   voci_servizio <- c(
     voci_servizio,
-    list(voce(immagine(svg_icona_servizio(NA), 14, 14), "Non censito"))
+    list(
+      voce(immagine(svg_icona_servizio(NA), 14, 14), "Non determinato"),
+      tags$div(class = "legenda-nota", "Non censiti: servizio atteso prevalente (almeno 80%)")
+    )
   )
 
   extra <- switch(modalita,

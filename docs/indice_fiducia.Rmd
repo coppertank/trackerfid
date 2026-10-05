@@ -1,0 +1,734 @@
+---
+title: "Indice di fiducia dei cluster RFID"
+subtitle: "Come si calcola e perché è semplice ed efficace"
+author: "Aldo Caumo"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+lang: it
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    mathjax: null
+---
+
+```{r setup, include=FALSE}
+# Per compilare il report, dalla radice del progetto:
+#   rmarkdown::render("docs/indice_fiducia.Rmd")
+# Servono i pacchetti rmarkdown, ggplot2 e pkgload.
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.retina = 2,
+  out.width = "100%"
+)
+
+# Il report usa le funzioni del pacchetto trackerfid, comprese quelle interne:
+# le carica dai sorgenti, quindi il file deve restare nella cartella docs/.
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+# Numeri con la virgola decimale.
+num <- function(x, cifre = 2) {
+  formatC(x, format = "f", digits = cifre, decimal.mark = ",", big.mark = ".")
+}
+
+# Interrompe la compilazione se una frase del testo non corrisponde più ai dati.
+verifica_testo <- function(condizione, frase) {
+  if (!isTRUE(condizione)) {
+    stop(
+      "Il testo del report non corrisponde più ai dati: ",
+      frase,
+      call. = FALSE
+    )
+  }
+}
+
+# Colori dei grafici: un grigio per i dati, un solo colore di accento.
+colori <- list(
+  accento = "#2a78d6",
+  dati = "#c3c2b7",
+  traccia = "#e9e8e4",
+  primario = "#0b0b0b",
+  secondario = "#52514e",
+  asse = "#c3c2b7",
+  riferimento = "#898781"
+)
+tema_grafico <- theme_void(base_size = 12) +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 13.5,
+      colour = colori$primario
+    ),
+    plot.subtitle = element_text(
+      size = 10.5,
+      colour = colori$secondario,
+      lineheight = 1.15,
+      margin = margin(t = 5, b = 12)
+    ),
+    plot.caption = element_text(
+      size = 9.5,
+      colour = colori$secondario,
+      hjust = 0,
+      margin = margin(t = 10)
+    ),
+    plot.title.position = "plot",
+    plot.caption.position = "plot",
+    plot.margin = margin(10, 12, 8, 12)
+  )
+```
+
+```{css}
+.formula {
+  margin: 1.2em 0;
+  padding: 0.8em 1em;
+  background: #f6f6f4;
+  border-radius: 6px;
+  font-size: 1.1em;
+  text-align: center;
+}
+```
+
+```{r dati}
+# Analisi dei cluster sull'anno più recente del dataset di esempio.
+letture <- carica_dataset(percorso_dataset_esempio())$dati
+anno <- max(anni_disponibili(letture))
+periodo <- periodo_anno(anno)
+analisi <- calcola_analisi_cluster(letture, periodo[1], periodo[2])
+parametri <- attr(analisi, "parametri")
+soglie <- parametri$soglie
+pesi <- pesi_fiducia()
+
+# Le sei verifiche, nell'ordine in cui compaiono nel report.
+verifiche <- data.frame(
+  campo = c(
+    "letture",
+    "compattezza",
+    "censimento",
+    "coerenza",
+    "raccolte",
+    "unicita"
+  ),
+  verifica = c(
+    "Letture",
+    "Compattezza",
+    "Censimento",
+    "Coerenza",
+    "Raccolte",
+    "Unicità"
+  ),
+  domanda = c(
+    "Il cluster ha abbastanza letture?",
+    "Le letture cadono tutte nello stesso punto?",
+    "Il contenitore è a database?",
+    "Il servizio è sempre lo stesso?",
+    "Le raccolte osservate corrispondono a quelle previste?",
+    "Il contenitore è stato letto in un solo luogo?"
+  ),
+  regola = c(
+    "Letture del cluster divise per 10, con massimo 1. Cinque letture valgono 0,5",
+    sprintf(
+      "1 fino a %s m di dispersione, 0 da %s m in su. In mezzo scende su scala logaritmica: %s m valgono 0,5",
+      soglie$compatto_m,
+      soglie$disperso_m,
+      round(sqrt(soglie$compatto_m * soglie$disperso_m))
+    ),
+    "1 se presente, 0 se non presente",
+    sprintf(
+      "Censito: 1 se il servizio non è mai cambiato, 0,5 se è cambiato. Non censito: 0 se il giro prevalente copre fino al 50%% delle letture, 1 dall'%s%%, proporzionale in mezzo",
+      100 * soglie$coerenza_atteso
+    ),
+    "Il valore minore diviso per il maggiore, tra raccolte presunte e previste. 0,5 se le previste non sono note",
+    "Quota delle letture del contenitore che cadono in questo cluster"
+  ),
+  stringsAsFactors = FALSE
+)
+verifiche$peso <- unname(pesi[verifiche$campo])
+verifiche$inizio <- cumsum(verifiche$peso) - verifiche$peso
+
+# La tabella di analisi non riporta due dati che entrano nell'indice: se il
+# servizio è cambiato e quanto pesa il giro prevalente. Si ricavano dalle letture.
+nel_periodo <- filtra_periodo(letture, periodo)
+servizi <- dplyr::summarise(
+  nel_periodo,
+  servizio_stabile = dplyr::n_distinct(servizio_transponder, na.rm = TRUE) <= 1,
+  .by = "RFID"
+)
+quote_giro <- nel_periodo |>
+  dplyr::arrange(RFID, giorno_lettura) |>
+  assegna_cluster(parametri$eps_m, parametri$min_pts) |>
+  dplyr::filter(!is.na(servizio_atteso)) |>
+  dplyr::count(RFID, cluster_id, servizio_atteso) |>
+  dplyr::summarise(
+    quota_atteso = max(n) / sum(n),
+    .by = c("RFID", "cluster_id")
+  )
+dettaglio <- analisi |>
+  dplyr::left_join(servizi, by = "RFID") |>
+  dplyr::left_join(quote_giro, by = c("RFID", "cluster_id")) |>
+  dplyr::mutate(censito = presente_a_database == "Presente")
+
+# Indice con pesi a scelta, calcolato dalla funzione del pacchetto.
+indice_con_pesi <- function(pesi_usati) {
+  indice_fiducia(
+    censito = dettaglio$censito,
+    cluster_letture = dettaglio$cluster_numero_letture,
+    globale_letture = dettaglio$globale_numero_letture,
+    dispersione_m = dettaglio$cluster_dispersione_90th_m,
+    servizio_stabile = dettaglio$servizio_stabile,
+    quota_atteso = dettaglio$quota_atteso,
+    previste = dettaglio$numero_raccolte_annue_previste,
+    presunte = dettaglio$numero_raccolte_annue_presunte,
+    soglie = soglie,
+    pesi = pesi_usati
+  )
+}
+
+# Punteggio di ogni verifica: la stessa funzione, con tutto il peso su quella
+# verifica. La formula non viene riscritta qui, quindi non può divergere.
+punteggi <- sapply(verifiche$campo, function(campo) {
+  indice_con_pesi(replace(pesi * 0, campo, 1))
+})
+verifica_testo(
+  max(abs(indice_con_pesi(pesi) - analisi$cluster_indice_fiducia)) <= 0.01,
+  "l'indice ricalcolato non coincide con quello dell'analisi."
+)
+
+# Cluster usati come esempi svolti.
+esempi <- data.frame(
+  chiave = c("regolare", "cambiato", "non_censito", "mezzo", "isolata"),
+  RFID = c(
+    "RFD20241001058",
+    "RFD20250901001",
+    "RFD20241014226",
+    "RFD20250203302",
+    "RFD20241003303"
+  ),
+  cluster_id = c(1L, 1L, 1L, 1L, 2L),
+  esempio = c(
+    "Contenitore regolare",
+    "Servizio cambiato nel periodo",
+    "Non censito regolare, giri misti",
+    "Tag rimasto sul mezzo",
+    "Lettura isolata, GPS impreciso"
+  ),
+  evidenza = c(FALSE, FALSE, FALSE, TRUE, FALSE),
+  stringsAsFactors = FALSE
+)
+esempi$riga <- match(
+  paste(esempi$RFID, esempi$cluster_id),
+  paste(dettaglio$RFID, dettaglio$cluster_id)
+)
+verifica_testo(
+  !anyNA(esempi$riga),
+  "i cluster degli esempi non sono nel dataset."
+)
+esempi$indice <- dettaglio$cluster_indice_fiducia[esempi$riga]
+rownames(esempi) <- esempi$chiave
+
+# Dati, punteggi e punti persi di un esempio.
+dati_esempio <- function(chiave) dettaglio[esempi[chiave, "riga"], ]
+punteggi_esempio <- function(chiave) punteggi[esempi[chiave, "riga"], ]
+persi_esempio <- function(chiave) {
+  stats::setNames(
+    verifiche$peso * (1 - punteggi_esempio(chiave)),
+    verifiche$campo
+  )
+}
+
+# Nomi in chiaro degli indicatori.
+nomi_indicatore <- c(
+  "VALID_TARGET" = "Regolari",
+  "RELOCATED_BIN" = "Spostati",
+  "GHOST_TAG" = "Poche letture",
+  "DEPOT_STUCK" = "Fermo in deposito",
+  "TRUCK_STOWAWAY" = "Rimasto sul mezzo",
+  "SCATTERED_READS / GPS_NOISE" = "Letture sparse",
+  "UNCATEGORIZED" = "Non classificati"
+)
+# Soglia usata solo in questo report per contare i cluster "alti" e "bassi".
+soglia_esempio <- 0.80
+
+riepilogo <- dplyr::summarise(
+  analisi,
+  cluster = dplyr::n(),
+  mediana = stats::median(cluster_indice_fiducia),
+  sopra = sum(cluster_indice_fiducia >= soglia_esempio),
+  .by = "indicatore_cluster"
+)
+riepilogo <- riepilogo[
+  match(
+    intersect(names(nomi_indicatore), riepilogo$indicatore_cluster),
+    riepilogo$indicatore_cluster
+  ),
+]
+riepilogo$nome <- unname(nomi_indicatore[riepilogo$indicatore_cluster])
+riepilogo$y <- rev(seq_len(nrow(riepilogo)))
+mediana_di <- function(indicatori) {
+  riepilogo$mediana[riepilogo$indicatore_cluster %in% indicatori]
+}
+anomali <- c(
+  "GHOST_TAG",
+  "SCATTERED_READS / GPS_NOISE",
+  "DEPOT_STUCK",
+  "TRUCK_STOWAWAY"
+)
+verifica_testo(
+  all(c("VALID_TARGET", anomali) %in% riepilogo$indicatore_cluster),
+  "mancano alcuni indicatori citati nel testo."
+)
+```
+
+L'indice di fiducia è un voto da 0 a 1 che dice quanto ci si può fidare di un cluster di letture RFID. Si ottiene sommando sei verifiche, ognuna con un punteggio da 0 a 1 e un peso fisso: ogni punto perso ha una causa che si legge direttamente nei dati.
+
+*Numeri e grafici di questo report sono calcolati alla compilazione con le funzioni del pacchetto, sul dataset di esempio dell'app, anno `r anno`: `r formatta_numero(nrow(analisi))` cluster di `r formatta_numero(dplyr::n_distinct(analisi$RFID))` contenitori.*
+
+## Come si calcola
+
+Per ogni cluster si risponde a sei domande. Ogni risposta è un punteggio da 0 a 1. L'indice è la somma dei sei punteggi, ciascuno moltiplicato per il proprio peso, arrotondata a due decimali.
+
+```{r formula, results='asis'}
+# La formula è scritta in HTML, così il report si legge anche senza connessione.
+termini <- sprintf(
+  "%s × p<sub>%s</sub>",
+  num(verifiche$peso),
+  tolower(verifiche$verifica)
+)
+cat(
+  "<p class=\"formula\">fiducia = ",
+  paste(termini, collapse = " + "),
+  "</p>\n",
+  sep = ""
+)
+```
+
+I pesi sommano a 1: un cluster che supera tutte le verifiche vale 1, uno che le fallisce tutte vale 0.
+
+```{r tabella-verifiche}
+knitr::kable(
+  data.frame(
+    verifiche$verifica,
+    verifiche$domanda,
+    num(verifiche$peso),
+    verifiche$regola
+  ),
+  col.names = c("Verifica", "Domanda", "Peso", "Come si assegna il punteggio"),
+  align = "llrl"
+)
+```
+
+La dispersione è il 90° percentile della distanza delle letture dal baricentro del cluster. Le raccolte presunte sono le letture del cluster riportate a un anno.
+
+## Cinque esempi svolti
+
+La parte vuota di ogni colonna è il punto perso, e la colonna dice dove.
+
+```{r verifiche-esempi}
+verifica_testo(
+  punteggi_esempio("mezzo")[["compattezza"]] == 0,
+  "il tag sul mezzo non perde più tutta la compattezza."
+)
+verifica_testo(
+  punteggi_esempio("non_censito")[["censimento"]] == 0 &&
+    punteggi_esempio("non_censito")[["coerenza"]] < 0.2,
+  "l'esempio non censito non perde più censimento e coerenza."
+)
+verifica_testo(
+  all(punteggi_esempio("isolata")[c("compattezza", "censimento")] == 1),
+  "la lettura isolata non conserva più compattezza e censimento."
+)
+```
+
+```{r grafico-esempi, fig.width=10, fig.height=4.6, fig.alt="Punti ottenuti nelle sei verifiche da cinque cluster di esempio"}
+n_esempi <- nrow(esempi)
+spazio <- 0.004
+barre <- expand.grid(i = seq_len(n_esempi), k = seq_len(nrow(verifiche)))
+barre$punteggio <- punteggi[cbind(esempi$riga[barre$i], barre$k)]
+barre$peso <- verifiche$peso[barre$k]
+barre$sinistra <- verifiche$inizio[barre$k] + spazio
+barre$larghezza <- barre$peso - 2 * spazio
+barre$y <- n_esempi + 1 - barre$i
+barre$colore <- ifelse(esempi$evidenza[barre$i], colori$accento, colori$dati)
+righe <- transform(esempi, y = n_esempi + 1 - seq_len(n_esempi))
+x_indice <- 1.03
+
+ggplot(barre) +
+  # traccia vuota: il punteggio massimo di ogni verifica
+  geom_rect(
+    aes(
+      xmin = sinistra,
+      xmax = sinistra + larghezza,
+      ymin = y - 0.2,
+      ymax = y + 0.2
+    ),
+    fill = colori$traccia
+  ) +
+  # parte piena: i punti ottenuti
+  geom_rect(
+    aes(
+      xmin = sinistra,
+      xmax = sinistra + larghezza * punteggio,
+      ymin = y - 0.2,
+      ymax = y + 0.2,
+      fill = colore
+    )
+  ) +
+  # punteggio scritto solo dove si perdono punti
+  geom_text(
+    data = barre[barre$punteggio < 0.995, ],
+    aes(x = sinistra, y = y - 0.38, label = num(punteggio)),
+    hjust = 0,
+    size = 3.3,
+    colour = colori$secondario
+  ) +
+  geom_text(
+    data = verifiche,
+    aes(x = inizio + spazio, y = n_esempi + 0.82, label = verifica),
+    hjust = 0,
+    size = 3.3,
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = verifiche,
+    aes(
+      x = inizio + spazio,
+      y = n_esempi + 0.55,
+      label = paste("×", num(peso))
+    ),
+    hjust = 0,
+    size = 3.1,
+    colour = colori$secondario
+  ) +
+  annotate(
+    "text",
+    x = x_indice,
+    y = n_esempi + 0.55,
+    label = "Indice",
+    hjust = 0,
+    size = 3.3,
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = righe,
+    aes(x = x_indice, y = y, label = num(indice)),
+    hjust = 0,
+    size = 4.8,
+    fontface = "bold",
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = righe,
+    aes(x = -0.47, y = y + 0.1, label = esempio),
+    hjust = 0,
+    size = 3.9,
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = righe,
+    aes(x = -0.47, y = y - 0.2, label = RFID),
+    hjust = 0,
+    size = 3.1,
+    colour = colori$secondario
+  ) +
+  scale_fill_identity() +
+  coord_cartesian(
+    xlim = c(-0.47, 1.13),
+    ylim = c(0.45, n_esempi + 1),
+    expand = FALSE,
+    clip = "off"
+  ) +
+  labs(
+    title = sprintf(
+      "Il tag sul mezzo si ferma a %s: perde tutti i %s punti della compattezza",
+      num(esempi["mezzo", "indice"]),
+      num(pesi[["compattezza"]])
+    ),
+    subtitle = paste0(
+      "Punti ottenuti in ogni verifica da cinque cluster del dataset di esempio. ",
+      "La larghezza di ogni colonna è il peso della verifica.\n",
+      "Il numero sotto una colonna incompleta è il punteggio ottenuto, da 0 a 1."
+    ),
+    caption = sprintf(
+      "Fonte: dataset di esempio dell'app, analisi dei cluster del %s, %s cluster.",
+      anno,
+      n_esempi
+    )
+  ) +
+  tema_grafico
+```
+
+Il contenitore regolare perde `r num(1 - esempi["regolare", "indice"])` perché ha `r dati_esempio("regolare")$numero_raccolte_annue_presunte` raccolte presunte contro `r dati_esempio("regolare")$numero_raccolte_annue_previste` previste. Il non censito perde tutto il censimento e quasi tutta la coerenza, perché i giri che lo leggono sono misti. La lettura isolata conserva compattezza e censimento, ma è `r conta(dati_esempio("isolata")$cluster_numero_letture, "sola lettura", "letture")` sulle `r dati_esempio("isolata")$globale_numero_letture` del suo contenitore.
+
+## Perché è semplice da capire
+
+L'indice si rifà a mano: sei moltiplicazioni e una somma.
+
+```{r verifiche-semplice}
+persi_mezzo <- persi_esempio("mezzo")
+verifica_testo(
+  sum(persi_mezzo[setdiff(names(persi_mezzo), c("compattezza", "raccolte"))]) <
+    0.005,
+  "il tag sul mezzo perde punti anche in altre verifiche."
+)
+conto_regolare <- paste(
+  sprintf("%s × %s", num(verifiche$peso), num(punteggi_esempio("regolare"))),
+  collapse = " + "
+)
+```
+
+- **Sei domande concrete.** Ogni verifica è una domanda che un operatore si farebbe davanti al bidone: quante volte è stato letto, sempre nello stesso punto, è a database.
+- **Un conto che sta in una riga.** Per il contenitore regolare dell'esempio: `r conto_regolare` = `r num(esempi["regolare", "indice"])`. In un foglio di calcolo è una formula sola.
+- **Ogni punto perso ha un nome.** I contributi si sommano, quindi la distanza da 1 si divide esattamente tra le verifiche. Il tag rimasto sul mezzo perde `r num(persi_mezzo[["compattezza"]])` per la compattezza e `r num(persi_mezzo[["raccolte"]])` per le raccolte: basta questo a spiegare il suo `r num(esempi["mezzo", "indice"])`.
+- **Le stesse soglie della classificazione.** `r soglie$compatto_m` m, `r soglie$disperso_m` m e `r 100 * soglie$coerenza_atteso`% sono le soglie già usate dagli indicatori. Non c'è un secondo insieme di regole da imparare.
+- **Scala fissa.** L'indice va sempre da 0 a 1, qualunque siano il numero di letture e la lunghezza del periodo. Due analisi diverse restano confrontabili.
+- **Nessun modello da addestrare.** Pesi e soglie sono pochi numeri scritti in chiaro. Chi non condivide un peso lo cambia e vede subito l'effetto.
+
+La somma pesata è stata preferita a due alternative più sofisticate.
+
+| Metodo | Si spiega in una frase | Richiede controlli sul campo già raccolti | Con un dato mancante |
+|---|---|---|---|
+| Somma pesata, quella adottata | Sì: sei verifiche, ognuna con il suo peso | No | Ne risente solo quella verifica, le altre restano |
+| Prodotto dei punteggi | In parte: un solo zero azzera tutto | No | L'indice si azzera o non si calcola |
+| Modello statistico addestrato | No: i coefficienti non si leggono | Sì, e oggi non esistono | Dipende dal modello |
+
+## Perché è efficace
+
+Sul dataset di esempio l'indice separa i cluster regolari dagli altri, aggiunge informazione all'indicatore e non dipende dal valore esatto dei pesi.
+
+```{r grafico-indicatori, fig.width=10, fig.height=5.8, fig.alt="Distribuzione dell'indice di fiducia per indicatore"}
+conteggi <- analisi |>
+  dplyr::count(indicatore_cluster, fiducia = cluster_indice_fiducia) |>
+  dplyr::mutate(quota = n / max(n), .by = "indicatore_cluster")
+conteggi$y <- riepilogo$y[match(
+  conteggi$indicatore_cluster,
+  riepilogo$indicatore_cluster
+)]
+conteggi$colore <- ifelse(
+  conteggi$indicatore_cluster == "VALID_TARGET",
+  colori$accento,
+  colori$dati
+)
+n_righe <- nrow(riepilogo)
+tacche <- seq(0, 1, by = 0.2)
+x_mediana <- 1.06
+x_sopra <- 1.22
+
+ggplot() +
+  # soglia di esempio
+  annotate(
+    "segment",
+    x = soglia_esempio,
+    xend = soglia_esempio,
+    y = 0.92,
+    yend = n_righe + 0.78,
+    linetype = "dashed",
+    linewidth = 0.35,
+    colour = colori$riferimento
+  ) +
+  geom_segment(
+    data = riepilogo,
+    aes(x = 0, xend = 1, y = y, yend = y),
+    linewidth = 0.4,
+    colour = colori$asse
+  ) +
+  # una barra per ogni valore dell'indice
+  geom_rect(
+    data = conteggi,
+    aes(
+      xmin = fiducia - 0.0035,
+      xmax = fiducia + 0.0035,
+      ymin = y,
+      ymax = y + 0.62 * quota,
+      fill = colore
+    )
+  ) +
+  # mediana: tratto sotto la riga
+  geom_segment(
+    data = riepilogo,
+    aes(x = mediana, xend = mediana, y = y - 0.17, yend = y - 0.02),
+    linewidth = 0.9,
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = riepilogo,
+    aes(x = -0.5, y = y + 0.43, label = nome),
+    hjust = 0,
+    size = 3.9,
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = riepilogo,
+    aes(x = -0.5, y = y + 0.14, label = indicatore_cluster),
+    hjust = 0,
+    size = 2.9,
+    colour = colori$secondario
+  ) +
+  geom_text(
+    data = riepilogo,
+    aes(x = x_mediana, y = y + 0.25, label = num(mediana)),
+    hjust = 0,
+    size = 4.8,
+    fontface = "bold",
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = riepilogo,
+    aes(x = x_sopra, y = y + 0.25, label = paste(sopra, "su", cluster)),
+    hjust = 0,
+    size = 3.7,
+    colour = colori$secondario
+  ) +
+  annotate(
+    "text",
+    x = x_mediana,
+    y = n_righe + 0.95,
+    label = "Mediana",
+    hjust = 0,
+    size = 3.3,
+    colour = colori$primario
+  ) +
+  annotate(
+    "text",
+    x = x_sopra,
+    y = n_righe + 0.95,
+    label = paste("Da", num(soglia_esempio), "in su"),
+    hjust = 0,
+    size = 3.3,
+    colour = colori$primario
+  ) +
+  annotate(
+    "text",
+    x = tacche,
+    y = 0.66,
+    label = num(tacche),
+    size = 3.2,
+    colour = colori$secondario
+  ) +
+  annotate(
+    "text",
+    x = 0.5,
+    y = 0.36,
+    label = "Indice di fiducia",
+    size = 3.5,
+    colour = colori$secondario
+  ) +
+  scale_fill_identity() +
+  coord_cartesian(
+    xlim = c(-0.5, 1.45),
+    ylim = c(0.25, n_righe + 1.1),
+    expand = FALSE,
+    clip = "off"
+  ) +
+  labs(
+    title = sprintf(
+      "Regolari a %s di mediana; poche letture, sparsi, deposito e mezzo tra %s e %s",
+      num(mediana_di("VALID_TARGET")),
+      num(min(mediana_di(anomali))),
+      num(max(mediana_di(anomali)))
+    ),
+    subtitle = paste0(
+      "Quanti cluster hanno ciascun valore dell'indice, per indicatore. Dataset di esempio, anno ",
+      anno,
+      ".\n",
+      "Altezza in proporzione al valore più frequente della riga. Tratto nero sotto la riga: mediana. ",
+      "Tratteggio: soglia a destra."
+    ),
+    caption = sprintf(
+      "Fonte: dataset di esempio dell'app, analisi dei cluster del %s, %s cluster.",
+      anno,
+      formatta_numero(nrow(analisi))
+    )
+  ) +
+  tema_grafico
+```
+
+```{r prove-efficacia}
+# Cluster regolari con indice basso: devono essere tutti non censiti.
+regolari_bassi <- dettaglio[
+  dettaglio$indicatore_cluster == "VALID_TARGET" &
+    dettaglio$cluster_indice_fiducia < soglia_esempio,
+]
+verifica_testo(
+  nrow(regolari_bassi) > 0 && !any(regolari_bassi$censito),
+  "i cluster regolari sotto la soglia non sono più tutti non censiti."
+)
+
+# Il bidone spostato del dataset: il luogo con meno letture e quello con più letture.
+spostato <- dettaglio[dettaglio$RFID == "RFD20250905100", ]
+verifica_testo(
+  nrow(spostato) == 2,
+  "il bidone spostato non ha più due cluster."
+)
+debole <- spostato[which.min(spostato$cluster_numero_letture), ]
+solido <- spostato[which.max(spostato$cluster_numero_letture), ]
+km_spostamento <- distanza_haversine_m(
+  debole$lat_baricentro_cluster,
+  debole$lon_baricentro_cluster,
+  solido$lat_baricentro_cluster,
+  solido$lon_baricentro_cluster
+) /
+  1000
+verifica_testo(
+  debole$cluster_indice_fiducia < solido$cluster_indice_fiducia,
+  "il luogo con meno letture non ha più l'indice più basso."
+)
+
+# Stabilità: ogni peso cambia a caso tra la metà e una volta e mezza il suo
+# valore, poi i pesi sono riportati a somma 1. Si confronta l'ordine dei cluster.
+set.seed(42)
+prove <- 5000
+indice_base <- as.numeric(punteggi %*% verifiche$peso)
+rango <- replicate(prove, {
+  pesi_prova <- verifiche$peso * stats::runif(nrow(verifiche), 0.5, 1.5)
+  stats::cor(
+    indice_base,
+    as.numeric(punteggi %*% (pesi_prova / sum(pesi_prova))),
+    method = "spearman"
+  )
+})
+rango_pesi_uguali <- stats::cor(
+  indice_base,
+  rowMeans(punteggi),
+  method = "spearman"
+)
+```
+
+- **Dice qualcosa in più dell'indicatore.** I `r nrow(regolari_bassi)` cluster regolari sotto `r num(soglia_esempio)` sono tutti contenitori non censiti. L'indicatore li dà al loro posto. L'indice segnala che manca l'anagrafica e li ordina da `r num(min(regolari_bassi$cluster_indice_fiducia))` a `r num(max(regolari_bassi$cluster_indice_fiducia))`, secondo la coerenza dei giri che li leggono.
+- **Ordina dentro la stessa categoria.** Per il bidone spostato di circa `r round(km_spostamento)` km, il luogo con `r conta(debole$cluster_numero_letture, "lettura", "letture")` vale `r num(debole$cluster_indice_fiducia)` e quello con `r conta(solido$cluster_numero_letture, "lettura", "letture")` vale `r num(solido$cluster_indice_fiducia)`. L'indice dice quale delle due posizioni è solida.
+- **Regge al variare dei pesi.** In `r formatta_numero(prove)` prove ogni peso è stato cambiato a caso, tra la metà e una volta e mezza il suo valore. L'ordine dei cluster è rimasto quasi identico: correlazione di rango `r num(stats::median(rango), 3)` in mediana, mai sotto `r num(floor(min(rango) * 100) / 100)`. Con sei pesi uguali è `r num(rango_pesi_uguali)`.
+- **Nessuna verifica decide da sola.** Il peso massimo è `r num(max(pesi))`. Un solo dato sbagliato non affossa un cluster e un solo dato buono non lo salva.
+- **Ogni verifica premia in una sola direzione.** Un cluster più compatto, più coerente o più vicino alle raccolte previste ha sempre un indice uguale o più alto. Non ci sono inversioni da spiegare.
+- **Si appoggia a ciò che i mezzi misurano.** Letture, compattezza e unicità valgono il `r round(100 * sum(pesi[c("letture", "compattezza", "unicita")]))`% dell'indice e vengono dai lettori e dal GPS. Il resto dipende dall'anagrafica.
+- **Indica cosa fare.** La verifica con il punteggio più basso suggerisce l'azione: censire il contenitore, controllare la posizione, rivedere il calendario di raccolta.
+
+## Cosa resta da verificare
+
+L'evidenza di oggi viene da dati simulati: la conferma definitiva richiede un confronto con controlli sul campo.
+
+```{r verifiche-limiti}
+fermi_o_sul_mezzo <- analisi$cluster_indice_fiducia[
+  analisi$indicatore_cluster %in% c("DEPOT_STUCK", "TRUCK_STOWAWAY")
+]
+# "a 0,65" se il valore è unico, altrimenti "tra ... e ...".
+valore_o_intervallo <- function(x) {
+  if (min(x) == max(x)) {
+    paste("a", num(min(x)))
+  } else {
+    paste("tra", num(min(x)), "e", num(max(x)))
+  }
+}
+```
+
+- **Va letto insieme all'indicatore.** L'indice misura quanto è solido il dato, l'indicatore dice che cosa è successo. Un tag fermo in deposito o rimasto sul mezzo ha molte letture e resta `r valore_o_intervallo(fermi_o_sul_mezzo)`: non è un contenitore regolare, e a dirlo è l'indicatore.
+- **Dati di prova.** I numeri di questo documento vengono dal dataset di esempio dell'app, costruito a tavolino con casi noti. Sui dati reali le distribuzioni saranno meno nette.
+- **Verifica sul campo.** Il passo che manca è controllare di persona un campione di cluster con indice alto e uno con indice basso, e contare quante volte l'indice aveva ragione.
+- **Parentela con l'indicatore.** Indice e indicatore usano entrambi letture e dispersione, quindi una parte del loro accordo è attesa. L'informazione in più viene da censimento, coerenza del servizio e raccolte.
+- **Pesi scelti a giudizio.** I pesi riflettono una valutazione, non una stima sui dati. La prova di stabilità mostra che il risultato non dipende dal loro valore esatto.
+- **Non è una probabilità.** Un indice di `r num(soglia_esempio)` non significa `r round(100 * soglia_esempio)`% di probabilità che il bidone sia al suo posto. Serve a ordinare i cluster e a capire cosa manca a ciascuno.

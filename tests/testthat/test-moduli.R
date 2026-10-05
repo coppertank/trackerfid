@@ -1,4 +1,5 @@
 test_that("il caricamento restituisce il dataset validato", {
+  atteso <- dati_esempio()
   shiny::testServer(mod_caricamento_server, {
     expect_null(session$getReturned()())
 
@@ -6,13 +7,13 @@ test_that("il caricamento restituisce il dataset validato", {
       name = "letture.csv", datapath = percorso_dataset_esempio(), stringsAsFactors = FALSE
     ))
     dati <- session$getReturned()()
-    expect_equal(nrow(dati), 728)
+    expect_equal(nrow(dati), nrow(atteso))
     html <- as.character(output$esito$html)
-    expect_match(html, "<b>728</b>\\s*righe caricate")
-    expect_match(html, "<b>236</b>\\s*RFID univoci")
+    expect_match(html, sprintf("<b>%s</b>\\s*righe caricate", formatta_numero(nrow(atteso))))
+    expect_match(html, "<b>239</b>\\s*RFID univoci")
     expect_match(html, "Periodo:")
-    expect_match(html, "01/09/2025")
-    expect_match(html, "30/09/2025")
+    expect_match(html, "01/10/2024")
+    expect_match(html, "31/12/2025")
   })
 })
 
@@ -20,7 +21,7 @@ test_that("un file non valido azzera il dataset e mostra l'errore", {
   errato <- scrivi_csv(c("giorno_lettura,RFID", "2025-09-15 08:30:00,R1"))
   shiny::testServer(mod_caricamento_server, {
     session$setInputs(carica_esempio = 1)
-    expect_equal(nrow(session$getReturned()()), 728)
+    expect_equal(nrow(session$getReturned()()), nrow(dati_esempio()))
 
     session$setInputs(file_upload = data.frame(
       name = "errato.csv", datapath = errato, stringsAsFactors = FALSE
@@ -32,17 +33,95 @@ test_that("un file non valido azzera il dataset e mostra l'errore", {
   })
 })
 
+test_that("il periodo predefinito è l'anno più recente del dataset", {
+  dati <- shiny::reactiveVal(dati_esempio())
+  shiny::testServer(mod_periodo_server, args = list(dati = dati), {
+    periodo <- session$getReturned()
+    session$flushReact()
+    expect_identical(periodo$periodo(), as.Date(c("2025-01-01", "2025-12-31")))
+    expect_identical(periodo$etichetta(), "Anno 2025")
+    letture <- periodo$dati()
+    expect_true(all(lubridate::year(letture$giorno_lettura) == 2025))
+    # le letture del periodo portano il servizio da usare per l'icona
+    expect_true("servizio_icona" %in% names(letture))
+    expect_match(as.character(output$riepilogo$html), "01/01/2025")
+
+    session$setInputs(anno_filtro = "2024")
+    expect_identical(periodo$periodo(), as.Date(c("2024-01-01", "2024-12-31")))
+    expect_identical(periodo$etichetta(), "Anno 2024")
+    expect_true(all(lubridate::year(periodo$dati()$giorno_lettura) == 2024))
+    expect_lt(nrow(periodo$dati()), nrow(letture))
+  })
+})
+
+test_that("il periodo personalizzato sostituisce l'anno e viene validato", {
+  dati <- shiny::reactiveVal(dati_esempio())
+  shiny::testServer(mod_periodo_server, args = list(dati = dati), {
+    periodo <- session$getReturned()
+    session$flushReact()
+
+    # le date personalizzate contano solo con l'opzione attiva
+    session$setInputs(intervallo = as.Date(c("2025-03-15", "2025-09-30")))
+    expect_identical(periodo$etichetta(), "Anno 2025")
+    session$setInputs(personalizzato = TRUE)
+    expect_identical(periodo$periodo(), as.Date(c("2025-03-15", "2025-09-30")))
+    expect_identical(periodo$etichetta(), "15/03/2025 - 30/09/2025")
+    giorni <- as.Date(periodo$dati()$giorno_lettura)
+    expect_true(all(giorni >= as.Date("2025-03-15") & giorni <= as.Date("2025-09-30")))
+
+    # intervallo incompleto o rovesciato: nessun periodo, con messaggio
+    session$setInputs(intervallo = as.Date(c("2025-09-30", "2025-03-15")))
+    expect_null(periodo$periodo())
+    expect_null(periodo$dati())
+    expect_match(as.character(output$riepilogo$html), "Intervallo non valido")
+    session$setInputs(intervallo = as.Date(c("2025-03-15", NA)))
+    expect_null(periodo$periodo())
+
+    # periodo senza letture: dataset vuoto, non errore
+    session$setInputs(intervallo = as.Date(c("2030-01-01", "2030-12-31")))
+    expect_equal(nrow(periodo$dati()), 0)
+    expect_match(as.character(output$riepilogo$html), "Nessuna lettura nel periodo")
+
+    session$setInputs(personalizzato = FALSE)
+    expect_identical(periodo$etichetta(), "Anno 2025")
+  })
+})
+
+test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
+  dati <- shiny::reactiveVal(NULL)
+  shiny::testServer(mod_periodo_server, args = list(dati = dati), {
+    periodo <- session$getReturned()
+    session$flushReact()
+    expect_null(periodo$periodo())
+    expect_null(periodo$dati())
+    expect_null(periodo$etichetta())
+
+    dati(dati_esempio())
+    session$flushReact()
+    session$setInputs(personalizzato = TRUE, intervallo = as.Date(c("2025-05-01", "2025-05-31")))
+    expect_identical(periodo$etichetta(), "01/05/2025 - 31/05/2025")
+
+    solo_2024 <- dati_esempio()[lubridate::year(dati_esempio()$giorno_lettura) == 2024, ]
+    dati(solo_2024)
+    session$flushReact()
+    expect_identical(periodo$etichetta(), "Anno 2024")
+    expect_equal(nrow(periodo$dati()), nrow(solo_2024))
+  })
+})
+
 test_that("i filtri partono senza esclusioni e reagiscono agli input", {
+  ultimi <- deduplica_ultimo_rfid(dati_esempio())
+  n_presenti <- sum(ultimi$presente_a_database == "Presente")
   dati <- shiny::reactiveVal(dati_esempio())
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
-    expect_equal(nrow(filtrati()), 236)
+    expect_equal(nrow(filtrati()), nrow(ultimi))
 
     session$setInputs(presente_filter = "Presente")
-    expect_equal(nrow(filtrati()), 200)
+    expect_equal(nrow(filtrati()), n_presenti)
     expect_true(all(filtrati()$presente_a_database == "Presente"))
-    expect_match(as.character(output$stat_box$html), "<b>200</b>", fixed = TRUE)
+    expect_match(as.character(output$stat_box$html), sprintf("<b>%d</b>", n_presenti), fixed = TRUE)
 
     session$setInputs(presente_filter = c("Presente", "Non Presente"))
     session$setInputs(servizio_transponder_check = c("SECCO", "CARTA"))
@@ -52,47 +131,38 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
     expect_setequal(unique(filtrati()$servizio_transponder), c("SECCO", "CARTA"))
 
     session$setInputs(reset = 1)
-    expect_equal(nrow(filtrati()), 236)
+    expect_equal(nrow(filtrati()), nrow(ultimi))
   })
 })
 
-test_that("il filtro per periodo restringe letture e scelte", {
-  dati <- shiny::reactiveVal(dati_esempio())
-  shiny::testServer(mod_filtri_server, args = list(dati = dati), {
-    filtrati <- function() session$getReturned()$dati_filtrati()
-    session$flushReact()
-
-    session$setInputs(date_range = as.Date(c("2025-09-01", "2025-09-03")))
-    expect_true(all(as.Date(filtrati()$giorno_lettura) <= as.Date("2025-09-03")))
-    expect_lt(nrow(filtrati()), 236)
-    # nel periodo ristretto il bidone speciale ha ancora il servizio iniziale
-    riga <- filtrati()[filtrati()$RFID == "RFD20250901001", ]
-    expect_identical(riga$servizio_transponder, "CARTA")
-    expect_identical(format(riga$giorno_lettura, "%d/%m"), "01/09")
-  })
-})
-
-test_that("senza dataset i filtri non restituiscono nulla e si riallineano al nuovo", {
+test_that("i filtri si azzerano con un nuovo dataset ma non al cambio di periodo", {
+  origine <- shiny::reactiveVal(1)
   dati <- shiny::reactiveVal(NULL)
-  shiny::testServer(mod_filtri_server, args = list(dati = dati), {
+  shiny::testServer(mod_filtri_server, args = list(dati = dati, azzera = origine), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
     expect_null(filtrati())
 
-    dati(dati_esempio())
+    dati(filtra_periodo(dati_esempio(), periodo_anno(2025)))
     session$flushReact()
-    expect_equal(nrow(filtrati()), 236)
-
-    # un nuovo dataset azzera le esclusioni impostate sul precedente
     session$setInputs(presente_filter = "Non Presente")
-    expect_equal(nrow(filtrati()), 36)
-    dati(dati_esempio()[1:100, ])
+    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+
+    # cambio di periodo: le scelte dell'utente restano
+    dati(filtra_periodo(dati_esempio(), periodo_anno(2024)))
     session$flushReact()
-    expect_equal(nrow(filtrati()), dplyr::n_distinct(dati_esempio()$RFID[1:100]))
+    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+    expect_true(all(lubridate::year(filtrati()$giorno_lettura) == 2024))
+
+    # nuovo dataset: filtri ai valori predefiniti
+    origine(2)
+    session$flushReact()
+    expect_true("Presente" %in% filtrati()$presente_a_database)
   })
 })
 
 test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
+  n_letture <- sum(dati_esempio()$RFID == "RFD20250901001")
   dati <- shiny::reactiveVal(dati_esempio())
   shiny::testServer(mod_ricerca_server, args = list(dati = dati, tipo = "rfid"), {
     ricerca <- session$getReturned()
@@ -102,7 +172,7 @@ test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
     expect_null(ricerca$risultati())
 
     session$setInputs(cerca = 1)
-    expect_equal(nrow(ricerca$risultati()), 3)
+    expect_equal(nrow(ricerca$risultati()), n_letture)
     expect_identical(ricerca$codici(), c("RFD20250901001", "inesistente"))
     html <- as.character(output$esito$html)
     expect_match(html, "1 RFID su 2 trovati")
@@ -139,25 +209,95 @@ test_that("il click su un marker restituisce l'RFID della lettura", {
 
     # il browser comunica lo zoom quando la mappa è pronta
     session$setInputs(mappa_zoom = 11)
-    expect_match(output$riepilogo, "5 letture di 2 RFID")
+    expect_match(output$riepilogo, sprintf("%d letture di 2 RFID", nrow(trovate)))
 
-    session$setInputs(mappa_marker_click = list(id = "4", lat = 42, lng = 12.5))
-    expect_identical(selezione()$rfid, "RFD20250905100")
+    ultima <- nrow(trovate)
+    session$setInputs(mappa_marker_click = list(id = as.character(ultima), lat = 42, lng = 12.5))
+    expect_identical(selezione()$rfid, trovate$RFID[ultima])
 
-    session$setInputs(mappa_marker_click = list(id = "99", lat = 42, lng = 12.5))
-    expect_identical(selezione()$rfid, "RFD20250905100")
+    session$setInputs(mappa_marker_click = list(id = "9999", lat = 42, lng = 12.5))
+    expect_identical(selezione()$rfid, trovate$RFID[ultima])
   })
 })
 
-test_that("l'interfaccia contiene le tre schede e i controlli richiesti", {
+test_that("l'analisi dei cluster parte dal pulsante e segue il periodo", {
+  dati <- shiny::reactiveVal(dati_esempio())
+  periodo <- shiny::reactiveVal(as.Date(c("2025-01-01", "2025-12-31")))
+  shiny::testServer(
+    mod_cluster_analysis_server,
+    args = list(dati = dati, periodo = periodo, etichetta = function() etichetta_periodo(periodo())),
+    {
+      selezione <- session$getReturned()
+      session$flushReact()
+      expect_match(output$invito, "Genera Analisi")
+      expect_match(output$invito, "Anno 2025")
+      expect_identical(output$riepilogo, "")
+
+      session$setInputs(eps_m = 100, min_pts = 1, genera = 1)
+      attesa <- analisi_esempio()
+      expect_match(output$riepilogo, sprintf("%d cluster di %d RFID", nrow(attesa), dplyr::n_distinct(attesa$RFID)))
+      expect_match(as.character(output$esito$html), "365 giorni osservati")
+      expect_equal(nrow(righe_filtrate()), nrow(attesa))
+
+      # i filtri della tabella valgono per grafici e mappa
+      session$setInputs(tabella_rows_all = 1:10)
+      expect_equal(nrow(righe_filtrate()), 10)
+
+      # selezione da tabella e da mappa
+      session$setInputs(tabella_rows_selected = 3)
+      expect_identical(selezione()$rfid, attesa$RFID[3])
+      session$setInputs(mappa_marker_click = list(id = "7"))
+      expect_identical(selezione()$rfid, attesa$RFID[7])
+
+      # raggio più ampio: meno cluster
+      session$setInputs(eps_m = 2000, genera = 2)
+      expect_lt(nrow(risultato()), nrow(attesa))
+
+      # parametri non validi: l'analisi precedente resta
+      precedente <- risultato()
+      session$setInputs(eps_m = -5, genera = 3)
+      expect_identical(risultato(), precedente)
+
+      # cambio di periodo: il risultato superato viene scartato
+      periodo(as.Date(c("2024-01-01", "2024-12-31")))
+      session$flushReact()
+      expect_null(risultato())
+      expect_match(output$invito, "Anno 2024")
+
+      # periodo senza letture
+      periodo(as.Date(c("2030-01-01", "2030-12-31")))
+      session$setInputs(eps_m = 100, genera = 4)
+      expect_match(output$invito, "Nessuna lettura nel periodo")
+    }
+  )
+})
+
+test_that("l'esportazione dalla scheda usa il nome con le date del periodo", {
+  dati <- shiny::reactiveVal(dati_esempio())
+  periodo <- shiny::reactiveVal(as.Date(c("2025-03-15", "2025-09-30")))
+  shiny::testServer(mod_cluster_analysis_server, args = list(dati = dati, periodo = periodo), {
+    session$setInputs(eps_m = 100, min_pts = 1, genera = 1)
+    file <- output$esporta
+    expect_identical(basename(file), "cluster_analysis_2025-03-15_2025-09-30.csv")
+    esportato <- utils::read.csv(file, stringsAsFactors = FALSE)
+    expect_identical(names(esportato), colonne_analisi_cluster())
+    expect_equal(nrow(esportato), nrow(risultato()))
+  })
+})
+
+test_that("l'interfaccia contiene le schede e i controlli richiesti", {
   html <- as.character(app_ui(NULL))
   for (testo in c(
-    "DASHBOARD RFID BIDONI RIFIUTI", "Mappa Principale", "Ricerca RFID", "Ricerca Utenza",
-    "Caricamento Dati", "Filtro Periodo", "Filtro Stato Database",
-    "Filtro Servizio Transponder", "Filtro Servizio Atteso", "Includi Non Censiti",
-    "Reset Filtri", "Pulisci Ricerca", "Cerca RFID", "Cerca Utenza",
-    "Visualizzazione: Clustering", "Visualizzazione: Ricerca RFID"
+    "Mappa Principale", "Ricerca RFID", "Ricerca Utenza", "Analisi Cluster Spaziale",
+    "Caricamento Dati", "Seleziona Anno di Analisi", "Periodo personalizzato",
+    "Filtro Stato Database", "Filtro Servizio Transponder", "Filtro Servizio Atteso",
+    "Includi Non Censiti", "Reset Filtri", "Pulisci Ricerca", "Cerca RFID", "Cerca Utenza",
+    "Visualizzazione: Clustering", "Visualizzazione: Ricerca RFID",
+    "Genera Analisi", "Esporta CSV", "Parametri DBSCAN"
   )) {
     expect_match(html, testo, fixed = TRUE)
   }
+  # lo slider del periodo è stato sostituito dalla selezione dell'anno
+  expect_no_match(html, "Filtro Periodo", fixed = TRUE)
+  expect_no_match(html, "js-range-slider", fixed = TRUE)
 })

@@ -1,7 +1,8 @@
 #' The application User-Interface
 #'
-#' Layout a dashboard: barra laterale (collassabile) con caricamento, dettaglio
-#' del bidone e controlli della scheda attiva; corpo con le tre mappe.
+#' Layout a dashboard: barra laterale (collassabile) con caricamento, periodo
+#' di analisi, dettaglio del bidone e controlli della scheda attiva; corpo con
+#' le tre mappe e l'analisi dei cluster spaziali.
 #'
 #' @param request Internal parameter for `{shiny}`.
 #'     DO NOT REMOVE.
@@ -15,17 +16,20 @@ app_ui <- function(request) {
       skin = "green",
       title = "Dashboard RFID Bidoni Rifiuti",
       header = shinydashboard::dashboardHeader(
-        title = "DASHBOARD RFID BIDONI RIFIUTI",
+        # Il titolo riporta il periodo di analisi, ad esempio "ANNO 2025".
+        title = textOutput("titolo", inline = TRUE),
         titleWidth = 360
       ),
       sidebar = shinydashboard::dashboardSidebar(
         width = 360,
         mod_caricamento_ui("caricamento"),
+        mod_periodo_ui("periodo"),
         div(id = "pannello_info", uiOutput("info_panel")),
         # I controlli seguono la scheda attiva: filtri oppure ricerche.
         conditionalPanel("input.scheda_attiva == 'mappa'", mod_filtri_ui("filtri")),
         conditionalPanel("input.scheda_attiva == 'rfid'", mod_ricerca_ui("ricerca_rfid", "rfid")),
-        conditionalPanel("input.scheda_attiva == 'utenza'", mod_ricerca_ui("ricerca_utenza", "utenza"))
+        conditionalPanel("input.scheda_attiva == 'utenza'", mod_ricerca_ui("ricerca_utenza", "utenza")),
+        conditionalPanel("input.scheda_attiva == 'cluster'", mod_cluster_analysis_sidebar_ui("cluster"))
       ),
       body = shinydashboard::dashboardBody(
         fluidRow(
@@ -46,6 +50,11 @@ app_ui <- function(request) {
               title = tagList(icon("user"), "Ricerca Utenza"),
               value = "utenza",
               mod_mappa_ui("mappa_utenza", "utenza")
+            ),
+            tabPanel(
+              title = tagList(icon("circle-nodes"), "Analisi Cluster Spaziale"),
+              value = "cluster",
+              mod_cluster_analysis_ui("cluster")
             )
           )
         )

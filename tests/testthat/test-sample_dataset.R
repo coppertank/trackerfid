@@ -5,7 +5,9 @@ test_that("dimensioni, periodo e mezzi", {
   expect_gte(nrow(d), 600)
   expect_gte(dplyr::n_distinct(d$RFID), 200)
   expect_lte(dplyr::n_distinct(d$RFID), 250)
-  expect_equal(as.Date(range(d$giorno_lettura)), as.Date(c("2025-09-01", "2025-09-30")))
+  # 2025 completo, 2024 parziale: serve a provare la selezione dell'anno
+  expect_equal(as.Date(range(d$giorno_lettura)), as.Date(c("2024-10-01", "2025-12-31")))
+  expect_identical(anni_disponibili(d), c(2025, 2024))
 
   ore <- as.numeric(format(d$giorno_lettura, "%H", tz = "UTC")) +
     as.numeric(format(d$giorno_lettura, "%M", tz = "UTC")) / 60
@@ -17,16 +19,44 @@ test_that("dimensioni, periodo e mezzi", {
   expect_equal(anyDuplicated(mezzi$matricola_veicolo), 0)
 })
 
-test_that("coerenza tra stato a database, servizio e utenza", {
+test_that("coerenza tra stato a database, servizio, utenza, volume e raccolte", {
   d <- dati_esempio()
   non_presente <- d$presente_a_database == "Non Presente"
-  expect_true(all(is.na(d$servizio_transponder[non_presente])))
-  expect_true(all(is.na(d$id_utenza[non_presente])))
-  expect_false(anyNA(d$servizio_transponder[!non_presente]))
-  expect_false(anyNA(d$id_utenza[!non_presente]))
+  for (campo in c("servizio_transponder", "id_utenza", "volume_previsto", "numero_raccolte_annue_previste")) {
+    expect_true(all(is.na(d[[campo]][non_presente])), info = campo)
+    expect_false(anyNA(d[[campo]][!non_presente]), info = campo)
+  }
   expect_true(all(is.na(d$servizio_atteso[!non_presente])))
   expect_false(anyNA(d$latitudine))
   expect_false(anyNA(d$longitudine))
+})
+
+test_that("volume e raccolte previste sono realistici e univoci per RFID", {
+  d <- dati_esempio()
+  censiti <- d[d$presente_a_database == "Presente", ]
+  expect_setequal(unique(censiti$volume_previsto), c(240, 770, 1100))
+  expect_setequal(unique(censiti$numero_raccolte_annue_previste), c(13, 26))
+
+  per_rfid <- dplyr::summarise(
+    censiti,
+    volumi = dplyr::n_distinct(volume_previsto),
+    raccolte = dplyr::n_distinct(numero_raccolte_annue_previste),
+    .by = "RFID"
+  )
+  expect_true(all(per_rfid$volumi == 1))
+  expect_true(all(per_rfid$raccolte == 1))
+
+  # i contenitori che hanno cambiato servizio conservano volume e raccolte iniziali
+  stabili <- dplyr::filter(censiti, dplyr::n_distinct(servizio_transponder) == 1, .by = "RFID")
+  ultimi <- deduplica_ultimo_rfid(stabili)
+  expect_true(all(ultimi$volume_previsto[ultimi$servizio_transponder == "PLASTICA E METALLI"] == 770))
+  expect_true(all(ultimi$numero_raccolte_annue_previste[ultimi$servizio_transponder != "VETRO"] == 26))
+  expect_setequal(
+    unique(ultimi$numero_raccolte_annue_previste[ultimi$servizio_transponder == "VETRO"]),
+    c(13, 26)
+  )
+  quota_secco_1100 <- mean(ultimi$volume_previsto[ultimi$servizio_transponder == "SECCO"] == 1100)
+  expect_equal(quota_secco_1100, 0.8, tolerance = 0.15)
 })
 
 test_that("distribuzioni vicine a quelle richieste", {
@@ -43,10 +73,11 @@ test_that("distribuzioni vicine a quelle richieste", {
   expect_setequal(names(quote), names(attese))
   expect_equal(as.numeric(quote[names(attese)]), unname(attese), tolerance = 0.1)
 
-  n_letture <- table(d$RFID)
-  expect_equal(mean(n_letture <= 2), 0.6, tolerance = 0.05)
-  expect_equal(mean(n_letture >= 3 & n_letture <= 5), 0.3, tolerance = 0.05)
-  expect_equal(mean(n_letture >= 6 & n_letture <= 15), 0.1, tolerance = 0.05)
+  # raccolta a cadenza fissa: un contenitore tipico ha una ventina di letture l'anno
+  nel_2025 <- d[lubridate::year(d$giorno_lettura) == 2025 & d$presente_a_database == "Presente", ]
+  letture <- as.integer(table(nel_2025$RFID))
+  expect_gt(stats::median(letture), 15)
+  expect_lt(stats::median(letture), 27)
 
   expect_equal(dplyr::n_distinct(d$id_utenza, na.rm = TRUE), 50)
   cambi_utenza <- tapply(d$id_utenza, d$RFID, function(x) dplyr::n_distinct(x, na.rm = TRUE))
@@ -74,9 +105,15 @@ test_that("casi speciali presenti", {
   d <- dplyr::arrange(dati_esempio(), giorno_lettura)
   letture <- function(rfid) d[d$RFID == rfid, ]
 
+  # righe di esempio della prima specifica
+  expect_identical(format(letture("RFD20250901001")$giorno_lettura[1]), "2025-09-01 06:00:00")
+  expect_identical(format(letture("RFD20250901002")$giorno_lettura[1]), "2025-09-01 06:15:00")
+  expect_identical(format(letture("RFD20250901201")$giorno_lettura[1]), "2025-09-01 06:30:00")
+
   cambio_servizio <- letture("RFD20250901001")
-  expect_identical(cambio_servizio$servizio_transponder, c("CARTA", "SECCO", "CARTA"))
-  expect_identical(format(cambio_servizio$giorno_lettura, "%d/%m"), c("01/09", "15/09", "28/09"))
+  expect_identical(cambio_servizio$servizio_transponder[1:3], c("CARTA", "SECCO", "CARTA"))
+  expect_identical(format(cambio_servizio$giorno_lettura[1:3], "%d/%m"), c("01/09", "15/09", "28/09"))
+  expect_true(all(cambio_servizio$servizio_transponder[-2] == "CARTA"))
 
   cambio_utenza <- letture("RFD20250901050")
   expect_identical(cambio_utenza$id_utenza[1], "UTZ001")
@@ -93,6 +130,39 @@ test_that("casi speciali presenti", {
   expect_true(all(is.na(senza_stima$servizio_atteso)))
 
   spostato <- letture("RFD20250905100")
-  expect_equal(spostato$latitudine, c(41.85, 42.00))
-  expect_equal(spostato$longitudine, c(12.35, 12.50))
+  expect_equal(spostato$latitudine[1:2], c(41.85, 42.00))
+  expect_equal(spostato$longitudine[1:2], c(12.35, 12.50))
+})
+
+test_that("il dataset contiene un esempio per ogni indicatore di cluster", {
+  analisi <- analisi_esempio()
+  indicatore <- function(rfid) unique(analisi$indicatore_cluster[analisi$RFID == rfid])
+
+  expect_identical(indicatore("RFD20241001301"), "DEPOT_STUCK")
+  expect_identical(indicatore("RFD20250203302"), "TRUCK_STOWAWAY")
+  expect_identical(indicatore("RFD20241003303"), "SCATTERED_READS / GPS_NOISE")
+  expect_identical(indicatore("RFD20250905100"), "RELOCATED_BIN")
+  expect_identical(indicatore("RFD20250915201"), "GHOST_TAG")
+  expect_identical(indicatore("RFD20250901001"), "VALID_TARGET")
+
+  conteggi <- table(analisi$indicatore_cluster)
+  expect_setequal(
+    names(conteggi),
+    setdiff(indicatori_config()$indicatore, "UNCATEGORIZED")
+  )
+  # la maggior parte dei contenitori è al suo posto
+  expect_gt(conteggi[["VALID_TARGET"]] / dplyr::n_distinct(analisi$RFID), 0.7)
+})
+
+test_that("l'output di esempio incluso corrisponde all'analisi del dataset", {
+  file <- app_sys("extdata", "cluster_analysis_2025-01-01_2025-12-31.csv")
+  expect_true(file.exists(file))
+  salvato <- utils::read.csv(file, stringsAsFactors = FALSE)
+  analisi <- analisi_esempio()
+
+  expect_identical(names(salvato), colonne_analisi_cluster())
+  expect_equal(nrow(salvato), nrow(analisi))
+  expect_identical(salvato$RFID, analisi$RFID)
+  expect_identical(salvato$indicatore_cluster, analisi$indicatore_cluster)
+  expect_equal(salvato$cluster_indice_fiducia, analisi$cluster_indice_fiducia)
 })

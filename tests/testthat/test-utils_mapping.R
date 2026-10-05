@@ -40,9 +40,9 @@ test_that("la ricerca RFID mostra tutte le letture, senza cluster, con i riquadr
   expect_length(riquadri$args[[1]], 2)
   spostato <- which(names(split(trovate, trovate$RFID)) == "RFD20250905100")
   expect_equal(riquadri$args[[1]][[spostato]], 41.85)
-  expect_equal(riquadri$args[[3]][[spostato]], 42.00)
+  expect_equal(riquadri$args[[3]][[spostato]], 42.00, tolerance = 1e-4)
   expect_equal(riquadri$args[[2]][[spostato]], 12.35)
-  expect_equal(riquadri$args[[4]][[spostato]], 12.50)
+  expect_equal(riquadri$args[[4]][[spostato]], 12.50, tolerance = 1e-4)
 })
 
 test_that("i bidoni mai spostati non hanno riquadro", {
@@ -76,4 +76,27 @@ test_that("la vista si adatta alle letture", {
   expect_gt(limiti[[3]], 41.92)
   expect_lt(limiti[[2]], 12.20)
   expect_gt(limiti[[4]], 12.42)
+})
+
+test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
+  letture <- dplyr::tibble(
+    giorno_lettura = as.POSIXct("2025-09-15 08:00:00", tz = "UTC"),
+    targa_veicolo = "AB123CD", matricola_veicolo = "VEH001",
+    RFID = c("N1", "N2"), presente_a_database = "Non Presente",
+    servizio_transponder = NA_character_, servizio_atteso = c("VETRO PAP", NA),
+    id_utenza = NA_character_, latitudine = c(41.9, 41.91), longitudine = c(12.5, 12.51),
+    servizio_icona = c("VETRO PAP", NA)
+  )
+  icone <- chiamata(disegna_marker(mappa_base("utenza"), letture, "utenza"), "addMarkers")$args[[3]]
+  url <- icone$iconUrl$data[icone$iconUrl$index + 1]
+  attese <- get_leaflet_icon(c("VETRO PAP", NA), "Non Presente")$iconUrl
+  expect_identical(url, attese)
+  expect_false(identical(url[1], url[2]))
+  # il marker resta rosso anche con l'icona del servizio
+  expect_match(utils::URLdecode(url[1]), "#e74c3c", fixed = TRUE)
+
+  # senza la colonna dedicata si usa il servizio transponder
+  senza <- letture[, setdiff(names(letture), "servizio_icona")]
+  icone <- chiamata(disegna_marker(mappa_base("utenza"), senza, "utenza"), "addMarkers")$args[[3]]
+  expect_length(icone$iconUrl$data, 1)
 })

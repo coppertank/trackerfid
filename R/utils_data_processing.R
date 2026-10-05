@@ -10,6 +10,18 @@ colonne_obbligatorie <- function() {
   )
 }
 
+#' Campi facoltativi del CSV, usati dall'analisi dei cluster
+#' @noRd
+colonne_facoltative <- function() {
+  c("volume_previsto", "numero_raccolte_annue_previste")
+}
+
+#' Tutte le colonne del dataset validato, nell'ordine in cui compaiono
+#' @noRd
+colonne_dataset <- function() {
+  c(colonne_obbligatorie(), colonne_facoltative())
+}
+
 #' Valori ammessi per `presente_a_database`
 #' @noRd
 stati_database <- function() c("Presente", "Non Presente")
@@ -112,6 +124,10 @@ elenco_righe <- function(indici, massimo = 5) {
 #' I valori non interpretabili generano un errore esplicito; le righe con campi
 #' essenziali vuoti vengono scartate e segnalate tra gli avvisi.
 #'
+#' I campi facoltativi (`volume_previsto`, `numero_raccolte_annue_previste`)
+#' vengono convertiti in numerico se presenti; se mancano, le colonne sono
+#' create vuote e la mancanza è segnalata tra gli avvisi.
+#'
 #' @param data Data frame letto da `read_csv_auto()`.
 #' @return Lista con `dati` (tibble validato) e `avvisi` (vettore di testo).
 #' @noRd
@@ -127,8 +143,18 @@ validate_dataset <- function(data) {
     ))
   }
 
+  facoltative <- colonne_facoltative()
+  posizione_facoltative <- match(tolower(facoltative), tolower(nomi))
+  originale <- data
   data <- dplyr::as_tibble(data[, posizione, drop = FALSE])
   names(data) <- attese
+  for (i in seq_along(facoltative)) {
+    data[[facoltative[i]]] <- if (is.na(posizione_facoltative[i])) {
+      rep(NA_character_, nrow(data))
+    } else {
+      originale[[posizione_facoltative[i]]]
+    }
+  }
   if (nrow(data) == 0) {
     errore_validazione("Il file non contiene righe di dati.")
   }
@@ -183,12 +209,36 @@ validate_dataset <- function(data) {
     ))
   }
 
+  quantita <- purrr::map(stats::setNames(facoltative, facoltative), function(campo) {
+    valori <- converti_numero(data[[campo]])
+    list(valori = valori, non_validi = which(!is.na(data[[campo]]) & (is.na(valori) | valori < 0)))
+  })
+  for (campo in facoltative) {
+    non_validi <- quantita[[campo]]$non_validi
+    if (length(non_validi) > 0) {
+      errori <- c(errori, sprintf(
+        "%s: %d valori non numerici o negativi. Righe del file: %s.",
+        campo, length(non_validi), elenco_righe(non_validi)
+      ))
+    }
+  }
+
   if (length(errori) > 0) {
     errore_validazione(errori)
   }
 
+  assenti <- facoltative[is.na(posizione_facoltative)]
+  if (length(assenti) > 0) {
+    avvisi <- c(avvisi, sprintf(
+      "Colonne facoltative assenti: %s. Nell'analisi dei cluster i campi che ne dipendono resteranno vuoti.",
+      paste(assenti, collapse = ", ")
+    ))
+  }
+
   data <- dplyr::mutate(
     data,
+    volume_previsto = quantita$volume_previsto$valori,
+    numero_raccolte_annue_previste = quantita$numero_raccolte_annue_previste$valori,
     giorno_lettura = giorno,
     presente_a_database = stato,
     servizio_transponder = stringr::str_to_upper(.data$servizio_transponder),
@@ -285,6 +335,102 @@ filtra_periodo <- function(data, periodo = NULL) {
   periodo <- lubridate::as_date(periodo)
   giorno <- lubridate::as_date(data$giorno_lettura)
   data[giorno >= periodo[1] & giorno <= periodo[2], , drop = FALSE]
+}
+
+#' Anni presenti nel dataset, dal più recente
+#' @noRd
+anni_disponibili <- function(data) {
+  sort(unique(lubridate::year(data$giorno_lettura)), decreasing = TRUE)
+}
+
+#' Periodo corrispondente a un anno solare (1 gennaio - 31 dicembre)
+#' @noRd
+periodo_anno <- function(anno) {
+  c(lubridate::make_date(anno, 1, 1), lubridate::make_date(anno, 12, 31))
+}
+
+#' Descrizione breve di un periodo: "Anno 2025" oppure le due date
+#' @noRd
+etichetta_periodo <- function(periodo) {
+  if (is.null(periodo)) {
+    return(NULL)
+  }
+  periodo <- lubridate::as_date(periodo)
+  anno <- lubridate::year(periodo[1])
+  if (identical(periodo, periodo_anno(anno))) {
+    paste("Anno", anno)
+  } else {
+    paste(format(periodo, "%d/%m/%Y"), collapse = " - ")
+  }
+}
+
+#' Servizio atteso prevalente dei contenitori non censiti
+#'
+#' Per ogni RFID considera le letture "Non Presente" con `servizio_atteso`
+#' valorizzato. La quota si calcola per tipologia (i giri che condividono
+#' l'icona, ad esempio "CARTA CONT.STRADALI" e "CARTA/CARTONE PAP", contano
+#' insieme): se la tipologia più frequente raggiunge la soglia, il servizio
+#' prevalente è il giro più letto di quella tipologia, altrimenti è `NA`.
+#'
+#' @param data Letture da analizzare.
+#' @param soglia Quota minima (0-1) perché la stima sia considerata affidabile.
+#' @return Tibble con `RFID`, `quota` della tipologia più frequente e
+#'   `servizio_prevalente` (`NA` sotto soglia). Contiene solo gli RFID con
+#'   almeno una stima.
+#' @noRd
+servizio_prevalente_non_censiti <- function(data, soglia = 0.8) {
+  data |>
+    dplyr::filter(
+      .data$presente_a_database == "Non Presente", !is.na(.data$servizio_atteso)
+    ) |>
+    dplyr::count(.data$RFID, .data$servizio_atteso, name = "n") |>
+    dplyr::mutate(tipologia = tipologia_servizio(.data$servizio_atteso)) |>
+    dplyr::mutate(totale = sum(.data$n), .by = "RFID") |>
+    dplyr::mutate(n_tipologia = sum(.data$n), .by = c("RFID", "tipologia")) |>
+    dplyr::arrange(
+      .data$RFID, dplyr::desc(.data$n_tipologia), .data$tipologia,
+      dplyr::desc(.data$n), .data$servizio_atteso
+    ) |>
+    dplyr::distinct(.data$RFID, .keep_all = TRUE) |>
+    dplyr::transmute(
+      RFID = .data$RFID,
+      quota = .data$n_tipologia / .data$totale,
+      servizio_prevalente = dplyr::if_else(
+        .data$quota >= soglia, .data$servizio_atteso, NA_character_
+      )
+    )
+}
+
+#' Servizio da usare per l'icona di un RFID non censito
+#'
+#' @param rfid_code Codice RFID.
+#' @param data Letture del dataset.
+#' @param soglia Quota minima del servizio atteso prevalente (predefinita 80%).
+#' @return Il servizio atteso prevalente se raggiunge la soglia, altrimenti
+#'   `NA`: in quel caso il marker mostra il punto di domanda.
+#' @noRd
+get_icon_for_uncensored_rfid <- function(rfid_code, data, soglia = 0.8) {
+  prevalente <- servizio_prevalente_non_censiti(data[data$RFID == rfid_code, , drop = FALSE], soglia)
+  if (nrow(prevalente) == 0) NA_character_ else prevalente$servizio_prevalente
+}
+
+#' Aggiunge alle letture il servizio da rappresentare con l'icona
+#'
+#' La colonna `servizio_icona` vale `servizio_transponder` per le letture
+#' censite e il servizio atteso prevalente dell'RFID per quelle non censite
+#' (`NA` se nessuna tipologia raggiunge la soglia).
+#'
+#' @param letture Letture da completare.
+#' @param riferimento Letture su cui calcolare il servizio prevalente.
+#' @param soglia Quota minima del servizio atteso prevalente.
+#' @noRd
+aggiungi_servizio_icona <- function(letture, riferimento = letture, soglia = 0.8) {
+  prevalenti <- servizio_prevalente_non_censiti(riferimento, soglia)
+  stimato <- prevalenti$servizio_prevalente[match(letture$RFID, prevalenti$RFID)]
+  letture$servizio_icona <- ifelse(
+    letture$presente_a_database == "Presente", letture$servizio_transponder, stimato
+  )
+  letture
 }
 
 #' Applica i filtri laterali alle letture

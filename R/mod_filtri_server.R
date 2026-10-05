@@ -8,14 +8,15 @@
 #' dell'utente sopravvivono quando l'elenco dei servizi cambia con il periodo.
 #'
 #' @param id Identificativo del modulo.
-#' @param dati Reactive con il dataset validato (o `NULL`).
+#' @param dati Reactive con le letture del periodo di analisi (o `NULL`).
+#' @param azzera Reactive il cui cambiamento riporta i filtri ai valori
+#'   predefiniti: di norma il dataset caricato.
 #' @return Lista con `dati_filtrati`: reactive con l'ultima lettura di ogni
 #'   RFID tra quelle che superano i filtri.
 #' @noRd
-mod_filtri_server <- function(id, dati) {
+mod_filtri_server <- function(id, dati, azzera = dati) {
   moduleServer(id, function(input, output, session) {
     stato <- reactiveValues(
-      periodo = NULL,
       stato_db = stati_database(),
       transponder_esclusi = character(0),
       includi_non_censiti = TRUE,
@@ -29,41 +30,22 @@ mod_filtri_server <- function(id, dati) {
 
     # --- Valori predefiniti: nuovo dataset o pulsante "Reset Filtri" -----------
     reimposta <- function() {
-      d <- dati()
       stato$stato_db <- stati_database()
       stato$transponder_esclusi <- character(0)
       stato$includi_non_censiti <- TRUE
       stato$atteso_esclusi <- character(0)
       stato$includi_senza_stima <- TRUE
       stato$reimpostazioni <- stato$reimpostazioni + 1L
-      if (is.null(d)) {
-        stato$periodo <- NULL
-        return(invisible())
-      }
-      periodo <- range(lubridate::as_date(d$giorno_lettura))
-      stato$periodo <- periodo
-      updateSliderInput(
-        session, "date_range",
-        min = periodo[1], max = periodo[2], value = periodo,
-        timeFormat = "%d/%m/%Y"
-      )
       updateCheckboxGroupInput(session, "presente_filter", selected = stati_database())
       updateCheckboxInput(session, "includi_non_censiti", value = TRUE)
       updateCheckboxInput(session, "includi_senza_stima", value = TRUE)
     }
-    observeEvent(dati(), reimposta(), ignoreNULL = FALSE, priority = 100)
+    observeEvent(azzera(), reimposta(), ignoreNULL = FALSE, priority = 100)
     observeEvent(input$reset, reimposta(), priority = 100)
 
     # --- Scelte dinamiche dei servizi: valori presenti nel periodo -------------
-    letture_periodo <- reactive({
-      d <- dati()
-      if (is.null(d) || is.null(stato$periodo)) {
-        return(NULL)
-      }
-      filtra_periodo(d, stato$periodo)
-    })
-    scelte_transponder <- reactive(ordina_servizi(letture_periodo()$servizio_transponder))
-    scelte_atteso <- reactive(ordina_servizi(letture_periodo()$servizio_atteso))
+    scelte_transponder <- reactive(ordina_servizi(dati()$servizio_transponder))
+    scelte_atteso <- reactive(ordina_servizi(dati()$servizio_atteso))
 
     aggiorna_gruppo <- function(id_input, scelte, esclusi) {
       etichette <- paste(info_servizio(scelte)$emoji, scelte)
@@ -85,13 +67,6 @@ mod_filtri_server <- function(id, dati) {
     })
 
     # --- Dagli input allo stato --------------------------------------------------
-    observeEvent(input$date_range,
-      {
-        req(length(input$date_range) == 2)
-        stato$periodo <- lubridate::as_date(input$date_range)
-      },
-      ignoreInit = TRUE
-    )
     observeEvent(input$presente_filter,
       {
         stato$stato_db <- input$presente_filter %||% character(0)
@@ -136,12 +111,11 @@ mod_filtri_server <- function(id, dati) {
     # --- Dataset filtrato: prima i filtri, poi l'ultima lettura per RFID -------
     dati_filtrati <- reactive({
       d <- dati()
-      if (is.null(d) || is.null(stato$periodo)) {
+      if (is.null(d)) {
         return(NULL)
       }
       filtra_letture(
         d,
-        periodo = stato$periodo,
         stato_db = stato$stato_db,
         transponder_esclusi = stato$transponder_esclusi,
         includi_non_censiti = stato$includi_non_censiti,
