@@ -105,7 +105,8 @@ golem_add_external_resources <- function() {
   )
 
   tags$head(
-    favicon(),
+    # Simbolo aziendale: inst/app/www/favicon.png
+    favicon(ext = "png"),
     bundle_resources(
       path = app_sys("app/www"),
       app_title = "Dashboard RFID Bidoni Rifiuti"

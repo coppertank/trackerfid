@@ -67,6 +67,7 @@ Altri comportamenti:
 - **Dettaglio del bidone.** Un click su un marker, su una riga della tabella dei cluster o su un baricentro apre nella barra laterale la storia dell'RFID: servizio coerente, cambio di servizio, stima per i non censiti, cambio di utenza. In fondo c'è l'istogramma delle letture per anno: usa tutte le letture caricate, non solo quelle del periodo, e distingue le letture storiche da quelle delle antenne. Un anno senza letture resta vuoto, con lo zero in rosso.
 - **Popup.** Riporta i dati della lettura e il comune, se il file ha la colonna.
 - **Titolo.** Riporta il periodo, ad esempio "DASHBOARD RFID - ANNO 2025".
+- **Favicon.** È il simbolo aziendale. Nell'intestazione non c'è nessun logo, per scelta del proprietario del progetto.
 
 ## Dati
 
@@ -217,6 +218,7 @@ trackerfid/
 ├── inst/
 │   ├── app/www/custom_style.css  tutti gli stili dell'app
 │   ├── app/www/script.js         un solo gestore: porta in vista il dettaglio del bidone
+│   ├── app/www/favicon.png       favicon: il simbolo aziendale
 │   ├── extdata/                  dataset di esempio, letture storiche di esempio, analisi dei cluster di esempio
 │   ├── scripts/generate_cluster_analysis.R   analisi dei cluster da riga di comando
 │   └── golem-config.yml          configurazione golem
@@ -351,6 +353,7 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Un filtro laterale nuovo o modificato | interfaccia in `R/mod_filtri_ui.R`, stato in `R/mod_filtri_server.R`, regola in `filtra_letture()` | `test-moduli.R`, `test-utils_data_processing.R` |
 | Selezione del periodo, preimpostazioni | `R/mod_periodo_ui.R`, `R/mod_periodo_server.R`, `periodo_anno()`, `etichetta_periodo()` | `test-moduli.R` |
 | Titolo in alto | `output$titolo` in `R/app_server.R` | nessuno |
+| Favicon | `favicon(ext = "png")` in `golem_add_external_resources()`. File `inst/app/www/favicon.png`: quadrato di 192 pixel con il simbolo aziendale su fondo bianco. L'immagine di origine non è nel repository | `test-moduli.R` |
 | Aggiungere una scheda | `tabBox` e `conditionalPanel` in `R/app_ui.R`, collegamenti in `R/app_server.R` | `test-moduli.R` |
 | Regole di ricerca: separatori, maiuscole | `analizza_input_ricerca()`, `codice_in()`, `cerca_per_rfid()`, `filtra_ultimo_per_utenza()` | `test-utils_data_processing.R` |
 | Aspetto della ricerca RFID: evidenza, opacità, riquadri | ramo `rfid` di `disegna_marker()`, `add_rfid_bounds()` | `test-utils_mapping.R` |
@@ -437,6 +440,7 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 - **Compilazione dei report.** Vanno compilati dalla cartella `docs/`, senza l'opzione `intermediates_dir`, che produce avvisi spuri. `output_dir` invece si può usare.
 - **Confronto tra i sistemi e coorte.** Il confronto parte dagli RFID letti dalle antenne, quindi per le antenne la quota di contenitori letti è il 100% per costruzione: non è un risultato e non va scritto come tale. Per lo stesso motivo un contenitore conta solo dall'anno successivo a quello della sua prima lettura.
 - **Codice nei report e `highlight.js`.** Con l'evidenziazione predefinita di R Markdown un blocco di codice nel testo fa incorporare `highlight.js`, che su questo computer arriva troncato e dà un errore JavaScript nella pagina. `beneficio_antenne.Rmd` usa `highlight: tango`, che non richiede script.
+- **`favicon()` e test dell'interfaccia.** golem mette il favicon nella sezione `head`, che `as.character(app_ui(NULL))` non riporta. Per controllarla nei test serve `htmltools::renderTags(app_ui(NULL))$head`.
 - **Intestazioni delle tabelle DT.** L'argomento `colnames` di `DT::datatable()` cambia i nomi che `formatStyle()` deve usare. Nel report le colonne sono rinominate prima, nel data frame.
 
 ## Documenti collegati

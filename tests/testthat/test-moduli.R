@@ -456,3 +456,20 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
   expect_no_match(html, "Filtro Periodo", fixed = TRUE)
   expect_no_match(html, "js-range-slider", fixed = TRUE)
 })
+
+test_that("la pagina ha come favicon il simbolo aziendale", {
+  pagina <- htmltools::renderTags(app_ui(NULL))
+  # golem mette il favicon nella sezione head
+  expect_match(pagina$head, '<link rel="shortcut icon" href="www/favicon.png"/>', fixed = TRUE)
+  expect_no_match(pagina$head, "favicon.ico", fixed = TRUE)
+  expect_true(file.exists(app_sys("app/www", "favicon.png")))
+
+  # il favicon è quadrato: larghezza e altezza stanno nell'intestazione del PNG
+  intestazione <- as.integer(readBin(app_sys("app/www", "favicon.png"), "raw", 24))
+  lato <- function(da) sum(intestazione[da:(da + 3)] * 256^(3:0))
+  expect_equal(lato(17), 192)
+  expect_equal(lato(21), 192)
+
+  # nell'intestazione non c'è nessun logo
+  expect_no_match(pagina$html, "<img", fixed = TRUE)
+})

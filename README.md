@@ -298,6 +298,7 @@ inst/
   extdata/                      dataset di esempio, letture storiche di esempio, analisi dei cluster di esempio
   scripts/generate_cluster_analysis.R   script eseguibile da riga di comando
   app/www/custom_style.css, script.js
+  app/www/favicon.png           favicon: il simbolo aziendale
 data-raw/
   genera_sample_dataset.R       dataset di esempio, simulati
   01_estrai_tabelle.R, 02_importa_tabelle.R, 03_crea_letture_app.R   dati reali, tre passi
