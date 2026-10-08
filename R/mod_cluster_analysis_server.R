@@ -11,7 +11,12 @@
 #' @return Reactive con l'ultimo cluster scelto in tabella o sulla mappa:
 #'   lista con `rfid` e `quando`.
 #' @noRd
-mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function() NULL) {
+mod_cluster_analysis_server <- function(
+  id,
+  dati,
+  periodo,
+  etichetta = function() NULL
+) {
   moduleServer(id, function(input, output, session) {
     risultato <- reactiveVal(NULL)
     secondi <- reactiveVal(NULL)
@@ -22,7 +27,10 @@ mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function(
       d <- dati()
       p <- periodo()
       if (is.null(d) || is.null(p)) {
-        showNotification("Carica un file CSV e scegli un periodo valido.", type = "warning")
+        showNotification(
+          "Carica un file CSV e scegli un periodo valido.",
+          type = "warning"
+        )
         return()
       }
       eps_m <- input$eps_m
@@ -36,8 +44,15 @@ mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function(
       }
       inizio <- Sys.time()
       analisi <- withProgress(
-        message = "Calcolo dei cluster in corso\u2026", value = 0.6,
-        calcola_analisi_cluster(d, p[1], p[2], eps_m = eps_m, min_pts = round(min_pts))
+        message = "Calcolo dei cluster in corso\u2026",
+        value = 0.6,
+        calcola_analisi_cluster(
+          d,
+          p[1],
+          p[2],
+          eps_m = eps_m,
+          min_pts = round(min_pts)
+        )
       )
       secondi(as.numeric(difftime(Sys.time(), inizio, units = "secs")))
       risultato(analisi)
@@ -63,21 +78,27 @@ mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function(
       analisi <- risultato()
       req(analisi)
       if (nrow(analisi) == 0) {
-        return(div(class = "esito-ricerca esito-avviso", "Nessuna lettura nel periodo selezionato."))
+        return(div(
+          class = "esito-ricerca esito-avviso",
+          "Nessuna lettura nel periodo selezionato."
+        ))
       }
       parametri <- attr(analisi, "parametri")
       div(
         class = "esito-ricerca esito-ok",
         tags$div(
-          conta(nrow(analisi), "cluster", "cluster"), " di ",
+          conta(nrow(analisi), "cluster", "cluster"),
+          " di ",
           conta(dplyr::n_distinct(analisi$RFID), "RFID", "RFID")
         ),
         tags$div(
           class = "esito-non-trovati",
           sprintf(
             "Raggio %s m, letture minime %s \u00b7 %s giorni osservati \u00b7 %.1f s",
-            formatta_numero(parametri$eps_m), parametri$min_pts,
-            formatta_numero(parametri$giorni_osservati), secondi()
+            formatta_numero(parametri$eps_m),
+            parametri$min_pts,
+            formatta_numero(parametri$giorni_osservati),
+            secondi()
           )
         )
       )
@@ -98,8 +119,11 @@ mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function(
       }
       analisi <- risultato()
       paste(
-        conta(nrow(analisi), "cluster", "cluster"), "di",
-        conta(dplyr::n_distinct(analisi$RFID), "RFID", "RFID"), "\u00b7", etichetta()
+        conta(nrow(analisi), "cluster", "cluster"),
+        "di",
+        conta(dplyr::n_distinct(analisi$RFID), "RFID", "RFID"),
+        "\u00b7",
+        etichetta()
       )
     })
 
@@ -113,7 +137,8 @@ mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function(
       } else {
         paste0(
           "Premi \u00abGenera Analisi\u00bb nel pannello laterale per calcolare i cluster spaziali del periodo: ",
-          etichetta(), "."
+          etichetta(),
+          "."
         )
       }
     })
@@ -139,7 +164,10 @@ mod_cluster_analysis_server <- function(id, dati, periodo, etichetta = function(
 
     output$grafico_dispersione <- plotly::renderPlotly({
       righe <- righe_filtrate()
-      validate(need(nrow(righe) > 0, "Nessun cluster corrisponde ai filtri della tabella."))
+      validate(need(
+        nrow(righe) > 0,
+        "Nessun cluster corrisponde ai filtri della tabella."
+      ))
       parametri <- attr(risultato(), "parametri")
       grafico_dispersione(righe, parametri$soglie, parametri$giorni_osservati)
     })

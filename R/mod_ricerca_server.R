@@ -46,10 +46,16 @@ mod_ricerca_server <- function(id, dati, tipo = c("rfid", "utenza")) {
         return(NULL)
       }
       if (length(cercati) == 0) {
-        return(div(class = "esito-ricerca esito-avviso", "Inserisci almeno un codice da cercare."))
+        return(div(
+          class = "esito-ricerca esito-avviso",
+          "Inserisci almeno un codice da cercare."
+        ))
       }
       if (is.null(dati())) {
-        return(div(class = "esito-ricerca esito-avviso", "Carica prima un file CSV."))
+        return(div(
+          class = "esito-ricerca esito-avviso",
+          "Carica prima un file CSV."
+        ))
       }
       trovati <- risultati()
       non_trovati <- cercati[!codice_in(cercati, trovati[[campo]])]
@@ -58,23 +64,32 @@ mod_ricerca_server <- function(id, dati, tipo = c("rfid", "utenza")) {
       riepilogo <- if (tipo == "rfid") {
         sprintf(
           "%s su %d trovati \u00b7 %s",
-          conta(n_trovati, "RFID", "RFID"), length(cercati),
+          conta(n_trovati, "RFID", "RFID"),
+          length(cercati),
           conta(nrow(trovati), "lettura", "letture")
         )
       } else {
         sprintf(
           "%s su %d con bidoni \u00b7 %s",
-          conta(n_trovati, "utenza", "utenze"), length(cercati),
+          conta(n_trovati, "utenza", "utenze"),
+          length(cercati),
           conta(nrow(trovati), "bidone", "bidoni")
         )
       }
       div(
-        class = paste("esito-ricerca", if (n_trovati > 0) "esito-ok" else "esito-avviso"),
+        class = paste(
+          "esito-ricerca",
+          if (n_trovati > 0) "esito-ok" else "esito-avviso"
+        ),
         tags$div(riepilogo),
         if (length(non_trovati) > 0) {
           tags$div(
             class = "esito-non-trovati",
-            if (tipo == "rfid") "Non trovati: " else "Nessun bidone attualmente associato a: ",
+            if (tipo == "rfid") {
+              "Non trovati: "
+            } else {
+              "Nessun bidone attualmente associato a: "
+            },
             paste(non_trovati, collapse = ", ")
           )
         }

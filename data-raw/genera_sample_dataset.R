@@ -1,10 +1,16 @@
-# Genera il dataset di esempio `inst/extdata/sample_rfid_dataset.csv`.
+# Genera i due dataset di esempio:
+#   inst/extdata/sample_rfid_dataset.csv        letture con le antenne
+#   inst/extdata/sample_letture_storiche.csv    letture del sistema precedente
 #
-# Il dataset copre 15 mesi (ottobre 2024 - dicembre 2025): l'anno 2025 e'
-# completo, il 2024 parziale, cosi' si puo' provare la selezione dell'anno.
-# Ogni contenitore viene letto a cadenza fissa dal giro del proprio servizio,
-# come accade con un calendario di raccolta reale. Sono inclusi esempi per
-# tutti gli indicatori dell'analisi dei cluster spaziali.
+# Le letture con le antenne coprono 15 mesi (ottobre 2024 - dicembre 2025):
+# l'anno 2025 e' completo, il 2024 parziale, cosi' si puo' provare la selezione
+# dell'anno. Ogni contenitore viene letto a cadenza fissa dal giro del proprio
+# servizio, come accade con un calendario di raccolta reale. Sono inclusi
+# esempi per tutti gli indicatori dell'analisi dei cluster spaziali.
+#
+# Le letture storiche vanno da gennaio 2020 a settembre 2024 e hanno solo due
+# colonne, RFID e data e ora. Sono generate in coda allo script: cosi' le
+# letture con le antenne non dipendono da loro.
 #
 # Lo script e' riproducibile (seed fisso) e usa solo R base.
 # Eseguire dalla radice del pacchetto:
@@ -518,6 +524,30 @@ letture$presente_a_database <- ifelse(letture$presente, "Presente", "Non Present
 letture$volume_previsto <- bidoni$volume[letture$chiave]
 letture$numero_raccolte_annue_previste <- bidoni$raccolte[letture$chiave]
 
+# Comune di servizio. Ogni zona appartiene a un comune e ogni contenitore sta
+# nel comune della zona piu' vicina al punto in cui e' registrato. E' un dato
+# dell'anagrafica: lo hanno solo i censiti e non cambia se il contenitore viene
+# spostato. Non usa numeri casuali.
+comuni_zone <- c(
+  "COMUNE EST", "COMUNE EST", "COMUNE NORD", "COMUNE NORD",
+  "COMUNE OVEST", "COMUNE SUD", "COMUNE SUD"
+)
+comune_da_posizione <- function(lat, lng) {
+  distanze <- (zone$lat - lat)^2 + ((zone$lng - lng) * cos(41.9 * pi / 180))^2
+  comuni_zone[which.min(distanze)]
+}
+lat_anagrafica <- bidoni$lat
+lng_anagrafica <- bidoni$lng
+for (ce in coord_esempio) {
+  lat_anagrafica[ce$k] <- ce$lat
+  lng_anagrafica[ce$k] <- ce$lng
+}
+# Il contenitore spostato resta registrato dove e' stato letto la prima volta.
+lat_anagrafica[k_spostato] <- 41.85
+lng_anagrafica[k_spostato] <- 12.35
+bidoni$comune <- mapply(comune_da_posizione, lat_anagrafica, lng_anagrafica)
+letture$comune <- ifelse(letture$presente, bidoni$comune[letture$chiave], NA_character_)
+
 # Servizio atteso: solo per i non censiti, dal calendario del mezzo.
 letture$servizio_atteso <- NA_character_
 for (i in which(!letture$presente)) {
@@ -526,7 +556,8 @@ for (i in which(!letture$presente)) {
   )
 }
 
-# Codice RFID: "RFD" + data della prima lettura + progressivo del contenitore.
+# Codice RFID: "RFD" + data della prima lettura con le antenne + progressivo
+# del contenitore.
 prima_lettura <- tapply(letture$giorno_lettura, letture$chiave, min)
 prima_lettura <- as.POSIXct(prima_lettura, origin = "1970-01-01", tz = "UTC")
 bidoni$RFID <- sprintf(
@@ -550,6 +581,7 @@ finale <- data.frame(
   longitudine = sprintf("%.4f", letture$longitudine),
   volume_previsto = letture$volume_previsto,
   numero_raccolte_annue_previste = letture$numero_raccolte_annue_previste,
+  comune = letture$comune,
   stringsAsFactors = FALSE
 )
 
@@ -589,6 +621,9 @@ stopifnot(
   all(finale$volume_previsto %in% c(240, 770, 1100, NA)),
   all(finale$numero_raccolte_annue_previste %in% c(13, 26, NA)),
   all(vapply(per_rfid, function(x) length(unique(x$volume_previsto)) == 1, logical(1))),
+  all(is.na(finale$comune) == non_presente),
+  setequal(unique(stats::na.omit(finale$comune)), unique(comuni_zone)),
+  all(vapply(per_rfid, function(x) length(unique(x$comune)) == 1, logical(1))),
   nrow(unique(finale[, c("targa_veicolo", "matricola_veicolo")])) == 5,
   length(unique(stats::na.omit(finale$id_utenza))) == 50,
   !anyNA(finale$latitudine), !anyNA(finale$longitudine),
@@ -611,4 +646,165 @@ message(sprintf(
 message(sprintf(
   "Esempi cluster: deposito %s, camion %s, letture sparse %s",
   bidoni$RFID[k_deposito], bidoni$RFID[k_camion], bidoni$RFID[k_sparso]
+))
+
+# ---- Letture storiche: il sistema precedente alle antenne --------------------
+#
+# Prima delle antenne una lettura registrava solo il codice e l'istante. Il
+# sistema perdeva molti passaggi, in misura diversa da comune a comune e da un
+# anno all'altro, e capitava che un contenitore restasse un anno intero senza
+# letture. Questa parte usa numeri casuali: va lasciata in coda allo script.
+
+inizio_storico <- as.Date("2020-01-01")
+fine_storico <- inizio_dati - 1
+giorni_storico <- seq(inizio_storico, fine_storico, by = "day")
+anni_storico <- 2020:2024
+
+# Quota dei passaggi registrati dal sistema precedente, per comune e anno.
+cattura <- rbind(
+  "COMUNE NORD" = c(0.62, 0.60, 0.56, 0.58, 0.55),
+  "COMUNE EST" = c(0.50, 0.44, 0.47, 0.42, 0.45),
+  "COMUNE SUD" = c(0.36, 0.33, 0.38, 0.30, 0.34),
+  "COMUNE OVEST" = c(0.28, 0.45, 0.22, 0.30, 0.26)
+)
+colnames(cattura) <- anni_storico
+# Probabilita' che un contenitore resti un anno intero senza letture.
+quota_anni_vuoti <- c(
+  "COMUNE NORD" = 0.06, "COMUNE EST" = 0.14, "COMUNE SUD" = 0.22, "COMUNE OVEST" = 0.30
+)
+
+# Istanti delle letture storiche di un contenitore: i passaggi seguono la
+# stessa cadenza usata con le antenne, ma ne viene registrata solo una parte.
+# `vuoti` elenca gli anni senza letture; se manca vengono estratti a sorte.
+letture_storiche_bidone <- function(giorno, cadenza, sfasamento, ora, esposizione, comune,
+                                    dal, al = fine_storico, vuoti = NULL) {
+  passaggi <- giorni_storico[
+    giorni_storico >= dal & giorni_storico <= al & giorno_settimana(giorni_storico) == giorno
+  ]
+  if (length(passaggi) <= sfasamento) {
+    return(NULL)
+  }
+  passaggi <- passaggi[seq(1 + sfasamento, length(passaggi), by = cadenza / 7)]
+  anno <- as.integer(format(passaggi, "%Y"))
+  if (is.null(vuoti)) {
+    vuoti <- anni_storico[stats::runif(length(anni_storico)) < quota_anni_vuoti[[comune]]]
+  }
+  registrata <- stats::runif(length(passaggi)) < esposizione * cattura[comune, as.character(anno)]
+  registrata <- registrata & !anno %in% vuoti
+  if (!any(registrata)) {
+    return(NULL)
+  }
+  ore <- pmin(pmax(ora + stats::rnorm(sum(registrata), 0, 0.4), 6), 18.98)
+  istante(passaggi[registrata], ore)
+}
+
+# Contenitori gia' in servizio prima delle antenne: i censiti letti fin da
+# ottobre 2024 e una parte dei non censiti. Gli altri RFID del dataset con le
+# antenne non hanno storia: contenitori nuovi, oppure mai letti prima.
+con_storia <- c(
+  setdiff(censiti, c(speciali, tardivi)),
+  estrai(setdiff(np_regolari, tardivi), 9),
+  estrai(setdiff(np_sporadici, tardivi), 5)
+)
+# Sette su dieci erano in servizio da prima del 2020, gli altri sono stati
+# consegnati tra il 2020 e il 2023.
+bidoni$consegna <- inizio_storico
+k_recenti <- estrai(con_storia, round(0.3 * length(con_storia)))
+bidoni$consegna[k_recenti] <- estrai(
+  seq(as.Date("2020-03-01"), as.Date("2023-12-31"), by = "day"), length(k_recenti)
+)
+
+# Contenitore usato come esempio nei documenti: in servizio da prima del 2020,
+# letto con regolarita' dalle antenne, senza nessuna lettura nel 2021 e nel 2023.
+k_vetrina <- min(which(
+  bidoni$presente & bidoni$comune == "COMUNE EST" & bidoni$raccolte == 26L &
+    !bidoni$chiave %in% c(speciali, tardivi, k_rari, k_recenti, k_utenza, k_servizio, k_mossi)
+))
+
+storiche <- lapply(con_storia, function(k) {
+  b <- bidoni[k, ]
+  # Un non censito letto di rado dalle antenne era letto di rado anche prima.
+  esposizione <- if (k %in% np_sporadici) 0.08 else b$esposizione
+  quando <- letture_storiche_bidone(
+    b$giorno, b$cadenza, b$sfasamento, b$ora_tipica, esposizione, b$comune,
+    dal = b$consegna, vuoti = if (k == k_vetrina) c(2021, 2023)
+  )
+  if (is.null(quando)) {
+    return(NULL)
+  }
+  data.frame(RFID = b$RFID, giorno_lettura = quando, stringsAsFactors = FALSE)
+})
+
+# RFID letti solo dal sistema precedente. I primi 30 sono contenitori ritirati
+# prima delle antenne, gli altri erano ancora in servizio a settembre 2024 e le
+# antenne non li hanno ancora letti.
+n_solo_storico <- 45
+n_ritirati <- 30
+solo_storico <- lapply(seq_len(n_solo_storico), function(i) {
+  dal <- if (stats::runif(1) < 0.7) {
+    inizio_storico
+  } else {
+    estrai(seq(as.Date("2020-03-01"), as.Date("2022-12-31"), by = "day"))
+  }
+  al <- if (i <= n_ritirati) {
+    estrai(seq(dal + 200, as.Date("2024-03-31"), by = "day"))
+  } else {
+    fine_storico
+  }
+  quando <- letture_storiche_bidone(
+    giorno = sample.int(6, 1), cadenza = 14, sfasamento = sample.int(2, 1) - 1,
+    ora = stats::runif(1, 6.5, 17), esposizione = stats::runif(1, 0.75, 0.98),
+    comune = estrai(rownames(cattura), 1, prob = c(0.30, 0.38, 0.21, 0.11)),
+    dal = dal, al = al
+  )
+  if (is.null(quando)) {
+    return(NULL)
+  }
+  data.frame(
+    RFID = sprintf("RFD%s%03d", format(min(quando), "%Y%m%d", tz = "UTC"), 400L + i),
+    giorno_lettura = quando,
+    stringsAsFactors = FALSE
+  )
+})
+
+storico <- do.call(rbind, c(storiche, solo_storico))
+storico <- storico[order(storico$giorno_lettura, storico$RFID), ]
+storico_finale <- data.frame(
+  RFID = storico$RFID,
+  giorno_lettura = format(storico$giorno_lettura, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+  stringsAsFactors = FALSE
+)
+
+rfid_antenne <- unique(finale$RFID)
+rfid_storico <- unique(storico_finale$RFID)
+anni_vetrina <- unique(substr(
+  storico_finale$giorno_lettura[storico_finale$RFID == bidoni$RFID[k_vetrina]], 1, 4
+))
+stopifnot(
+  # tutte precedenti alla prima lettura con le antenne
+  all(substr(storico_finale$giorno_lettura, 1, 10) < format(inizio_dati)),
+  setequal(unique(substr(storico_finale$giorno_lettura, 1, 4)), as.character(anni_storico)),
+  !anyDuplicated(storico_finale),
+  !anyNA(storico_finale),
+  # RFID letti da entrambi i sistemi, solo dalle antenne, solo in passato
+  length(intersect(rfid_storico, rfid_antenne)) >= 150,
+  length(setdiff(rfid_antenne, rfid_storico)) >= 30,
+  length(setdiff(rfid_storico, rfid_antenne)) >= 30,
+  setequal(anni_vetrina, c("2020", "2022", "2024"))
+)
+
+utils::write.csv(
+  storico_finale,
+  "inst/extdata/sample_letture_storiche.csv",
+  row.names = FALSE, quote = FALSE, fileEncoding = "UTF-8"
+)
+
+message(sprintf(
+  "Scritte %d letture storiche di %d RFID in inst/extdata/sample_letture_storiche.csv",
+  nrow(storico_finale), length(rfid_storico)
+))
+message(sprintf(
+  "RFID in comune %d, solo antenne %d, solo storico %d. Esempio con anni vuoti: %s",
+  length(intersect(rfid_storico, rfid_antenne)), length(setdiff(rfid_antenne, rfid_storico)),
+  length(setdiff(rfid_storico, rfid_antenne)), bidoni$RFID[k_vetrina]
 ))

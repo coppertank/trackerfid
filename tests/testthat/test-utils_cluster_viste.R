@@ -10,7 +10,10 @@ test_that("la tabella interattiva mostra tutte le colonne con i filtri", {
   expect_s3_class(tabella$x$data$indicatore_cluster, "factor")
   expect_identical(
     levels(tabella$x$data$indicatore_cluster),
-    intersect(indicatori_config()$indicatore, analisi_esempio()$indicatore_cluster)
+    intersect(
+      indicatori_config()$indicatore,
+      analisi_esempio()$indicatore_cluster
+    )
   )
 })
 
@@ -18,7 +21,10 @@ test_that("il grafico a barre conta i cluster per indicatore, in ordine fisso", 
   grafico <- plotly::plotly_build(grafico_indicatori(analisi_esempio()))
   barre <- grafico$x$data[[1]]
   config <- indicatori_config()
-  attesi <- as.integer(table(factor(analisi_esempio()$indicatore_cluster, levels = config$indicatore)))
+  attesi <- as.integer(table(factor(
+    analisi_esempio()$indicatore_cluster,
+    levels = config$indicatore
+  )))
 
   expect_identical(barre$type, "bar")
   expect_identical(as.character(barre$y), config$indicatore)
@@ -31,15 +37,32 @@ test_that("il grafico a barre conta i cluster per indicatore, in ordine fisso", 
 test_that("il grafico a dispersione ha un riquadro per indicatore presente", {
   analisi <- analisi_esempio()
   grafico <- plotly::plotly_build(grafico_dispersione(analisi))
-  presenti <- intersect(indicatori_config()$indicatore, analisi$indicatore_cluster)
-  titoli <- vapply(grafico$x$layout$annotations, function(a) a$text, character(1))
+  presenti <- intersect(
+    indicatori_config()$indicatore,
+    analisi$indicatore_cluster
+  )
+  titoli <- vapply(
+    grafico$x$layout$annotations,
+    function(a) a$text,
+    character(1)
+  )
   for (indicatore in presenti) {
     expect_true(any(grepl(indicatore, titoli, fixed = TRUE)), info = indicatore)
   }
   # per ogni riquadro: contesto in grigio e cluster dell'indicatore in colore
   expect_length(grafico$x$data, 2 * length(presenti))
-  colori <- vapply(grafico$x$data, function(traccia) traccia$marker$color[1], character(1))
-  expect_true(all(indicatori_config()$colore[match(presenti, indicatori_config()$indicatore)] %in% colori))
+  colori <- vapply(
+    grafico$x$data,
+    function(traccia) traccia$marker$color[1],
+    character(1)
+  )
+  expect_true(all(
+    indicatori_config()$colore[match(
+      presenti,
+      indicatori_config()$indicatore
+    )] %in%
+      colori
+  ))
 
   # un solo indicatore: nessuna traccia di contesto
   solo <- analisi[analisi$indicatore_cluster == "VALID_TARGET", ]
@@ -50,7 +73,10 @@ test_that("la mappa mostra un baricentro e un cerchio di dispersione per cluster
   analisi <- analisi_esempio()
   mappa <- mappa_cluster(analisi)
   metodi <- vapply(mappa$x$calls, function(k) k$method, character(1))
-  presenti <- intersect(indicatori_config()$indicatore, analisi$indicatore_cluster)
+  presenti <- intersect(
+    indicatori_config()$indicatore,
+    analisi$indicatore_cluster
+  )
   expect_equal(sum(metodi == "addCircles"), length(presenti))
   expect_equal(sum(metodi == "addCircleMarkers"), length(presenti))
   expect_true("addLayersControl" %in% metodi)
@@ -67,7 +93,9 @@ test_that("la mappa mostra un baricentro e un cerchio di dispersione per cluster
   expect_true(all(raggi >= 1))
 
   vuota <- mappa_cluster(analisi[0, ])
-  expect_false("addCircles" %in% vapply(vuota$x$calls, function(k) k$method, character(1)))
+  expect_false(
+    "addCircles" %in% vapply(vuota$x$calls, function(k) k$method, character(1))
+  )
 })
 
 test_that("il popup del cluster riporta i dati principali e fa l'escape", {

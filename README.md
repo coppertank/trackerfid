@@ -8,7 +8,8 @@ Permette di:
 - vedere se la tipologia di rifiuto o l'utenza di un bidone sono cambiate nel tempo;
 - seguire gli spostamenti di un singolo bidone;
 - cercare i bidoni per RFID o per utenza proprietaria;
-- analizzare per ogni bidone i luoghi in cui è stato letto nel periodo, per riconoscere spostamenti, tag smarriti o rimasti sui mezzi.
+- analizzare per ogni bidone i luoghi in cui è stato letto nel periodo, per riconoscere spostamenti, tag smarriti o rimasti sui mezzi;
+- vedere quante volte un bidone è stato letto anno per anno, anche prima dell'installazione delle antenne sui mezzi.
 
 L'interfaccia è interamente in italiano.
 
@@ -23,7 +24,7 @@ devtools::install_deps(dependencies = TRUE)
 
 devtools::load_all()
 run_app()             # si parte da un'app vuota e si carica un CSV
-run_app(demo = TRUE)  # si parte con il dataset di esempio già caricato
+run_app(demo = TRUE)  # si parte con i dati di esempio già caricati
 ```
 
 In sviluppo si può usare anche `golem::run_dev()`.
@@ -31,7 +32,7 @@ Per installare il pacchetto: `devtools::install()`, poi `trackerfid::run_app()`.
 
 ## Formato del CSV
 
-Il file deve contenere 10 campi obbligatori e può contenerne 2 facoltativi. L'ordine delle colonne e le maiuscole nei nomi non contano, eventuali altre colonne vengono ignorate.
+Il file deve contenere 10 campi obbligatori e può contenerne 3 facoltativi. L'ordine delle colonne e le maiuscole nei nomi non contano, eventuali altre colonne vengono ignorate.
 
 | Campo | Tipo | Contenuto |
 |---|---|---|
@@ -47,6 +48,7 @@ Il file deve contenere 10 campi obbligatori e può contenerne 2 facoltativi. L'o
 | `longitudine` | numero | Longitudine in gradi decimali |
 | `volume_previsto` | numero | Facoltativo. Volume del contenitore in litri secondo il database, vuoto se non censito |
 | `numero_raccolte_annue_previste` | numero | Facoltativo. Raccolte previste in un anno, vuoto se non censito |
+| `comune` | testo | Facoltativo. Comune di servizio secondo il database, vuoto se non censito |
 
 Cosa viene accettato:
 
@@ -63,11 +65,22 @@ RFID e utenze sono sempre letti come testo, quindi gli zeri iniziali si conserva
 Al caricamento l'app controlla il file e mostra l'esito sotto il campo di caricamento.
 
 - **Errori, il file viene rifiutato**: colonne mancanti, date non riconoscibili, coordinate non numeriche o fuori scala, valori di `presente_a_database` diversi dai due ammessi. Il messaggio indica il campo e le righe del file coinvolte.
-- **Avvisi, il file viene caricato**: righe prive di un campo essenziale (data, RFID, stato, coordinate), che vengono scartate; letture "Non Presente" che riportano comunque servizio o utenza; relazione targa/matricola non univoca; colonne facoltative assenti, nel qual caso i campi dell'analisi dei cluster che ne dipendono restano vuoti.
+- **Avvisi, il file viene caricato**: righe prive di un campo essenziale (data, RFID, stato, coordinate), che vengono scartate; letture "Non Presente" che riportano comunque servizio o utenza; relazione targa/matricola non univoca; colonne facoltative assenti, nel qual caso le informazioni che ne dipendono restano vuote.
+
+### Letture storiche
+
+Le letture fatte prima dell'installazione delle antenne sui mezzi stanno in un secondo file CSV, facoltativo, con due sole colonne.
+
+| Campo | Tipo | Contenuto |
+|---|---|---|
+| `RFID` | testo | Identificativo del chip, scritto come nel file delle letture con le antenne |
+| `giorno_lettura` | data e ora | Momento della lettura, negli stessi formati accettati per l'altro file |
+
+Si carica dal secondo campo della sezione di caricamento. Eventuali altre colonne vengono ignorate, le righe incomplete e quelle ripetute vengono scartate con un avviso. L'app usa questo file nel dettaglio del bidone, per l'istogramma delle letture per anno. Il confronto completo tra i due sistemi è nel [report sul beneficio delle antenne](#report-sul-beneficio-delle-antenne).
 
 ## Come si usa
 
-La barra laterale a sinistra, richiudibile dal pulsante in alto, contiene il caricamento del file, il periodo di analisi, il dettaglio del bidone selezionato e i controlli della scheda aperta.
+La barra laterale a sinistra, richiudibile dal pulsante in alto, contiene il caricamento dei file, il periodo di analisi, il dettaglio del bidone selezionato e i controlli della scheda aperta.
 
 ### Periodo di analisi
 
@@ -134,7 +147,10 @@ Un click su un marker apre il popup con i dati della lettura e, nella barra late
 - **censito con servizio coerente**: conferma della tipologia;
 - **cambio di servizio**: cronologia dei passaggi, con il servizio attuale;
 - **non censito**: stima percentuale del servizio ricavata dal calendario dei mezzi, oppure l'indicazione che non ci sono elementi per stimarlo;
-- **cambio di proprietario**: cronologia delle utenze, mostrata in aggiunta ai casi precedenti.
+- **cambio di proprietario**: cronologia delle utenze, mostrata in aggiunta ai casi precedenti;
+- **letture per anno**: un istogramma con una colonna per anno, dalla prima lettura del bidone all'ultimo anno dei dati. Non dipende dal periodo di analisi. Se sono state caricate le letture storiche, le colonne distinguono il sistema precedente dalle antenne e un anno senza letture resta vuoto, con lo zero in rosso.
+
+Il popup riporta anche il comune, quando il file lo contiene.
 
 ### Analisi Cluster Spaziale
 
@@ -186,11 +202,61 @@ Rscript inst/scripts/generate_cluster_analysis.R letture.csv 2025-01-01 2025-12-
 
 Senza date si analizza l'anno più recente del file. Lo script si può anche caricare con `source()`, che rende disponibile `genera_analisi_cluster()`.
 
+## Report sul beneficio delle antenne
+
+[docs/beneficio_antenne.Rmd](docs/beneficio_antenne.Rmd) confronta le letture del sistema precedente con quelle delle antenne, sugli stessi contenitori. Contiene:
+
+- le letture anno per anno, vecchie e nuove insieme, e la tabella per RFID con le letture di ogni anno, il comune e le raccolte previste;
+- gli anni senza letture: quanti contenitori già in servizio non risultano mai letti in un anno intero;
+- la stima del guadagno: letture per contenitore, quota delle raccolte previste che risulta letta, letture recuperate ogni anno, con un intervallo di confidenza;
+- lo stesso confronto comune per comune;
+- gli RFID letti in passato che le antenne non hanno ancora letto.
+
+Senza parametri usa i due dataset di esempio. Sui dati reali si indicano i due file, con il percorso a partire dalla radice del progetto:
+
+```r
+rmarkdown::render("docs/beneficio_antenne.Rmd")   # dati di esempio
+
+rmarkdown::render(
+  "docs/beneficio_antenne.Rmd",
+  params = list(
+    letture = "data-raw/output/letture_app.csv",
+    storico = "data-raw/output/letture_storiche.csv"
+  ),
+  output_dir = "data-raw/output"
+)
+```
+
+L'HTML compilato sui dati reali contiene dati aziendali: `output_dir` lo scrive in una cartella esclusa da git.
+
+Le regole del confronto sono funzioni del pacchetto, in `R/utils_storico.R`, e hanno i loro test. Un contenitore conta dall'anno successivo a quello della sua prima lettura, così un contenitore nuovo non passa per un contenitore mai letto. Le letture utili di un contenitore non superano le raccolte previste, così un tag fermo in deposito non gonfia il risultato.
+
+## Preparare i dati reali
+
+Il CSV con le letture vere si produce dentro il repository, con gli script elencati qui sotto, da eseguire in ordine dalla radice del progetto.
+
+| Passo | Script | Cosa fa |
+|---|---|---|
+| 1 | `data-raw/01_estrai_tabelle.R` | Estrae le tabelle dal database aziendale e le salva in `data-raw/origine/` |
+| 2 | `data-raw/02_importa_tabelle.R` | Carica le tabelle ripulite da `data-raw/intermedi/`. Il codice commentato le ricostruisce dalle estrazioni |
+| 3 | `data-raw/03_crea_letture_app.R` | Applica le regole di preparazione e scrive `data-raw/output/letture_app.csv`, da caricare nell'app |
+| 4, facoltativo | `data-raw/04_crea_letture_storiche.R` | Legge le letture precedenti alle antenne da `data-raw/origine/letture_storiche.csv`, porta i codici RFID allo stesso formato del passo 3 e scrive `data-raw/output/letture_storiche.csv` |
+
+Il passo 3 esegue da solo anche il passo 2. Le regole sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune arriva dalla colonna `comune_servizio` dell'anagrafica dei contenitori.
+
+Il passo 4 va adattato al file di origine: in cima allo script si indicano il nome del file e i nomi delle due colonne. Alla fine riporta quanti RFID delle antenne compaiono anche nelle letture storiche: se sono pochi, i codici dei due file hanno con ogni probabilità formati diversi.
+
+Le tre cartelle dei dati sono escluse da git: i dati aziendali restano sul computer di chi li prepara. Il passo 1 richiede i pacchetti `odbc` e `DBI` e la sorgente dati ODBC configurata.
+
 ## Dataset di esempio
 
 `inst/extdata/sample_rfid_dataset.csv` contiene 6.463 letture di 239 bidoni, da ottobre 2024 a dicembre 2025, con cinque mezzi e 50 utenze nell'area di Roma. Il 2025 è completo, il 2024 parziale: serve a provare la selezione dell'anno. Ogni bidone viene letto a cadenza fissa dal giro del proprio servizio, come con un calendario di raccolta reale.
 
-Lo genera lo script `data-raw/genera_sample_dataset.R`, che ha un seed fisso e ne verifica la conformità prima di scrivere il file. Nella stessa cartella, `cluster_analysis_2025-01-01_2025-12-31.csv` è l'analisi dei cluster del 2025, prodotta con lo script descritto sopra.
+I bidoni censiti hanno anche il comune di servizio, uno tra `COMUNE NORD`, `COMUNE EST`, `COMUNE SUD` e `COMUNE OVEST`: nomi di fantasia, assegnati in base alla zona.
+
+`inst/extdata/sample_letture_storiche.csv` contiene le letture del sistema precedente alle antenne: 7.375 letture di 229 RFID, da gennaio 2020 a settembre 2024, con le sole colonne `RFID` e `giorno_lettura`. Il sistema precedente registra solo una parte dei passaggi, in misura diversa da comune a comune, e lascia anni interi senza letture. Dei 229 RFID, 185 sono letti anche dalle antenne e 44 no: contenitori ritirati, oppure non ancora raggiunti. Altri 54 RFID sono letti solo dalle antenne.
+
+Li genera entrambi lo script `data-raw/genera_sample_dataset.R`, che ha un seed fisso e ne verifica la conformità prima di scrivere i file. Nella stessa cartella, `cluster_analysis_2025-01-01_2025-12-31.csv` è l'analisi dei cluster del 2025, prodotta con lo script descritto sopra.
 
 Casi utili da provare:
 
@@ -204,6 +270,7 @@ Casi utili da provare:
 | `RFD20241001301` | Tag fermo in deposito, oltre 400 letture l'anno: `DEPOT_STUCK` |
 | `RFD20250203302` | Tag rimasto sul camion, letto lungo tutto il giro: `TRUCK_STOWAWAY` |
 | `RFD20241003303` | GPS impreciso, 17 cluster: `SCATTERED_READS / GPS_NOISE` |
+| `RFD20241004003` | Letto con regolarità dalle antenne, ma senza nessuna lettura nel 2021 e nel 2023: l'istogramma del dettaglio mostra i due anni vuoti |
 
 ## Struttura del progetto
 
@@ -224,15 +291,22 @@ R/
   utils_dbscan_clustering.R     clustering DBSCAN e distanze
   utils_cluster_output.R        tabella di analisi, indicatori, indice di fiducia
   utils_cluster_viste.R         tabella interattiva, grafici e mappa dei cluster
+  utils_storico.R               letture storiche: lettura, conteggi per anno, confronto con le antenne
   generate_cluster_analysis.R   funzioni esportate per l'analisi senza app
+  fct_preparazione_letture.R    regole che trasformano i dati aziendali nel CSV dell'app
 inst/
-  extdata/                      dataset di esempio e analisi dei cluster di esempio
+  extdata/                      dataset di esempio, letture storiche di esempio, analisi dei cluster di esempio
   scripts/generate_cluster_analysis.R   script eseguibile da riga di comando
   app/www/custom_style.css, script.js
-data-raw/genera_sample_dataset.R
+data-raw/
+  genera_sample_dataset.R       dataset di esempio, simulati
+  01_estrai_tabelle.R, 02_importa_tabelle.R, 03_crea_letture_app.R   dati reali, tre passi
+  04_crea_letture_storiche.R    dati reali: letture precedenti alle antenne, facoltativo
+  origine/, intermedi/, output/ dati aziendali, esclusi da git
 docs/
   analisi_cluster.md            analisi dei cluster: regole, colonne, scelte
   indice_fiducia.Rmd            report sull'indice di fiducia, da compilare in HTML
+  beneficio_antenne.Rmd         report sul beneficio delle antenne, da compilare in HTML
 tests/testthat/
 ```
 

@@ -186,6 +186,13 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
   color: #9c640c;
 }
 
+/* Secondo file, facoltativo: le letture storiche */
+.caricamento-storico {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e3e8ed;
+}
+
 /* ---------- Statistiche ---------- */
 .stat-box {
   padding: 12px 15px;
@@ -340,6 +347,86 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
 p.info-avvertenza {
   color: #5f6b76;
   font-size: 12px;
+}
+
+/* Istogramma delle letture per anno */
+.info-neutro {
+  background: #f4f6f8;
+  border-color: #aab4be;
+}
+
+.anni-grafico {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.anni-colonna {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.anni-valore {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.anni-zero {
+  color: #c0392b;
+}
+
+.anni-barra {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 100%;
+  max-width: 34px;
+  height: 64px;
+  border-bottom: 1px solid #aab4be;
+}
+
+.anni-segmento {
+  display: block;
+  width: 100%;
+}
+
+.anni-segmento:first-child {
+  border-radius: 3px 3px 0 0;
+}
+
+.anni-storico {
+  background: #95a1ad;
+}
+
+.anni-antenne {
+  background: #2a78d6;
+}
+
+.anni-etichetta {
+  margin-top: 2px;
+  color: #5f6b76;
+  font-size: 11px;
+}
+
+.anni-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: #5f6b76;
+  font-size: 11px;
+}
+
+.anni-legenda i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 4px;
+  border-radius: 2px;
 }
 
 /* ---------- Mappe ---------- */

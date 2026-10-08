@@ -9,6 +9,17 @@ dati_esempio <- local({
   }
 })
 
+# Letture storiche di esempio validate, lette una sola volta.
+storico_esempio <- local({
+  cache <- NULL
+  function() {
+    if (is.null(cache)) {
+      cache <<- carica_storico(percorso_storico_esempio())$dati
+    }
+    cache
+  }
+})
+
 # Scrive un CSV temporaneo a partire dalle righe indicate.
 scrivi_csv <- function(righe, env = parent.frame()) {
   percorso <- withr::local_tempfile(fileext = ".csv", .local_envir = env)
@@ -17,8 +28,16 @@ scrivi_csv <- function(righe, env = parent.frame()) {
 }
 
 intestazione_csv <- paste(
-  "giorno_lettura", "targa_veicolo", "matricola_veicolo", "RFID", "presente_a_database",
-  "servizio_transponder", "servizio_atteso", "id_utenza", "latitudine", "longitudine",
+  "giorno_lettura",
+  "targa_veicolo",
+  "matricola_veicolo",
+  "RFID",
+  "presente_a_database",
+  "servizio_transponder",
+  "servizio_atteso",
+  "id_utenza",
+  "latitudine",
+  "longitudine",
   sep = ","
 )
 
@@ -27,8 +46,12 @@ letture_test <- function() {
   dplyr::tibble(
     giorno_lettura = as.POSIXct(
       c(
-        "2025-09-01 08:00:00", "2025-09-10 08:00:00", "2025-09-20 08:00:00",
-        "2025-09-05 09:00:00", "2025-09-06 09:00:00", "2025-09-07 09:00:00"
+        "2025-09-01 08:00:00",
+        "2025-09-10 08:00:00",
+        "2025-09-20 08:00:00",
+        "2025-09-05 09:00:00",
+        "2025-09-06 09:00:00",
+        "2025-09-07 09:00:00"
       ),
       tz = "UTC"
     ),
@@ -49,7 +72,11 @@ analisi_esempio <- local({
   cache <- NULL
   function() {
     if (is.null(cache)) {
-      cache <<- calcola_analisi_cluster(dati_esempio(), "2025-01-01", "2025-12-31")
+      cache <<- calcola_analisi_cluster(
+        dati_esempio(),
+        "2025-01-01",
+        "2025-12-31"
+      )
     }
     cache
   }
@@ -59,9 +86,18 @@ analisi_esempio <- local({
 gradi_lat <- function(metri) metri / (raggio_terra_m() * pi / 180)
 
 # Letture sintetiche di un RFID: una per data, tutte nello stesso punto.
-letture_rfid <- function(rfid, date, lat = 41.9, lon = 12.5, presente = "Presente",
-                         servizio = "CARTA", atteso = NA_character_, utenza = "U1",
-                         volume = 240, raccolte = 26) {
+letture_rfid <- function(
+  rfid,
+  date,
+  lat = 41.9,
+  lon = 12.5,
+  presente = "Presente",
+  servizio = "CARTA",
+  atteso = NA_character_,
+  utenza = "U1",
+  volume = 240,
+  raccolte = 26
+) {
   n <- length(date)
   censito <- presente == "Presente"
   dplyr::tibble(

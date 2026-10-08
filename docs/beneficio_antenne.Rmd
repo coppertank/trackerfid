@@ -1,0 +1,790 @@
+---
+title: "Il beneficio delle antenne sui mezzi"
+subtitle: "Letture RFID prima e dopo l'installazione"
+author: "Aldo Caumo"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+lang: it
+params:
+  letture: ""
+  storico: ""
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    mathjax: null
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+# Per compilare il report sui dati di esempio, dalla radice del progetto:
+#   rmarkdown::render("docs/beneficio_antenne.Rmd")
+#
+# Sui dati reali si indicano i due file, con il percorso a partire dalla
+# radice del progetto. L'HTML contiene dati aziendali: va scritto in una
+# cartella esclusa da git.
+#   rmarkdown::render(
+#     "docs/beneficio_antenne.Rmd",
+#     params = list(
+#       letture = "data-raw/output/letture_app.csv",
+#       storico = "data-raw/output/letture_storiche.csv"
+#     ),
+#     output_dir = "data-raw/output"
+#   )
+#
+# Servono i pacchetti rmarkdown, ggplot2 e pkgload.
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.retina = 2,
+  out.width = "100%"
+)
+
+# Il report usa le funzioni del pacchetto trackerfid, comprese quelle interne:
+# le carica dai sorgenti, quindi il file deve restare nella cartella docs/.
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+# Numeri con la virgola decimale, interi con il punto delle migliaia, quote in
+# percentuale.
+num <- function(x, cifre = 1) {
+  formatC(x, format = "f", digits = cifre, decimal.mark = ",", big.mark = ".")
+}
+intero <- function(x) formatta_numero(round(x))
+pct <- function(x, cifre = 0) paste0(num(100 * x, cifre), "%")
+
+# Percentuale preceduta da articolo o preposizione: "il 33%", "all'82%".
+# Davanti a 1, 8, 11 e da 80 a 89 serve l'apostrofo, davanti a zero "lo".
+con_articolo <- function(x, forma = c("il", "al", "dal")) {
+  forme <- list(
+    il = c("il ", "l'", "lo "),
+    al = c("al ", "all'", "allo "),
+    dal = c("dal ", "dall'", "dallo ")
+  )[[match.arg(forma)]]
+  valore <- round(100 * x)
+  quale <- ifelse(
+    valore == 0,
+    3,
+    ifelse(valore %in% c(1, 8, 11) | (valore >= 80 & valore <= 89), 2, 1)
+  )
+  paste0(forme[quale], pct(x))
+}
+
+# Interrompe la compilazione quando i dati non permettono il confronto.
+ferma <- function(...) stop(..., call. = FALSE)
+
+# Colori dei grafici: grigio per il sistema precedente, blu per le antenne,
+# arancione per gli anni senza letture.
+colori <- list(
+  antenne = "#2a78d6",
+  misto = "#9dbfe8",
+  storico = "#b9b8ae",
+  vuoto = "#e07b39",
+  primario = "#0b0b0b",
+  secondario = "#52514e",
+  griglia = "#e9e8e4"
+)
+colori_sistema <- c(
+  storico = colori$storico,
+  misto = colori$misto,
+  antenne = colori$antenne
+)
+nomi_sistema <- c(
+  storico = "Sistema precedente",
+  misto = "Anno misto",
+  antenne = "Antenne"
+)
+tema_grafico <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 13.5,
+      colour = colori$primario
+    ),
+    plot.subtitle = element_text(
+      size = 10.5,
+      colour = colori$secondario,
+      lineheight = 1.15,
+      margin = margin(t = 5, b = 10)
+    ),
+    plot.caption = element_text(
+      size = 9.5,
+      colour = colori$secondario,
+      hjust = 0,
+      margin = margin(t = 10)
+    ),
+    plot.title.position = "plot",
+    plot.caption.position = "plot",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(colour = colori$griglia),
+    axis.title = element_text(size = 10, colour = colori$secondario),
+    axis.text = element_text(colour = colori$secondario),
+    strip.text = element_text(
+      face = "bold",
+      hjust = 0,
+      colour = colori$primario
+    ),
+    legend.position = "top",
+    legend.justification = "left",
+    legend.title = element_blank(),
+    legend.margin = margin(0, 0, 0, 0),
+    plot.margin = margin(10, 12, 8, 12)
+  )
+```
+
+```{css}
+.numeri {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 1.2em 0;
+}
+.numero {
+  padding: 0.8em 1em;
+  background: #f6f6f4;
+  border-radius: 6px;
+}
+.numero b {
+  display: block;
+  font-size: 1.7em;
+  line-height: 1.2;
+  color: #2a78d6;
+}
+.numero span {
+  font-size: 0.92em;
+  color: #52514e;
+}
+.avviso-esempio {
+  margin: 1em 0;
+  padding: 0.7em 1em;
+  background: #fef5e7;
+  border-left: 4px solid #f39c12;
+  border-radius: 5px;
+}
+.formula {
+  margin: 1.2em 0;
+  padding: 0.8em 1em;
+  background: #f6f6f4;
+  border-radius: 6px;
+  text-align: center;
+}
+```
+
+```{r dati}
+# Senza parametri il report usa i due dataset di esempio del pacchetto.
+dati_di_esempio <- !nzchar(params$letture) && !nzchar(params$storico)
+if (!dati_di_esempio && !(nzchar(params$letture) && nzchar(params$storico))) {
+  ferma("Indica entrambi i file, letture e storico, oppure nessuno dei due.")
+}
+# I percorsi dei parametri partono dalla radice del progetto.
+dalla_radice <- function(percorso) {
+  if (file.exists(percorso)) percorso else file.path("..", percorso)
+}
+file_letture <- if (dati_di_esempio) {
+  percorso_dataset_esempio()
+} else {
+  dalla_radice(params$letture)
+}
+file_storico <- if (dati_di_esempio) {
+  percorso_storico_esempio()
+} else {
+  dalla_radice(params$storico)
+}
+
+letture <- carica_dataset(file_letture)$dati
+storico <- carica_storico(file_storico)$dati
+unite <- unisci_letture(letture, storico)
+anagrafica <- anagrafica_rfid(letture)
+copertura <- copertura_annuale(unite)
+confronto <- confronto_sistemi(unite, anagrafica)
+riepilogo <- riepilogo_confronto(confronto)
+
+if (nrow(confronto) == 0) {
+  ferma(
+    "Nessun RFID letto da entrambi i sistemi ha un anno intero di storia. ",
+    "Controlla che i codici RFID dei due file abbiano lo stesso formato."
+  )
+}
+if (riepilogo$n_con_raccolte == 0) {
+  ferma(
+    "Nessun contenitore del confronto ha le raccolte annue previste: ",
+    "serve la colonna numero_raccolte_annue_previste."
+  )
+}
+if (all(is.na(confronto$comune))) {
+  ferma(
+    "Nessun contenitore del confronto ha il comune: serve la colonna comune."
+  )
+}
+
+# RFID per sistema.
+rfid_antenne <- anagrafica$RFID
+rfid_storico <- unique(storico$RFID)
+n_entrambi <- length(intersect(rfid_antenne, rfid_storico))
+n_solo_antenne <- length(setdiff(rfid_antenne, rfid_storico))
+solo_storico <- rfid_solo_storico(unite)
+
+# Periodi dei due sistemi.
+giorni_storico <- range(lubridate::as_date(storico$giorno_lettura))
+giorni_antenne <- range(lubridate::as_date(letture$giorno_lettura))
+durata_antenne <- attr(confronto, "giorni_antenne")
+anni_storico <- attr(confronto, "anni_storico")
+periodi_sovrapposti <- giorni_storico[2] >= giorni_antenne[1]
+dal_al <- function(giorni) paste(format(giorni, "%d/%m/%Y"), collapse = " - ")
+elenco_anni <- function(anni) {
+  if (length(anni) == 1) {
+    return(as.character(anni))
+  }
+  if (all(diff(anni) == 1)) {
+    return(paste("dal", min(anni), "al", max(anni)))
+  }
+  paste(anni, collapse = ", ")
+}
+
+# Etichette degli anni: sotto l'anno compare il sistema, se non è il precedente,
+# e l'avviso per gli anni coperti solo in parte.
+etichette_anni <- stats::setNames(
+  paste0(
+    copertura$anno,
+    ifelse(copertura$sistema == "misto", "\nmisto", ""),
+    ifelse(copertura$sistema == "antenne", "\nantenne", ""),
+    ifelse(copertura$completo, "", "\nparziale")
+  ),
+  copertura$anno
+)
+
+# Confronto sui contenitori con le raccolte previste.
+con_raccolte <- confronto[!is.na(confronto$numero_raccolte_annue_previste), ]
+raccolte_medie <- mean(con_raccolte$numero_raccolte_annue_previste)
+punti <- riepilogo$tasso_antenne - riepilogo$tasso_storico
+recuperate <- intervallo_media(
+  con_raccolte$letture_utili_antenne - con_raccolte$letture_utili_storico
+)
+punti_intervallo <- recuperate[c("inferiore", "superiore")] / raccolte_medie
+quota_migliorati <- mean(
+  confronto$letture_annue_antenne > confronto$letture_annue_storico
+)
+
+# Proiezione su tutti i contenitori censiti letti dalle antenne.
+tutti_con_raccolte <- anagrafica[
+  !is.na(anagrafica$numero_raccolte_annue_previste),
+]
+proiezione <- punti * sum(tutti_con_raccolte$numero_raccolte_annue_previste)
+
+# Contenitori che le antenne leggono almeno una volta al mese.
+soglia_regolari <- 12
+regolari <- confronto[confronto$letture_annue_antenne >= soglia_regolari, ]
+quota_vuoti_regolari <- sum(regolari$anni_vuoti) / sum(regolari$anni_servizio)
+
+medie <- media_annuale(unite, anagrafica)
+medie_comune <- media_annuale(unite, anagrafica, "comune")
+per_comune <- riepilogo_confronto(
+  confronto[!is.na(confronto$comune), ],
+  "comune"
+)
+```
+
+`r if (dati_di_esempio) '<div class="avviso-esempio">Questo report è compilato sui <b>dati di esempio</b> del pacchetto, che sono simulati. I numeri mostrano il metodo, non i risultati dell\'azienda. L\'ultima sezione spiega come compilarlo sui dati reali.</div>'`
+
+## In breve
+
+Prima delle antenne una lettura registrava solo il codice del contenitore e l'istante. Con le antenne ogni lettura porta anche il mezzo e la posizione. Questo report misura quanto è cambiato il numero di letture, e lo fa sugli **stessi contenitori**, prima e dopo.
+
+<div class="numeri">
+<div class="numero"><b>× `r num(riepilogo$rapporto)`</b><span>letture di un contenitore in un anno: da `r num(riepilogo$media_storico)` a `r num(riepilogo$media_antenne)`</span></div>
+<div class="numero"><b>`r pct(riepilogo$quota_anni_vuoti)`</b><span>degli anni di servizio senza nemmeno una lettura, con il sistema precedente</span></div>
+<div class="numero"><b>`r pct(riepilogo$tasso_storico)` → `r pct(riepilogo$tasso_antenne)`</b><span>delle raccolte previste che risultano lette</span></div>
+<div class="numero"><b>+ `r intero(riepilogo$letture_recuperate)`</b><span>letture utili in più ogni anno, su `r intero(riepilogo$n_con_raccolte)` contenitori</span></div>
+</div>
+
+- **Stessi contenitori.** Il confronto riguarda i `r intero(riepilogo$n_rfid)` RFID letti da entrambi i sistemi e in servizio da almeno un anno intero prima delle antenne. Così un contenitore nuovo non passa per un contenitore mai letto.
+- **Anni vuoti.** Con il sistema precedente `r intero(riepilogo$rfid_con_anni_vuoti)` di questi contenitori, `r con_articolo(riepilogo$rfid_con_anni_vuoti / riepilogo$n_rfid)`, hanno almeno un anno intero senza letture. Non erano contenitori fermi: tra quelli che oggi le antenne leggono almeno una volta al mese gli anni vuoti sono `r con_articolo(quota_vuoti_regolari)`.
+- **Letture utili.** Per la fatturazione conta la quota delle raccolte previste che risulta letta. Passa `r con_articolo(riepilogo$tasso_storico, "dal")` `r con_articolo(riepilogo$tasso_antenne, "al")`: `r num(100 * punti, 0)` punti in più, tra `r num(100 * punti_intervallo[1], 0)` e `r num(100 * punti_intervallo[2], 0)` con un intervallo di confidenza al 95%.
+
+## I dati
+
+```{r tabella-dati}
+knitr::kable(
+  data.frame(
+    sistema = c("Sistema precedente", "Antenne"),
+    periodo = c(dal_al(giorni_storico), dal_al(giorni_antenne)),
+    letture = c(intero(nrow(storico)), intero(nrow(letture))),
+    rfid = c(intero(length(rfid_storico)), intero(length(rfid_antenne))),
+    contenuto = c(
+      "RFID, data e ora",
+      "RFID, data e ora, mezzo, posizione, anagrafica"
+    )
+  ),
+  col.names = c(
+    "Sistema",
+    "Periodo",
+    "Letture",
+    "RFID",
+    "Cosa registra una lettura"
+  ),
+  align = "llrrl"
+)
+```
+
+Gli RFID si dividono in tre gruppi.
+
+- **Letti da entrambi i sistemi: `r intero(n_entrambi)`.** Su questi si misura il cambiamento.
+- **Letti solo dalle antenne: `r intero(n_solo_antenne)`.** Contenitori nuovi, oppure contenitori che il sistema precedente non ha mai letto: i dati non permettono di distinguerli.
+- **Letti solo dal sistema precedente: `r intero(nrow(solo_storico))`.** Contenitori ritirati, oppure non ancora raggiunti dalle antenne. Hanno una [sezione](#gli-rfid-che-le-antenne-non-hanno-ancora-letto) a parte.
+
+Ogni anno appartiene a un sistema, oppure a tutti e due.
+
+```{r tabella-anni}
+knitr::kable(
+  data.frame(
+    anno = copertura$anno,
+    sistema = unname(nomi_sistema[copertura$sistema]),
+    storico = intero(copertura$giorni_storico),
+    antenne = intero(copertura$giorni_antenne),
+    completo = ifelse(copertura$completo, "Sì", "No, riportato a 12 mesi")
+  ),
+  col.names = c(
+    "Anno",
+    "Sistema",
+    "Giorni del sistema precedente",
+    "Giorni delle antenne",
+    "Anno completo"
+  ),
+  align = "llrrl"
+)
+```
+
+Un anno è *misto* quando i due sistemi si sono dati il cambio al suo interno: le letture si sommano. Un anno coperto per meno del 95% dei giorni è *parziale*: nei conteggi per contenitore viene riportato a dodici mesi. `r if (periodi_sovrapposti) "**Attenzione:** i periodi dei due sistemi si sovrappongono. Nei giorni in comune uno stesso svuotamento può essere contato due volte."`
+
+## Le letture anno per anno
+
+```{r grafico-totali, fig.width=8, fig.height=4.2}
+totali <- conta_letture_annuali(unite[unite$RFID %in% rfid_antenne, ]) |>
+  dplyr::summarise(letture = sum(letture), .by = c("anno", "fonte")) |>
+  dplyr::mutate(fonte = factor(fonte, levels = c("antenne", "storico")))
+totali_anno <- dplyr::summarise(totali, letture = sum(letture), .by = "anno")
+
+ggplot(totali, aes(factor(anno), letture)) +
+  geom_col(aes(fill = fonte), width = 0.68) +
+  geom_text(
+    data = totali_anno,
+    aes(label = intero(letture)),
+    vjust = -0.5,
+    size = 3.4,
+    colour = colori$primario
+  ) +
+  scale_fill_manual(
+    values = c(storico = colori$storico, antenne = colori$antenne),
+    labels = c(storico = "Sistema precedente", antenne = "Antenne"),
+    breaks = c("storico", "antenne")
+  ) +
+  scale_x_discrete(labels = etichette_anni) +
+  scale_y_continuous(
+    labels = intero,
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  labs(
+    title = "Le letture di ogni anno, vecchie e nuove insieme",
+    subtitle = sprintf(
+      "Letture dei %s RFID letti dalle antenne, per anno e per sistema.",
+      intero(length(rfid_antenne))
+    ),
+    x = NULL,
+    y = "Letture"
+  ) +
+  tema_grafico
+```
+
+Il totale dipende anche da quanti contenitori erano in servizio, che negli anni cambiano. Per un confronto alla pari serve la media per contenitore. Qui sotto ogni contenitore entra nel conteggio **dall'anno successivo a quello della sua prima lettura**: da lì in poi era di sicuro in servizio per tutto l'anno. Per questo il primo anno dei dati non compare.
+
+```{r grafico-medie, fig.width=8, fig.height=4.2}
+ggplot(medie, aes(factor(anno), letture_utili_medie)) +
+  geom_col(aes(fill = sistema), width = 0.68) +
+  geom_errorbar(
+    aes(ymin = raccolte_medie, ymax = raccolte_medie),
+    width = 0.86,
+    linetype = "dashed",
+    colour = colori$secondario
+  ) +
+  geom_text(
+    aes(label = num(letture_utili_medie)),
+    vjust = -0.5,
+    size = 3.4,
+    colour = colori$primario
+  ) +
+  annotate(
+    "text",
+    x = 0.55,
+    y = max(medie$raccolte_medie),
+    label = "Raccolte previste",
+    hjust = 0,
+    vjust = -0.6,
+    size = 3.2,
+    colour = colori$secondario
+  ) +
+  scale_fill_manual(
+    values = colori_sistema,
+    labels = nomi_sistema,
+    breaks = names(nomi_sistema)
+  ) +
+  scale_x_discrete(labels = etichette_anni) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = sprintf(
+      "Un contenitore viene letto %s volte l'anno con le antenne, prima da %s a %s",
+      num(max(medie$letture_utili_medie[medie$sistema == "antenne"])),
+      num(min(medie$letture_utili_medie[medie$sistema == "storico"])),
+      num(max(medie$letture_utili_medie[medie$sistema == "storico"]))
+    ),
+    subtitle = sprintf(
+      "Letture utili medie per contenitore, tra i censiti con le raccolte previste.\nTratteggio: raccolte previste in un anno, %s in media.",
+      num(mean(medie$raccolte_medie))
+    ),
+    x = NULL,
+    y = "Letture utili per contenitore"
+  ) +
+  tema_grafico
+```
+
+Le *letture utili* di un contenitore in un anno non superano mai le sue raccolte previste. Un tag letto più volte di quante il mezzo passi non è un contenitore svuotato più spesso: è un tag fermo in deposito o rimasto su un mezzo, e l'app lo segnala nell'analisi dei cluster.
+
+### Tabella per RFID
+
+Una riga per ogni RFID letto dalle antenne, con le letture di ogni anno, il comune e le raccolte previste. La casella è vuota negli anni che precedono la prima lettura dell'RFID, ed è zero negli anni successivi senza letture.
+
+```{r tabella-rfid}
+tabella <- tabella_letture_annuali(unite, anagrafica)
+# Le intestazioni riportano l'anno e il suo sistema, come nei grafici.
+colonne_anni <- gsub(
+  "\n",
+  " ",
+  etichette_anni[sub(
+    "letture_",
+    "",
+    grep("^letture_", names(tabella), value = TRUE)
+  )]
+)
+names(tabella) <- c("RFID", colonne_anni, "Comune", "Raccolte previste")
+DT::datatable(
+  tabella,
+  rownames = FALSE,
+  filter = "top",
+  class = "display nowrap",
+  options = list(
+    pageLength = 10,
+    scrollX = TRUE,
+    language = lingua_dt()
+  ),
+  callback = DT::JS(
+    "$(table.table().container()).find('input[placeholder=\"All\"]').attr('placeholder', 'Tutti');"
+  )
+) |>
+  DT::formatStyle(
+    colonne_anni,
+    color = DT::styleEqual(0, colori$vuoto),
+    fontWeight = DT::styleEqual(0, "bold")
+  )
+```
+
+## Gli anni senza letture
+
+Un *anno vuoto* è un anno intero del sistema precedente in cui un contenitore già in servizio non ha nemmeno una lettura. Contano gli anni `r elenco_anni(anni_storico)`, e per ogni contenitore solo quelli successivi all'anno della sua prima lettura.
+
+```{r anni-vuoti}
+vuoti_per_anno <- griglia_annuale(unite, confronto$RFID) |>
+  dplyr::filter(anno %in% anni_storico, anno > primo_anno) |>
+  dplyr::summarise(
+    in_servizio = dplyr::n(),
+    senza_letture = sum(storico == 0),
+    .by = "anno"
+  ) |>
+  dplyr::arrange(anno)
+
+knitr::kable(
+  data.frame(
+    anno = vuoti_per_anno$anno,
+    in_servizio = intero(vuoti_per_anno$in_servizio),
+    senza_letture = intero(vuoti_per_anno$senza_letture),
+    quota = pct(vuoti_per_anno$senza_letture / vuoti_per_anno$in_servizio)
+  ),
+  col.names = c("Anno", "Contenitori in servizio", "Senza letture", "Quota"),
+  align = "rrrr"
+)
+```
+
+In tutto `r intero(riepilogo$totale_anni_vuoti)` anni vuoti su `r intero(riepilogo$totale_anni_servizio)` anni di servizio, `r con_articolo(riepilogo$quota_anni_vuoti)`. Riguardano `r intero(riepilogo$rfid_con_anni_vuoti)` contenitori su `r intero(riepilogo$n_rfid)`.
+
+Un anno vuoto può anche essere vero: un contenitore mai esposto, un'utenza sospesa. Per separare i due casi si guardano i soli contenitori che le antenne leggono almeno `r soglia_regolari` volte l'anno, cioè quelli esposti con regolarità. Sono `r intero(nrow(regolari))`, e per loro gli anni vuoti sono `r con_articolo(quota_vuoti_regolari)`: `r intero(sum(regolari$anni_vuoti))` su `r intero(sum(regolari$anni_servizio))`. Per un contenitore letto oggi una o due volte al mese, un anno intero senza letture è una mancata registrazione.
+
+```{r grafico-griglia, fig.width=8, fig.height=6}
+classi <- c(
+  "Nessuna lettura",
+  "Da 1 a 6",
+  "Da 7 a 12",
+  "Da 13 a 20",
+  "Più di 20"
+)
+ordine <- confronto$RFID[order(
+  confronto$letture_annue_storico,
+  confronto$letture_annue_antenne
+)]
+griglia <- griglia_annuale(unite, confronto$RFID) |>
+  dplyr::mutate(
+    riga = match(RFID, ordine),
+    classe = cut(letture, breaks = c(-Inf, 0, 6, 12, 20, Inf), labels = classi)
+  )
+
+ggplot(griglia, aes(factor(anno), riga, fill = classe)) +
+  geom_tile(width = 0.96, height = 1) +
+  scale_fill_manual(
+    values = stats::setNames(
+      c(colori$vuoto, "#e4e3de", "#bdbcb3", "#85847c", "#3f3e3a"),
+      classi
+    ),
+    drop = FALSE
+  ) +
+  scale_x_discrete(labels = etichette_anni, position = "top") +
+  scale_y_reverse(expand = c(0, 0), breaks = NULL) +
+  labs(
+    title = "Ogni riga un contenitore, ogni colonna un anno",
+    subtitle = sprintf(
+      "Letture in un anno dei %s contenitori del confronto. In alto quelli che il sistema precedente leggeva meno.\nIn arancione gli anni senza letture. Casella bianca: prima della prima lettura del contenitore.",
+      intero(nrow(confronto))
+    ),
+    x = NULL,
+    y = NULL
+  ) +
+  tema_grafico +
+  theme(panel.grid = element_blank())
+```
+
+## Quanto si guadagna
+
+Il vantaggio si misura in tre modi, dal più semplice al più utile per la fatturazione.
+
+**1. Letture per contenitore.** Con il sistema precedente un contenitore veniva letto in media `r num(riepilogo$media_storico)` volte l'anno, con le antenne `r num(riepilogo$media_antenne)`: `r num(riepilogo$rapporto)` volte tanto. `r sub("^(.)", "\\U\\1", con_articolo(quota_migliorati), perl = TRUE)` dei contenitori è letto più spesso di prima.
+
+```{r grafico-confronto, fig.width=6.4, fig.height=5.6, out.width="72%"}
+limite <- max(
+  confronto$letture_annue_storico,
+  confronto$letture_annue_antenne
+) *
+  1.04
+ggplot(confronto, aes(letture_annue_storico, letture_annue_antenne)) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    colour = colori$secondario
+  ) +
+  geom_point(
+    aes(colour = letture_annue_antenne > letture_annue_storico),
+    size = 1.9,
+    alpha = 0.6,
+    show.legend = FALSE
+  ) +
+  annotate(
+    "text",
+    x = limite * 0.98,
+    y = limite * 0.6,
+    label = "Sulla diagonale:\nstesse letture\nprima e dopo",
+    hjust = 1,
+    vjust = 1,
+    size = 3.2,
+    lineheight = 0.95,
+    colour = colori$secondario
+  ) +
+  scale_colour_manual(
+    values = c(`TRUE` = colori$antenne, `FALSE` = colori$vuoto)
+  ) +
+  coord_equal(xlim = c(0, limite), ylim = c(0, limite), expand = FALSE) +
+  labs(
+    title = sprintf(
+      "%s contenitori su %s sono letti più spesso di prima",
+      intero(sum(
+        confronto$letture_annue_antenne > confronto$letture_annue_storico
+      )),
+      intero(nrow(confronto))
+    ),
+    subtitle = "Un punto per contenitore. Sopra la diagonale le antenne leggono di più.",
+    x = "Letture in un anno, sistema precedente",
+    y = "Letture in un anno, antenne"
+  ) +
+  tema_grafico +
+  theme(panel.grid.major.x = element_line(colour = colori$griglia))
+```
+
+**2. Quota delle raccolte previste.** Più letture non bastano: contano quelle che corrispondono a un passaggio del mezzo. Il *tasso di lettura* mette a confronto le letture utili con le raccolte previste dall'anagrafica.
+
+<div class="formula">
+tasso di lettura = letture utili in un anno ÷ raccolte previste in un anno
+</div>
+
+Sui `r intero(riepilogo$n_con_raccolte)` contenitori censiti del confronto le raccolte previste sono `r intero(riepilogo$raccolte_previste)` l'anno. Il sistema precedente ne registrava `r intero(riepilogo$utili_storico)`, `r con_articolo(riepilogo$tasso_storico)`. Le antenne ne registrano `r intero(riepilogo$utili_antenne)`, `r con_articolo(riepilogo$tasso_antenne)`.
+
+**3. Letture recuperate.** La differenza tra i due tassi, moltiplicata per le raccolte previste, dà le letture che prima mancavano.
+
+<div class="formula">
+letture recuperate in un anno = (tasso con le antenne − tasso precedente) × raccolte previste
+</div>
+
+- **Per contenitore:** `r num(recuperate["media"])` letture utili in più all'anno, tra `r num(recuperate["inferiore"])` e `r num(recuperate["superiore"])` con un intervallo di confidenza al 95%.
+- **Sui contenitori del confronto:** `r intero(riepilogo$letture_recuperate)` letture in più all'anno, pari a circa `r intero(riepilogo$litri_recuperati / 1000)` metri cubi di volume svuotato che prima non risultava.
+- **Su tutti i censiti letti dalle antenne:** se lo stesso guadagno vale per tutti i `r intero(nrow(tutti_con_raccolte))` contenitori con le raccolte previste, le letture recuperate sono circa `r intero(proiezione)` l'anno. È una proiezione: il confronto diretto è possibile solo sui contenitori con una storia.
+
+Ogni lettura recuperata è uno svuotamento che prima non risultava e che ora si può attribuire a un'utenza. Per tradurla in euro basta moltiplicarla per la tariffa a svuotamento o a litro.
+
+## Comune per comune
+
+```{r grafico-comuni, fig.width=8, fig.height=2.9 * ceiling(length(unique(medie_comune$comune)) / 2) + 0.9}
+previste_comune <- dplyr::summarise(
+  medie_comune,
+  raccolte_medie = mean(raccolte_medie),
+  .by = "comune"
+)
+migliore <- per_comune[
+  which.max(per_comune$tasso_antenne - per_comune$tasso_storico),
+]
+
+ggplot(medie_comune, aes(factor(anno), letture_utili_medie)) +
+  geom_col(aes(fill = sistema), width = 0.68) +
+  geom_hline(
+    data = previste_comune,
+    aes(yintercept = raccolte_medie),
+    linetype = "dashed",
+    colour = colori$secondario
+  ) +
+  geom_text(
+    aes(label = num(letture_utili_medie)),
+    vjust = -0.5,
+    size = 3.1,
+    colour = colori$primario
+  ) +
+  geom_text(
+    data = previste_comune,
+    aes(
+      x = -Inf,
+      y = raccolte_medie,
+      label = paste("Raccolte previste:", num(raccolte_medie))
+    ),
+    hjust = -0.04,
+    vjust = -0.6,
+    size = 3,
+    colour = colori$secondario
+  ) +
+  facet_wrap(~comune, ncol = 2) +
+  scale_fill_manual(
+    values = colori_sistema,
+    labels = nomi_sistema,
+    breaks = names(nomi_sistema)
+  ) +
+  scale_x_discrete(labels = etichette_anni) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) +
+  labs(
+    title = sprintf(
+      "Il guadagno maggiore è a %s: %s %s delle raccolte previste",
+      migliore$comune,
+      con_articolo(migliore$tasso_storico, "dal"),
+      con_articolo(migliore$tasso_antenne, "al")
+    ),
+    subtitle = "Letture utili medie per contenitore, anno per anno. Tratteggio: media delle raccolte previste nel comune.",
+    x = NULL,
+    y = "Letture utili per contenitore"
+  ) +
+  tema_grafico
+```
+
+```{r tabella-comuni}
+knitr::kable(
+  data.frame(
+    comune = per_comune$comune,
+    contenitori = intero(per_comune$n_con_raccolte),
+    vuoti = pct(per_comune$quota_anni_vuoti),
+    prima = pct(per_comune$tasso_storico),
+    dopo = pct(per_comune$tasso_antenne),
+    punti = paste(
+      "+",
+      num(100 * (per_comune$tasso_antenne - per_comune$tasso_storico), 0)
+    ),
+    recuperate = intero(per_comune$letture_recuperate)
+  ),
+  col.names = c(
+    "Comune",
+    "Contenitori",
+    "Anni vuoti",
+    "Tasso prima",
+    "Tasso dopo",
+    "Punti",
+    "Letture recuperate"
+  ),
+  align = "lrrrrrr"
+)
+```
+
+Con il sistema precedente il tasso di lettura andava `r con_articolo(min(per_comune$tasso_storico), "dal")` `r con_articolo(max(per_comune$tasso_storico), "al")` secondo il comune. Con le antenne va `r con_articolo(min(per_comune$tasso_antenne), "dal")` `r con_articolo(max(per_comune$tasso_antenne), "al")`. Lo scarto tra il comune letto meglio e quello letto peggio passa da `r num(100 * diff(range(per_comune$tasso_storico)), 0)` a `r num(100 * diff(range(per_comune$tasso_antenne)), 0)` punti: le differenze dipendevano da come veniva fatta la lettura, non dai contenitori.
+
+## Gli RFID che le antenne non hanno ancora letto
+
+`r intero(nrow(solo_storico))` RFID compaiono nelle letture del sistema precedente e non in quelle delle antenne. L'anno dell'ultima lettura aiuta a capire di che cosa si tratta.
+
+```{r solo-storico}
+ultimo_anno_storico <- max(lubridate::year(storico$giorno_lettura))
+per_ultimo_anno <- dplyr::count(solo_storico, ultimo_anno, name = "rfid")
+recenti <- sum(solo_storico$ultimo_anno == ultimo_anno_storico)
+
+knitr::kable(
+  data.frame(
+    anno = per_ultimo_anno$ultimo_anno,
+    rfid = intero(per_ultimo_anno$rfid)
+  ),
+  col.names = c("Anno dell'ultima lettura", "RFID"),
+  align = "rr"
+)
+```
+
+- **Ultima lettura lontana nel tempo:** con ogni probabilità contenitori ritirati o tag sostituiti.
+- **Ultima lettura nel `r ultimo_anno_storico`: `r intero(recenti)` RFID.** Erano in servizio fino a poco prima delle antenne. Sono i primi da controllare: contenitori su giri non ancora coperti, tag che le antenne non riescono a leggere, oppure ritiri recenti.
+
+## Come sono fatti i conti
+
+1. **Coorte.** Entrano nel confronto gli RFID letti da entrambi i sistemi, con almeno un anno intero del sistema precedente dopo l'anno della loro prima lettura.
+2. **Anni di servizio.** Per il sistema precedente contano solo gli anni interi, non toccati dalle antenne. Per ogni contenitore si parte dall'anno successivo a quello della prima lettura: prima potrebbe non essere stato ancora consegnato.
+3. **Letture con le antenne.** Sono riportate a un anno in base ai giorni coperti dalle antenne: qui `r intero(durata_antenne)`.
+4. **Letture utili.** Per ogni contenitore non superano le raccolte annue previste. Le letture in eccesso non contano.
+5. **Tasso di lettura.** Somma delle letture utili divisa per la somma delle raccolte previste, sui contenitori censiti che le hanno in anagrafica.
+6. **Intervallo di confidenza.** Calcolato sulla differenza di letture utili di ogni contenitore, prima e dopo.
+
+Le funzioni sono in `R/utils_storico.R` e hanno i loro test: `confronto_sistemi()`, `riepilogo_confronto()`, `media_annuale()`, `tabella_letture_annuali()`.
+
+## Cosa resta da verificare
+
+- **Gli anni vuoti delle antenne.** Il confronto parte dagli RFID che le antenne hanno letto, quindi per le antenne gli anni vuoti non si possono ancora contare allo stesso modo. Servirà un secondo anno completo: quanti contenitori letti nel primo anno non lo sono nel secondo.
+- **Raccolte previste di oggi.** L'anagrafica riporta le raccolte previste attuali. Il confronto le applica anche agli anni passati, come se il calendario non fosse cambiato.
+- **Anni vuoti veri.** Un contenitore può non essere stato esposto per un anno. La verifica sui contenitori regolari riduce questo dubbio, non lo elimina.
+- **Periodo delle antenne.** Le letture con le antenne coprono `r intero(durata_antenne)` giorni. `r if (durata_antenne < 365) "Meno di un anno: il riporto a dodici mesi risente delle stagioni e dei mezzi attrezzati per ultimi." else "Se alcuni mezzi sono stati attrezzati dopo gli altri, il dato delle antenne è stimato per difetto."`
+- **Lettura e svuotamento.** Una lettura dice che il mezzo è passato accanto al tag. Le letture utili e l'analisi dei cluster dell'app tolgono i casi più evidenti di tag letti senza svuotamento.
+`r if (dati_di_esempio) "- **Dati di prova.** I numeri di questo documento vengono dai dataset di esempio, costruiti a tavolino. Sui dati reali le differenze possono essere più o meno nette."`
+
+## Rifare il report sui dati reali
+
+Servono due file CSV: le letture con le antenne, nel formato dell'app, e le letture storiche, con le colonne `RFID` e `giorno_lettura`. I codici RFID devono avere lo stesso formato nei due file. Dalla radice del progetto:
+
+```r
+rmarkdown::render(
+  "docs/beneficio_antenne.Rmd",
+  params = list(
+    letture = "data-raw/output/letture_app.csv",
+    storico = "data-raw/output/letture_storiche.csv"
+  ),
+  output_dir = "data-raw/output"
+)
+```
+
+L'HTML prodotto contiene dati aziendali. La cartella `data-raw/output/` è esclusa da git: va lasciato lì.

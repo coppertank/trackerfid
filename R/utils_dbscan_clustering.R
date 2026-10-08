@@ -74,7 +74,13 @@ cluster_dbscan <- function(lat, lon, eps_m = 100, min_pts = 1) {
   if (n == 1) {
     return(if (min_pts <= 1) 1L else 0L)
   }
-  as.integer(dbscan::dbscan(proietta_metri(lat, lon), eps = eps_m, minPts = min_pts)$cluster)
+  as.integer(
+    dbscan::dbscan(
+      proietta_metri(lat, lon),
+      eps = eps_m,
+      minPts = min_pts
+    )$cluster
+  )
 }
 
 #' Rinumera i cluster in ordine di prima lettura

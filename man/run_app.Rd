@@ -35,7 +35,7 @@ expression in order for the match to be considered successful.}
 
 \item{...}{arguments to pass to golem_opts.
 See \code{?golem::get_golem_options} for more details.
-Con \code{demo = TRUE} l'app si apre con il dataset di esempio già caricato.}
+Con \code{demo = TRUE} l'app si apre con i dati di esempio già caricati.}
 }
 \description{
 Avvia la dashboard RFID dei bidoni per rifiuti.

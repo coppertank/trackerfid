@@ -30,39 +30,66 @@ colori_stato <- function() {
 tipologie_servizio <- function() {
   list(
     list(
-      tipologia = "Secco", icona = "trash-can", colore = "#7f8c8d", emoji = "\U0001F5D1\ufe0f",
+      tipologia = "Secco",
+      icona = "trash-can",
+      colore = "#7f8c8d",
+      emoji = "\U0001F5D1\ufe0f",
       servizi = c("SECCO", "SECCO PAP")
     ),
     list(
-      tipologia = "Carta", icona = "file-lines", colore = "#8e5b2e", emoji = "\U0001F4C4",
+      tipologia = "Carta",
+      icona = "file-lines",
+      colore = "#8e5b2e",
+      emoji = "\U0001F4C4",
       servizi = c("CARTA", "CARTA CONT.STRADALI", "CARTA/CARTONE PAP")
     ),
     list(
-      tipologia = "Vetro", icona = "wine-bottle", colore = "#2471a3", emoji = "\U0001F37E",
+      tipologia = "Vetro",
+      icona = "wine-bottle",
+      colore = "#2471a3",
+      emoji = "\U0001F37E",
       servizi = c("VETRO", "VETRO PAP")
     ),
     list(
-      tipologia = "Umido", icona = "leaf", colore = "#1e8449", emoji = "\U0001F342",
+      tipologia = "Umido",
+      icona = "leaf",
+      colore = "#1e8449",
+      emoji = "\U0001F342",
       servizi = c("UMIDO", "UMIDO CONT.STRADALI", "UMIDO PAP")
     ),
     list(
-      tipologia = "Plastica e metalli", icona = "recycle", colore = "#0e9aa7", emoji = "\u267b\ufe0f",
+      tipologia = "Plastica e metalli",
+      icona = "recycle",
+      colore = "#0e9aa7",
+      emoji = "\u267b\ufe0f",
       servizi = c("PLASTICA E METALLI", "PLAST.CONT.STRADALI", "PLASTICA PAP")
     ),
     list(
-      tipologia = "Verde e ramaglie", icona = "tree", colore = "#6b8e23", emoji = "\U0001F333",
+      tipologia = "Verde e ramaglie",
+      icona = "tree",
+      colore = "#6b8e23",
+      emoji = "\U0001F333",
       servizi = c("VERDE E RAMAGLIE", "VERDE PAP")
     ),
     list(
-      tipologia = "Assistente servizi", icona = "user-gear", colore = "#5d6d7e", emoji = "\U0001F6E0\ufe0f",
+      tipologia = "Assistente servizi",
+      icona = "user-gear",
+      colore = "#5d6d7e",
+      emoji = "\U0001F6E0\ufe0f",
       servizi = "ASSISTENTE SERVIZI"
     ),
     list(
-      tipologia = "Pulizia territorio", icona = "broom", colore = "#b9770e", emoji = "\U0001F9F9",
+      tipologia = "Pulizia territorio",
+      icona = "broom",
+      colore = "#b9770e",
+      emoji = "\U0001F9F9",
       servizi = "PULIZIA TERRIT."
     ),
     list(
-      tipologia = "Servizi mercati", icona = "store", colore = "#884ea0", emoji = "\U0001F3EA",
+      tipologia = "Servizi mercati",
+      icona = "store",
+      colore = "#884ea0",
+      emoji = "\U0001F3EA",
       servizi = "SERVIZI MERCATI"
     )
   )
@@ -75,8 +102,12 @@ tipologie_servizio <- function() {
 servizi_config <- function() {
   righe <- purrr::map(tipologie_servizio(), function(tp) {
     data.frame(
-      servizio = tp$servizi, tipologia = tp$tipologia, icona = tp$icona,
-      colore = tp$colore, emoji = tp$emoji, stringsAsFactors = FALSE
+      servizio = tp$servizi,
+      tipologia = tp$tipologia,
+      icona = tp$icona,
+      colore = tp$colore,
+      emoji = tp$emoji,
+      stringsAsFactors = FALSE
     )
   })
   do.call(rbind, righe)
@@ -120,7 +151,11 @@ tipologia_servizio <- function(servizio) {
 #' @noRd
 get_color <- function(presente) {
   colori <- colori_stato()
-  ifelse(!is.na(presente) & presente == "Presente", colori$presente, colori$non_presente)
+  ifelse(
+    !is.na(presente) & presente == "Presente",
+    colori$presente,
+    colori$non_presente
+  )
 }
 
 #' Genera colore cluster basato su percentuale Presente
@@ -145,7 +180,12 @@ genera_colore_cluster <- function(pct_presente) {
       ratio <- (pct - 0.5) * 2
       canali <- giallo + (verde - giallo) * ratio
     }
-    tolower(grDevices::rgb(round(canali[1]), round(canali[2]), round(canali[3]), maxColorValue = 255))
+    tolower(grDevices::rgb(
+      round(canali[1]),
+      round(canali[2]),
+      round(canali[3]),
+      maxColorValue = 255
+    ))
   })
 }
 
@@ -172,9 +212,22 @@ glifo_fa <- function(nome) {
 svg_glifo <- function(nome, colore, x = 0, y = 0, lato = 16) {
   glifo <- glifo_fa(nome)
   paste0(
-    "<svg x=\"", x, "\" y=\"", y, "\" width=\"", lato, "\" height=\"", lato,
-    "\" viewBox=\"", glifo$viewBox, "\" preserveAspectRatio=\"xMidYMid meet\">",
-    "<path d=\"", glifo$path, "\" fill=\"", colore, "\"/></svg>"
+    "<svg x=\"",
+    x,
+    "\" y=\"",
+    y,
+    "\" width=\"",
+    lato,
+    "\" height=\"",
+    lato,
+    "\" viewBox=\"",
+    glifo$viewBox,
+    "\" preserveAspectRatio=\"xMidYMid meet\">",
+    "<path d=\"",
+    glifo$path,
+    "\" fill=\"",
+    colore,
+    "\"/></svg>"
   )
 }
 
@@ -183,8 +236,15 @@ svg_glifo <- function(nome, colore, x = 0, y = 0, lato = 16) {
 svg_icona_servizio <- function(servizio, lato = 16) {
   info <- info_servizio(servizio)
   paste0(
-    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"", lato, "\" height=\"", lato,
-    "\" viewBox=\"0 0 ", lato, " ", lato, "\">",
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"",
+    lato,
+    "\" height=\"",
+    lato,
+    "\" viewBox=\"0 0 ",
+    lato,
+    " ",
+    lato,
+    "\">",
     svg_glifo(info$icona, info$colore, 0, 0, lato),
     "</svg>"
   )
@@ -207,7 +267,8 @@ svg_marker <- function(servizio, presente, stile = "normale", glifo = TRUE) {
   } else {
     "M8.5 3h19a4.5 4.5 0 0 1 4.5 4.5v19a4.5 4.5 0 0 1-4.5 4.5H24l-6 14.5-6-14.5H8.5A4.5 4.5 0 0 1 4 26.5v-19A4.5 4.5 0 0 1 8.5 3z"
   }
-  tratto <- switch(stile,
+  tratto <- switch(
+    stile,
     ultimo = "stroke-width=\"3\"",
     precedente = "stroke-width=\"1\" stroke-dasharray=\"5,5\"",
     "stroke-width=\"1.5\""
@@ -215,8 +276,15 @@ svg_marker <- function(servizio, presente, stile = "normale", glifo = TRUE) {
   info <- info_servizio(servizio)
   paste0(
     "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"36\" height=\"48\" viewBox=\"0 0 36 48\">",
-    "<path d=\"", sagoma, "\" fill=\"", get_color(presente), "\" stroke=\"", colori$bordo,
-    "\" stroke-linejoin=\"round\" ", tratto, "/>",
+    "<path d=\"",
+    sagoma,
+    "\" fill=\"",
+    get_color(presente),
+    "\" stroke=\"",
+    colori$bordo,
+    "\" stroke-linejoin=\"round\" ",
+    tratto,
+    "/>",
     "<circle cx=\"18\" cy=\"17\" r=\"10.5\" fill=\"#ffffff\"/>",
     if (glifo) svg_glifo(info$icona, info$colore, 11, 10, 14),
     "</svg>"
@@ -226,7 +294,10 @@ svg_marker <- function(servizio, presente, stile = "normale", glifo = TRUE) {
 #' Converte un SVG in data URI utilizzabile come immagine
 #' @noRd
 uri_svg <- function(svg) {
-  paste0("data:image/svg+xml;charset=utf-8,", utils::URLencode(svg, reserved = TRUE))
+  paste0(
+    "data:image/svg+xml;charset=utf-8,",
+    utils::URLencode(svg, reserved = TRUE)
+  )
 }
 
 #' Genera icone Leaflet per servizio e stato a database
@@ -251,9 +322,12 @@ get_leaflet_icon <- function(servizio, presente, stile = "normale") {
 
   leaflet::icons(
     iconUrl = uri[match(chiave, chiave[uniche])],
-    iconWidth = 36, iconHeight = 48,
-    iconAnchorX = 18, iconAnchorY = 46,
-    popupAnchorX = 1, popupAnchorY = -40
+    iconWidth = 36,
+    iconHeight = 48,
+    iconAnchorX = 18,
+    iconAnchorY = 46,
+    popupAnchorX = 1,
+    popupAnchorY = -40
   )
 }
 
@@ -265,15 +339,22 @@ get_leaflet_icon <- function(servizio, presente, stile = "normale") {
 #' @noRd
 js_icona_cluster <- function() {
   colori <- colori_stato()
-  canali <- function(hex) paste0("[", paste(grDevices::col2rgb(hex)[, 1], collapse = ","), "]")
+  canali <- function(hex) {
+    paste0("[", paste(grDevices::col2rgb(hex)[, 1], collapse = ","), "]")
+  }
   paste0(
     "function(cluster) {
       var figli = cluster.getAllChildMarkers();
       var n = figli.length, censiti = 0;
       for (var i = 0; i < n; i++) { if (figli[i].options.censito) censiti++; }
       var pct = n > 0 ? censiti / n : 0;
-      var rosso = ", canali(colori$non_presente), ", giallo = ", canali(colori$misto),
-    ", verde = ", canali(colori$presente), ";
+      var rosso = ",
+    canali(colori$non_presente),
+    ", giallo = ",
+    canali(colori$misto),
+    ", verde = ",
+    canali(colori$presente),
+    ";
       var da = pct < 0.5 ? rosso : giallo, a = pct < 0.5 ? giallo : verde;
       var ratio = pct < 0.5 ? pct * 2 : (pct - 0.5) * 2;
       var c = [0, 1, 2].map(function(k) { return Math.round(da[k] + (a[k] - da[k]) * ratio); });
@@ -283,7 +364,9 @@ js_icona_cluster <- function() {
         'background-color:rgb(' + c.join(',') + ');border:3px solid rgba(255,255,255,0.9);' +
         'box-shadow:0 1px 5px rgba(0,0,0,0.45);box-sizing:border-box;display:flex;' +
         'flex-direction:column;align-items:center;justify-content:center;' +
-        'color:", colori$bordo, ";font-family:Arial,sans-serif;line-height:1.05;' +
+        'color:",
+    colori$bordo,
+    ";font-family:Arial,sans-serif;line-height:1.05;' +
         'text-shadow:0 0 3px rgba(255,255,255,0.8);';
       return L.divIcon({
         html: '<div class=\"cluster-rfid-interno\" style=\"' + stile + '\" title=\"' + censiti +
@@ -308,7 +391,11 @@ html_legenda <- function(modalita = "cluster") {
     tags$img(src = uri_svg(svg), width = larghezza, height = altezza, alt = "")
   }
   voce <- function(icona, testo) {
-    tags$div(class = "legenda-voce", tags$span(class = "legenda-icona", icona), tags$span(testo))
+    tags$div(
+      class = "legenda-voce",
+      tags$span(class = "legenda-icona", icona),
+      tags$span(testo)
+    )
   }
 
   # Una voce per tipologia: i servizi con la stessa icona sono raggruppati.
@@ -319,11 +406,15 @@ html_legenda <- function(modalita = "cluster") {
     voci_servizio,
     list(
       voce(immagine(svg_icona_servizio(NA), 14, 14), "Non determinato"),
-      tags$div(class = "legenda-nota", "Non censiti: servizio atteso prevalente (almeno 80%)")
+      tags$div(
+        class = "legenda-nota",
+        "Non censiti: servizio atteso prevalente (almeno 80%)"
+      )
     )
   )
 
-  extra <- switch(modalita,
+  extra <- switch(
+    modalita,
     cluster = list(
       tags$div(class = "legenda-titolo", "Cluster: % censiti"),
       tags$div(
@@ -333,12 +424,27 @@ html_legenda <- function(modalita = "cluster") {
           paste(genera_colore_cluster(c(0, 0.5, 1)), collapse = ", ")
         )
       ),
-      tags$div(class = "legenda-scala", tags$span("0%"), tags$span("50%"), tags$span("100%"))
+      tags$div(
+        class = "legenda-scala",
+        tags$span("0%"),
+        tags$span("50%"),
+        tags$span("100%")
+      )
     ),
     rfid = list(
       tags$div(class = "legenda-titolo", "Letture"),
-      voce(immagine(svg_marker(NA, "Presente", "ultimo", glifo = FALSE), 15, 20), "Ultima lettura"),
-      voce(immagine(svg_marker(NA, "Presente", "precedente", glifo = FALSE), 15, 20), "Letture precedenti"),
+      voce(
+        immagine(svg_marker(NA, "Presente", "ultimo", glifo = FALSE), 15, 20),
+        "Ultima lettura"
+      ),
+      voce(
+        immagine(
+          svg_marker(NA, "Presente", "precedente", glifo = FALSE),
+          15,
+          20
+        ),
+        "Letture precedenti"
+      ),
       voce(tags$span(class = "legenda-riquadro"), "Area di spostamento")
     ),
     NULL
@@ -348,8 +454,14 @@ html_legenda <- function(modalita = "cluster") {
     open = NA,
     tags$summary("Legenda"),
     tags$div(class = "legenda-titolo", "Stato a database"),
-    voce(immagine(svg_marker(NA, "Presente", glifo = FALSE), 15, 20), "Presente (censito)"),
-    voce(immagine(svg_marker(NA, "Non Presente", glifo = FALSE), 15, 20), "Non Presente"),
+    voce(
+      immagine(svg_marker(NA, "Presente", glifo = FALSE), 15, 20),
+      "Presente (censito)"
+    ),
+    voce(
+      immagine(svg_marker(NA, "Non Presente", glifo = FALSE), 15, 20),
+      "Non Presente"
+    ),
     tags$div(class = "legenda-titolo", "Servizio"),
     voci_servizio,
     extra

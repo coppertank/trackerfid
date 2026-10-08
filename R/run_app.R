@@ -4,7 +4,7 @@
 #'
 #' @param ... arguments to pass to golem_opts.
 #' See `?golem::get_golem_options` for more details.
-#' Con `demo = TRUE` l'app si apre con il dataset di esempio già caricato.
+#' Con `demo = TRUE` l'app si apre con i dati di esempio già caricati.
 #' @inheritParams shiny::shinyApp
 #'
 #' @examples

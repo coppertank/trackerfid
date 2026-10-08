@@ -38,8 +38,13 @@
 #'
 #' @seealso [scrivi_analisi_cluster()] per salvare il risultato in CSV.
 #' @export
-genera_analisi_cluster <- function(csv_path, data_inizio = NULL, data_fine = NULL,
-                                   eps_m = 100, min_pts = 1) {
+genera_analisi_cluster <- function(
+  csv_path,
+  data_inizio = NULL,
+  data_fine = NULL,
+  eps_m = 100,
+  min_pts = 1
+) {
   esito <- carica_dataset(csv_path)
   for (avviso in esito$avvisi) {
     message("Avviso: ", avviso)
@@ -51,12 +56,22 @@ genera_analisi_cluster <- function(csv_path, data_inizio = NULL, data_fine = NUL
     data_inizio <- periodo[1]
     data_fine <- periodo[2]
   } else if (is.null(data_inizio)) {
-    data_inizio <- periodo_anno(lubridate::year(lubridate::as_date(data_fine)))[1]
+    data_inizio <- periodo_anno(lubridate::year(lubridate::as_date(data_fine)))[
+      1
+    ]
   } else if (is.null(data_fine)) {
-    data_fine <- periodo_anno(lubridate::year(lubridate::as_date(data_inizio)))[2]
+    data_fine <- periodo_anno(lubridate::year(lubridate::as_date(data_inizio)))[
+      2
+    ]
   }
 
-  calcola_analisi_cluster(letture, data_inizio, data_fine, eps_m = eps_m, min_pts = min_pts)
+  calcola_analisi_cluster(
+    letture,
+    data_inizio,
+    data_fine,
+    eps_m = eps_m,
+    min_pts = min_pts
+  )
 }
 
 #' Salva l'analisi dei cluster in un file CSV
@@ -78,7 +93,9 @@ genera_analisi_cluster <- function(csv_path, data_inizio = NULL, data_fine = NUL
 #' @export
 scrivi_analisi_cluster <- function(risultato, cartella = ".") {
   if (nrow(risultato) == 0) {
-    rlang::abort("L'analisi non contiene righe: nessuna lettura nel periodo indicato.")
+    rlang::abort(
+      "L'analisi non contiene righe: nessuna lettura nel periodo indicato."
+    )
   }
   dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
   file <- file.path(

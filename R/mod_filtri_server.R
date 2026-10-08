@@ -36,7 +36,11 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       stato$atteso_esclusi <- character(0)
       stato$includi_senza_stima <- TRUE
       stato$reimpostazioni <- stato$reimpostazioni + 1L
-      updateCheckboxGroupInput(session, "presente_filter", selected = stati_database())
+      updateCheckboxGroupInput(
+        session,
+        "presente_filter",
+        selected = stati_database()
+      )
       updateCheckboxInput(session, "includi_non_censiti", value = TRUE)
       updateCheckboxInput(session, "includi_senza_stima", value = TRUE)
     }
@@ -50,7 +54,8 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     aggiorna_gruppo <- function(id_input, scelte, esclusi) {
       etichette <- paste(info_servizio(scelte)$emoji, scelte)
       updateCheckboxGroupInput(
-        session, id_input,
+        session,
+        id_input,
         choices = stats::setNames(scelte, etichette),
         selected = setdiff(scelte, esclusi)
       )
@@ -58,28 +63,38 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     observe({
       stato$reimpostazioni
       aggiorna_gruppo(
-        "servizio_transponder_check", scelte_transponder(), isolate(stato$transponder_esclusi)
+        "servizio_transponder_check",
+        scelte_transponder(),
+        isolate(stato$transponder_esclusi)
       )
     })
     observe({
       stato$reimpostazioni
-      aggiorna_gruppo("servizio_atteso_check", scelte_atteso(), isolate(stato$atteso_esclusi))
+      aggiorna_gruppo(
+        "servizio_atteso_check",
+        scelte_atteso(),
+        isolate(stato$atteso_esclusi)
+      )
     })
 
     # --- Dagli input allo stato --------------------------------------------------
-    observeEvent(input$presente_filter,
+    observeEvent(
+      input$presente_filter,
       {
         stato$stato_db <- input$presente_filter %||% character(0)
       },
-      ignoreNULL = FALSE, ignoreInit = TRUE
+      ignoreNULL = FALSE,
+      ignoreInit = TRUE
     )
-    observeEvent(input$includi_non_censiti,
+    observeEvent(
+      input$includi_non_censiti,
       {
         stato$includi_non_censiti <- isTRUE(input$includi_non_censiti)
       },
       ignoreInit = TRUE
     )
-    observeEvent(input$includi_senza_stima,
+    observeEvent(
+      input$includi_senza_stima,
       {
         stato$includi_senza_stima <- isTRUE(input$includi_senza_stima)
       },
@@ -89,23 +104,34 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     # Un servizio visibile è escluso se non è spuntato; i servizi fuori dal
     # periodo corrente conservano lo stato precedente.
     aggiorna_esclusi <- function(esclusi, scelte, selezionati) {
-      sort(union(setdiff(esclusi, scelte), setdiff(scelte, selezionati %||% character(0))))
+      sort(union(
+        setdiff(esclusi, scelte),
+        setdiff(scelte, selezionati %||% character(0))
+      ))
     }
-    observeEvent(input$servizio_transponder_check,
+    observeEvent(
+      input$servizio_transponder_check,
       {
         stato$transponder_esclusi <- aggiorna_esclusi(
-          stato$transponder_esclusi, scelte_transponder(), input$servizio_transponder_check
+          stato$transponder_esclusi,
+          scelte_transponder(),
+          input$servizio_transponder_check
         )
       },
-      ignoreNULL = FALSE, ignoreInit = TRUE
+      ignoreNULL = FALSE,
+      ignoreInit = TRUE
     )
-    observeEvent(input$servizio_atteso_check,
+    observeEvent(
+      input$servizio_atteso_check,
       {
         stato$atteso_esclusi <- aggiorna_esclusi(
-          stato$atteso_esclusi, scelte_atteso(), input$servizio_atteso_check
+          stato$atteso_esclusi,
+          scelte_atteso(),
+          input$servizio_atteso_check
         )
       },
-      ignoreNULL = FALSE, ignoreInit = TRUE
+      ignoreNULL = FALSE,
+      ignoreInit = TRUE
     )
 
     # --- Dataset filtrato: prima i filtri, poi l'ultima lettura per RFID -------

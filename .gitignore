@@ -1,0 +1,11 @@
+# Dati aziendali: estrazioni, tabelle intermedie e CSV per l'app restano
+# sul computer di chi li prepara. Le cartelle esistono grazie ai file .gitkeep.
+data-raw/origine/*
+data-raw/intermedi/*
+data-raw/output/*
+!data-raw/*/.gitkeep
+
+# Sessioni di R: possono contenere gli stessi dati
+.RData
+.Rhistory
+.Rproj.user/

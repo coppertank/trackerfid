@@ -26,10 +26,22 @@ app_ui <- function(request) {
         mod_periodo_ui("periodo"),
         div(id = "pannello_info", uiOutput("info_panel")),
         # I controlli seguono la scheda attiva: filtri oppure ricerche.
-        conditionalPanel("input.scheda_attiva == 'mappa'", mod_filtri_ui("filtri")),
-        conditionalPanel("input.scheda_attiva == 'rfid'", mod_ricerca_ui("ricerca_rfid", "rfid")),
-        conditionalPanel("input.scheda_attiva == 'utenza'", mod_ricerca_ui("ricerca_utenza", "utenza")),
-        conditionalPanel("input.scheda_attiva == 'cluster'", mod_cluster_analysis_sidebar_ui("cluster"))
+        conditionalPanel(
+          "input.scheda_attiva == 'mappa'",
+          mod_filtri_ui("filtri")
+        ),
+        conditionalPanel(
+          "input.scheda_attiva == 'rfid'",
+          mod_ricerca_ui("ricerca_rfid", "rfid")
+        ),
+        conditionalPanel(
+          "input.scheda_attiva == 'utenza'",
+          mod_ricerca_ui("ricerca_utenza", "utenza")
+        ),
+        conditionalPanel(
+          "input.scheda_attiva == 'cluster'",
+          mod_cluster_analysis_sidebar_ui("cluster")
+        )
       ),
       body = shinydashboard::dashboardBody(
         fluidRow(

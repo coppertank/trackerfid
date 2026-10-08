@@ -57,9 +57,20 @@ pulisci_mappa <- function(map) {
 #' @param opacita Opacità dei marker.
 #' @param rialzo Priorità di sovrapposizione (zIndexOffset).
 #' @noRd
-aggiungi_marker <- function(map, df, cluster = FALSE, stile = "normale", opacita = 1, rialzo = 0) {
+aggiungi_marker <- function(
+  map,
+  df,
+  cluster = FALSE,
+  stile = "normale",
+  opacita = 1,
+  rialzo = 0
+) {
   # Per i non censiti l'icona segue il servizio atteso prevalente dell'RFID.
-  servizio <- if ("servizio_icona" %in% names(df)) df$servizio_icona else df$servizio_transponder
+  servizio <- if ("servizio_icona" %in% names(df)) {
+    df$servizio_icona
+  } else {
+    df$servizio_transponder
+  }
   leaflet::addMarkers(
     map,
     lng = df$longitudine,
@@ -74,7 +85,8 @@ aggiungi_marker <- function(map, df, cluster = FALSE, stile = "normale", opacita
       matricola = df$matricola_veicolo,
       giorno_lettura = df$giorno_lettura,
       id_utenza = df$id_utenza,
-      presente = df$presente_a_database
+      presente = df$presente_a_database,
+      comune = df[["comune"]]
     ),
     label = df$RFID,
     options = leaflet::markerOptions(
@@ -107,7 +119,10 @@ add_rfid_bounds <- function(map, df) {
     lat1 = purrr::map_dbl(riquadri, "lat_min"),
     lng2 = purrr::map_dbl(riquadri, "lng_max"),
     lat2 = purrr::map_dbl(riquadri, "lat_max"),
-    color = "gray", weight = 2, fillOpacity = 0, dashArray = NULL,
+    color = "gray",
+    weight = 2,
+    fillOpacity = 0,
+    dashArray = NULL,
     label = names(riquadri),
     group = paste0("bounds_", names(riquadri))
   )
@@ -130,7 +145,8 @@ disegna_marker <- function(map, df, modalita = c("cluster", "rfid", "utenza")) {
   if (is.null(df) || nrow(df) == 0) {
     return(map)
   }
-  switch(modalita,
+  switch(
+    modalita,
     cluster = aggiungi_marker(map, df, cluster = TRUE),
     utenza = aggiungi_marker(map, df),
     rfid = map |>
@@ -153,8 +169,10 @@ adatta_vista <- function(map, df, margine = 0.0015) {
   b <- calcola_bbox(df)
   leaflet::fitBounds(
     map,
-    lng1 = b$lng_min - margine, lat1 = b$lat_min - margine,
-    lng2 = b$lng_max + margine, lat2 = b$lat_max + margine,
+    lng1 = b$lng_min - margine,
+    lat1 = b$lat_min - margine,
+    lng2 = b$lng_max + margine,
+    lat2 = b$lat_max + margine,
     options = list(maxZoom = 17)
   )
 }

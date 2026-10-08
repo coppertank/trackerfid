@@ -12,24 +12,36 @@ mod_periodo_ui <- function(id) {
     "output.caricato",
     ns = ns,
     sezione_sidebar(
-      "Periodo di Analisi", "calendar-days",
+      "Periodo di Analisi",
+      "calendar-days",
       conditionalPanel(
         "!input.personalizzato",
         ns = ns,
         # Gli anni disponibili vengono impostati al caricamento del dataset.
         selectInput(
-          ns("anno_filtro"), "Seleziona Anno di Analisi",
-          choices = character(0), selectize = FALSE, width = "100%"
+          ns("anno_filtro"),
+          "Seleziona Anno di Analisi",
+          choices = character(0),
+          selectize = FALSE,
+          width = "100%"
         )
       ),
-      checkboxInput(ns("personalizzato"), "Periodo personalizzato", value = FALSE),
+      checkboxInput(
+        ns("personalizzato"),
+        "Periodo personalizzato",
+        value = FALSE
+      ),
       conditionalPanel(
         "input.personalizzato",
         ns = ns,
         dateRangeInput(
-          ns("intervallo"), "Dal / al",
-          format = "dd/mm/yyyy", language = "it", weekstart = 1,
-          separator = "al", width = "100%"
+          ns("intervallo"),
+          "Dal / al",
+          format = "dd/mm/yyyy",
+          language = "it",
+          weekstart = 1,
+          separator = "al",
+          width = "100%"
         )
       ),
       uiOutput(ns("riepilogo"))

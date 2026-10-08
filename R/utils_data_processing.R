@@ -4,15 +4,31 @@
 #' @noRd
 colonne_obbligatorie <- function() {
   c(
-    "giorno_lettura", "targa_veicolo", "matricola_veicolo", "RFID",
-    "presente_a_database", "servizio_transponder", "servizio_atteso",
-    "id_utenza", "latitudine", "longitudine"
+    "giorno_lettura",
+    "targa_veicolo",
+    "matricola_veicolo",
+    "RFID",
+    "presente_a_database",
+    "servizio_transponder",
+    "servizio_atteso",
+    "id_utenza",
+    "latitudine",
+    "longitudine"
   )
 }
 
-#' Campi facoltativi del CSV, usati dall'analisi dei cluster
+#' Campi facoltativi del CSV
+#'
+#' Le due quantità servono all'analisi dei cluster, il comune al popup dei
+#' marker e al confronto con le letture storiche.
 #' @noRd
 colonne_facoltative <- function() {
+  c(colonne_quantita(), "comune")
+}
+
+#' Campi facoltativi numerici del CSV
+#' @noRd
+colonne_quantita <- function() {
   c("volume_previsto", "numero_raccolte_annue_previste")
 }
 
@@ -82,7 +98,8 @@ read_csv_auto <- function(path) {
     ),
     error = function(e) {
       errore_validazione(paste0(
-        "Impossibile leggere il file come CSV: ", conditionMessage(e)
+        "Impossibile leggere il file come CSV: ",
+        conditionMessage(e)
       ))
     }
   )
@@ -105,7 +122,11 @@ converti_data_ora <- function(x) {
 #' Converte un vettore di testo in numerico (accetta la virgola decimale)
 #' @noRd
 converti_numero <- function(x) {
-  suppressWarnings(as.numeric(stringr::str_replace(x, stringr::fixed(","), ".")))
+  suppressWarnings(as.numeric(stringr::str_replace(
+    x,
+    stringr::fixed(","),
+    "."
+  )))
 }
 
 #' Elenca le prime righe del file che presentano un problema
@@ -124,9 +145,10 @@ elenco_righe <- function(indici, massimo = 5) {
 #' I valori non interpretabili generano un errore esplicito; le righe con campi
 #' essenziali vuoti vengono scartate e segnalate tra gli avvisi.
 #'
-#' I campi facoltativi (`volume_previsto`, `numero_raccolte_annue_previste`)
-#' vengono convertiti in numerico se presenti; se mancano, le colonne sono
-#' create vuote e la mancanza è segnalata tra gli avvisi.
+#' I campi facoltativi numerici (`volume_previsto`,
+#' `numero_raccolte_annue_previste`) vengono convertiti se presenti, `comune`
+#' viene scritto in maiuscolo. Se un campo facoltativo manca, la colonna è
+#' creata vuota e la mancanza è segnalata tra gli avvisi.
 #'
 #' @param data Data frame letto da `read_csv_auto()`.
 #' @return Lista con `dati` (tibble validato) e `avvisi` (vettore di testo).
@@ -169,57 +191,98 @@ validate_dataset <- function(data) {
   giorno <- converti_data_ora(data$giorno_lettura)
   non_validi <- which(!is.na(data$giorno_lettura) & is.na(giorno))
   if (length(non_validi) > 0) {
-    errori <- c(errori, sprintf(
-      "giorno_lettura: %d valori non riconosciuti come data e ora (formato atteso YYYY-MM-DD HH:MM:SS). Righe del file: %s.",
-      length(non_validi), elenco_righe(non_validi)
-    ))
+    errori <- c(
+      errori,
+      sprintf(
+        "giorno_lettura: %d valori non riconosciuti come data e ora (formato atteso YYYY-MM-DD HH:MM:SS). Righe del file: %s.",
+        length(non_validi),
+        elenco_righe(non_validi)
+      )
+    )
   }
 
   coordinate <- list(latitudine = c(-90, 90), longitudine = c(-180, 180))
   numeri <- purrr::imap(coordinate, function(limiti, campo) {
     valori <- converti_numero(data[[campo]])
     non_numerici <- which(!is.na(data[[campo]]) & is.na(valori))
-    fuori_scala <- which(!is.na(valori) & (valori < limiti[1] | valori > limiti[2]))
-    list(valori = valori, non_numerici = non_numerici, fuori_scala = fuori_scala)
+    fuori_scala <- which(
+      !is.na(valori) & (valori < limiti[1] | valori > limiti[2])
+    )
+    list(
+      valori = valori,
+      non_numerici = non_numerici,
+      fuori_scala = fuori_scala
+    )
   })
   for (campo in names(numeri)) {
     esito <- numeri[[campo]]
     if (length(esito$non_numerici) > 0) {
-      errori <- c(errori, sprintf(
-        "%s: %d valori non numerici. Righe del file: %s.",
-        campo, length(esito$non_numerici), elenco_righe(esito$non_numerici)
-      ))
+      errori <- c(
+        errori,
+        sprintf(
+          "%s: %d valori non numerici. Righe del file: %s.",
+          campo,
+          length(esito$non_numerici),
+          elenco_righe(esito$non_numerici)
+        )
+      )
     }
     if (length(esito$fuori_scala) > 0) {
-      errori <- c(errori, sprintf(
-        "%s: %d valori fuori dall'intervallo ammesso (%s .. %s). Righe del file: %s.",
-        campo, length(esito$fuori_scala),
-        coordinate[[campo]][1], coordinate[[campo]][2], elenco_righe(esito$fuori_scala)
-      ))
+      errori <- c(
+        errori,
+        sprintf(
+          "%s: %d valori fuori dall'intervallo ammesso (%s .. %s). Righe del file: %s.",
+          campo,
+          length(esito$fuori_scala),
+          coordinate[[campo]][1],
+          coordinate[[campo]][2],
+          elenco_righe(esito$fuori_scala)
+        )
+      )
     }
   }
 
-  stato <- stati_database()[match(tolower(data$presente_a_database), tolower(stati_database()))]
+  stato <- stati_database()[match(
+    tolower(data$presente_a_database),
+    tolower(stati_database())
+  )]
   non_validi <- which(!is.na(data$presente_a_database) & is.na(stato))
   if (length(non_validi) > 0) {
-    errori <- c(errori, sprintf(
-      "presente_a_database: valori non ammessi (%s). Sono accettati solo \"Presente\" e \"Non Presente\". Righe del file: %s.",
-      paste(utils::head(unique(data$presente_a_database[non_validi]), 3), collapse = ", "),
-      elenco_righe(non_validi)
-    ))
+    errori <- c(
+      errori,
+      sprintf(
+        "presente_a_database: valori non ammessi (%s). Sono accettati solo \"Presente\" e \"Non Presente\". Righe del file: %s.",
+        paste(
+          utils::head(unique(data$presente_a_database[non_validi]), 3),
+          collapse = ", "
+        ),
+        elenco_righe(non_validi)
+      )
+    )
   }
 
-  quantita <- purrr::map(stats::setNames(facoltative, facoltative), function(campo) {
-    valori <- converti_numero(data[[campo]])
-    list(valori = valori, non_validi = which(!is.na(data[[campo]]) & (is.na(valori) | valori < 0)))
-  })
-  for (campo in facoltative) {
+  quantita <- purrr::map(
+    stats::setNames(colonne_quantita(), colonne_quantita()),
+    function(campo) {
+      valori <- converti_numero(data[[campo]])
+      list(
+        valori = valori,
+        non_validi = which(!is.na(data[[campo]]) & (is.na(valori) | valori < 0))
+      )
+    }
+  )
+  for (campo in colonne_quantita()) {
     non_validi <- quantita[[campo]]$non_validi
     if (length(non_validi) > 0) {
-      errori <- c(errori, sprintf(
-        "%s: %d valori non numerici o negativi. Righe del file: %s.",
-        campo, length(non_validi), elenco_righe(non_validi)
-      ))
+      errori <- c(
+        errori,
+        sprintf(
+          "%s: %d valori non numerici o negativi. Righe del file: %s.",
+          campo,
+          length(non_validi),
+          elenco_righe(non_validi)
+        )
+      )
     }
   }
 
@@ -229,10 +292,13 @@ validate_dataset <- function(data) {
 
   assenti <- facoltative[is.na(posizione_facoltative)]
   if (length(assenti) > 0) {
-    avvisi <- c(avvisi, sprintf(
-      "Colonne facoltative assenti: %s. Nell'analisi dei cluster i campi che ne dipendono resteranno vuoti.",
-      paste(assenti, collapse = ", ")
-    ))
+    avvisi <- c(
+      avvisi,
+      sprintf(
+        "Colonne facoltative assenti: %s. Le informazioni che ne dipendono resteranno vuote.",
+        paste(assenti, collapse = ", ")
+      )
+    )
   }
 
   data <- dplyr::mutate(
@@ -243,12 +309,19 @@ validate_dataset <- function(data) {
     presente_a_database = stato,
     servizio_transponder = stringr::str_to_upper(.data$servizio_transponder),
     servizio_atteso = stringr::str_to_upper(.data$servizio_atteso),
+    comune = stringr::str_to_upper(.data$comune),
     latitudine = numeri$latitudine$valori,
     longitudine = numeri$longitudine$valori
   )
 
   # --- Righe con campi essenziali vuoti --------------------------------------
-  essenziali <- c("giorno_lettura", "RFID", "presente_a_database", "latitudine", "longitudine")
+  essenziali <- c(
+    "giorno_lettura",
+    "RFID",
+    "presente_a_database",
+    "latitudine",
+    "longitudine"
+  )
   n_prima <- nrow(data)
   data <- tidyr::drop_na(data, dplyr::all_of(essenziali))
   n_scartate <- n_prima - nrow(data)
@@ -259,10 +332,14 @@ validate_dataset <- function(data) {
     ))
   }
   if (n_scartate > 0) {
-    avvisi <- c(avvisi, sprintf(
-      "%d righe scartate perch\u00e9 prive di un campo essenziale (%s).",
-      n_scartate, paste(essenziali, collapse = ", ")
-    ))
+    avvisi <- c(
+      avvisi,
+      sprintf(
+        "%d righe scartate perch\u00e9 prive di un campo essenziale (%s).",
+        n_scartate,
+        paste(essenziali, collapse = ", ")
+      )
+    )
   }
 
   # --- Controlli di coerenza (non bloccanti) ----------------------------------
@@ -271,14 +348,23 @@ validate_dataset <- function(data) {
       (!is.na(data$servizio_transponder) | !is.na(data$id_utenza))
   )
   if (incoerenti > 0) {
-    avvisi <- c(avvisi, sprintf(
-      "%d letture \"Non Presente\" riportano comunque servizio_transponder o id_utenza.",
-      incoerenti
-    ))
+    avvisi <- c(
+      avvisi,
+      sprintf(
+        "%d letture \"Non Presente\" riportano comunque servizio_transponder o id_utenza.",
+        incoerenti
+      )
+    )
   }
   coppie <- dplyr::distinct(data, .data$targa_veicolo, .data$matricola_veicolo)
-  if (anyDuplicated(coppie$targa_veicolo) > 0 || anyDuplicated(coppie$matricola_veicolo) > 0) {
-    avvisi <- c(avvisi, "La relazione tra targa_veicolo e matricola_veicolo non \u00e8 univoca (1:1).")
+  if (
+    anyDuplicated(coppie$targa_veicolo) > 0 ||
+      anyDuplicated(coppie$matricola_veicolo) > 0
+  ) {
+    avvisi <- c(
+      avvisi,
+      "La relazione tra targa_veicolo e matricola_veicolo non \u00e8 univoca (1:1)."
+    )
   }
 
   list(dati = data, avvisi = avvisi)
@@ -381,22 +467,28 @@ etichetta_periodo <- function(periodo) {
 servizio_prevalente_non_censiti <- function(data, soglia = 0.8) {
   data |>
     dplyr::filter(
-      .data$presente_a_database == "Non Presente", !is.na(.data$servizio_atteso)
+      .data$presente_a_database == "Non Presente",
+      !is.na(.data$servizio_atteso)
     ) |>
     dplyr::count(.data$RFID, .data$servizio_atteso, name = "n") |>
     dplyr::mutate(tipologia = tipologia_servizio(.data$servizio_atteso)) |>
     dplyr::mutate(totale = sum(.data$n), .by = "RFID") |>
     dplyr::mutate(n_tipologia = sum(.data$n), .by = c("RFID", "tipologia")) |>
     dplyr::arrange(
-      .data$RFID, dplyr::desc(.data$n_tipologia), .data$tipologia,
-      dplyr::desc(.data$n), .data$servizio_atteso
+      .data$RFID,
+      dplyr::desc(.data$n_tipologia),
+      .data$tipologia,
+      dplyr::desc(.data$n),
+      .data$servizio_atteso
     ) |>
     dplyr::distinct(.data$RFID, .keep_all = TRUE) |>
     dplyr::transmute(
       RFID = .data$RFID,
       quota = .data$n_tipologia / .data$totale,
       servizio_prevalente = dplyr::if_else(
-        .data$quota >= soglia, .data$servizio_atteso, NA_character_
+        .data$quota >= soglia,
+        .data$servizio_atteso,
+        NA_character_
       )
     )
 }
@@ -410,7 +502,10 @@ servizio_prevalente_non_censiti <- function(data, soglia = 0.8) {
 #'   `NA`: in quel caso il marker mostra il punto di domanda.
 #' @noRd
 get_icon_for_uncensored_rfid <- function(rfid_code, data, soglia = 0.8) {
-  prevalente <- servizio_prevalente_non_censiti(data[data$RFID == rfid_code, , drop = FALSE], soglia)
+  prevalente <- servizio_prevalente_non_censiti(
+    data[data$RFID == rfid_code, , drop = FALSE],
+    soglia
+  )
   if (nrow(prevalente) == 0) NA_character_ else prevalente$servizio_prevalente
 }
 
@@ -424,11 +519,20 @@ get_icon_for_uncensored_rfid <- function(rfid_code, data, soglia = 0.8) {
 #' @param riferimento Letture su cui calcolare il servizio prevalente.
 #' @param soglia Quota minima del servizio atteso prevalente.
 #' @noRd
-aggiungi_servizio_icona <- function(letture, riferimento = letture, soglia = 0.8) {
+aggiungi_servizio_icona <- function(
+  letture,
+  riferimento = letture,
+  soglia = 0.8
+) {
   prevalenti <- servizio_prevalente_non_censiti(riferimento, soglia)
-  stimato <- prevalenti$servizio_prevalente[match(letture$RFID, prevalenti$RFID)]
+  stimato <- prevalenti$servizio_prevalente[match(
+    letture$RFID,
+    prevalenti$RFID
+  )]
   letture$servizio_icona <- ifelse(
-    letture$presente_a_database == "Presente", letture$servizio_transponder, stimato
+    letture$presente_a_database == "Presente",
+    letture$servizio_transponder,
+    stimato
   )
   letture
 }
@@ -450,13 +554,15 @@ aggiungi_servizio_icona <- function(letture, riferimento = letture, soglia = 0.8
 #' @param includi_senza_stima Mantiene le letture non censite senza servizio atteso.
 #' @return Dataframe filtrato (tutte le letture che superano i filtri).
 #' @noRd
-filtra_letture <- function(data,
-                           periodo = NULL,
-                           stato_db = stati_database(),
-                           transponder_esclusi = character(0),
-                           includi_non_censiti = TRUE,
-                           atteso_esclusi = character(0),
-                           includi_senza_stima = TRUE) {
+filtra_letture <- function(
+  data,
+  periodo = NULL,
+  stato_db = stati_database(),
+  transponder_esclusi = character(0),
+  includi_non_censiti = TRUE,
+  atteso_esclusi = character(0),
+  includi_senza_stima = TRUE
+) {
   data <- filtra_periodo(data, periodo)
   non_censita <- data$presente_a_database == "Non Presente"
 
@@ -471,7 +577,11 @@ filtra_letture <- function(data,
     !(data$servizio_atteso %in% atteso_esclusi)
   )
 
-  data[data$presente_a_database %in% stato_db & transponder_ok & atteso_ok, , drop = FALSE]
+  data[
+    data$presente_a_database %in% stato_db & transponder_ok & atteso_ok,
+    ,
+    drop = FALSE
+  ]
 }
 
 #' Conta le occorrenze di un servizio, in ordine canonico
@@ -517,7 +627,8 @@ analizza_input_ricerca <- function(testo) {
 #' Confronto tra codici che ignora maiuscole e minuscole
 #' @noRd
 codice_in <- function(valori, codici) {
-  !is.na(valori) & stringr::str_to_upper(valori) %in% stringr::str_to_upper(codici)
+  !is.na(valori) &
+    stringr::str_to_upper(valori) %in% stringr::str_to_upper(codici)
 }
 
 #' Tutte le letture degli RFID cercati
@@ -581,7 +692,10 @@ cronologia_transizioni <- function(letture, campo) {
     dplyr::arrange(.data$giorno_lettura)
   valori <- x[[campo]]
   cambio <- c(TRUE, valori[-1] != valori[-length(valori)])[seq_along(valori)]
-  out <- dplyr::tibble(giorno_lettura = x$giorno_lettura[cambio], valore = valori[cambio])
+  out <- dplyr::tibble(
+    giorno_lettura = x$giorno_lettura[cambio],
+    valore = valori[cambio]
+  )
   dplyr::mutate(out, attuale = dplyr::row_number() == dplyr::n())
 }
 
@@ -629,7 +743,11 @@ analizza_rfid <- function(letture) {
     n_letture = nrow(letture),
     prima_lettura = min(letture$giorno_lettura),
     ultima_lettura = ultima$giorno_lettura,
-    servizio_attuale = if (nrow(servizi) > 0) servizi$valore[nrow(servizi)] else NA_character_,
+    servizio_attuale = if (nrow(servizi) > 0) {
+      servizi$valore[nrow(servizi)]
+    } else {
+      NA_character_
+    },
     cronologia_servizio = servizi,
     stima = stima,
     cambio_utenza = nrow(utenze) > 1,

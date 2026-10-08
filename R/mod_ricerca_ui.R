@@ -1,7 +1,8 @@
 #' Testi dell'interfaccia di ricerca
 #' @noRd
 testi_ricerca <- function(tipo) {
-  switch(tipo,
+  switch(
+    tipo,
     rfid = list(
       titolo = "Ricerca per RFID",
       icona = "barcode",
@@ -29,16 +30,24 @@ mod_ricerca_ui <- function(id, tipo = c("rfid", "utenza")) {
   ns <- NS(id)
   testi <- testi_ricerca(tipo)
   sezione_sidebar(
-    testi$titolo, testi$icona,
+    testi$titolo,
+    testi$icona,
     textAreaInput(
       ns("testo"),
       label = testi$etichetta,
       placeholder = testi$segnaposto,
-      rows = 4, width = "100%", resize = "vertical"
+      rows = 4,
+      width = "100%",
+      resize = "vertical"
     ),
     div(
       class = "pulsanti-ricerca",
-      actionButton(ns("cerca"), testi$pulsante, icon = icon("magnifying-glass"), class = "btn-primary"),
+      actionButton(
+        ns("cerca"),
+        testi$pulsante,
+        icon = icon("magnifying-glass"),
+        class = "btn-primary"
+      ),
       actionButton(ns("pulisci"), "\u274c Pulisci Ricerca")
     ),
     uiOutput(ns("esito"))

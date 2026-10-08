@@ -377,7 +377,7 @@ ggplot(barre) +
       xmax = sinistra + larghezza * punteggio,
       ymin = y - 0.2,
       ymax = y + 0.2,
-      fill = colore
+      fill = colori$accento
     )
   ) +
   # punteggio scritto solo dove si perdono punti

@@ -3,7 +3,8 @@
 #' Collega i moduli: il dataset caricato viene ristretto al periodo di analisi,
 #' che alimenta filtri, ricerche e mappe. L'analisi dei cluster lavora sullo
 #' stesso periodo. Il click su un marker o su un cluster apre il dettaglio del
-#' bidone nella barra laterale.
+#' bidone nella barra laterale, con le letture per anno: lì entrano anche le
+#' letture storiche, se sono state caricate.
 #'
 #' @param input,output,session Internal parameters for {shiny}.
 #'     DO NOT REMOVE.
@@ -14,13 +15,18 @@ app_server <- function(input, output, session) {
   # I file di letture superano facilmente il limite predefinito di 5 MB.
   options(shiny.maxRequestSize = 100 * 1024^2)
 
-  dati_caricati <- mod_caricamento_server("caricamento")
+  caricamento <- mod_caricamento_server("caricamento")
+  dati_caricati <- caricamento$letture
   periodo <- mod_periodo_server("periodo", dati = dati_caricati)
   # Letture del periodo di analisi: da qui in poi tutta l'app lavora su queste.
   dati <- periodo$dati
   filtri <- mod_filtri_server("filtri", dati = dati, azzera = dati_caricati)
   ricerca_rfid <- mod_ricerca_server("ricerca_rfid", dati = dati, tipo = "rfid")
-  ricerca_utenza <- mod_ricerca_server("ricerca_utenza", dati = dati, tipo = "utenza")
+  ricerca_utenza <- mod_ricerca_server(
+    "ricerca_utenza",
+    dati = dati,
+    tipo = "utenza"
+  )
 
   output$titolo <- renderText({
     intervallo <- periodo$periodo()
@@ -113,15 +119,18 @@ app_server <- function(input, output, session) {
   # --- Dettaglio del bidone selezionato ------------------------------------------
   rfid_selezionato <- reactiveVal(NULL)
 
-  purrr::walk(list(clic_principale, clic_rfid, clic_utenza, clic_cluster), function(clic) {
-    observeEvent(clic(), {
-      rfid_selezionato(clic()$rfid)
-      # Porta il pannello in vista dopo che è stato aggiornato.
-      session$onFlushed(function() {
-        session$sendCustomMessage("trackerfid-mostra", "pannello_info")
+  purrr::walk(
+    list(clic_principale, clic_rfid, clic_utenza, clic_cluster),
+    function(clic) {
+      observeEvent(clic(), {
+        rfid_selezionato(clic()$rfid)
+        # Porta il pannello in vista dopo che è stato aggiornato.
+        session$onFlushed(function() {
+          session$sendCustomMessage("trackerfid-mostra", "pannello_info")
+        })
       })
-    })
-  })
+    }
+  )
   observeEvent(dati_caricati(), rfid_selezionato(NULL), ignoreNULL = FALSE)
   observeEvent(input$chiudi_info, rfid_selezionato(NULL))
 
@@ -134,14 +143,28 @@ app_server <- function(input, output, session) {
     letture <- if (!is.null(rfid)) d[d$RFID == rfid, , drop = FALSE]
     if (vuoto(letture)) {
       return(sezione_sidebar(
-        "Dettaglio Bidone", "circle-info",
-        p(class = "suggerimento", "Clicca su un marker della mappa per vedere il dettaglio del bidone nel periodo.")
+        "Dettaglio Bidone",
+        "circle-info",
+        p(
+          class = "suggerimento",
+          "Clicca su un marker della mappa per vedere il dettaglio del bidone nel periodo."
+        )
       ))
     }
     sezione_sidebar(
-      "Dettaglio Bidone", "circle-info",
-      azione = actionLink("chiudi_info", "Chiudi", icon = icon("xmark"), class = "chiudi-info"),
-      crea_info_panel(analizza_rfid(letture))
+      "Dettaglio Bidone",
+      "circle-info",
+      azione = actionLink(
+        "chiudi_info",
+        "Chiudi",
+        icon = icon("xmark"),
+        class = "chiudi-info"
+      ),
+      crea_info_panel(
+        analizza_rfid(letture),
+        # Le letture per anno non dipendono dal periodo di analisi.
+        andamento_rfid(rfid, dati_caricati(), caricamento$storico())
+      )
     )
   })
 }

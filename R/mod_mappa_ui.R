@@ -6,7 +6,8 @@
 mod_mappa_ui <- function(id, modalita = c("cluster", "rfid", "utenza")) {
   modalita <- match.arg(modalita)
   ns <- NS(id)
-  etichetta <- switch(modalita,
+  etichetta <- switch(
+    modalita,
     cluster = "Clustering",
     rfid = "Ricerca RFID",
     utenza = "Ricerca Utenza"

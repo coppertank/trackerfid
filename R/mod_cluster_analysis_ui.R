@@ -11,7 +11,10 @@ mod_cluster_analysis_ui <- function(id) {
     class = "pannello-cluster",
     div(
       class = "mappa-intestazione",
-      span(class = "badge-stato badge-cluster", "Visualizzazione: Analisi Cluster"),
+      span(
+        class = "badge-stato badge-cluster",
+        "Visualizzazione: Analisi Cluster"
+      ),
       textOutput(ns("riepilogo"), inline = TRUE)
     ),
     conditionalPanel(
@@ -27,12 +30,14 @@ mod_cluster_analysis_ui <- function(id) {
         type = "pills",
         tabPanel(
           "Tabella",
-          value = "tabella", icon = icon("table"),
+          value = "tabella",
+          icon = icon("table"),
           div(class = "vista-cluster", DT::DTOutput(ns("tabella")))
         ),
         tabPanel(
           "Grafici",
-          value = "grafici", icon = icon("chart-simple"),
+          value = "grafici",
+          icon = icon("chart-simple"),
           div(
             class = "vista-cluster",
             plotly::plotlyOutput(ns("grafico_indicatori"), height = "250px"),
@@ -46,7 +51,8 @@ mod_cluster_analysis_ui <- function(id) {
         ),
         tabPanel(
           "Mappa",
-          value = "mappa", icon = icon("map-location-dot"),
+          value = "mappa",
+          icon = icon("map-location-dot"),
           div(
             class = "vista-cluster mappa-contenitore mappa-cluster",
             leaflet::leafletOutput(ns("mappa"), height = "100%")
@@ -64,17 +70,37 @@ mod_cluster_analysis_ui <- function(id) {
 mod_cluster_analysis_sidebar_ui <- function(id) {
   ns <- NS(id)
   sezione_sidebar(
-    "Analisi Cluster Spaziale", "circle-nodes",
+    "Analisi Cluster Spaziale",
+    "circle-nodes",
     uiOutput(ns("periodo")),
     tags$details(
       class = "parametri-dbscan",
       tags$summary("Parametri DBSCAN"),
-      numericInput(ns("eps_m"), "Raggio di ricerca (metri)", value = 100, min = 1, step = 10, width = "100%"),
-      numericInput(ns("min_pts"), "Letture minime per cluster", value = 1, min = 1, step = 1, width = "100%")
+      numericInput(
+        ns("eps_m"),
+        "Raggio di ricerca (metri)",
+        value = 100,
+        min = 1,
+        step = 10,
+        width = "100%"
+      ),
+      numericInput(
+        ns("min_pts"),
+        "Letture minime per cluster",
+        value = 1,
+        min = 1,
+        step = 1,
+        width = "100%"
+      )
     ),
     div(
       class = "pulsanti-ricerca",
-      actionButton(ns("genera"), "Genera Analisi", icon = icon("play"), class = "btn-primary"),
+      actionButton(
+        ns("genera"),
+        "Genera Analisi",
+        icon = icon("play"),
+        class = "btn-primary"
+      ),
       conditionalPanel(
         "output.pronta",
         ns = ns,

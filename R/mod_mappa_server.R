@@ -14,12 +14,14 @@
 #' @param messaggio Reactive con un eventuale avviso da mostrare sulla mappa.
 #' @return Reactive con l'ultimo marker cliccato: lista con `rfid` e `quando`.
 #' @noRd
-mod_mappa_server <- function(id,
-                             dati,
-                             modalita = c("cluster", "rfid", "utenza"),
-                             dati_vista = dati,
-                             attiva = function() TRUE,
-                             messaggio = function() NULL) {
+mod_mappa_server <- function(
+  id,
+  dati,
+  modalita = c("cluster", "rfid", "utenza"),
+  dati_vista = dati,
+  attiva = function() TRUE,
+  messaggio = function() NULL
+) {
   modalita <- match.arg(modalita)
   moduleServer(id, function(input, output, session) {
     output$mappa <- leaflet::renderLeaflet(mappa_base(modalita))
@@ -64,11 +66,20 @@ mod_mappa_server <- function(id,
         return("")
       }
       n_rfid <- dplyr::n_distinct(df$RFID)
-      switch(modalita,
-        cluster = paste(conta(n_rfid, "bidone", "bidoni"), "sulla mappa (ultima lettura)"),
-        rfid = paste(conta(nrow(df), "lettura", "letture"), "di", conta(n_rfid, "RFID", "RFID")),
+      switch(
+        modalita,
+        cluster = paste(
+          conta(n_rfid, "bidone", "bidoni"),
+          "sulla mappa (ultima lettura)"
+        ),
+        rfid = paste(
+          conta(nrow(df), "lettura", "letture"),
+          "di",
+          conta(n_rfid, "RFID", "RFID")
+        ),
         utenza = paste(
-          conta(n_rfid, "bidone", "bidoni"), "di",
+          conta(n_rfid, "bidone", "bidoni"),
+          "di",
           conta(dplyr::n_distinct(df$id_utenza), "utenza", "utenze")
         )
       )

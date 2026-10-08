@@ -1,4 +1,6 @@
-chiamate <- function(mappa) vapply(mappa$x$calls, function(k) k$method, character(1))
+chiamate <- function(mappa) {
+  vapply(mappa$x$calls, function(k) k$method, character(1))
+}
 chiamata <- function(mappa, metodo) {
   Filter(function(k) k$method == metodo, mappa$x$calls)[[1]]
 }
@@ -26,7 +28,10 @@ test_that("la mappa principale raggruppa i marker in cluster colorati", {
 })
 
 test_that("la ricerca RFID mostra tutte le letture, senza cluster, con i riquadri", {
-  trovate <- cerca_per_rfid(dati_esempio(), c("RFD20250901001", "RFD20250905100"))
+  trovate <- cerca_per_rfid(
+    dati_esempio(),
+    c("RFD20250901001", "RFD20250905100")
+  )
   mappa <- disegna_marker(mappa_base("rfid"), trovate, "rfid")
   marker <- chiamata(mappa, "addMarkers")
 
@@ -65,7 +70,10 @@ test_that("senza dati la mappa viene solo ripulita", {
     expect_false("addMarkers" %in% chiamate(mappa))
     expect_true("clearMarkers" %in% chiamate(mappa))
   }
-  expect_identical(adatta_vista(mappa_base("cluster"), NULL), mappa_base("cluster"))
+  expect_identical(
+    adatta_vista(mappa_base("cluster"), NULL),
+    mappa_base("cluster")
+  )
 })
 
 test_that("la vista si adatta alle letture", {
@@ -81,13 +89,21 @@ test_that("la vista si adatta alle letture", {
 test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
   letture <- dplyr::tibble(
     giorno_lettura = as.POSIXct("2025-09-15 08:00:00", tz = "UTC"),
-    targa_veicolo = "AB123CD", matricola_veicolo = "VEH001",
-    RFID = c("N1", "N2"), presente_a_database = "Non Presente",
-    servizio_transponder = NA_character_, servizio_atteso = c("VETRO PAP", NA),
-    id_utenza = NA_character_, latitudine = c(41.9, 41.91), longitudine = c(12.5, 12.51),
+    targa_veicolo = "AB123CD",
+    matricola_veicolo = "VEH001",
+    RFID = c("N1", "N2"),
+    presente_a_database = "Non Presente",
+    servizio_transponder = NA_character_,
+    servizio_atteso = c("VETRO PAP", NA),
+    id_utenza = NA_character_,
+    latitudine = c(41.9, 41.91),
+    longitudine = c(12.5, 12.51),
     servizio_icona = c("VETRO PAP", NA)
   )
-  icone <- chiamata(disegna_marker(mappa_base("utenza"), letture, "utenza"), "addMarkers")$args[[3]]
+  icone <- chiamata(
+    disegna_marker(mappa_base("utenza"), letture, "utenza"),
+    "addMarkers"
+  )$args[[3]]
   url <- icone$iconUrl$data[icone$iconUrl$index + 1]
   attese <- get_leaflet_icon(c("VETRO PAP", NA), "Non Presente")$iconUrl
   expect_identical(url, attese)
@@ -97,6 +113,9 @@ test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
 
   # senza la colonna dedicata si usa il servizio transponder
   senza <- letture[, setdiff(names(letture), "servizio_icona")]
-  icone <- chiamata(disegna_marker(mappa_base("utenza"), senza, "utenza"), "addMarkers")$args[[3]]
+  icone <- chiamata(
+    disegna_marker(mappa_base("utenza"), senza, "utenza"),
+    "addMarkers"
+  )$args[[3]]
   expect_length(icone$iconUrl$data, 1)
 })
