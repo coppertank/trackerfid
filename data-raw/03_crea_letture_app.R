@@ -25,14 +25,14 @@ servizi_associati <- associa_servizio(
 # manca e il cantiere viene dal solo comune del database.
 servizio_atteso <- associa_servizio_atteso_da_calendario(
   servizi_associati,
-  calendario_servizio_rifiuti,
-  colonna_comune = "comune"
+  calendario_servizio_rifiuti
 )
 
 
 letture_app <- servizio_atteso |>
   dplyr::filter(
-    !stringr::str_starts(RFID, "00BD")
+    !stringr::str_starts(RFID, "00BD"),
+    !stringr::str_starts(RFID, "0000000000")
   )
 
 write.csv(letture_app, "data-raw/output/letture_app.csv", row.names = FALSE)

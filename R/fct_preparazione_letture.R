@@ -153,7 +153,8 @@ associa_servizio <- function(
         "Non Presente"
       )
     ) |>
-    dplyr::select(-dplyr::all_of("id_servizio"))
+    dplyr::select(-dplyr::all_of("id_servizio")) |>
+    dplyr::rename(comune_da_database = "comune_servizio")
 }
 
 #' Associa a ogni lettura il servizio atteso dal calendario dei mezzi
@@ -187,8 +188,7 @@ associa_servizio <- function(
 #' @noRd
 associa_servizio_atteso_da_calendario <- function(
   df_letture,
-  df_calendario,
-  colonna_comune = "comune"
+  df_calendario
 ) {
   # 1. Preparazione delle letture
   df_letture_clean <- dplyr::mutate(
@@ -199,14 +199,12 @@ associa_servizio_atteso_da_calendario <- function(
   # 2. Preparazione del calendario
   df_calendario_clean <- df_calendario |>
     dplyr::select(
-      dplyr::all_of(c(
-        "giorno",
-        "ora_inizio",
-        "ora_fine",
-        "matricola_mezzo",
-        "descrizione_servizio"
-      )),
-      dplyr::any_of(c(comune_lettura = colonna_comune))
+      "giorno",
+      "ora_inizio",
+      "ora_fine",
+      "matricola_mezzo",
+      "descrizione_servizio",
+      "comune"
     ) |>
     dplyr::distinct() |>
     dplyr::mutate(
@@ -277,9 +275,9 @@ associa_servizio_atteso_da_calendario <- function(
       servizio_transponder = "descrizione_rifiuto",
       servizio_atteso = "descrizione_servizio",
       volume_previsto = "volume",
-      numero_raccolte_annue_previste = "numero_raccolte_annue"
+      numero_raccolte_annue_previste = "numero_raccolte_annue",
+      comune_lettura = "comune"
     ) |>
-    dplyr::rename(dplyr::any_of(c(comune_da_database = "comune_servizio"))) |>
     completa_cantiere() |>
     # Solo le colonne del CSV dell'app
     dplyr::select(
