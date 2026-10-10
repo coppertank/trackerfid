@@ -582,6 +582,22 @@ p.info-avvertenza {
   border: 2px solid gray;
 }
 
+.legenda-cantiere {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border: 1.5px dashed;
+  border-radius: 2px;
+}
+
+.legenda-comune-giro {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border: 2.5px solid #1f2d3a;
+  border-radius: 2px;
+}
+
 .legenda-nota {
   max-width: 150px;
   margin-top: 4px;
@@ -770,4 +786,40 @@ details.parametri-dbscan summary {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.3px;
+}
+
+/* ---------- Incongruenze tra posizione e comuni dichiarati ---------- */
+.popup-incongruenza {
+  color: #b03a2e;
+}
+
+.info-nota {
+  margin: 4px 0 0;
+  color: #5f6b76;
+  font-size: 11px;
+}
+
+/* ---------- Ricerca dei giri ---------- */
+.badge-giro {
+  background: #37474f;
+}
+
+.tabella-giri {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.titolo-giri {
+  margin-bottom: 4px;
+  color: #5f6b76;
+}
+
+.tabella-giri table.dataTable tbody tr {
+  cursor: pointer;
+}
+
+/* La tabella dei giri sta sopra la mappa: la mappa è più bassa. */
+.scheda-giro .mappa-contenitore {
+  height: calc(100vh - 470px);
+  min-height: 360px;
 }

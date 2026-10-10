@@ -35,6 +35,10 @@ app_ui <- function(request) {
           mod_ricerca_ui("ricerca_rfid", "rfid")
         ),
         conditionalPanel(
+          "input.scheda_attiva == 'giro'",
+          mod_giro_sidebar_ui("giro")
+        ),
+        conditionalPanel(
           "input.scheda_attiva == 'utenza'",
           mod_ricerca_ui("ricerca_utenza", "utenza")
         ),
@@ -57,6 +61,15 @@ app_ui <- function(request) {
               title = tagList(icon("barcode"), "Ricerca RFID"),
               value = "rfid",
               mod_mappa_ui("mappa_rfid", "rfid")
+            ),
+            tabPanel(
+              title = tagList(icon("truck"), "Ricerca Giro"),
+              value = "giro",
+              div(
+                class = "scheda-giro",
+                mod_giro_ui("giro"),
+                mod_mappa_ui("mappa_giro", "giro")
+              )
             ),
             tabPanel(
               title = tagList(icon("user"), "Ricerca Utenza"),

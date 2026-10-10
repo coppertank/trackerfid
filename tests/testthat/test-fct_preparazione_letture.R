@@ -58,7 +58,9 @@ calendario_prova <- dplyr::tibble(
     "CARTA/CARTONE PAP",
     "SECCO PAP",
     "VETRO PAP"
-  )
+  ),
+  # il calendario dice in quale comune lavora ogni giro
+  comune = "Bassano del Grappa"
 )
 
 # Letture già associate al database, pronte per il calendario.
@@ -76,6 +78,7 @@ letture_associate <- function(quando, matricola = "101") {
     volume = 240,
     numero_raccolte_annue = 26,
     id_utenza = "U1",
+    comune_da_database = "Rosà",
     presente_a_database = "Presente"
   )
 }
@@ -197,6 +200,24 @@ test_that("ogni lettura riceve il contenitore valido nel suo giorno", {
   expect_equal(associate$latitudine, rep(45.4642, 6))
   expect_equal(associate$longitudine, rep(9.19, 6))
   expect_false("id_servizio" %in% names(associate))
+  # il comune di servizio dell'anagrafica diventa il comune del database:
+  # lo hanno solo le letture che trovano un contenitore
+  expect_false("comune_servizio" %in% names(associate))
+  expect_identical(
+    associate$comune_da_database,
+    c(rep("Rosà", 3), rep(NA, 3))
+  )
+
+  # l'anagrafica dei contenitori deve riportare il comune di servizio
+  expect_error(
+    associa_servizio(
+      letture,
+      dplyr::select(contenitori_prova, -"comune_servizio"),
+      tag_prova,
+      sacchetti_prova
+    ),
+    "comune_servizio"
+  )
 })
 
 test_that("il servizio atteso è il turno in cui cade la lettura, o il più vicino", {
@@ -301,7 +322,8 @@ test_that("il turno notturno e quello del mattino dopo si dividono le letture", 
     ora_inizio = c("22:00:00", "08:00:00"),
     ora_fine = c("04:00:00", "12:00:00"),
     matricola_mezzo = "103",
-    descrizione_servizio = c("VETRO PAP", "CARTA CONT.STRADALI")
+    descrizione_servizio = c("VETRO PAP", "CARTA CONT.STRADALI"),
+    comune = c("Nove", "Cartigliano")
   )
   letture <- letture_associate(
     c(
@@ -317,6 +339,11 @@ test_that("il turno notturno e quello del mattino dopo si dividono le letture", 
     risultato$servizio_atteso,
     c("VETRO PAP", "VETRO PAP", "CARTA CONT.STRADALI", "CARTA CONT.STRADALI")
   )
+  # il comune di lettura è quello del giro scelto
+  expect_identical(
+    risultato$comune_lettura,
+    c("Nove", "Nove", "Cartigliano", "Cartigliano")
+  )
 })
 
 test_that("i turni che finiscono in giornata non passano al giorno dopo", {
@@ -326,10 +353,23 @@ test_that("i turni che finiscono in giornata non passano al giorno dopo", {
     calendario_prova
   )
   expect_true(all(is.na(giorno_dopo$servizio_atteso)))
-  # senza comuni in ingresso il risultato non ha le colonne geografiche
+  # senza turni manca anche il comune di lettura: il cantiere viene dal comune
+  # del database
+  expect_true(all(is.na(giorno_dopo$comune_lettura)))
+  expect_identical(giorno_dopo$cantiere, rep("BASSANO", 2))
   expect_setequal(
     names(giorno_dopo),
-    c(colonne_obbligatorie(), colonne_quantita())
+    setdiff(colonne_dataset(), colonne_derivate())
+  )
+})
+
+test_that("il calendario deve riportare il comune di ogni giro", {
+  expect_error(
+    associa_servizio_atteso_da_calendario(
+      letture_associate("2026-03-02 08:30:00"),
+      dplyr::select(calendario_prova, -"comune")
+    ),
+    "comune"
   )
 })
 
@@ -347,10 +387,7 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
     filtra_letture_post_test(test_mezzi_prova) |>
     formatta_rfid() |>
     associa_servizio(contenitori_prova, tag_prova, sacchetti_prova) |>
-    associa_servizio_atteso_da_calendario(
-      # il calendario dice in quale comune lavora ogni giro
-      dplyr::mutate(calendario_prova, comune = "Bassano del Grappa")
-    )
+    associa_servizio_atteso_da_calendario(calendario_prova)
 
   # le colonne del CSV: il comune assegnato lo calcola l'app
   expect_setequal(

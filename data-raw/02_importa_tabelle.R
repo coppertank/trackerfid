@@ -90,10 +90,10 @@ associazione_contenitori <- readRDS(
 #       as_date("2099-12-31"),
 #       as_date(data_cessazione_contenitore)
 #     ),
-#     comune_servizio = if_else(
-#       comune_servizio == "LUSINA CONCO",
-#       "LUSIANA CONCO",
-#       comune_servizio
+#     comune_servizio = case_when(
+#       comune_servizio == "LUSINA CONCO" ~ "LUSIANA CONCO",
+#       comune_servizio == "VALSTAGNA" ~ "VALBRENTA",
+#       TRUE ~ comune_servizio # Mantiene il valore originale per tutti gli altri
 #     )
 #   )
 

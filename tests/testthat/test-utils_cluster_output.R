@@ -94,7 +94,7 @@ test_that("l'indice di fiducia è tra 0 e 1 e premia i cluster affidabili", {
   expect_false(anyNA(tutti))
 })
 
-test_that("la tabella ha 27 colonne e una riga per cluster", {
+test_that("la tabella ha 30 colonne e una riga per cluster", {
   letture <- dplyr::bind_rows(
     letture_rfid("FERMO", date_2025(26)),
     letture_rfid(
@@ -113,7 +113,7 @@ test_that("la tabella ha 27 colonne e una riga per cluster", {
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
 
   expect_identical(names(analisi), colonne_analisi_cluster())
-  expect_length(names(analisi), 27)
+  expect_length(names(analisi), 30)
   expect_equal(nrow(analisi), 5)
   expect_identical(analisi$RFID, c("FERMO", "IGNOTO", "MOSSO", "MOSSO", "RARO"))
   expect_identical(analisi$cluster_id, c(1L, 1L, 1L, 2L, 1L))
@@ -434,4 +434,68 @@ test_that("l'esportazione scrive date leggibili e celle vuote per i mancanti", {
     nome_file_analisi_cluster("2025-01-01", as.Date("2025-12-31")),
     "cluster_analysis_2025-01-01_2025-12-31.csv"
   )
+})
+
+test_that("ogni cluster riporta il comune in cui cade e le incongruenze", {
+  comuni <- comuni_cantieri()
+  centro <- function(comune) comuni[comuni$comune == comune, ]
+  posizione <- posizione_cluster(
+    lat = c(
+      centro("LIMENA")$latitudine,
+      centro("CITTADELLA")$latitudine,
+      centro("CITTADELLA")$latitudine,
+      centro("CITTADELLA")$latitudine,
+      41.9
+    ),
+    lon = c(
+      centro("LIMENA")$longitudine,
+      centro("CITTADELLA")$longitudine,
+      centro("CITTADELLA")$longitudine,
+      centro("CITTADELLA")$longitudine,
+      12.5
+    ),
+    censito = c(TRUE, TRUE, FALSE, TRUE, FALSE),
+    comune_database = c("LIMENA", "LIMENA", "CITTADELLA", "LIMENA", NA),
+    comune_giro = c("LIMENA", "CITTADELLA", "ASIAGO", "ASIAGO", NA)
+  )
+  expect_identical(
+    posizione$comune_geografico,
+    c("LIMENA", "CITTADELLA", "CITTADELLA", "CITTADELLA", NA)
+  )
+  expect_identical(
+    posizione$incongruenza_comune,
+    c(NA, "FUORI_COMUNE", "FUORI_GIRO", "FUORI_COMUNE, FUORI_GIRO", NA)
+  )
+  # distanza dal comune dichiarato: del database per i censiti, del giro per
+  # i non censiti
+  expect_identical(posizione$distanza_comune_m[1], 0)
+  expect_gt(posizione$distanza_comune_m[2], 10000)
+  expect_gt(posizione$distanza_comune_m[3], 20000)
+  expect_identical(posizione$distanza_comune_m[4], posizione$distanza_comune_m[2])
+  expect_true(is.na(posizione$distanza_comune_m[5]))
+  # un non censito non \u00e8 mai fuori comune: il database non lo conosce
+  expect_no_match(posizione$incongruenza_comune[3], "FUORI_COMUNE", fixed = TRUE)
+
+  # sul dataset di esempio: il contenitore spostato, nel suo secondo luogo
+  analisi <- analisi_esempio()
+  spostato <- analisi[analisi$RFID == "RFD20250905100", ]
+  expect_identical(spostato$comune, c("LIMENA", "LIMENA"))
+  expect_identical(spostato$comune_geografico, c("LIMENA", "CITTADELLA"))
+  expect_identical(spostato$incongruenza_comune, c(NA, "FUORI_COMUNE"))
+  expect_identical(spostato$distanza_comune_m[1], 0)
+  expect_equal(spostato$distanza_comune_m[2], 16600, tolerance = 0.02)
+  expect_identical(
+    as.integer(table(analisi$incongruenza_comune)[c("FUORI_COMUNE", "FUORI_GIRO")]),
+    c(1L, 17L)
+  )
+  # ogni cluster dell'esempio cade in un comune servito
+  expect_false(anyNA(analisi$comune_geografico))
+  # letture senza comuni: niente da confrontare
+  semplice <- calcola_analisi_cluster(
+    letture_rfid("A", date_2025(8)),
+    "2025-01-01",
+    "2025-12-31"
+  )
+  expect_true(is.na(semplice$incongruenza_comune))
+  expect_true(is.na(semplice$comune_geografico))
 })

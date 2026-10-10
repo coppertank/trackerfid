@@ -5,15 +5,16 @@
 #' lo sfondo. Gli aggiornamenti restano in attesa finché la scheda della mappa
 #' non è visibile: Leaflet non gestisce bene i disegni su mappe nascoste.
 #'
-#' Sulla mappa principale i bidoni da disegnare possono essere troppi per il
-#' browser. Fino al limite di `limiti_mappa()` arrivano tutti e il browser li
-#' raggruppa da sé. Oltre, il modulo segue spostamenti e zoom e disegna la
-#' vista scelta da `scegli_vista()`: bolle per cantiere, per comune o per
-#' riquadro, oppure i soli bidoni dell'area inquadrata.
+#' Sulla mappa principale il modulo segue spostamenti e zoom e disegna la
+#' vista scelta da `scegli_vista()`: da lontano una bolla per cantiere, poi
+#' una per comune, da vicino i singoli bidoni. Se i bidoni sono troppi per il
+#' browser, oltre il limite di `limiti_mappa()`, da vicino arrivano i soli
+#' bidoni dell'area inquadrata, oppure una bolla per riquadro.
 #'
 #' @param id Identificativo del modulo.
 #' @param dati Reactive con le letture da disegnare (o `NULL`).
-#' @param modalita `"cluster"`, `"rfid"` o `"utenza"`, vedi `disegna_marker()`.
+#' @param modalita `"cluster"`, `"rfid"`, `"utenza"` o `"giro"`, vedi
+#'   `disegna_marker()`.
 #' @param dati_vista Reactive con le letture su cui inquadrare la mappa: la
 #'   vista si adatta solo quando questo valore cambia.
 #' @param attiva Reactive: `TRUE` quando la scheda della mappa è visibile.
@@ -23,7 +24,7 @@
 mod_mappa_server <- function(
   id,
   dati,
-  modalita = c("cluster", "rfid", "utenza"),
+  modalita = c("cluster", "rfid", "utenza", "giro"),
   dati_vista = dati,
   attiva = function() TRUE,
   messaggio = function() NULL
@@ -59,6 +60,8 @@ mod_mappa_server <- function(
           df[scelta$righe, , drop = FALSE]
         } else if (modalita == "rfid") {
           limita_letture_ricerca(df)
+        } else if (modalita == "giro") {
+          limita_letture_giro(df)
         } else {
           df
         }
@@ -94,8 +97,8 @@ mod_mappa_server <- function(
       }
     })
 
-    # Vista aggregata: dopo uno spostamento o uno zoom la mappa si ridisegna
-    # solo se la vista disegnata non va più bene per l'area inquadrata.
+    # Dopo uno spostamento o uno zoom la mappa si ridisegna solo se la vista
+    # disegnata non va più bene per lo zoom e per l'area inquadrata.
     if (modalita == "cluster") {
       spostamento <- debounce(
         reactive(list(input$mappa_bounds, input$mappa_zoom)),
@@ -104,9 +107,6 @@ mod_mappa_server <- function(
       observeEvent(spostamento(), {
         df <- dati()
         req(pronta(), isTRUE(attiva()), !in_attesa$marker, !is.null(df))
-        if (nrow(df) <= limiti_mappa()$marker) {
-          return()
-        }
         nuova <- scegli_vista(df, input$mappa_bounds, input$mappa_zoom)
         if (
           vista_da_rifare(vista(), nuova, input$mappa_bounds, input$mappa_zoom)
@@ -148,7 +148,7 @@ mod_mappa_server <- function(
         return("")
       }
       n_rfid <- dplyr::n_distinct(df$RFID)
-      # Con la vista aggregata l'intestazione dice che cosa si sta guardando.
+      # Con le bolle l'intestazione dice che cosa si sta guardando.
       tipo <- vista()$tipo
       descrizione <- if (!is.null(tipo)) descrizione_vista(tipo)
       switch(
@@ -173,6 +173,15 @@ mod_mappa_server <- function(
           conta(n_rfid, "bidone", "bidoni"),
           "di",
           conta(dplyr::n_distinct(df$id_utenza), "utenza", "utenze")
+        ),
+        giro = paste0(
+          descrizione_giri(df),
+          if (nrow(df) > limiti_mappa()$letture_ricerca) {
+            sprintf(
+              " \u00b7 sulla mappa %s letture: prima quelle fuori giro o fuori comune",
+              formatta_numero(limiti_mappa()$letture_ricerca)
+            )
+          }
         )
       )
     })

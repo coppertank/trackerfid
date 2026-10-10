@@ -104,10 +104,11 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
     sum(ultimi$presente_a_database == "Presente")
   )
 
-  # una bolla sta nel punto medio dei suoi bidoni e ne riporta il riquadro
+  # la bolla di un cantiere sta nel punto medio dei suoi bidoni e ne riporta
+  # il riquadro
   bassano <- per_cantiere[which(per_cantiere$nome == "BASSANO"), ]
   suoi <- ultimi[which(ultimi$cantiere == "BASSANO"), ]
-  expect_equal(bassano$n, 69)
+  expect_equal(bassano$n, 66)
   expect_equal(bassano$censiti, sum(suoi$presente_a_database == "Presente"))
   expect_equal(bassano$latitudine, mean(suoi$latitudine))
   expect_equal(bassano$longitudine, mean(suoi$longitudine))
@@ -120,6 +121,45 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
   expect_equal(
     per_comune$n[which(per_comune$nome == "BASSANO DEL GRAPPA")],
     sum(ultimi$comune_assegnato == "BASSANO DEL GRAPPA", na.rm = TRUE)
+  )
+  # la bolla di un comune sta nel baricentro del comune, non tra i suoi bidoni
+  baricentri <- baricentri_comuni()
+  riga <- match(per_comune$nome, baricentri$comune)
+  expect_false(anyNA(riga))
+  expect_equal(per_comune$latitudine, baricentri$latitudine[riga])
+  expect_equal(per_comune$longitudine, baricentri$longitudine[riga])
+  # resta ferma quando i filtri lasciano solo una parte dei bidoni; il
+  # riquadro, che serve al click, resta quello dei bidoni rimasti
+  di_bassano <- ultimi[which(ultimi$comune_assegnato == "BASSANO DEL GRAPPA"), ]
+  pochi <- di_bassano[1:2, ]
+  una <- aggrega_marker(pochi, "comune")
+  centro <- baricentri[baricentri$comune == "BASSANO DEL GRAPPA", ]
+  expect_equal(nrow(una), 1)
+  expect_equal(una$latitudine, centro$latitudine)
+  expect_equal(una$longitudine, centro$longitudine)
+  expect_equal(c(una$lat_min, una$lat_max), range(pochi$latitudine))
+  expect_equal(c(una$lng_min, una$lng_max), range(pochi$longitudine))
+  expect_false(isTRUE(all.equal(una$latitudine, mean(pochi$latitudine))))
+  # un comune che non è nella tabella, o che manca, non ha un baricentro:
+  # la bolla sta nel punto medio dei suoi bidoni
+  altrove <- di_bassano[1:3, ]
+  altrove$comune_assegnato <- c("MILANO", "MILANO", NA)
+  fuori <- aggrega_marker(altrove, "comune")
+  expect_identical(fuori$nome, c("MILANO", NA))
+  expect_equal(
+    fuori$latitudine,
+    c(mean(altrove$latitudine[1:2]), altrove$latitudine[3])
+  )
+  expect_equal(
+    fuori$longitudine,
+    c(mean(altrove$longitudine[1:2]), altrove$longitudine[3])
+  )
+  # il nome si confronta senza badare a maiuscole e accenti
+  minuscolo <- pochi
+  minuscolo$comune_assegnato <- "Bassano del Grappa"
+  expect_equal(
+    aggrega_marker(minuscolo, "comune")$latitudine,
+    centro$latitudine
   )
 
   # la griglia si infittisce con lo zoom e non ha nomi
@@ -148,42 +188,66 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
   expect_error(aggrega_marker(ultimi, "provincia"))
 })
 
-test_that("la vista dipende dal numero di bidoni, dall'area e dallo zoom", {
+test_that("la vista dipende dallo zoom, dal numero di bidoni e dall'area", {
   ultimi <- deduplica_ultimo_rfid(dati_esempio())
   tutta <- tutta_la_zona()
+  piccola <- attorno_a("ASIAGO")
 
-  # sotto il limite: tutti i bidoni, raggruppati dal browser
-  expect_identical(scegli_vista(ultimi, tutta, 9), list(tipo = "tutti"))
+  # da lontano una bolla per cantiere, poi una per comune: con qualsiasi
+  # numero di bidoni, sotto o sopra il limite
+  for (limite in c(50, nrow(ultimi), 10000)) {
+    expect_identical(
+      scegli_vista(ultimi, tutta, 9, limite = limite),
+      list(tipo = "cantiere")
+    )
+    expect_identical(
+      scegli_vista(ultimi, tutta, 10, limite = limite),
+      list(tipo = "cantiere")
+    )
+    expect_identical(
+      scegli_vista(ultimi, tutta, 11, limite = limite),
+      list(tipo = "comune")
+    )
+    expect_identical(
+      scegli_vista(ultimi, tutta, 12, limite = limite),
+      list(tipo = "comune")
+    )
+  }
+  # le bolle del territorio non dipendono dall'area inquadrata
+  expect_identical(scegli_vista(ultimi, NULL, 9), list(tipo = "cantiere"))
   expect_identical(
-    scegli_vista(ultimi, tutta, 9, limite = nrow(ultimi)),
-    list(tipo = "tutti")
-  )
-  expect_identical(scegli_vista(NULL, tutta, 9), list(tipo = "tutti"))
-
-  # sopra il limite: bolle secondo lo zoom
-  expect_identical(
-    scegli_vista(ultimi, tutta, 9, limite = 50),
+    scegli_vista(ultimi, piccola, 9, limite = 50),
     list(tipo = "cantiere")
   )
   expect_identical(
-    scegli_vista(ultimi, tutta, 12, limite = 50),
+    scegli_vista(ultimi, piccola, 12, limite = 50),
     list(tipo = "comune")
   )
+
+  # da vicino i singoli bidoni: tutti, finché stanno sotto il limite
+  expect_identical(scegli_vista(ultimi, tutta, 13), list(tipo = "tutti"))
+  expect_identical(
+    scegli_vista(ultimi, tutta, 13, limite = nrow(ultimi)),
+    list(tipo = "tutti")
+  )
+  expect_identical(scegli_vista(ultimi, NULL, 17), list(tipo = "tutti"))
+  # senza bidoni non c'è niente da raggruppare
+  expect_identical(scegli_vista(NULL, tutta, 9), list(tipo = "tutti"))
+  expect_identical(scegli_vista(ultimi[0, ], tutta, 9), list(tipo = "tutti"))
+
+  # da vicino e sopra il limite: una bolla per riquadro
   griglia <- scegli_vista(ultimi, tutta, 14, limite = 50)
   expect_identical(griglia$tipo, "griglia")
   expect_identical(griglia$riquadro, allarga_riquadro(tutta))
   expect_equal(sum(griglia$righe), nrow(ultimi))
-
   # senza area inquadrata i singoli bidoni non si possono scegliere
   expect_identical(
     scegli_vista(ultimi, NULL, 15, limite = 50)$tipo,
     "griglia"
   )
-  expect_identical(scegli_vista(ultimi, NULL, 9, limite = 50)$tipo, "cantiere")
 
-  # un'area con pochi bidoni mostra i singoli, a qualsiasi zoom
-  piccola <- attorno_a("ASIAGO")
-  singoli <- scegli_vista(ultimi, piccola, 9, limite = 50)
+  # oppure i soli bidoni dell'area inquadrata, se sono pochi
+  singoli <- scegli_vista(ultimi, piccola, 14, limite = 50)
   expect_identical(singoli$tipo, "singoli")
   expect_identical(singoli$riquadro, allarga_riquadro(piccola))
   expect_identical(
@@ -193,10 +257,27 @@ test_that("la vista dipende dal numero di bidoni, dall'area e dallo zoom", {
   expect_gt(sum(singoli$righe), 0)
   expect_lte(sum(singoli$righe), 50)
 
-  # un dataset senza cantieri e comuni usa la griglia a ogni zoom
+  # un dataset senza cantieri e comuni non ha bolle del territorio: tutti i
+  # bidoni, oppure la griglia, a ogni zoom
   senza <- deduplica_ultimo_rfid(letture_test())
+  expect_identical(scegli_vista(senza, NULL, 9), list(tipo = "tutti"))
+  expect_identical(scegli_vista(senza, NULL, 12), list(tipo = "tutti"))
   expect_identical(scegli_vista(senza, NULL, 9, limite = 2)$tipo, "griglia")
   expect_identical(scegli_vista(senza, NULL, 12, limite = 2)$tipo, "griglia")
+  # con i soli cantieri, a zoom da comune restano i bidoni
+  soli_cantieri <- ultimi
+  soli_cantieri$comune_assegnato <- NA_character_
+  expect_identical(scegli_vista(soli_cantieri, tutta, 9)$tipo, "cantiere")
+  expect_identical(scegli_vista(soli_cantieri, tutta, 12)$tipo, "tutti")
+
+  expect_identical(livello_aggregazione(NULL), "cantiere")
+  expect_identical(
+    vapply(8:14, livello_aggregazione, character(1)),
+    c("cantiere", "cantiere", "cantiere", "comune", "comune", "griglia", "griglia")
+  )
+  expect_match(descrizione_vista("cantiere"), "una bolla per cantiere")
+  expect_match(descrizione_vista("comune"), "una bolla per comune")
+  expect_null(descrizione_vista("tutti"))
 })
 
 test_that("la vista si ridisegna solo quando non copre più l'area inquadrata", {

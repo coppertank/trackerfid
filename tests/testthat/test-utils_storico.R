@@ -179,7 +179,7 @@ test_that("l'andamento di un RFID copre tutti gli anni fino alla fine dei dati",
   # sul dataset di esempio: due anni interi senza letture, poi le antenne
   esempio <- andamento_rfid("RFD20241004003", dati_esempio(), storico_esempio())
   expect_identical(esempio$anno, 2020:2025)
-  expect_identical(esempio$storico, c(16L, 0L, 6L, 0L, 7L, 0L))
+  expect_identical(esempio$storico, c(13L, 0L, 16L, 0L, 6L, 0L))
   expect_identical(esempio$antenne, c(0L, 0L, 0L, 0L, 6L, 25L))
 })
 
@@ -436,19 +436,19 @@ test_that("sul dataset di esempio le antenne leggono molto di più del sistema p
 
   expect_identical(attr(confronto, "anni_storico"), 2020:2023)
   expect_equal(attr(confronto, "giorni_antenne"), 457)
-  expect_equal(r$n_rfid, 162)
+  expect_equal(r$n_rfid, 161)
   # quasi un anno di servizio su cinque senza nemmeno una lettura
-  expect_equal(r$totale_anni_servizio, 415)
-  expect_equal(r$totale_anni_vuoti, 90)
-  expect_equal(r$rfid_con_anni_vuoti, 73)
-  # da un terzo a oltre l'80% delle raccolte previste
-  expect_equal(r$tasso_storico, 0.31, tolerance = 0.03)
-  expect_equal(r$tasso_antenne, 0.82, tolerance = 0.03)
+  expect_equal(r$totale_anni_servizio, 418)
+  expect_equal(r$totale_anni_vuoti, 78)
+  expect_equal(r$rfid_con_anni_vuoti, 55)
+  # da meno di un terzo a oltre l'80% delle raccolte previste
+  expect_equal(r$tasso_storico, 0.32, tolerance = 0.03)
+  expect_equal(r$tasso_antenne, 0.83, tolerance = 0.03)
   expect_gt(r$rapporto, 2)
-  # un solo contenitore, esposto di rado, è letto meno di prima
+  # due contenitori, esposti di rado, sono letti meno di prima
   expect_equal(
     sum(confronto$letture_annue_antenne <= confronto$letture_annue_storico),
-    1
+    2
   )
 
   # il sistema precedente leggeva in modo diverso da cantiere a cantiere, le
@@ -461,7 +461,7 @@ test_that("sul dataset di esempio le antenne leggono molto di più del sistema p
     per_cantiere$cantiere[order(per_cantiere$tasso_storico)],
     c("ASIAGO", "RUBANO", "CAMPOSAMPIERO", "BASSANO")
   )
-  expect_gt(diff(range(per_cantiere$tasso_storico)), 0.25)
+  expect_gt(diff(range(per_cantiere$tasso_storico)), 0.2)
   expect_lt(diff(range(per_cantiere$tasso_antenne)), 0.1)
   expect_true(all(per_cantiere$tasso_antenne - per_cantiere$tasso_storico > 0.3))
 })

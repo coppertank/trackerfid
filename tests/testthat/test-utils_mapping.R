@@ -5,10 +5,92 @@ chiamata <- function(mappa, metodo) {
   Filter(function(k) k$method == metodo, mappa$x$calls)[[1]]
 }
 
-test_that("la mappa di base ha sfondo, scala e legenda", {
+test_that("la mappa di base ha sfondo, confini dei comuni, scala e legenda", {
   mappa <- mappa_base("cluster")
   expect_s3_class(mappa, "leaflet")
-  expect_identical(chiamate(mappa), c("addTiles", "addScaleBar", "addControl"))
+  expect_identical(
+    chiamate(mappa),
+    c("addTiles", "createMapPane", "addGeoJSON", "addScaleBar", "addControl")
+  )
+  # inquadra tutta la zona servita, comuni nuovi compresi
+  zona <- riquadro_zona()
+  expect_equal(
+    unlist(mappa$x$fitBounds[1:4]),
+    c(zona$lat_min, zona$lng_min, zona$lat_max, zona$lng_max)
+  )
+})
+
+test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
+  testo <- geojson_confini()
+  expect_type(testo, "character")
+  expect_length(testo, 1)
+  # pochi dati per il browser: la mappa li riceve a ogni disegno
+  expect_lt(nchar(testo), 200000)
+  # preparati una volta sola
+  expect_identical(geojson_confini(), testo)
+
+  confini <- jsonlite::fromJSON(testo, simplifyVector = FALSE)
+  expect_identical(confini$type, "FeatureCollection")
+  comuni <- comuni_cantieri()
+  proprieta <- lapply(confini$features, function(elemento) elemento$properties)
+  expect_identical(
+    vapply(proprieta, function(p) p$comune, character(1)),
+    comuni$comune
+  )
+  expect_identical(
+    vapply(proprieta, function(p) p$cantiere, character(1)),
+    comuni$cantiere
+  )
+  # bordo e riempimento hanno il colore del cantiere
+  expect_identical(
+    vapply(proprieta, function(p) p$style$color, character(1)),
+    colore_cantiere(comuni$cantiere)
+  )
+  expect_identical(
+    vapply(proprieta, function(p) p$style$fillColor, character(1)),
+    colore_cantiere(comuni$cantiere)
+  )
+  tipi <- vapply(
+    confini$features,
+    function(elemento) elemento$geometry$type,
+    character(1)
+  )
+  expect_true(all(tipi %in% c("Polygon", "MultiPolygon")))
+  # coordinate con cinque decimali, dentro la zona servita
+  coordinate <- unlist(lapply(confini$features, function(elemento) {
+    elemento$geometry$coordinates
+  }))
+  expect_equal(coordinate, round(coordinate, 5))
+  zona <- riquadro_zona()
+  expect_gte(min(coordinate), zona$lng_min - 1e-5)
+  expect_lte(max(coordinate), zona$lat_max + 1e-5)
+
+  # sulla mappa: un livello a parte, sotto i marker, che non risponde al mouse
+  mappa <- aggiungi_confini(leaflet::leaflet())
+  riquadro <- chiamata(mappa, "createMapPane")
+  expect_identical(riquadro$args[[1]], "confini")
+  # i marker di Leaflet stanno a 600, riquadri e cerchi a 400
+  expect_lt(riquadro$args[[2]], 400)
+  disegno <- chiamata(mappa, "addGeoJSON")
+  expect_identical(disegno$args[[1]], testo)
+  expect_identical(disegno$args[[3]], "confini")
+  opzioni <- disegno$args[[4]]
+  expect_identical(opzioni$pane, "confini")
+  expect_false(opzioni$interactive)
+  stile <- stile_confini()
+  expect_identical(opzioni$weight, stile$weight)
+  expect_identical(opzioni$fillOpacity, stile$fillOpacity)
+  expect_identical(opzioni$dashArray, stile$dashArray)
+  # appena accennati: bordo sottile, riempimento molto trasparente
+  expect_lte(stile$weight, 2)
+  expect_lte(stile$fillOpacity, 0.15)
+
+  # ridisegnare i marker non toglie i confini
+  ripulita <- pulisci_mappa(mappa_base("rfid"))
+  expect_false("clearGeoJSON" %in% chiamate(ripulita))
+  expect_false("clearGroup" %in% chiamate(ripulita))
+  # anche la mappa dei cluster spaziali ha i confini
+  expect_true("addGeoJSON" %in% chiamate(mappa_cluster(NULL)))
 })
 
 test_that("la mappa principale raggruppa i marker in cluster colorati", {
@@ -211,11 +293,62 @@ test_that("il popup dei marker riporta comune e cantiere della lettura", {
   )$args[[7]]
   expect_length(popup, nrow(spostato))
   expect_true(all(grepl("<b>Comune:</b> LIMENA", popup, fixed = TRUE)))
-  expect_true(all(grepl("<b>Cantiere:</b> RUBANO", popup, fixed = TRUE)))
-  # dopo lo spostamento il giro lo legge in un altro comune
+  # il cantiere è quello del comune in cui cade la lettura
+  expect_true(any(grepl("<b>Cantiere:</b> RUBANO", popup, fixed = TRUE)))
+  expect_true(any(grepl("<b>Cantiere:</b> CAMPOSAMPIERO", popup, fixed = TRUE)))
+  # dopo lo spostamento lo legge il giro di un altro comune: la lettura è
+  # fuori comune, e il marker porta il segnale
   expect_true(any(grepl(
-    "<b>Comune di lettura:</b> CITTADELLA",
+    "<b>Comune del giro:</b> CITTADELLA",
     popup,
     fixed = TRUE
   )))
+  expect_equal(
+    sum(grepl(
+      "Fuori comune:</b> a database LIMENA, letto a CITTADELLA",
+      popup,
+      fixed = TRUE
+    )),
+    sum(spostato$fuori_comune)
+  )
+  expect_false(any(grepl("Fuori giro", popup, fixed = TRUE)))
+  icone <- chiamata(
+    disegna_marker(mappa_base("utenza"), spostato, "utenza"),
+    "addMarkers"
+  )$args[[3]]$iconUrl
+  # due disegni: senza segnale e con il segnale del fuori comune
+  expect_length(icone$data, 2)
+  coerente <- icone$index[!spostato$fuori_comune][1]
+  expect_identical(icone$index != coerente, spostato$fuori_comune)
+})
+
+test_that("la mappa dei giri disegna le letture e mette in evidenza i comuni dei giri", {
+  letture <- cerca_giri(dati_esempio(), "VEH001", "2025-09-24", "2025-09-24")
+  mappa <- disegna_marker(mappa_base("giro"), letture, "giro")
+  marker <- chiamata(mappa, "addMarkers")
+  expect_length(marker$args[[1]], nrow(letture))
+  # senza cluster
+  expect_null(marker$args[[9]])
+  # il confine del comune del giro, un contorno senza riempimento
+  contorni <- Filter(function(k) k$method == "addPolygons", mappa$x$calls)
+  expect_length(contorni, dplyr::n_distinct(letture$comune_lettura))
+  expect_identical(contorni[[1]]$args[[3]], "comuni_giro")
+  expect_false(contorni[[1]]$args[[4]]$fill)
+  expect_match(contorni[[1]]$args[[7]], "Comune del giro: LIMENA", fixed = TRUE)
+
+  # con troppi comuni il contorno non viene disegnato; i comuni fuori tabella
+  # e quelli mancanti non contano
+  vuota <- leaflet::leaflet()
+  expect_false(
+    "addPolygons" %in% chiamate(aggiungi_comuni_giro(vuota, comuni_cantieri()$comune))
+  )
+  expect_false("addPolygons" %in% chiamate(aggiungi_comuni_giro(vuota, c("MILANO", NA))))
+  expect_false("addPolygons" %in% chiamate(aggiungi_comuni_giro(vuota, NULL)))
+  due <- aggiungi_comuni_giro(vuota, c("Valbrenta", "ASIAGO", "ASIAGO"))
+  expect_equal(sum(chiamate(due) == "addPolygons"), 2)
+  # Valbrenta ha due poligoni: restano separati
+  valbrenta <- chiamata(due, "addPolygons")$args[[1]]
+  expect_length(valbrenta, 2)
+  # ridisegnare toglie i contorni: sono forme
+  expect_true("clearShapes" %in% chiamate(pulisci_mappa(due)))
 })

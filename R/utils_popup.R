@@ -56,7 +56,10 @@ create_popup_html <- function(
   presente,
   comune = NULL,
   comune_lettura = NULL,
-  cantiere = NULL
+  cantiere = NULL,
+  comune_geografico = NULL,
+  fuori_comune = NULL,
+  fuori_giro = NULL
 ) {
   testo <- function(x, se_mancante = "N/A") {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
@@ -75,11 +78,49 @@ create_popup_html <- function(
   }
   riga_comune <- riga_facoltativa("Comune", comune)
   riga_lettura <- riga_facoltativa(
-    "Comune di lettura",
+    "Comune del giro",
     comune_lettura,
     if (is.null(comune)) TRUE else is.na(comune) | comune != comune_lettura
   )
   riga_cantiere <- riga_facoltativa("Cantiere", cantiere)
+  # Le incongruenze tra la posizione e i comuni dichiarati hanno una riga loro,
+  # che dice dove sta il punto.
+  riga_incongruenza <- function(etichetta, attiva, dichiarato) {
+    n <- length(rfid)
+    if (is.null(attiva)) {
+      return(rep("", n))
+    }
+    dove <- if (is.null(comune_geografico)) {
+      rep(NA_character_, n)
+    } else {
+      as.character(comune_geografico)
+    }
+    ifelse(
+      attiva %in% TRUE,
+      paste0(
+        "<b class='popup-incongruenza'>\u26a0 ",
+        etichetta,
+        ":</b> ",
+        dichiarato,
+        " ",
+        testo(rep_len(dichiarato_da(etichetta), n)),
+        ", letto ",
+        ifelse(
+          is.na(dove),
+          "fuori dai comuni serviti",
+          paste("a", testo(dove))
+        ),
+        "<br>"
+      ),
+      ""
+    )
+  }
+  dichiarato_da <- function(etichetta) {
+    valori <- if (etichetta == "Fuori comune") comune else comune_lettura
+    if (is.null(valori)) NA_character_ else valori
+  }
+  riga_fuori_comune <- riga_incongruenza("Fuori comune", fuori_comune, "a database")
+  riga_fuori_giro <- riga_incongruenza("Fuori giro", fuori_giro, "giro a")
 
   paste0(
     "<div style='font-family: Arial; font-size: 12px;'>",
@@ -110,6 +151,8 @@ create_popup_html <- function(
     "<b>Censito:</b> ",
     testo(presente),
     "<br>",
+    riga_fuori_comune,
+    riga_fuori_giro,
     "</div>"
   )
 }
@@ -370,9 +413,85 @@ crea_info_panel <- function(analisi, andamento = NULL) {
       }
     ),
     corpo,
+    blocco_posizione(analisi$posizione, analisi$n_letture),
     utenza,
     istogramma_annuale(andamento)
   )
+}
+
+#' Blocchi del dettaglio sulle letture fuori dai comuni dichiarati
+#'
+#' @param posizione Risultato di `posizione_rfid()`.
+#' @param n_letture Letture dell'RFID nel periodo.
+#' @return Elenco di blocchi, vuoto se tutte le letture sono coerenti.
+#' @noRd
+blocco_posizione <- function(posizione, n_letture) {
+  tags <- htmltools::tags
+  if (is.null(posizione)) {
+    return(NULL)
+  }
+  quante <- function(n) {
+    sprintf(
+      "%s su %s",
+      conta(n, "lettura", "letture"),
+      formatta_numero(n_letture)
+    )
+  }
+  distanza <- formatta_numero(tolleranza_confine_m() / 1000)
+  elenco <- function(comuni) {
+    paste(utils::head(comuni, 3), collapse = ", ")
+  }
+  blocchi <- list()
+  fuori_comune <- posizione$fuori_comune
+  if (isTRUE(fuori_comune$n > 0)) {
+    blocchi$comune <- blocco_info(
+      "attenzione",
+      "\u26a0\ufe0f LETTO FUORI DAL SUO COMUNE",
+      tags$p(
+        "A database il contenitore \u00e8 a ",
+        tags$b(elenco(fuori_comune$dichiarati)),
+        ". ",
+        quante(fuori_comune$n),
+        sprintf(" a pi\u00f9 di %s km dal confine: ", distanza),
+        tags$b(elenco(fuori_comune$letti)),
+        "."
+      ),
+      tags$p(class = "info-nota", "Probabile contenitore spostato.")
+    )
+  }
+  fuori_giro <- posizione$fuori_giro
+  if (isTRUE(fuori_giro$n > 0)) {
+    righe <- fuori_giro$letture
+    blocchi$giro <- blocco_info(
+      "attenzione",
+      "\u26a0\ufe0f LETTO FUORI DAL GIRO DEL MEZZO",
+      tags$p(
+        quante(fuori_giro$n),
+        sprintf(
+          " a pi\u00f9 di %s km dal comune del giro. Le pi\u00f9 recenti:",
+          distanza
+        )
+      ),
+      tags$ul(
+        class = "info-cronologia",
+        lapply(seq_len(nrow(righe)), function(i) {
+          letto <- righe$comune_geografico[i]
+          tags$li(sprintf(
+            "%s \u00b7 %s \u00b7 giro a %s, letto %s",
+            formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
+            righe$matricola_veicolo[i],
+            righe$comune_lettura[i],
+            if (is.na(letto)) "fuori dai comuni serviti" else paste("a", letto)
+          ))
+        })
+      ),
+      tags$p(
+        class = "info-nota",
+        "Il giro di un mezzo in un giorno si vede nella scheda Ricerca Giro."
+      )
+    )
+  }
+  unname(blocchi)
 }
 
 #' Righe "servizio: conteggio" del riquadro statistiche
@@ -476,6 +595,18 @@ crea_box_statistiche <- function(stat) {
         tags$span("\u2753 Stima incerta:"),
         tags$b(formatta_numero(stat$stima_incerta))
       )
-    }
+    },
+    # Posizione dell'ultima lettura a confronto con i comuni dichiarati.
+    tags$div(class = "stat-gruppo", "Posizione e comuni dichiarati:"),
+    tags$div(
+      class = "stat-riga",
+      tags$span("\u26a0 Fuori comune:"),
+      tags$b(formatta_numero(stat$fuori_comune %||% 0))
+    ),
+    tags$div(
+      class = "stat-riga",
+      tags$span("\u26a0 Fuori giro:"),
+      tags$b(formatta_numero(stat$fuori_giro %||% 0))
+    )
   )
 }

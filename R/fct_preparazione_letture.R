@@ -100,11 +100,13 @@ formatta_rfid <- function(df) {
 #'
 #' @param df_letture Letture con `RFID`, `giorno`, `latitudine`, `longitudine`.
 #' @param df_associazione_contenitori Associazioni dei contenitori, con
-#'   `codice_transponder`, il periodo di validità e i dati del servizio.
+#'   `codice_transponder`, il periodo di validità, i dati del servizio e
+#'   `comune_servizio`.
 #' @param df_tag Anagrafica dei tag, con `codice_transponder`.
 #' @param df_associazione_sacchetti Associazioni dei sacchetti, con
 #'   `codice_uhf` e `id_servizio`.
-#' @return Le letture con i dati del contenitore, `presente_a_database` e
+#' @return Le letture con i dati del contenitore, `comune_da_database`, cioè
+#'   il comune di servizio dell'anagrafica, `presente_a_database` e
 #'   `presente_in_tag_contenitori`.
 #' @noRd
 associa_servizio <- function(
@@ -169,11 +171,10 @@ associa_servizio <- function(
 #' turno iniziato la sera prima.
 #'
 #' Restituisce le colonne con i nomi che l'app si aspetta, comprese quelle
-#' geografiche quando i dati le permettono:
-#' - `comune_da_database` dalla colonna `comune_servizio` dell'anagrafica dei
-#'   contenitori;
-#' - `comune_lettura` dalla colonna del calendario indicata con
-#'   `colonna_comune`, cioè il comune in cui lavora il giro scelto;
+#' geografiche:
+#' - `comune_da_database` è quello già scritto da `associa_servizio()`;
+#' - `comune_lettura` viene dalla colonna `comune` del calendario, cioè il
+#'   comune in cui lavora il giro scelto;
 #' - `cantiere` dalla tabella dei comuni, per il comune del database se c'è,
 #'   altrimenti per quello di lettura.
 #'
@@ -181,9 +182,7 @@ associa_servizio <- function(
 #'
 #' @param df_letture Letture prodotte da `associa_servizio()`.
 #' @param df_calendario Calendario dei giri, con `giorno`, `ora_inizio`,
-#'   `ora_fine`, `matricola_mezzo` e `descrizione_servizio`.
-#' @param colonna_comune Nome della colonna del calendario con il comune del
-#'   giro. Se la colonna non c'è, il risultato non ha `comune_lettura`.
+#'   `ora_fine`, `matricola_mezzo`, `descrizione_servizio` e `comune`.
 #' @return Una riga per lettura, con le colonne del CSV dell'app.
 #' @noRd
 associa_servizio_atteso_da_calendario <- function(
@@ -307,5 +306,7 @@ completa_cantiere <- function(df) {
   if (!any(c("comune_da_database", "comune_lettura") %in% names(df))) {
     return(df)
   }
-  aggiungi_geografia(df)
+  # Il CSV riporta il cantiere del comune dichiarato: la posizione la guarda
+  # l'app, al caricamento.
+  aggiungi_geografia(df, da_posizione = FALSE)
 }

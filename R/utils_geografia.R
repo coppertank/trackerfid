@@ -148,6 +148,113 @@ dentro_poligoni <- function(lng, lat, poligoni) {
   sum(attraversa) %% 2 == 1
 }
 
+#' Baricentro e superficie di uno o più poligoni
+#'
+#' È il baricentro dell'area, non la media dei vertici: ogni poligono pesa
+#' per la sua superficie, e i fori si sottraggono, qualunque sia il verso in
+#' cui sono scritti i vertici. I conti sono fatti in gradi: dentro un comune
+#' la lunghezza di un grado di longitudine cambia di pochissimo.
+#'
+#' @param poligoni Vertici di uno o più poligoni, con `poligono`, `anello`,
+#'   `longitudine` e `latitudine`: i vertici di ogni anello stanno di seguito,
+#'   il primo anello di un poligono è il contorno, gli altri sono fori.
+#' @return Vettore con `longitudine`, `latitudine` e `area`, in gradi
+#'   quadrati. Senza superficie le coordinate mancano e l'area è zero.
+#' @noRd
+baricentro_poligoni <- function(poligoni) {
+  vuoto <- c(longitudine = NA_real_, latitudine = NA_real_, area = 0)
+  if (nrow(poligoni) == 0) {
+    return(vuoto)
+  }
+  # Coordinate riferite al loro punto medio: i prodotti restano piccoli e i
+  # conti non perdono cifre.
+  origine_x <- mean(poligoni$longitudine)
+  origine_y <- mean(poligoni$latitudine)
+  x <- poligoni$longitudine - origine_x
+  y <- poligoni$latitudine - origine_y
+  anello <- paste(poligoni$poligono, poligoni$anello)
+  # Il vertice che segue l'ultimo di un anello è il primo dello stesso anello.
+  successivo <- seq_along(x) + 1L
+  successivo[!duplicated(anello, fromLast = TRUE)] <- which(!duplicated(anello))
+  incrocio <- x * y[successivo] - x[successivo] * y
+  gruppo <- indice_gruppi(anello)
+  n <- max(gruppo)
+  area <- somma_per_gruppo(incrocio, gruppo, n) / 2
+  centro_x <- somma_per_gruppo((x + x[successivo]) * incrocio, gruppo, n) /
+    (6 * area)
+  centro_y <- somma_per_gruppo((y + y[successivo]) * incrocio, gruppo, n) /
+    (6 * area)
+  # Un contorno aggiunge superficie, un foro la toglie.
+  foro <- primo_per_gruppo(poligoni$anello, gruppo, n) > 1
+  peso <- abs(area) * ifelse(foro, -1, 1)
+  utili <- is.finite(centro_x) & is.finite(centro_y)
+  totale <- sum(peso[utili])
+  if (!any(utili) || totale <= 0) {
+    return(vuoto)
+  }
+  c(
+    longitudine = origine_x + sum(peso[utili] * centro_x[utili]) / totale,
+    latitudine = origine_y + sum(peso[utili] * centro_y[utili]) / totale,
+    area = totale
+  )
+}
+
+#' Baricentro di ogni comune servito
+#'
+#' È il punto in cui la mappa principale mette la bolla di un comune. Di
+#' norma è il baricentro dell'area del comune. Se quel punto cade fuori dal
+#' confine, come può succedere a un comune a mezzaluna o fatto di più parti,
+#' vale il baricentro della parte più grande; se anche quello è fuori, il
+#' centro abitato della tabella dei comuni. Il punto sta sempre dentro il
+#' confine del suo comune.
+#'
+#' @return Tibble con `comune`, `latitudine` e `longitudine`, una riga per
+#'   comune, nell'ordine della tabella dei comuni.
+#' @noRd
+baricentri_comuni <- function() {
+  if (is.null(memoria_geografia$baricentri)) {
+    comuni <- comuni_cantieri()
+    confini <- poligoni_comuni()
+    confini <- split(confini, confini$comune)
+    punti <- lapply(seq_len(nrow(comuni)), function(i) {
+      centro_abitato <- c(
+        longitudine = comuni$longitudine[i],
+        latitudine = comuni$latitudine[i]
+      )
+      confine <- confini[[comuni$comune[i]]]
+      if (is.null(confine)) {
+        return(centro_abitato)
+      }
+      candidati <- list(baricentro_poligoni(confine))
+      parti <- split(confine, confine$poligono)
+      if (length(parti) > 1) {
+        misure <- lapply(parti, baricentro_poligoni)
+        aree <- vapply(misure, function(m) m[["area"]], numeric(1))
+        candidati <- c(candidati, misure[which.max(aree)])
+      }
+      for (punto in candidati) {
+        if (
+          !anyNA(punto) &&
+            dentro_poligoni(
+              punto[["longitudine"]],
+              punto[["latitudine"]],
+              confine
+            )
+        ) {
+          return(punto[c("longitudine", "latitudine")])
+        }
+      }
+      centro_abitato
+    })
+    memoria_geografia$baricentri <- dplyr::tibble(
+      comune = comuni$comune,
+      latitudine = vapply(punti, function(p) p[["latitudine"]], numeric(1)),
+      longitudine = vapply(punti, function(p) p[["longitudine"]], numeric(1))
+    )
+  }
+  memoria_geografia$baricentri
+}
+
 #' Riquadro che contiene tutta la zona servita
 #'
 #' @return Lista con `lat_min`, `lat_max`, `lng_min`, `lng_max`.
@@ -225,27 +332,75 @@ cantiere_di_comune <- function(comune) {
 
 #' Completa le colonne geografiche delle letture
 #'
-#' Il comune assegnato a una lettura è quello del database, se c'è, altrimenti
-#' quello del giro che l'ha letta. Il cantiere è quello del comune assegnato,
-#' secondo la tabella dei comuni. Per un comune che non è in tabella resta il
-#' cantiere indicato nel file.
+#' Il comune assegnato a una lettura è quello in cui cade il suo punto, vedi
+#' `comune_geografico()`. Se il punto è fuori da tutti i comuni serviti, o se
+#' le coordinate mancano, vale il comune dichiarato: quello del database, se
+#' c'è, altrimenti quello del giro che l'ha letta. Il cantiere è quello del
+#' comune assegnato, secondo la tabella dei comuni. Per un comune che non è in
+#' tabella resta il cantiere indicato nel file.
+#'
+#' La funzione confronta poi la posizione con i comuni dichiarati, con la
+#' tolleranza di `tolleranza_confine_m()`:
+#' - `fuori_comune`: lettura di un censito oltre la tolleranza dal comune del
+#'   database. Di solito è un bidone spostato.
+#' - `fuori_giro`: lettura oltre la tolleranza dal comune del giro. Di solito
+#'   il mezzo non stava facendo il giro del calendario.
 #'
 #' @param letture Letture con `comune_da_database`, `comune_lettura` e
 #'   `cantiere`. Le colonne assenti sono trattate come vuote.
-#' @return Le letture con `comune_assegnato` e `cantiere` compilati.
+#' @param da_posizione Con `FALSE` la posizione non conta: il comune assegnato
+#'   è quello dichiarato e nessuna lettura è fuori comune o fuori giro. Serve
+#'   alla preparazione dei dati, che scrive il cantiere del comune dichiarato.
+#' @return Le letture con `comune_geografico`, `comune_assegnato`, `cantiere`,
+#'   `fuori_comune` e `fuori_giro` compilati.
 #' @noRd
-aggiungi_geografia <- function(letture) {
+aggiungi_geografia <- function(letture, da_posizione = TRUE) {
   for (campo in colonne_geografiche()) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_character_
   }
+  n <- nrow(letture)
+  con_posizione <- da_posizione &&
+    all(c("latitudine", "longitudine") %in% names(letture))
+  geografico <- if (con_posizione) {
+    indice_comune_geografico(letture$latitudine, letture$longitudine)
+  } else {
+    integer(n)
+  }
+  letture$comune_geografico <- comuni_cantieri()$comune[
+    replace(geografico, geografico == 0L, NA_integer_)
+  ]
   letture$comune_assegnato <- dplyr::coalesce(
-    letture$comune_da_database,
-    letture$comune_lettura
+    letture$comune_geografico,
+    as.character(letture$comune_da_database),
+    as.character(letture$comune_lettura)
   )
   letture$cantiere <- dplyr::coalesce(
     cantiere_di_comune(letture$comune_assegnato),
-    letture$cantiere
+    as.character(letture$cantiere)
   )
+  if (con_posizione) {
+    censita <- if ("presente_a_database" %in% names(letture)) {
+      letture$presente_a_database %in% "Presente"
+    } else {
+      !is.na(letture$comune_da_database)
+    }
+    letture$fuori_comune <- censita &
+      oltre_il_comune(
+        letture$latitudine,
+        letture$longitudine,
+        letture$comune_da_database,
+        geografico = geografico
+      )
+    letture$fuori_giro <- oltre_il_comune(
+      letture$latitudine,
+      letture$longitudine,
+      letture$comune_lettura,
+      geografico = geografico
+    )
+  } else {
+    letture$fuori_comune <- rep(FALSE, n)
+    letture$fuori_giro <- rep(FALSE, n)
+  }
   letture
 }
 
@@ -263,7 +418,14 @@ aggiungi_geografia <- function(letture) {
 #' @return Tibble con `comune` e `cantiere`, una riga per gruppo.
 #' @noRd
 geografia_per_gruppo <- function(letture, gruppo, n_gruppi = max(gruppo)) {
-  letture <- aggiungi_geografia(letture)
+  for (campo in colonne_geografiche()) {
+    if (!campo %in% names(letture)) letture[[campo]] <- NA_character_
+  }
+  # Qui conta il comune dichiarato, non quello in cui cade il punto.
+  dichiarato <- dplyr::coalesce(
+    as.character(letture$comune_da_database),
+    as.character(letture$comune_lettura)
+  )
   comune <- ultimo_valido_per_gruppo(
     letture$comune_da_database,
     gruppo,
@@ -276,8 +438,7 @@ geografia_per_gruppo <- function(letture, gruppo, n_gruppi = max(gruppo)) {
   comune <- dplyr::coalesce(comune, letto)
   del_file <- as.character(letture$cantiere)
   altro_comune <- !is.na(comune)[gruppo] &
-    (is.na(letture$comune_assegnato) |
-      letture$comune_assegnato != comune[gruppo])
+    (is.na(dichiarato) | dichiarato != comune[gruppo])
   del_file[altro_comune] <- NA_character_
   dplyr::tibble(
     comune = comune,

@@ -6,9 +6,17 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   expect_s3_class(dati$giorno_lettura, "POSIXct")
   expect_type(dati$volume_previsto, "double")
   expect_type(dati$numero_raccolte_annue_previste, "double")
-  for (campo in c(colonne_geografiche(), colonne_derivate())) {
+  for (campo in c(
+    colonne_geografiche(),
+    "comune_assegnato",
+    "comune_geografico"
+  )) {
     expect_type(dati[[campo]], "character")
   }
+  expect_type(dati$fuori_comune, "logical")
+  expect_type(dati$fuori_giro, "logical")
+  expect_false(anyNA(dati$fuori_comune))
+  expect_false(anyNA(dati$fuori_giro))
   expect_type(dati$latitudine, "double")
   expect_type(dati$longitudine, "double")
   expect_type(dati$RFID, "character")
@@ -956,11 +964,11 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
   stat <- calcola_statistiche(ultimi, dati$cantiere)
   expect_identical(
     stat$rfid_cantieri,
-    c(ASIAGO = 30L, BASSANO = 69L, CAMPOSAMPIERO = 89L, RUBANO = 63L)
+    c(ASIAGO = 33L, BASSANO = 66L, CAMPOSAMPIERO = 92L, RUBANO = 60L)
   )
   expect_identical(
     stat$letture_cantieri,
-    c(ASIAGO = 669L, BASSANO = 2011L, CAMPOSAMPIERO = 2339L, RUBANO = 1456L)
+    c(ASIAGO = 691L, BASSANO = 1879L, CAMPOSAMPIERO = 2568L, RUBANO = 1337L)
   )
   expect_equal(sum(stat$rfid_cantieri), stat$totale)
   expect_equal(sum(stat$letture_cantieri), nrow(dati))
@@ -1142,4 +1150,110 @@ test_that("i sacchetti stanno sotto la loro tipologia, censiti o no", {
   expect_true(analizza_rfid(d[d$RFID == codice_sacchetto(1), ])$sacchetto)
   expect_true(analizza_rfid(d[d$RFID == codice_sacchetto(2), ])$sacchetto)
   expect_false(analizza_rfid(d[d$RFID == "0000ABC123", ])$sacchetto)
+})
+
+# Letture con le incongruenze scritte a mano: A coerente, B fuori comune, C
+# fuori giro, D fuori comune e fuori giro.
+letture_coerenza <- function() {
+  d <- dplyr::bind_rows(
+    letture_rfid("A", "2025-03-01"),
+    letture_rfid("B", "2025-03-02"),
+    letture_rfid("C", "2025-03-03", presente = "Non Presente", atteso = "SECCO PAP"),
+    letture_rfid("D", "2025-03-04")
+  )
+  d$fuori_comune <- c(FALSE, TRUE, FALSE, TRUE)
+  d$fuori_giro <- c(FALSE, FALSE, TRUE, TRUE)
+  d
+}
+
+test_that("il filtro sulla posizione tiene le letture delle voci spuntate", {
+  expect_identical(
+    names(stati_coerenza()),
+    c("coerente", "fuori_comune", "fuori_giro")
+  )
+  d <- letture_coerenza()
+  rimasti <- function(...) d$RFID[maschera_filtri(d, ...)]
+  expect_identical(rimasti(), c("A", "B", "C", "D"))
+  expect_identical(rimasti(coerenza_escluse = "coerente"), c("B", "C", "D"))
+  # una lettura fuori comune e fuori giro resta se \u00e8 spuntata una delle due voci
+  expect_identical(rimasti(coerenza_escluse = "fuori_comune"), c("A", "C", "D"))
+  expect_identical(rimasti(coerenza_escluse = "fuori_giro"), c("A", "B", "D"))
+  expect_identical(
+    rimasti(coerenza_escluse = c("coerente", "fuori_comune")),
+    c("C", "D")
+  )
+  expect_identical(
+    rimasti(coerenza_escluse = c("coerente", "fuori_giro")),
+    c("B", "D")
+  )
+  expect_identical(
+    rimasti(coerenza_escluse = c("fuori_comune", "fuori_giro")),
+    "A"
+  )
+  expect_identical(rimasti(coerenza_escluse = names(stati_coerenza())), character(0))
+  # una voce sconosciuta non filtra niente; gli altri filtri si sommano
+  expect_identical(rimasti(coerenza_escluse = "altro"), c("A", "B", "C", "D"))
+  expect_identical(
+    rimasti(coerenza_escluse = "coerente", stato_db = "Presente"),
+    c("B", "D")
+  )
+  # un dataset senza le colonne \u00e8 tutto coerente
+  semplice <- letture_test()
+  expect_true(all(maschera_filtri(semplice, coerenza_escluse = "fuori_giro")))
+  expect_false(any(maschera_filtri(semplice, coerenza_escluse = "coerente")))
+  expect_true(all(coerenza_letture(semplice)$coerente))
+  # un valore mancante vale come coerente
+  d$fuori_giro[3] <- NA
+  expect_identical(rimasti(coerenza_escluse = "coerente"), c("B", "D"))
+})
+
+test_that("le statistiche contano i bidoni fuori comune e fuori giro", {
+  stat <- calcola_statistiche(letture_coerenza())
+  expect_identical(stat$fuori_comune, 2L)
+  expect_identical(stat$fuori_giro, 2L)
+  senza <- calcola_statistiche(deduplica_ultimo_rfid(letture_test()))
+  expect_identical(senza$fuori_comune, 0L)
+  expect_identical(senza$fuori_giro, 0L)
+  # sul dataset di esempio del 2025, per ultima lettura di ogni RFID
+  nel_2025 <- aggiungi_servizio_icona(
+    filtra_periodo(dati_esempio(), periodo_anno(2025))
+  )
+  esempio <- calcola_statistiche(deduplica_ultimo_rfid(nel_2025))
+  expect_identical(esempio$fuori_comune, 1L)
+  expect_identical(esempio$fuori_giro, 20L)
+})
+
+test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarati", {
+  d <- dati_esempio()
+  # spostato: otto letture a Cittadella, registrato a Limena
+  spostato <- analizza_rfid(d[d$RFID == "RFD20250905100", ])$posizione
+  expect_identical(spostato$fuori_comune$n, 8L)
+  expect_identical(spostato$fuori_comune$dichiarati, "LIMENA")
+  expect_identical(spostato$fuori_comune$letti, "CITTADELLA")
+  expect_identical(spostato$fuori_giro$n, 0L)
+  expect_null(spostato$fuori_giro$letture)
+
+  # il tag fermo in deposito \u00e8 letto da giri di ogni comune
+  deposito <- analizza_rfid(d[d$RFID == "RFD20241001301", ])$posizione
+  expect_identical(deposito$fuori_comune$n, 0L)
+  expect_gt(deposito$fuori_giro$n, 300)
+  expect_identical(deposito$fuori_giro$letti, "CAMPOSAMPIERO")
+  expect_gt(length(deposito$fuori_giro$dichiarati), 10)
+  # le ultime cinque letture fuori giro, dalla pi\u00f9 recente
+  ultime <- deposito$fuori_giro$letture
+  expect_equal(nrow(ultime), 5)
+  expect_false(is.unsorted(rev(ultime$giorno_lettura)))
+  expect_named(
+    ultime,
+    c("giorno_lettura", "matricola_veicolo", "comune_lettura", "comune_geografico")
+  )
+
+  # un contenitore coerente non ha niente da segnalare
+  coerente <- analizza_rfid(d[d$RFID == "RFD20250901001", ])$posizione
+  expect_identical(coerente$fuori_comune$n, 0L)
+  expect_identical(coerente$fuori_giro$n, 0L)
+  # letture senza le colonne della posizione
+  semplice <- analizza_rfid(letture_rfid("A", date_2025(3)))$posizione
+  expect_identical(semplice$fuori_comune$n, 0L)
+  expect_identical(semplice$fuori_giro$n, 0L)
 })

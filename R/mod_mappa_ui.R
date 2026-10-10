@@ -3,14 +3,18 @@
 #' @param id Identificativo del modulo.
 #' @param modalita `"cluster"` (mappa principale), `"rfid"` o `"utenza"`.
 #' @noRd
-mod_mappa_ui <- function(id, modalita = c("cluster", "rfid", "utenza")) {
+mod_mappa_ui <- function(
+  id,
+  modalita = c("cluster", "rfid", "utenza", "giro")
+) {
   modalita <- match.arg(modalita)
   ns <- NS(id)
   etichetta <- switch(
     modalita,
     cluster = "Clustering",
     rfid = "Ricerca RFID",
-    utenza = "Ricerca Utenza"
+    utenza = "Ricerca Utenza",
+    giro = "Ricerca Giro"
   )
   div(
     class = "pannello-mappa",

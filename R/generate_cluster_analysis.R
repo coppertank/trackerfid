@@ -23,10 +23,12 @@
 #'   lettura appartiene a un cluster; con valori maggiori le letture isolate
 #'   finiscono nel cluster 0.
 #'
-#' @return Un tibble con 27 colonne, una riga per cluster di ogni RFID:
+#' @return Un tibble con 30 colonne, una riga per cluster di ogni RFID:
 #'   identificazione (`RFID`, `cluster_id`, `globale_conteggio_cluster`),
 #'   tempi globali e del cluster, `presente_a_database`, `cantiere` e
-#'   `comune` dell'RFID, servizio transponder
+#'   `comune` dell'RFID, `comune_geografico` in cui cade il cluster,
+#'   `incongruenza_comune` e `distanza_comune_m` rispetto al comune dichiarato,
+#'   servizio transponder
 #'   (attuale e cronologia dei cambi), servizio atteso (prevalente e
 #'   composizione), volumi, periodo di analisi, raccolte annue previste e
 #'   presunte, numero di letture, baricentro, `cluster_dispersione_90th_m`,

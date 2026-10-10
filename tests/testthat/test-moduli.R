@@ -848,13 +848,15 @@ test_that("le scelte geografiche restano al cambio di periodo e si azzerano con 
     {
       filtrati <- function() session$getReturned()$dati_filtrati()
       session$flushReact()
-      session$setInputs(cantiere_check = "BASSANO", comuni = "ROSA'")
-      expect_true(all(filtrati()$comune_assegnato == "ROSA'"))
+      session$setInputs(cantiere_check = "BASSANO", comuni = "BASSANO DEL GRAPPA")
+      expect_gt(nrow(filtrati()), 0)
+      expect_true(all(filtrati()$comune_assegnato == "BASSANO DEL GRAPPA"))
 
       # cambio di periodo: cantiere e comune scelti restano
       dati(filtra_periodo(dati_esempio(), periodo_anno(2024)))
       session$flushReact()
-      expect_true(all(filtrati()$comune_assegnato == "ROSA'"))
+      expect_gt(nrow(filtrati()), 0)
+      expect_true(all(filtrati()$comune_assegnato == "BASSANO DEL GRAPPA"))
       expect_true(all(lubridate::year(filtrati()$giorno_lettura) == 2024))
 
       # nuovo dataset: tutti i cantieri e tutti i comuni
@@ -974,7 +976,7 @@ test_that("oltre il limite la mappa principale passa alla vista aggregata", {
   )
 })
 
-test_that("sotto il limite la mappa principale disegna tutti i bidoni", {
+test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, bidoni", {
   withr::local_options(trackerfid.max_marker = NULL)
   ultimi <- deduplica_ultimo_rfid(dati_esempio())
   dati <- shiny::reactiveVal(ultimi)
@@ -983,19 +985,51 @@ test_that("sotto il limite la mappa principale disegna tutti i bidoni", {
     args = list(dati = dati, modalita = "cluster"),
     {
       selezione <- session$getReturned()
+      # da lontano una bolla per cantiere
       session$setInputs(mappa_zoom = 9)
+      expect_identical(vista()$tipo, "cantiere")
+      expect_identical(sort(bolle()$nome), cantieri())
+      expect_equal(sum(bolle()$n), nrow(ultimi))
+      expect_null(disegnati())
+      expect_match(output$riepilogo, "^251 bidoni sulla mappa \\(ultima lettura\\)")
+      expect_match(output$riepilogo, "una bolla per cantiere")
+
+      # avvicinandosi una bolla per comune
+      session$setInputs(mappa_zoom = 11)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "comune")
+      expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
+      expect_match(output$riepilogo, "una bolla per comune")
+
+      # da vicino tutti i bidoni, uno per uno
+      session$setInputs(mappa_zoom = 14)
+      session$elapse(400)
       expect_identical(vista()$tipo, "tutti")
       expect_equal(nrow(disegnati()), nrow(ultimi))
+      expect_null(bolle())
       expect_identical(
         output$riepilogo,
         "251 bidoni sulla mappa (ultima lettura)"
       )
-      # spostamenti e zoom non cambiano niente
-      session$setInputs(mappa_zoom = 14)
+      session$setInputs(mappa_marker_click = list(id = "3"))
+      expect_identical(selezione()$rfid, ultimi$RFID[3])
+
+      # da vicino spostamenti e zoom non ridisegnano niente
+      session$setInputs(
+        mappa_zoom = 16,
+        mappa_bounds = list(north = 45.8, south = 45.7, east = 11.8, west = 11.7)
+      )
       session$elapse(400)
       expect_identical(vista()$tipo, "tutti")
-      expect_identical(vista()$zoom, 9)
-      session$setInputs(mappa_marker_click = list(id = "3"))
+      expect_identical(vista()$zoom, 14)
+
+      # tornando lontano tornano le bolle
+      session$setInputs(mappa_zoom = 10)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "cantiere")
+      expect_null(disegnati())
+      # un click su una bolla non seleziona un bidone
+      session$setInputs(mappa_marker_click = list(id = "bolla-2"))
       expect_identical(selezione()$rfid, ultimi$RFID[3])
     }
   )
@@ -1041,14 +1075,15 @@ test_that("l'interfaccia ha i filtri geografici e le sole quattro schede previst
   expect_match(html, '"placeholder":"Tutti i comuni"', fixed = TRUE)
   # i campi di caricamento accettano i tre formati
   expect_match(html, 'accept=".csv,.txt,.gz,.parquet', fixed = TRUE)
-  # le schede sono le tre mappe e l'analisi dei cluster, con le sue tre viste
+  # le schede sono le tre mappe, la ricerca dei giri e l'analisi dei cluster,
+  # con le sue tre viste
   schede <- regmatches(
     html,
     gregexpr('data-toggle="tab"[^>]*data-value="[a-z]+"', html)
   )[[1]]
   expect_identical(
     sub('.*data-value="([a-z]+)"', "\\1", schede),
-    c("mappa", "rfid", "utenza", "cluster", "tabella", "grafici", "mappa")
+    c("mappa", "rfid", "giro", "utenza", "cluster", "tabella", "grafici", "mappa")
   )
 })
 
@@ -1112,4 +1147,206 @@ test_that("i sacchetti stanno tra i servizi del loro stato e seguono le scelte r
       c(sacchetto(1), sacchetto(2), "0000ABC123")
     )
   })
+})
+
+test_that("il filtro sulla posizione restringe la mappa alle letture fuori comune o fuori giro", {
+  dati <- shiny::reactiveVal(
+    aggiungi_servizio_icona(filtra_periodo(dati_esempio(), periodo_anno(2025)))
+  )
+  shiny::testServer(mod_filtri_server, args = list(dati = dati), {
+    filtrati <- function() session$getReturned()$dati_filtrati()
+    session$flushReact()
+    tutti <- nrow(filtrati())
+    expect_equal(tutti, 248)
+
+    # solo le letture fuori comune: il contenitore spostato e il tag sul mezzo
+    session$setInputs(coerenza_check = "fuori_comune")
+    expect_setequal(filtrati()$RFID, c("RFD20250905100", "RFD20250203302"))
+    expect_true(all(filtrati()$fuori_comune))
+    expect_match(
+      as.character(output$stat_box$html),
+      "Fuori comune:</span>\\s*<b>2</b>"
+    )
+
+    # solo fuori giro: la mappa mostra l'ultima lettura fuori giro di ogni RFID
+    session$setInputs(coerenza_check = "fuori_giro")
+    expect_true(all(filtrati()$fuori_giro))
+    expect_equal(
+      nrow(filtrati()),
+      dplyr::n_distinct(dati()$RFID[dati()$fuori_giro])
+    )
+    expect_gt(nrow(filtrati()), 30)
+    expect_true(all(c("RFD20241001301", "RFD20250203302") %in% filtrati()$RFID))
+
+    # solo le letture coerenti
+    session$setInputs(coerenza_check = "coerente")
+    expect_false(any(filtrati()$fuori_comune | filtrati()$fuori_giro))
+    # nessuna voce: nessun bidone
+    session$setInputs(coerenza_check = NULL)
+    expect_equal(nrow(filtrati()), 0)
+    # il reset rimette tutte le voci
+    session$setInputs(reset = 1)
+    expect_equal(nrow(filtrati()), tutti)
+  })
+})
+
+test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, giorni e filtri", {
+  dati <- shiny::reactiveVal(filtra_periodo(dati_esempio(), periodo_anno(2025)))
+  shiny::testServer(mod_giro_server, args = list(dati = dati), {
+    restituito <- session$getReturned()
+    session$flushReact()
+    # all'avvio: tutti i mezzi, ultimo giorno con letture
+    expect_identical(stato$mezzo, "")
+    expect_identical(stato$dal, as.Date("2025-12-31"))
+    expect_identical(stato$al, as.Date("2025-12-31"))
+    all_avvio <- restituito$risultati()
+    expect_true(all(all_avvio$giorno == as.Date("2025-12-31")))
+    expect_gt(nrow(all_avvio), 0)
+    expect_null(restituito$messaggio())
+
+    # un mezzo, un giorno: il giro sbagliato
+    session$setInputs(
+      mezzo = "VEH001",
+      giorni = as.Date(c("2025-09-24", "2025-09-24"))
+    )
+    expect_equal(nrow(restituito$risultati()), 10)
+    expect_true(all(restituito$risultati()$matricola_veicolo == "VEH001"))
+    giri <- restituito$riepilogo()
+    expect_equal(nrow(giri), 1)
+    expect_identical(giri$comune_giro, "LIMENA")
+    expect_identical(giri$fuori_giro, 10L)
+    expect_match(as.character(output$esito$html), "1 giro \u00b7 10 letture")
+    expect_match(as.character(output$esito$html), "1 giro con letture fuori giro")
+
+    # un intervallo di giorni, tutti i mezzi, solo le letture fuori giro
+    session$setInputs(
+      mezzo = "",
+      giorni = as.Date(c("2025-09-22", "2025-09-28")),
+      solo = "fuori_giro"
+    )
+    settimana <- restituito$risultati()
+    expect_true(all(settimana$fuori_giro))
+    expect_gt(dplyr::n_distinct(settimana$matricola_veicolo), 1)
+    expect_true(all(
+      settimana$giorno >= as.Date("2025-09-22") &
+        settimana$giorno <= as.Date("2025-09-28")
+    ))
+    giri <- restituito$riepilogo()
+    expect_true(all(giri$fuori_giro > 0))
+
+    # un click su una riga della tabella: le sole letture di quel giro
+    riga <- which(giri$matricola_veicolo == "VEH001" & giri$fuori_giro == 10)
+    session$setInputs(tabella_rows_selected = riga)
+    expect_equal(nrow(restituito$risultati()), 10)
+    expect_true(all(restituito$risultati()$comune_lettura == "LIMENA"))
+    # tolta la selezione tornano tutte
+    session$setInputs(tabella_rows_selected = NULL)
+    expect_equal(nrow(restituito$risultati()), nrow(settimana))
+    # una riga che non esiste non sceglie niente
+    session$setInputs(tabella_rows_selected = 9999)
+    expect_equal(nrow(restituito$risultati()), nrow(settimana))
+
+    # cambiare la ricerca toglie il giro scelto
+    session$setInputs(tabella_rows_selected = riga)
+    session$setInputs(solo = NULL)
+    expect_gt(nrow(restituito$risultati()), nrow(settimana))
+
+    # un intervallo scritto a met\u00e0, o rovesciato, non cambia la ricerca
+    session$setInputs(giorni = as.Date(c("2025-09-28", "2025-09-22")))
+    expect_identical(stato$dal, as.Date("2025-09-22"))
+    session$setInputs(giorni = as.Date(c("2025-09-22", NA)))
+    expect_identical(stato$al, as.Date("2025-09-28"))
+
+    # nessuna lettura: avviso sulla mappa
+    session$setInputs(
+      mezzo = "VEH005",
+      giorni = as.Date(c("2025-09-28", "2025-09-28"))
+    )
+    expect_equal(nrow(restituito$risultati()), 0)
+    expect_match(restituito$messaggio(), "Nessuna lettura")
+
+    # un nuovo periodo riporta la ricerca ai valori predefiniti
+    dati(filtra_periodo(dati_esempio(), periodo_anno(2024)))
+    session$flushReact()
+    expect_identical(stato$mezzo, "")
+    expect_identical(stato$solo, character(0))
+    expect_identical(stato$dal, as.Date("2024-12-31"))
+    expect_true(all(restituito$risultati()$giorno == as.Date("2024-12-31")))
+
+    # senza letture non c'\u00e8 niente da cercare
+    dati(NULL)
+    session$flushReact()
+    expect_null(restituito$risultati())
+    expect_equal(nrow(restituito$riepilogo()), 0)
+  })
+})
+
+test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
+  letture <- cerca_giri(dati_esempio(), "VEH001", "2025-09-22", "2025-09-28")
+  dati <- shiny::reactiveVal(letture)
+  shiny::testServer(
+    mod_mappa_server,
+    args = list(dati = dati, modalita = "giro"),
+    {
+      selezione <- session$getReturned()
+      session$setInputs(mappa_zoom = 11)
+      # nessuna bolla: tutte le letture, a qualsiasi zoom
+      expect_identical(vista()$tipo, "tutti")
+      expect_equal(nrow(disegnati()), nrow(letture))
+      expect_match(
+        output$riepilogo,
+        sprintf("^%d letture di %d bidoni", nrow(letture), dplyr::n_distinct(letture$RFID))
+      )
+      expect_match(
+        output$riepilogo,
+        sprintf("%d fuori giro", sum(letture$fuori_giro)),
+        fixed = TRUE
+      )
+      expect_gte(sum(letture$fuori_giro), 10)
+      session$setInputs(mappa_marker_click = list(id = "4"))
+      expect_identical(selezione()$rfid, letture$RFID[4])
+    }
+  )
+  # oltre il limite la mappa tiene per prime le letture con un'incongruenza
+  withr::local_options(trackerfid.max_letture_ricerca = 12)
+  shiny::testServer(
+    mod_mappa_server,
+    args = list(dati = dati, modalita = "giro"),
+    {
+      session$setInputs(mappa_zoom = 11)
+      expect_equal(nrow(disegnati()), 12)
+      expect_gte(sum(disegnati()$fuori_giro), 10)
+      expect_match(output$riepilogo, "sulla mappa 12 letture")
+    }
+  )
+})
+
+test_that("l'interfaccia ha la scheda dei giri, il suo pannello e il filtro sulla posizione", {
+  html <- as.character(app_ui(NULL))
+  expect_match(html, "Ricerca Giro", fixed = TRUE)
+  expect_match(html, 'id="giro-mezzo"', fixed = TRUE)
+  expect_match(html, 'id="giro-giorni"', fixed = TRUE)
+  expect_match(html, 'id="giro-solo"', fixed = TRUE)
+  expect_match(html, 'id="giro-tabella"', fixed = TRUE)
+  expect_match(html, 'id="mappa_giro-mappa"', fixed = TRUE)
+  expect_match(html, "input.scheda_attiva == &#39;giro&#39;", fixed = TRUE)
+  expect_match(html, "Visualizzazione: Ricerca Giro", fixed = TRUE)
+  # la scheda dei giri sta dopo la ricerca per RFID
+  expect_lt(
+    regexpr('data-value="rfid"', html, fixed = TRUE),
+    regexpr('data-value="giro"', html, fixed = TRUE)
+  )
+  expect_lt(
+    regexpr('data-value="giro"', html, fixed = TRUE),
+    regexpr('data-value="utenza"', html, fixed = TRUE)
+  )
+  # il filtro sulla posizione, con le tre voci spuntate
+  expect_match(html, 'id="filtri-coerenza_check"', fixed = TRUE)
+  for (voce in names(stati_coerenza())) {
+    expect_match(
+      html,
+      sprintf('name="filtri-coerenza_check" value="%s" checked', voce),
+      fixed = TRUE
+    )
+  }
 })

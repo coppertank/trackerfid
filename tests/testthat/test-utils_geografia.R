@@ -1,7 +1,7 @@
-test_that("la tabella dei comuni ha 57 comuni in quattro cantieri", {
+test_that("la tabella dei comuni ha 66 comuni in quattro cantieri", {
   comuni <- comuni_cantieri()
   expect_named(comuni, c("comune", "cantiere", "latitudine", "longitudine"))
-  expect_equal(nrow(comuni), 57)
+  expect_equal(nrow(comuni), 66)
   expect_equal(anyDuplicated(comuni$comune), 0)
   expect_identical(
     cantieri(),
@@ -9,13 +9,35 @@ test_that("la tabella dei comuni ha 57 comuni in quattro cantieri", {
   )
   expect_identical(
     as.integer(table(comuni$cantiere)[cantieri()]),
-    c(7L, 15L, 23L, 12L)
+    c(7L, 17L, 27L, 15L)
   )
+  # Vigonza sta sotto Camposampiero, come ha precisato l'azienda
+  expect_identical(cantiere_di_comune("VIGONZA"), "CAMPOSAMPIERO")
+  # i comuni aggiunti con l'ultimo elenco dell'azienda
+  expect_true(all(
+    c(
+      "SOLAGNA",
+      "VALBRENTA",
+      "TREBASELEGHE",
+      "VILLA DEL CONTE",
+      "VILLANOVA DI CAMPOSAMPIERO",
+      "VEGGIANO",
+      "VIGODARZERE",
+      "VIGONZA",
+      "VILLAFRANCA PADOVANA"
+    ) %in%
+      comuni$comune
+  ))
   # i nomi sono in maiuscolo, come nel file dell'azienda
   expect_identical(comuni$comune, toupper(comuni$comune))
   # i centri abitati stanno nel Veneto centrale
   expect_true(all(comuni$latitudine > 45.2 & comuni$latitudine < 46.1))
   expect_true(all(comuni$longitudine > 11.3 & comuni$longitudine < 12.1))
+  # Valstagna non è più un comune: dal 2019 fa parte di Valbrenta, e la
+  # preparazione dei dati lo corregge prima che arrivi all'app
+  expect_false("VALSTAGNA" %in% comuni$comune)
+  expect_true(is.na(cantiere_di_comune("VALSTAGNA")))
+  expect_identical(normalizza_comune("Valstagna"), "VALSTAGNA")
   # il comune che dà il nome a un cantiere gli appartiene
   expect_identical(
     cantiere_di_comune(c(
@@ -153,6 +175,106 @@ test_that("un punto è dentro i poligoni se attraversa un numero dispari di lati
   expect_true(dentro_poligoni(5, 5, aperto))
   expect_false(dentro_poligoni(11, 5, aperto))
   expect_false(dentro_poligoni(1, 1, poligoni[0, ]))
+})
+
+test_that("il baricentro è quello dell'area, con più poligoni e con i fori", {
+  quadrato <- function(nome, x0, y0, lato, anello = 1) {
+    dplyr::tibble(
+      poligono = nome,
+      anello = anello,
+      longitudine = x0 + c(0, lato, lato, 0),
+      latitudine = y0 + c(0, 0, lato, lato)
+    )
+  }
+  atteso <- function(x, y, area) c(longitudine = x, latitudine = y, area = area)
+
+  semplice <- quadrato("a", 0, 0, 2)
+  expect_equal(baricentro_poligoni(semplice), atteso(1, 1, 4))
+  # il verso dei vertici non conta
+  expect_equal(baricentro_poligoni(semplice[4:1, ]), atteso(1, 1, 4))
+  # nemmeno il primo vertice ripetuto in coda, come nei file GeoJSON
+  expect_equal(
+    baricentro_poligoni(rbind(semplice, semplice[1, ])),
+    atteso(1, 1, 4)
+  )
+  # non è la media dei vertici: tanti vertici su un lato non lo spostano
+  fitto <- dplyr::tibble(
+    poligono = "a",
+    anello = 1,
+    longitudine = c(0, 0.5, 1, 1.5, 2, 2, 0),
+    latitudine = c(0, 0, 0, 0, 0, 2, 2)
+  )
+  expect_equal(baricentro_poligoni(fitto), atteso(1, 1, 4))
+  expect_false(isTRUE(all.equal(mean(fitto$latitudine), 1)))
+
+  # due poligoni: il più grande pesa di più
+  due <- rbind(semplice, quadrato("b", 10, 0, 1))
+  expect_equal(baricentro_poligoni(due), atteso(2.9, 0.9, 5))
+  # un foro toglie superficie, qualunque sia il verso dei suoi vertici
+  forato <- rbind(quadrato("a", 0, 0, 4), quadrato("a", 0, 0, 2, anello = 2))
+  expect_equal(baricentro_poligoni(forato), atteso(7 / 3, 7 / 3, 12))
+  rovescio <- rbind(
+    quadrato("a", 0, 0, 4),
+    quadrato("a", 0, 0, 2, anello = 2)[4:1, ]
+  )
+  expect_equal(baricentro_poligoni(rovescio), atteso(7 / 3, 7 / 3, 12))
+  # con coordinate vere, lontane dall'origine, il conto non perde cifre
+  expect_equal(
+    baricentro_poligoni(quadrato("a", 11.7, 45.7, 0.01)),
+    atteso(11.705, 45.705, 1e-4),
+    tolerance = 1e-9
+  )
+
+  # senza superficie non c'è baricentro
+  nessuno <- atteso(NA_real_, NA_real_, 0)
+  expect_identical(baricentro_poligoni(semplice[0, ]), nessuno)
+  expect_identical(baricentro_poligoni(semplice[1:2, ]), nessuno)
+})
+
+test_that("ogni comune ha un baricentro dentro il suo confine", {
+  baricentri <- baricentri_comuni()
+  comuni <- comuni_cantieri()
+  expect_named(baricentri, c("comune", "latitudine", "longitudine"))
+  expect_identical(baricentri$comune, comuni$comune)
+  expect_false(anyNA(baricentri))
+  # calcolati una volta sola
+  expect_identical(baricentri_comuni(), baricentri)
+
+  confini <- poligoni_comuni()
+  confini <- split(confini, confini$comune)
+  dentro <- mapply(
+    function(comune, lng, lat) dentro_poligoni(lng, lat, confini[[comune]]),
+    baricentri$comune,
+    baricentri$longitudine,
+    baricentri$latitudine
+  )
+  expect_true(all(dentro))
+
+  # per quasi tutti i comuni è il baricentro dell'area
+  area <- t(vapply(
+    comuni$comune,
+    function(comune) baricentro_poligoni(confini[[comune]]),
+    numeric(3)
+  ))
+  uguali <- abs(area[, "longitudine"] - baricentri$longitudine) < 1e-9 &
+    abs(area[, "latitudine"] - baricentri$latitudine) < 1e-9
+  expect_gte(sum(uguali), 60)
+  # anche per Valbrenta, che ha due poligoni
+  expect_true(uguali[comuni$comune == "VALBRENTA"])
+  # dove il baricentro dell'area cade fuori dal confine vale un punto che sta
+  # dentro: qui il centro abitato della tabella dei comuni
+  for (i in which(!uguali)) {
+    expect_false(
+      dentro_poligoni(
+        area[i, "longitudine"],
+        area[i, "latitudine"],
+        confini[[comuni$comune[i]]]
+      ),
+      info = comuni$comune[i]
+    )
+    expect_equal(baricentri$latitudine[i], comuni$latitudine[i])
+    expect_equal(baricentri$longitudine[i], comuni$longitudine[i])
+  }
 })
 
 test_that("i vertici si leggono da poligoni e multipoligoni", {
@@ -340,7 +462,7 @@ test_that("sul dataset di esempio ogni contenitore censito ha il comune del data
   )
   expect_equal(
     as.integer(table(geografia$cantiere)[cantieri()]),
-    c(30, 69, 89, 63)
+    c(34, 67, 89, 61)
   )
   # ogni lettura ha il comune del giro: nessun RFID resta senza cantiere
   expect_false(anyNA(geografia$comune))

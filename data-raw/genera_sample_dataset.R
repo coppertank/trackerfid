@@ -135,6 +135,20 @@ giro_del_mezzo <- function(matricola, quando) {
   del_giorno[[which.min(distanza)]]$giro
 }
 
+# Turno che il mezzo stava facendo al momento di una lettura, come posizione
+# nel calendario: stessa regola di `giro_del_mezzo()`.
+indice_turno_del_mezzo <- function(matricola, quando) {
+  gs <- giorno_settimana(as.Date(quando, tz = "UTC"))
+  ora <- as.numeric(format(quando, "%H", tz = "UTC")) +
+    as.numeric(format(quando, "%M", tz = "UTC")) / 60
+  del_giorno <- which(vapply(turni, function(t) t$m == matricola && gs %in% t$giorni, logical(1)))
+  stopifnot(length(del_giorno) > 0)
+  distanza <- vapply(turni[del_giorno], function(t) {
+    if (ora >= t$da && ora < t$a) 0 else min(abs(ora - t$da), abs(ora - t$a))
+  }, numeric(1))
+  del_giorno[which.min(distanza)]
+}
+
 # Indici dei turni che raccolgono una tipologia.
 turni_servizio <- function(servizio) {
   which(vapply(turni, function(t) !is.na(t$s) && t$s == servizio, logical(1)))
@@ -329,11 +343,30 @@ pos <- t(vapply(seq_len(nrow(bidoni)), function(i) posizione_casuale(), numeric(
 bidoni$lat <- pos[, "lat"]
 bidoni$lng <- pos[, "lng"]
 
+# Casi con calendario fissato: prime letture scritte a mano, poi il calendario.
+imposta <- function(k, turno, giorno, ora, dal, sfasamento = 0, esposizione = 0.95) {
+  bidoni$turno[k] <<- turno
+  bidoni$giorno[k] <<- giorno
+  bidoni$ora_tipica[k] <<- ora
+  bidoni$attivo_dal[k] <<- as.Date(dal)
+  bidoni$sfasamento[k] <<- sfasamento
+  bidoni$esposizione[k] <<- esposizione
+  bidoni$cadenza[k] <<- 14L
+}
+imposta(k_cambio_servizio, turno = 2, giorno = 2, ora = 8.6, dal = "2025-10-07")
+imposta(k_esempio_secco, turno = 1, giorno = 1, ora = 6.3, dal = "2025-09-15")
+imposta(k_cambio_utenza, turno = 10, giorno = 6, ora = 13.0, dal = "2025-10-11")
+imposta(k_spostato, turno = 4, giorno = 5, ora = 10.5, dal = "2025-10-03")
+imposta(k_np_esempio, turno = 1, giorno = 1, ora = 6.5, dal = "2025-09-15")
+bidoni$raccolte[c(k_cambio_servizio, k_esempio_secco, k_cambio_utenza, k_spostato)] <- 26L
+
 # ---- Geografia: comuni e cantieri del territorio servito ----------------------
 #
-# Ogni contenitore riceve un comune vero. Le estrazioni di questa parte hanno
-# un seme proprio e non toccano la sequenza casuale principale: cambiare la
-# geografia non cambia date, mezzi e servizi delle letture.
+# Come nei dati reali, il calendario dei mezzi dice in quale comune lavora
+# ogni giro: qui un giro e' un turno in uno dei suoi giorni della settimana.
+# Ogni contenitore sta nel comune del proprio giro. Le estrazioni di questa
+# parte hanno un seme proprio e non toccano la sequenza casuale principale:
+# cambiare la geografia non cambia date, mezzi e servizi delle letture.
 
 comuni <- utils::read.csv("inst/extdata/comuni_cantieri.csv", stringsAsFactors = FALSE)
 # Confini dei comuni: i vertici di ogni comune, pronti per il controllo.
@@ -361,31 +394,65 @@ nel_comune <- function(lat, lng, comune) {
   dentro_poligoni(lng, lat, confini[[comune]])
 }
 
-# Comune che contiene un punto. Per un punto fuori dalla zona servita, il
-# comune con il centro piu' vicino.
-comune_del_punto <- function(lat, lng) {
-  vicini <- order((comuni$latitudine - lat)^2 + ((comuni$longitudine - lng) * cos(45.6 * pi / 180))^2)
-  for (i in utils::head(vicini, 8)) {
-    if (nel_comune(lat, lng, comuni$comune[i])) {
-      return(comuni$comune[i])
-    }
-  }
-  comuni$comune[vicini[1]]
+# Giri del calendario: una riga per turno e giorno della settimana.
+giri <- do.call(rbind, lapply(seq_along(turni), function(indice) {
+  data.frame(turno = indice, giorno = turni[[indice]]$giorni)
+}))
+giro_di <- function(turno, giorno) {
+  match(paste(turno, giorno), paste(giri$turno, giri$giorno))
+}
+bidoni$giro <- giro_di(bidoni$turno, bidoni$giorno)
+stopifnot(!anyNA(bidoni$giro))
+giri$bidoni <- tabulate(bidoni$giro, nrow(giri))
+
+# Giri con il comune fissato, per i casi speciali.
+giri$comune <- NA_character_
+# - I contenitori delle righe di esempio stanno a Bassano del Grappa: li
+#   leggono il lunedi' il turno 1, il martedi' il turno 2, la domenica il 3.
+giri$comune[giro_di(c(1, 2, 3), c(1, 2, 7))] <- "BASSANO DEL GRAPPA"
+# - Il contenitore con il cambio di utenza e' letto dal turno 10 il sabato e,
+#   nelle prime letture, il lunedi': stesso comune.
+giri$comune[giro_di(c(10, 10), c(1, 6))] <- "CAMPOSAMPIERO"
+# - Il contenitore spostato: la prima lettura e' del giro del venerdi' del
+#   turno 1, a Limena; dopo lo spostamento lo legge a Cittadella il giro del
+#   venerdi' del turno 4.
+giri$comune[giro_di(1, 5)] <- "LIMENA"
+giri$comune[giro_di(4, 5)] <- "CITTADELLA"
+fissati <- !is.na(giri$comune)
+giri$cantiere <- comuni$cantiere[match(giri$comune, comuni$comune)]
+
+# Cantiere degli altri giri. Si parte dai giri con piu' contenitori, e ognuno
+# va al cantiere a cui ne mancano di piu' per arrivare alla propria quota.
+obiettivo <- quote_cantieri * nrow(bidoni)
+assegnati <- vapply(names(quote_cantieri), function(cantiere) {
+  sum(giri$bidoni[fissati & giri$cantiere %in% cantiere])
+}, numeric(1))
+for (g in setdiff(order(-giri$bidoni, seq_len(nrow(giri))), which(fissati))) {
+  scelto <- names(which.max(obiettivo - assegnati))
+  giri$cantiere[g] <- scelto
+  assegnati[scelto] <- assegnati[scelto] + giri$bidoni[g]
 }
 
-# Cantiere: quote esatte tra i contenitori. Comune: a sorte dentro il cantiere,
-# con peso quadruplo per il comune che da' il nome al cantiere.
-conteggi_cantieri <- round(quote_cantieri * nrow(bidoni))
-piu_grande <- which.max(conteggi_cantieri)
-conteggi_cantieri[piu_grande] <- conteggi_cantieri[piu_grande] + nrow(bidoni) - sum(conteggi_cantieri)
-bidoni$cantiere <- con_seme(2026, sample(rep(names(quote_cantieri), conteggi_cantieri)))
-bidoni$comune <- con_seme(2027, vapply(bidoni$cantiere, function(cantiere) {
-  scelta <- comuni$comune[comuni$cantiere == cantiere]
-  scelta[sample.int(length(scelta), 1, prob = ifelse(startsWith(scelta, cantiere), 4, 1))]
-}, character(1), USE.NAMES = FALSE))
+# Comune degli altri giri: a sorte tra quelli del cantiere non ancora usati,
+# senza ripetizioni finche' ce ne sono, con peso quadruplo per il comune che
+# da' il nome al cantiere.
+giri$comune[!fissati] <- con_seme(2027, {
+  comune <- rep(NA_character_, nrow(giri))
+  for (cantiere in names(quote_cantieri)) {
+    quali <- which(!fissati & giri$cantiere == cantiere)
+    scelta <- setdiff(comuni$comune[comuni$cantiere == cantiere], giri$comune[fissati])
+    ordine <- scelta[sample.int(length(scelta), prob = ifelse(startsWith(scelta, cantiere), 4, 1))]
+    comune[quali] <- rep_len(ordine, length(quali))
+  }
+  comune[!fissati]
+})
+stopifnot(!anyNA(giri$comune), !anyNA(giri$cantiere))
 
-# Casi speciali con il comune fissato.
-bidoni$comune[c(k_cambio_servizio, k_esempio_secco, k_np_esempio)] <- "BASSANO DEL GRAPPA"
+# Ogni contenitore sta nel comune del proprio giro.
+bidoni$comune <- giri$comune[bidoni$giro]
+# Casi speciali con il comune fissato: il contenitore spostato e' registrato a
+# Limena, il tag rimasto sul mezzo gira a Marostica, il deposito e' a
+# Camposampiero.
 bidoni$comune[k_spostato] <- "LIMENA"
 bidoni$comune[k_camion] <- "MAROSTICA"
 bidoni$comune[k_deposito] <- "CAMPOSAMPIERO"
@@ -413,23 +480,6 @@ spostato_a <- round(centro_comune("CITTADELLA"), 4)
 # Il deposito dei mezzi, a Camposampiero.
 deposito <- round(centro_comune("CAMPOSAMPIERO") + c(-0.006, 0.008), 4)
 stopifnot(nel_comune(deposito[["lat"]], deposito[["lng"]], "CAMPOSAMPIERO"))
-
-# Casi con calendario fissato: prime letture scritte a mano, poi il calendario.
-imposta <- function(k, turno, giorno, ora, dal, sfasamento = 0, esposizione = 0.95) {
-  bidoni$turno[k] <<- turno
-  bidoni$giorno[k] <<- giorno
-  bidoni$ora_tipica[k] <<- ora
-  bidoni$attivo_dal[k] <<- as.Date(dal)
-  bidoni$sfasamento[k] <<- sfasamento
-  bidoni$esposizione[k] <<- esposizione
-  bidoni$cadenza[k] <<- 14L
-}
-imposta(k_cambio_servizio, turno = 2, giorno = 2, ora = 8.6, dal = "2025-10-07")
-imposta(k_esempio_secco, turno = 1, giorno = 1, ora = 6.3, dal = "2025-09-15")
-imposta(k_cambio_utenza, turno = 10, giorno = 6, ora = 13.0, dal = "2025-10-11")
-imposta(k_spostato, turno = 4, giorno = 5, ora = 10.5, dal = "2025-10-03")
-imposta(k_np_esempio, turno = 1, giorno = 1, ora = 6.5, dal = "2025-09-15")
-bidoni$raccolte[c(k_cambio_servizio, k_esempio_secco, k_cambio_utenza, k_spostato)] <- 26L
 
 # ---- Generazione delle letture ----------------------------------------------
 
@@ -494,7 +544,7 @@ genera_letture <- function(b) {
     altre <- letture_calendario(b)
     out <- aggiungi(
       manuali(
-        c("2025-09-05 08:14:26", "2025-09-19 10:37:53"), "VEH002",
+        c("2025-09-05 08:14:26", "2025-09-19 10:37:53"), c("VEH001", "VEH002"),
         latitudine = c(spostato_da[["lat"]], spostato_a[["lat"]]),
         longitudine = c(spostato_da[["lng"]], spostato_a[["lng"]])
       ),
@@ -669,10 +719,6 @@ sacchetti <- data.frame(
     "SAC001", "SAC001", "SAC001", "SAC002", "SAC002", "SAC003", "SAC003", "SAC004",
     rep(NA_character_, 4)
   ),
-  comune = c(
-    rep("BASSANO DEL GRAPPA", 3), rep("CAMPOSAMPIERO", 2), rep("RUBANO", 2), "ASIAGO",
-    "MAROSTICA", "CITTADELLA", "SELVAZZANO DENTRO", "GALLIO"
-  ),
   # i due giri "SECCO PAP" del calendario
   turno = c(1, 1, 1, 10, 10, 10, 10, 1, 1, 10, 10, 1),
   # giorno della raccolta, cioe' dell'unica lettura
@@ -683,6 +729,8 @@ sacchetti <- data.frame(
   stringsAsFactors = FALSE
 )
 sacchetti$RFID <- sprintf("00BD%020d", sacchetti$n)
+# Un sacchetto sta nel comune del giro che lo raccoglie.
+sacchetti$comune <- giri$comune[giro_di(sacchetti$turno, giorno_settimana(sacchetti$giorno))]
 # I sacchetti di un'utenza vengono lasciati davanti alla stessa porta, in
 # giorni diversi.
 sacchetti$porta <- ifelse(is.na(sacchetti$utenza), sacchetti$RFID, sacchetti$utenza)
@@ -772,13 +820,36 @@ letture$servizio_atteso <- vapply(seq_len(nrow(letture)), function(i) {
 # - comune_da_database: comune dell'anagrafica dei contenitori. Lo hanno solo
 #   i contenitori censiti e non cambia se il contenitore viene spostato. Un
 #   sacchetto non lo ha nemmeno da censito.
-# - comune_lettura: comune del giro che ha fatto la lettura, cioe' quello in
-#   cui il mezzo si trovava. C'e' per ogni lettura: per un non censito e'
-#   l'unico comune noto.
+# - comune_lettura: comune del giro che ha fatto la lettura, secondo il
+#   calendario dei mezzi. C'e' per ogni lettura: per un non censito e' l'unico
+#   comune noto. Di norma il contenitore sta in quel comune; una lettura fatta
+#   altrove e' fuori giro.
 # - cantiere: quello del comune del database, se c'e', altrimenti quello del
 #   comune della lettura.
 letture$comune_da_database <- ifelse(letture$presente, bidoni$comune[letture$chiave], NA_character_)
-letture$comune_lettura <- mapply(comune_del_punto, letture$latitudine, letture$longitudine)
+turno_lettura <- vapply(seq_len(nrow(letture)), function(i) {
+  indice_turno_del_mezzo(letture$matricola_veicolo[i], letture$giorno_lettura[i])
+}, numeric(1))
+letture$comune_lettura <- giri$comune[giro_di(
+  turno_lettura,
+  giorno_settimana(as.Date(letture$giorno_lettura, tz = "UTC"))
+)]
+# Un giro sbagliato: mercoledi' 24 settembre 2025 il calendario dava al turno
+# 1 il giro del venerdi', a Limena, ma il mezzo ha fatto quello solito del
+# mercoledi'. Tutte le sue letture di quella mattina risultano lontane dal
+# comune del giro.
+giro_sbagliato <- list(giorno = as.Date("2025-09-24"), turno = 1, previsto = 5)
+del_giro_sbagliato <- turno_lettura == giro_sbagliato$turno &
+  as.Date(letture$giorno_lettura, tz = "UTC") == giro_sbagliato$giorno
+letture$comune_lettura[del_giro_sbagliato] <- giri$comune[
+  giro_di(giro_sbagliato$turno, giro_sbagliato$previsto)
+]
+stopifnot(
+  giorno_settimana(giro_sbagliato$giorno) == 3,
+  sum(del_giro_sbagliato) >= 8,
+  giri$comune[giro_di(giro_sbagliato$turno, giro_sbagliato$previsto)] == "LIMENA",
+  giri$comune[giro_di(giro_sbagliato$turno, 3)] != "LIMENA"
+)
 comune_assegnato <- ifelse(
   is.na(letture$comune_da_database), letture$comune_lettura, letture$comune_da_database
 )
@@ -895,7 +966,7 @@ stopifnot(
   !anyNA(finale$comune_lettura),
   !anyNA(finale$cantiere),
   setequal(unique(finale$cantiere), names(quote_cantieri)),
-  max(abs(prop.table(table(bidoni$cantiere))[names(quote_cantieri)] - quote_cantieri)) < 0.03,
+  max(abs(prop.table(table(bidoni$cantiere))[names(quote_cantieri)] - quote_cantieri)) < 0.05,
   # il contenitore spostato e' registrato a Limena e letto a Cittadella
   all(per_rfid$RFD20250905100$comune_da_database == "LIMENA"),
   identical(per_rfid$RFD20250905100$comune_lettura[1:2], c("LIMENA", "CITTADELLA")),
@@ -953,7 +1024,9 @@ cattura <- rbind(
 )
 colnames(cattura) <- anni_storico
 # Dentro un cantiere ogni comune registra un po' piu' o un po' meno della media.
-comuni$fattore_cattura <- stats::runif(nrow(comuni), 0.7, 1.3)
+# L'estrazione ha un seme proprio, come il resto della geografia: aggiungere
+# un comune alla tabella non cambia le altre estrazioni di questa parte.
+comuni$fattore_cattura <- con_seme(2030, stats::runif(nrow(comuni), 0.7, 1.3))
 # Probabilita' che un contenitore resti un anno intero senza letture.
 quota_anni_vuoti <- c(BASSANO = 0.06, CAMPOSAMPIERO = 0.14, RUBANO = 0.22, ASIAGO = 0.30)
 

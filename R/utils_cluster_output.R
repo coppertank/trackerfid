@@ -15,6 +15,9 @@ colonne_analisi_cluster <- function() {
     "presente_a_database",
     "cantiere",
     "comune",
+    "comune_geografico",
+    "incongruenza_comune",
+    "distanza_comune_m",
     "servizio_transponder",
     "servizio_transponder_cronologia",
     "servizio_atteso",
@@ -160,6 +163,63 @@ classifica_cluster <- function(
   )
 }
 
+#' Posizione di un cluster a confronto con i comuni dichiarati
+#'
+#' Stessa regola delle letture, vedi `aggiungi_geografia()`, applicata al
+#' baricentro del cluster. Un cluster è `FUORI_COMUNE` se è di un censito e
+#' sta oltre la tolleranza dal comune del database: il contenitore è stato
+#' letto lontano da dove risulta. È `FUORI_GIRO` se sta oltre la tolleranza
+#' dal comune del giro che lo ha letto più spesso.
+#'
+#' @param lat,lon Baricentro di ogni cluster.
+#' @param censito `TRUE` per i cluster di un RFID censito.
+#' @param comune_database Comune dell'RFID secondo il database.
+#' @param comune_giro Comune del giro prevalente tra le letture del cluster.
+#' @param tolleranza Distanza in metri, vedi `tolleranza_confine_m()`.
+#' @return Lista con `comune_geografico`, il comune in cui cade il baricentro,
+#'   `incongruenza_comune`, vuota se il cluster è coerente, e
+#'   `distanza_comune_m`: metri dal confine del comune dichiarato, cioè quello
+#'   del database per un censito e quello del giro per un non censito. Zero se
+#'   il baricentro è dentro il comune.
+#' @noRd
+posizione_cluster <- function(
+  lat,
+  lon,
+  censito,
+  comune_database,
+  comune_giro,
+  tolleranza = tolleranza_confine_m()
+) {
+  geografico <- indice_comune_geografico(lat, lon)
+  dal_database <- distanza_dal_comune_m(
+    lat,
+    lon,
+    ifelse(censito, comune_database, NA_character_),
+    geografico = geografico
+  )
+  dal_giro <- distanza_dal_comune_m(
+    lat,
+    lon,
+    comune_giro,
+    geografico = geografico
+  )
+  fuori_comune <- !is.na(dal_database) & dal_database > tolleranza
+  fuori_giro <- !is.na(dal_giro) & dal_giro > tolleranza
+  incongruenza <- dplyr::case_when(
+    fuori_comune & fuori_giro ~ "FUORI_COMUNE, FUORI_GIRO",
+    fuori_comune ~ "FUORI_COMUNE",
+    fuori_giro ~ "FUORI_GIRO",
+    .default = NA_character_
+  )
+  list(
+    comune_geografico = comuni_cantieri()$comune[
+      replace(geografico, geografico == 0L, NA_integer_)
+    ],
+    incongruenza_comune = incongruenza,
+    distanza_comune_m = round(ifelse(censito, dal_database, dal_giro))
+  )
+}
+
 #' Indice di fiducia di un cluster (0-1)
 #'
 #' Somma pesata di sei componenti, ognuna tra 0 e 1:
@@ -244,6 +304,9 @@ analisi_cluster_vuota <- function() {
     presente_a_database = character(0),
     cantiere = character(0),
     comune = character(0),
+    comune_geografico = character(0),
+    incongruenza_comune = character(0),
+    distanza_comune_m = numeric(0),
     servizio_transponder = character(0),
     servizio_transponder_cronologia = character(0),
     servizio_atteso = character(0),
@@ -440,9 +503,31 @@ calcola_analisi_cluster <- function(
       frequenza_annua = .data$globale_numero_letture * 365 / giorni_osservati
     )
 
+  # --- Posizione del cluster e comuni dichiarati --------------------------------
+  # Il baricentro si confronta con il comune del database, per i censiti, e
+  # con il comune del giro prevalente tra le letture del cluster.
+  posizione <- posizione_cluster(
+    lat_baricentro,
+    lon_baricentro,
+    censito = per_rfid$censito[rfid_del_cluster],
+    comune_database = per_rfid$comune[rfid_del_cluster],
+    comune_giro = if (is.null(dati[["comune_lettura"]])) {
+      rep(NA_character_, n_cluster)
+    } else {
+      piu_frequente_per_gruppo(
+        as.character(dati$comune_lettura),
+        cluster,
+        n_cluster
+      )
+    }
+  )
+
   # --- Valori del singolo cluster ---------------------------------------------
   per_cluster <- dplyr::tibble(
     RFID = per_rfid$RFID[rfid_del_cluster],
+    comune_geografico = posizione$comune_geografico,
+    incongruenza_comune = posizione$incongruenza_comune,
+    distanza_comune_m = posizione$distanza_comune_m,
     cluster_id = primo_per_gruppo(dati$cluster_id, cluster, n_cluster),
     cluster_prima_lettura = primo_per_gruppo(
       dati$giorno_lettura,

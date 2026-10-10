@@ -37,7 +37,7 @@ colonne_quantita <- function() {
 #'
 #' `comune_da_database` è il comune dell'anagrafica, vuoto per i non censiti.
 #' `comune_lettura` è il comune del giro che ha fatto la lettura. `cantiere`
-#' è il cantiere del primo, se c'è, altrimenti del secondo.
+#' è il cantiere del comune assegnato, vedi `colonne_derivate()`.
 #' @noRd
 colonne_geografiche <- function() {
   c("comune_da_database", "comune_lettura", "cantiere")
@@ -45,10 +45,16 @@ colonne_geografiche <- function() {
 
 #' Campi calcolati dalla validazione, assenti dal CSV
 #'
-#' `comune_assegnato` è il comune del database, se c'è, altrimenti quello
-#' della lettura: è il comune usato da filtri e report.
+#' Li compila `aggiungi_geografia()`. `comune_geografico` è il comune in cui
+#' cade il punto della lettura. `comune_assegnato` è quello, oppure il comune
+#' dichiarato se il punto è fuori dai comuni serviti: è il comune usato da
+#' filtri, bolle e statistiche. `fuori_comune` e `fuori_giro` dicono se la
+#' lettura sta oltre la tolleranza dal comune del database e da quello del
+#' giro.
 #' @noRd
-colonne_derivate <- function() "comune_assegnato"
+colonne_derivate <- function() {
+  c("comune_assegnato", "comune_geografico", "fuori_comune", "fuori_giro")
+}
 
 #' Tutte le colonne del dataset validato, nell'ordine in cui compaiono
 #' @noRd
@@ -59,6 +65,47 @@ colonne_dataset <- function() {
 #' Valori ammessi per `presente_a_database`
 #' @noRd
 stati_database <- function() c("Presente", "Non Presente")
+
+#' Voci del filtro sulla coerenza tra posizione e comuni dichiarati
+#'
+#' Una lettura è coerente se non è né fuori comune né fuori giro, vedi
+#' `aggiungi_geografia()`. Può essere fuori comune e fuori giro insieme.
+#'
+#' @return Vettore con le etichette: i nomi sono i valori usati dai filtri.
+#' @noRd
+stati_coerenza <- function() {
+  c(
+    coerente = "Coerente",
+    fuori_comune = "Fuori comune",
+    fuori_giro = "Fuori giro"
+  )
+}
+
+#' Coerenza di ogni lettura con i comuni dichiarati
+#'
+#' @param data Letture. Senza le colonne `fuori_comune` e `fuori_giro` sono
+#'   tutte coerenti.
+#' @return Lista con i vettori logici `fuori_comune`, `fuori_giro` e
+#'   `coerente`, un valore per lettura.
+#' @noRd
+coerenza_letture <- function(data) {
+  n <- nrow(data)
+  fuori_comune <- if (is.null(data[["fuori_comune"]])) {
+    rep(FALSE, n)
+  } else {
+    data$fuori_comune %in% TRUE
+  }
+  fuori_giro <- if (is.null(data[["fuori_giro"]])) {
+    rep(FALSE, n)
+  } else {
+    data$fuori_giro %in% TRUE
+  }
+  list(
+    fuori_comune = fuori_comune,
+    fuori_giro = fuori_giro,
+    coerente = !fuori_comune & !fuori_giro
+  )
+}
 
 #' Servizio assegnato ai sacchetti
 #'
@@ -918,7 +965,8 @@ maschera_filtri <- function(
   atteso_esclusi = character(0),
   includi_stima_incerta = TRUE,
   cantieri_esclusi = character(0),
-  comuni = character(0)
+  comuni = character(0),
+  coerenza_escluse = character(0)
 ) {
   # Ogni filtro passa su tutte le letture solo se è attivo: con milioni di
   # righe un confronto in meno si sente. Un servizio mancante non è mai tra
@@ -952,6 +1000,18 @@ maschera_filtri <- function(
   comuni <- comuni[!is.na(comuni) & nzchar(comuni)]
   if (length(comuni) > 0 && "comune_assegnato" %in% names(data)) {
     tieni <- tieni & data$comune_assegnato %in% comuni
+  }
+  # Coerenza con i comuni dichiarati: una lettura fuori comune e fuori giro
+  # insieme resta se è spuntata almeno una delle due voci.
+  coerenza_escluse <- intersect(coerenza_escluse, names(stati_coerenza()))
+  if (length(coerenza_escluse) > 0) {
+    coerenza <- coerenza_letture(data)
+    tieni <- tieni &
+      Reduce(
+        `|`,
+        coerenza[setdiff(names(stati_coerenza()), coerenza_escluse)],
+        rep(FALSE, nrow(data))
+      )
   }
   tieni
 }
@@ -999,6 +1059,7 @@ conta_cantieri <- function(valori) {
 calcola_statistiche <- function(data, cantieri_letture = NULL) {
   censiti <- data$presente_a_database == "Presente"
   stimato <- servizio_mostrato(data)
+  coerenza <- coerenza_letture(data)
   list(
     totale = nrow(data),
     presente = sum(censiti),
@@ -1006,6 +1067,8 @@ calcola_statistiche <- function(data, cantieri_letture = NULL) {
     transponder = conta_servizi(data$servizio_transponder[censiti]),
     atteso = conta_servizi(stimato[!censiti]),
     stima_incerta = sum(!censiti & is.na(stimato)),
+    fuori_comune = sum(coerenza$fuori_comune),
+    fuori_giro = sum(coerenza$fuori_giro),
     rfid_cantieri = conta_cantieri(data[["cantiere"]]),
     letture_cantieri = conta_cantieri(cantieri_letture)
   )
@@ -1163,6 +1226,54 @@ analizza_rfid <- function(letture) {
     cronologia_servizio = servizi,
     stima = stima,
     cambio_utenza = nrow(utenze) > 1,
-    cronologia_utenza = utenze
+    cronologia_utenza = utenze,
+    posizione = posizione_rfid(letture)
+  )
+}
+
+#' Letture di un RFID fuori dai comuni dichiarati
+#'
+#' @param letture Letture dell'RFID, in ordine di tempo.
+#' @return Lista con `fuori_comune` e `fuori_giro`. Ognuna ha `n`, il numero
+#'   di letture, e, se ce ne sono, `dichiarati`, i comuni dichiarati di quelle
+#'   letture, e `letti`, i comuni in cui cadono: tutti e due dal più
+#'   frequente. `fuori_giro` ha anche `letture`, le ultime cinque, con data,
+#'   mezzo, comune del giro e comune della posizione.
+#' @noRd
+posizione_rfid <- function(letture) {
+  coerenza <- coerenza_letture(letture)
+  per_frequenza <- function(valori) {
+    valori <- as.character(valori)
+    valori[is.na(valori)] <- "fuori dai comuni serviti"
+    names(sort(table(valori), decreasing = TRUE))
+  }
+  riepilogo <- function(quali, colonna) {
+    esito <- list(n = sum(quali))
+    if (esito$n > 0) {
+      esito$dichiarati <- per_frequenza(letture[[colonna]][quali])
+      esito$letti <- per_frequenza(letture[["comune_geografico"]][quali])
+    }
+    esito
+  }
+  fuori_giro <- riepilogo(coerenza$fuori_giro, "comune_lettura")
+  if (fuori_giro$n > 0) {
+    ultime <- utils::tail(letture[coerenza$fuori_giro, , drop = FALSE], 5)
+    fuori_giro$letture <- ultime[
+      rev(seq_len(nrow(ultime))),
+      intersect(
+        c(
+          "giorno_lettura",
+          "matricola_veicolo",
+          "comune_lettura",
+          "comune_geografico"
+        ),
+        names(ultime)
+      ),
+      drop = FALSE
+    ]
+  }
+  list(
+    fuori_comune = riepilogo(coerenza$fuori_comune, "comune_da_database"),
+    fuori_giro = fuori_giro
   )
 }

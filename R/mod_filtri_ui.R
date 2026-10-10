@@ -51,6 +51,20 @@ mod_filtri_ui <- function(id) {
                 plugins = list("remove_button")
               )
             )
+          ),
+          # Posizione delle letture a confronto con i comuni dichiarati.
+          checkboxGroupInput(
+            ns("coerenza_check"),
+            "Filtro Posizione",
+            choiceNames = unname(stati_coerenza()),
+            choiceValues = names(stati_coerenza()),
+            selected = names(stati_coerenza()),
+            inline = FALSE
+          ),
+          p(
+            class = "nota-filtro",
+            "Fuori comune: censito letto lontano dal comune del database.",
+            "Fuori giro: lettura lontana dal comune del giro del mezzo."
           )
         ),
         checkboxGroupInput(

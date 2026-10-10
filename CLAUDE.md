@@ -22,6 +22,7 @@ Quando aggiungi o sposti file e funzioni, o cambi il flusso dei dati, aggiorna a
 - Per un non censito servizio, utenza e comune non sono noti. Valgono quelli dei giri che lo hanno letto: il servizio viene stimato dai giri, il comune è quello del giro.
 - Oltre ai bidoni le antenne leggono i **sacchetti**. Non hanno una tipologia di rifiuto, ma si riconoscono dal codice RFID: 24 caratteri con il prefisso `00BD`, contro i 10 caratteri di un bidone. Un sacchetto è **monouso**: il mezzo lo legge quando lo raccoglie e, una volta svuotato, non può più essere letto. Ha quindi una lettura sola. Il proprietario del progetto vuole poterli vedere sulla mappa, ma li tiene fuori dall'analisi dei cluster e dal report sul beneficio delle antenne, e il più delle volte li toglierà dal file delle letture.
 - L'obiettivo finale dell'analisi è **censire a mano i bidoni che oggi non sono a database**. Gli operatori cercano: bidoni non censiti, cambi di servizio o di utenza, bidoni spostati, tag anomali (smarriti, fermi in deposito, rimasti su un mezzo).
+- Ogni lettura ha una posizione e fino a due **comuni dichiarati**: quello del database, per i censiti, e quello del giro. Il proprietario del progetto vuole che il comune di una lettura venga dalla posizione, e che le differenze con i comuni dichiarati saltino all'occhio. Un censito letto lontano dal comune del database è **fuori comune**: di solito un bidone spostato. Una lettura lontana dal comune del giro è **fuori giro**: di solito il mezzo ha fatto un giro diverso da quello del calendario, e quel giorno ha molte letture fuori giro. La tolleranza, scelta dal proprietario del progetto, è di un chilometro dal confine del comune.
 - Il territorio servito è diviso in quattro **cantieri**: `ASIAGO`, `BASSANO`, `CAMPOSAMPIERO`, `RUBANO`. Ogni comune appartiene a un cantiere. Gli operatori filtrano le letture per cantiere e per comune.
 - Le antenne sui mezzi sono recenti. Prima un altro sistema registrava solo RFID e istante della lettura, senza mezzo e senza posizione: sono le **letture storiche**. L'azienda vuole misurare quanto le antenne leggono in più, anche per la fatturazione.
 
@@ -49,9 +50,16 @@ Quando aggiungi o sposti file e funzioni, o cambi il flusso dei dati, aggiorna a
 | Cantiere | Sede operativa che serve un gruppo di comuni. Quattro valori | `cantiere`, `cantieri()`, `inst/extdata/comuni_cantieri.csv` |
 | Comune del database | Comune di servizio del contenitore secondo il database | `comune_da_database`, vuoto per i non censiti |
 | Comune di lettura, comune atteso | Comune del giro che il mezzo stava facendo al momento della lettura. C'è su ogni lettura | `comune_lettura` |
-| Comune assegnato | Comune del database, se c'è, altrimenti quello di lettura. È il comune usato da filtri e report | `comune_assegnato`, calcolato da `aggiungi_geografia()` |
-| Comune di un RFID | Ultimo comune indicato dal database, oppure, per un non censito, quello in cui è stato letto più spesso | `comune` in `anagrafica_rfid()` e nella tabella dei cluster, `geografia_per_gruppo()` |
-| Vista aggregata, bolla | Sulla mappa principale, oltre il limite dei marker: un gruppo di bidoni per cantiere, comune o riquadro, calcolato dal server | `scegli_vista()`, `aggrega_marker()`, `R/utils_mappa_aggregata.R` |
+| Comune geografico | Comune servito il cui confine contiene il punto della lettura. Vuoto fuori dai comuni serviti | `comune_geografico`, `comune_geografico()`, `R/utils_comune_geografico.R` |
+| Comune dichiarato | Comune del database, per un censito, o comune del giro: quello che i dati dicono, a confronto con la posizione | `comune_da_database`, `comune_lettura` |
+| Comune assegnato | Comune geografico della lettura; se il punto è fuori dai comuni serviti, quello del database, se c'è, altrimenti quello del giro. È il comune usato da filtri, bolle e statistiche | `comune_assegnato`, calcolato da `aggiungi_geografia()` |
+| Fuori comune | Lettura di un censito oltre la tolleranza dal comune del database | `fuori_comune`, segnale `C` sul marker, `FUORI_COMUNE` nella tabella dei cluster |
+| Fuori giro | Lettura, di un censito o no, oltre la tolleranza dal comune del giro | `fuori_giro`, segnale `G` sul marker, `FUORI_GIRO` nella tabella dei cluster |
+| Tolleranza | Distanza dal confine del comune dichiarato oltre la quale una lettura è incongruente: un chilometro | `tolleranza_confine_m()` |
+| Giro | Lavoro di un mezzo in un giorno, per un servizio e in un comune, secondo il calendario. Nel file sta su ogni lettura | `servizio_atteso` e `comune_lettura`, `riepilogo_giri()`, `R/utils_giri.R` |
+| Comune di un RFID | Comune dichiarato dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello del giro che lo ha letto più spesso. Non dipende dalla posizione: lo usano i report e la tabella dei cluster | `comune` in `anagrafica_rfid()` e nella tabella dei cluster, `geografia_per_gruppo()` |
+| Bolla | Sulla mappa principale, da lontano: un gruppo di bidoni per cantiere o per comune, calcolato dal server. Da vicino, oltre il limite dei marker, anche per riquadro. Ha l'aspetto di un cluster di marker. La bolla di un comune sta nel baricentro del comune | `scegli_vista()`, `aggrega_marker()`, `baricentri_comuni()`, `R/utils_mappa_aggregata.R` |
+| Confini dei comuni | Livello disegnato su tutte le mappe: il confine di ogni comune servito, tratteggiato, con il colore del suo cantiere | `aggiungi_confini()`, `geojson_confini()`, `colori_cantieri()` |
 | Letture storiche, sistema precedente | Letture fatte prima dell'installazione delle antenne: solo RFID e istante | secondo file CSV, `fonte == "storico"`, `R/utils_storico.R` |
 | Fonte | Sistema che ha fatto una lettura | `fonte`: `"storico"` o `"antenne"`, aggiunta da `unisci_letture()` |
 | Anno misto, anno parziale | Anno coperto da tutti e due i sistemi. Anno coperto per meno del 95% dei giorni, riportato a dodici mesi | `sistema`, `completo`, `fattore` in `copertura_annuale()` |
@@ -60,31 +68,34 @@ Quando aggiungi o sposti file e funzioni, o cambi il flusso dei dati, aggiorna a
 | Letture utili | Letture di un contenitore in un anno, mai più delle raccolte previste | `letture_utili_storico`, `letture_utili_antenne` |
 | Tasso di lettura | Letture utili divise per le raccolte previste | `tasso_storico`, `tasso_antenne` |
 
-**Attenzione: la parola "cluster" ha due significati che non c'entrano l'uno con l'altro.** Sulla mappa principale è un effetto grafico. Nell'analisi è il risultato di DBSCAN. Le bolle della vista aggregata hanno l'aspetto dei cluster di marker ma sono calcolate dal server.
+**Attenzione: la parola "cluster" ha due significati che non c'entrano l'uno con l'altro.** Sulla mappa principale è un effetto grafico. Nell'analisi è il risultato di DBSCAN. Le bolle per cantiere, per comune e per riquadro hanno l'aspetto dei cluster di marker ma sono calcolate dal server.
 
 ## Funzionalità
 
-L'interfaccia è una dashboard. La barra laterale contiene, dall'alto: caricamento dei due file (letture con le antenne e, facoltative, letture storiche), periodo di analisi, dettaglio del bidone selezionato, controlli della scheda aperta. Il corpo ha quattro schede, in un `tabBox` con id `scheda_attiva`.
+L'interfaccia è una dashboard. La barra laterale contiene, dall'alto: caricamento dei due file (letture con le antenne e, facoltative, letture storiche), periodo di analisi, dettaglio del bidone selezionato, controlli della scheda aperta. Il corpo ha cinque schede, in un `tabBox` con id `scheda_attiva`.
 
 | Scheda | Valore di `scheda_attiva` | Cosa mostra | Controlli nella barra laterale |
 |---|---|---|---|
-| Mappa Principale | `mappa` | Un marker per RFID, nella posizione dell'ultima lettura del periodo. Marker raggruppati in cluster colorati secondo la quota di censiti. Oltre 10.000 bidoni, vista aggregata | Filtri per cantiere, comune, stato a database, servizio transponder, servizio atteso. Statistiche |
+| Mappa Principale | `mappa` | Un marker per RFID, nella posizione dell'ultima lettura del periodo. Da lontano una bolla per cantiere, poi una per comune; da vicino i singoli marker, con quelli vicini raggruppati in cluster colorati secondo la quota di censiti. Confini dei comuni colorati per cantiere | Filtri per cantiere, comune, stato a database, servizio transponder, servizio atteso. Statistiche |
 | Ricerca RFID | `rfid` | Tutte le letture degli RFID cercati. Ultima lettura in evidenza, riquadro attorno alle posizioni di ogni RFID | Campo di testo, pulsanti Cerca e Pulisci |
+| Ricerca Giro | `giro` | Che cosa ha letto un mezzo in un giorno: tabella dei giri, con servizio e comune previsti dal calendario e letture fuori giro e fuori comune, e mappa di tutte le letture, con il confine del comune del giro in evidenza | Mezzo, giorno o intervallo di giorni, caselle «Fuori giro» e «Fuori comune» |
 | Ricerca Utenza | `utenza` | Ultima lettura dei bidoni la cui utenza attuale è tra quelle cercate | Campo di testo, pulsanti Cerca e Pulisci |
 | Analisi Cluster Spaziale | `cluster` | Tabella, grafici e mappa dei cluster spaziali di ogni RFID, con indicatore e indice di fiducia. Esportazione in CSV | Parametri DBSCAN, pulsante Genera Analisi |
 
-**Le schede sono quattro, per scelta del proprietario del progetto.** Le analisi per territorio, cantiere e comune stanno nel report `docs/beneficio_antenne.Rmd`: non aggiungere all'app schede di analisi, di report o di prestazioni.
+**Le schede sono cinque, per scelta del proprietario del progetto**, che ha chiesto la «Ricerca Giro» dopo aver fissato le prime quattro. Le analisi per territorio, cantiere e comune stanno nel report `docs/beneficio_antenne.Rmd`: non aggiungere all'app altre schede di analisi, di report o di prestazioni.
 
 Altri comportamenti:
 
-- **Filtri per cantiere e comune.** I cantieri si spuntano. I comuni si scelgono da un elenco a scelta multipla, con i comuni dei cantieri spuntati divisi per cantiere: se ne possono scegliere più di uno, anche di cantieri diversi. Nessun comune scelto vale per tutti. Vale il comune assegnato alla lettura. Cambiando cantieri o comuni la mappa si sposta sull'area scelta. I due filtri compaiono solo se almeno una lettura ha un cantiere.
+- **Filtri per cantiere e comune.** I cantieri si spuntano. I comuni si scelgono da un elenco a scelta multipla, con i comuni dei cantieri spuntati divisi per cantiere: se ne possono scegliere più di uno, anche di cantieri diversi. Nessun comune scelto vale per tutti. Vale il comune assegnato alla lettura, cioè quello in cui cade il suo punto. Cambiando cantieri o comuni la mappa si sposta sull'area scelta. I due filtri compaiono solo se almeno una lettura ha un cantiere.
+- **Filtro sulla posizione.** «Filtro Posizione» ha tre voci, tutte spuntate all'avvio: «Coerente», «Fuori comune», «Fuori giro». Una lettura fuori comune e fuori giro insieme resta se è spuntata almeno una delle due voci. Compare con gli altri filtri geografici. Le statistiche riportano i bidoni fuori comune e fuori giro.
 - **Filtri dei servizi.** Lo stato a database toglie o rimette tutti i bidoni di uno stato. I servizi stanno in due elenchi, uno per stato. "Filtro Servizio Transponder" riguarda i bidoni "Presente": servizio del database. "Filtro Servizio Atteso" riguarda i bidoni "Non Presente": servizio stimato dai giri, lo stesso dell'icona. La casella "Includi Non Censiti con stima incerta (?)" riguarda i non censiti con il punto di domanda. Accanto a ogni titolo, "Tutti" e "Nessuno" spuntano o tolgono tutte le voci: "Nessuno" sul servizio atteso toglie anche la stima incerta. Non c'è una casella "Includi Non Censiti": il proprietario del progetto l'ha fatta togliere perché doppione dello stato "Non Presente".
 - **Elenchi a discesa.** L'elenco dei comuni e quello dell'anno di analisi hanno lo stesso aspetto, per richiesta del proprietario del progetto: stesso riquadro, stesso testo, stessa freccia.
-- **Vista aggregata.** Con più bidoni del limite la mappa principale mostra una bolla per cantiere fino a zoom 10, per comune a zoom 11 e 12, per riquadro da zoom 13, e i singoli bidoni dell'area inquadrata quando tornano sotto il limite. Un click su una bolla ingrandisce sui suoi bidoni.
-- **Marker.** Verde a goccia se censito, rosso squadrato se non censito. L'icona interna indica il servizio. Per un non censito è il servizio stimato: il giro prevalente, se una tipologia raggiunge l'80% delle letture, altrimenti un punto di domanda. Un sacchetto ha sempre l'icona dei sacchetti, censito o no.
+- **Vista per zoom.** La mappa principale mostra una bolla per cantiere fino a zoom 10, una per comune a zoom 11 e 12, i singoli bidoni da zoom 13: l'ha chiesto il proprietario del progetto, perché i gruppi che si vedono siano quelli del territorio. Vale per qualsiasi numero di bidoni. Da vicino i bidoni che si sovrappongono restano in un cluster di marker. Con più bidoni del limite, da zoom 13 la mappa mostra una bolla per riquadro e i singoli bidoni dell'area inquadrata solo quando tornano sotto il limite. La bolla di un comune sta nel baricentro del comune, per richiesta del proprietario del progetto: così resta ferma al variare dei filtri, in mezzo al confine disegnato. Le bolle dei cantieri e dei riquadri stanno nel punto medio dei loro bidoni. Un click su una bolla ingrandisce sui suoi bidoni. Un file senza cantieri né comuni non ha bolle del territorio.
+- **Confini dei comuni.** Tutte le mappe, anche quella dei cluster spaziali, disegnano i confini dei comuni serviti: bordo tratteggiato e riempimento appena accennato, nel colore del cantiere. Il proprietario del progetto li ha chiesti poco saturi e poco invasivi. La legenda riporta i quattro colori. I confini non rispondono al mouse e stanno sotto marker, cluster e riquadri.
+- **Marker.** Verde a goccia se censito, rosso squadrato se non censito. L'icona interna indica il servizio. Per un non censito è il servizio stimato: il giro prevalente, se una tipologia raggiunge l'80% delle letture, altrimenti un punto di domanda. Un sacchetto ha sempre l'icona dei sacchetti, censito o no. Due bollini scuri con una lettera, negli angoli in alto, segnalano le incongruenze: `C` per una lettura fuori comune, `G` per una fuori giro. Non cambiano colore, forma né icona.
 - **Sacchetti.** Si vedono sulla mappa principale e nelle due ricerche, con la loro icona, la loro voce nei filtri e nelle statistiche e un dettaglio loro. Restano fuori dall'analisi dei cluster spaziali: la scheda riguarda i soli contenitori.
-- **Dettaglio del bidone.** Un click su un marker, su una riga della tabella dei cluster o su un baricentro apre nella barra laterale la storia dell'RFID: servizio coerente, cambio di servizio, stima per i non censiti, cambio di utenza. In fondo c'è l'istogramma delle letture per anno: usa tutte le letture caricate, non solo quelle del periodo, e distingue le letture storiche da quelle delle antenne. Un anno senza letture resta vuoto, con lo zero in rosso.
-- **Popup.** Riporta i dati della lettura, il comune del database, il comune di lettura se è diverso, e il cantiere, se il file ha le colonne.
+- **Dettaglio del bidone.** Un click su un marker, su una riga della tabella dei cluster o su un baricentro apre nella barra laterale la storia dell'RFID: servizio coerente, cambio di servizio, stima per i non censiti, cambio di utenza, letture fuori dal comune del database e fuori dal giro, con dove sono state fatte. In fondo c'è l'istogramma delle letture per anno: usa tutte le letture caricate, non solo quelle del periodo, e distingue le letture storiche da quelle delle antenne. Un anno senza letture resta vuoto, con lo zero in rosso.
+- **Popup.** Riporta i dati della lettura, il comune del database, il comune del giro se è diverso, il cantiere e, per una lettura fuori comune o fuori giro, una riga che dice dove era dichiarata e dove è stata fatta.
 - **Titolo.** Riporta il periodo, ad esempio "DASHBOARD RFID - ANNO 2025".
 - **Favicon.** È il simbolo aziendale. Nell'intestazione non c'è nessun logo, per scelta del proprietario del progetto.
 
@@ -106,15 +117,17 @@ Il file delle letture con le antenne ha dieci colonne obbligatorie e cinque faco
 | `numero_raccolte_annue_previste` | numerico, facoltativa | Usata dall'analisi dei cluster e dal confronto con le letture storiche |
 | `comune_da_database` | testo, facoltativa | Vuoto per i non censiti. La colonna `comune` dei file meno recenti vale come questa |
 | `comune_lettura` | testo, facoltativa | Comune del giro del mezzo: il comune atteso. Compilato per ogni lettura |
-| `cantiere` | testo maiuscolo, facoltativa | Ricalcolato dal comune assegnato secondo la tabella dei comuni. Quello del file vale solo per i comuni fuori tabella |
-| `comune_assegnato` | testo | Non sta nel file: lo aggiunge la validazione |
+| `cantiere` | testo maiuscolo, facoltativa | Ricalcolato dal comune assegnato, cioè dalla posizione, secondo la tabella dei comuni. Quello del file vale solo per le letture fuori dai comuni serviti con un comune dichiarato fuori tabella |
+| `comune_geografico` | testo | Non sta nel file: lo aggiunge la validazione, dalle coordinate. Vuoto fuori dai comuni serviti |
+| `comune_assegnato` | testo | Non sta nel file. Comune geografico, oppure quello dichiarato per le letture fuori dai comuni serviti |
+| `fuori_comune`, `fuori_giro` | logico | Non stanno nel file. Lettura oltre la tolleranza dal comune del database, per i censiti, e dal comune del giro |
 
 La validazione rifiuta il file se mancano colonne o se ci sono valori non interpretabili. Scarta, con un avviso, le righe prive di un campo essenziale. Riporta i nomi dei comuni alla grafia della tabella dei comuni, senza badare a maiuscole, accenti e apostrofi, e segnala con un avviso i comuni che la tabella non contiene.
 
 La geografia sta in due file del pacchetto.
 
-- `inst/extdata/comuni_cantieri.csv`: i 57 comuni serviti, con cantiere e coordinate del centro abitato. È compilato a mano ed è l'unico elenco di comuni e cantieri: 7 comuni per `ASIAGO`, 15 per `BASSANO`, 23 per `CAMPOSAMPIERO`, 12 per `RUBANO`. I nomi sono in maiuscolo, con l'apostrofo al posto dell'accento, come nel file dell'azienda: `ROSA'`.
-- `inst/extdata/comuni_confini.geojson`: i confini degli stessi comuni, uno per ogni riga della tabella e nello stesso ordine. Sono quelli dell'ISTAT, dall'ultimo rilascio della raccolta `guglielmo/geojson-italy`, licenza CC-BY 4.0: ora il rilascio del 14 maggio 2026. Li scarica `scarica_confini_comuni()`, richiamata dallo script `data-raw/prepara_comuni.R`. Ogni comune sta su una riga del file e porta `comune` e `cantiere`, come nella tabella, e `nome_istat`, `codice_istat`, `codice_catastale`, `provincia`, come nella fonte. Servono alla mappa dei comuni del report, alla vista iniziale delle mappe dell'app e al dataset di esempio.
+- `inst/extdata/comuni_cantieri.csv`: i 66 comuni serviti, con cantiere e coordinate del centro abitato. È compilato a mano ed è l'unico elenco di comuni e cantieri: 7 comuni per `ASIAGO`, 17 per `BASSANO`, 27 per `CAMPOSAMPIERO`, 15 per `RUBANO`. `VIGONZA` sta sotto `CAMPOSAMPIERO`: l'ha precisato il proprietario del progetto, dopo un primo elenco che lo metteva sotto `RUBANO`. I nomi sono in maiuscolo, con l'apostrofo al posto dell'accento, come nel file dell'azienda: `ROSA'`. L'elenco dell'azienda aveva anche `VALSTAGNA`, comune soppresso nel 2019 e oggi parte di `VALBRENTA`: non ha più un confine suo e non sta in tabella. Il proprietario del progetto lo riporta a `VALBRENTA` nel passo 2 della preparazione dei dati.
+- `inst/extdata/comuni_confini.geojson`: i confini degli stessi comuni, uno per ogni riga della tabella e nello stesso ordine. Sono quelli dell'ISTAT, dall'ultimo rilascio della raccolta `guglielmo/geojson-italy`, licenza CC-BY 4.0: ora il rilascio del 14 maggio 2026. Li scarica `scarica_confini_comuni()`, richiamata dallo script `data-raw/prepara_comuni.R`. Ogni comune sta su una riga del file e porta `comune` e `cantiere`, come nella tabella, e `nome_istat`, `codice_istat`, `codice_catastale`, `provincia`, come nella fonte. Servono ai confini disegnati sulle mappe dell'app, alla loro vista iniziale, alla mappa dei comuni del report e al dataset di esempio. `VALBRENTA` ha due poligoni.
 
 I nomi della tabella e quelli della fonte si associano con `chiave_comune()`: `ROSA'` trova `Rosà`. Tra due comuni italiani con lo stesso nome vale quello che contiene il centro abitato della tabella. Se un comune non trova il confine, o il suo centro cade fuori dal confine trovato, `scarica_confini_comuni()` si ferma senza scrivere il file.
 
@@ -122,10 +135,10 @@ Il CSV delle letture storiche è un secondo file, facoltativo, con due colonne: 
 
 I dataset di esempio sono due, simulati dallo script `data-raw/genera_sample_dataset.R` con un seme fisso.
 
-- `inst/extdata/sample_rfid_dataset.csv`: 6.475 letture con le antenne di 251 RFID, cioè 239 bidoni e 12 sacchetti, da ottobre 2024 a dicembre 2025, cinque mezzi, 50 utenze dei bidoni. I bidoni stanno nel territorio servito, dentro i confini dei loro comuni: 54 comuni nei quattro cantieri. Come nei dati reali, ogni lettura ha servizio atteso, comune di lettura e cantiere. I bidoni non censiti sono 37: nel 2025, 18 hanno il servizio stimato e 19 la stima incerta. I sacchetti hanno una lettura ciascuno, perché sono monouso: 8 sono censiti, con le utenze da `SAC001` a `SAC004`, e 4 non censiti. A database hanno solo l'utenza, come escono dal passo 3: niente servizio, volume, raccolte o comune. Li leggono i giri `SECCO PAP`. Due sono letti nel 2024, dieci nel 2025.
-- `inst/extdata/sample_letture_storiche.csv`: 7.025 letture storiche di 227 RFID, da gennaio 2020 a settembre 2024. 183 RFID sono letti da entrambi i sistemi, 68 solo dalle antenne, cioè 56 bidoni e i 12 sacchetti, 44 solo dal sistema precedente. Il sistema precedente registra una parte dei passaggi, diversa per cantiere, per comune e per anno, e lascia anni interi senza letture.
+- `inst/extdata/sample_rfid_dataset.csv`: 6.475 letture con le antenne di 251 RFID, cioè 239 bidoni e 12 sacchetti, da ottobre 2024 a dicembre 2025, cinque mezzi, 50 utenze dei bidoni. Come nei dati reali, il calendario dà un comune a ogni giro: nell'esempio un giro è un turno in un giorno della settimana, i giri sono 41 e lavorano in 32 comuni dei quattro cantieri. Ogni bidone sta nel comune del proprio giro, dentro il confine. Ogni lettura ha servizio atteso, comune di lettura e cantiere. I bidoni non censiti sono 37: nel 2025, 18 hanno il servizio stimato e 19 la stima incerta. I sacchetti hanno una lettura ciascuno, perché sono monouso: 8 sono censiti, con le utenze da `SAC001` a `SAC004`, e 4 non censiti. A database hanno solo l'utenza, come escono dal passo 3: niente servizio, volume, raccolte o comune. Li leggono i giri `SECCO PAP`, nel comune del giro. Due sono letti nel 2024, dieci nel 2025. Le letture fuori comune sono 77, di due RFID; quelle fuori giro sono circa 1.200, quasi tutte dei due tag anomali, quello in deposito e quello rimasto su un mezzo.
+- `inst/extdata/sample_letture_storiche.csv`: 6.893 letture storiche di 228 RFID, da gennaio 2020 a settembre 2024. 184 RFID sono letti da entrambi i sistemi, 67 solo dalle antenne, cioè 55 bidoni e i 12 sacchetti, 44 solo dal sistema precedente. Il sistema precedente registra una parte dei passaggi, diversa per cantiere, per comune e per anno, e lascia anni interi senza letture.
 
-Lo script genera prima le letture dei bidoni, poi la geografia e i sacchetti, con semi a parte, poi le letture storiche: una modifica alla geografia, ai sacchetti o alla parte storica non cambia il resto. Giro, comune di lettura e cantiere di ogni lettura sono ricavati senza numeri casuali, con `giro_del_mezzo()`: il turno in cui cade la lettura o, fuori orario, il più vicino del mezzo in quel giorno, come fa sui dati reali `associa_servizio_atteso_da_calendario()`. Test e report fanno riferimento a questi RFID:
+Lo script genera prima le letture dei bidoni, poi la geografia e i sacchetti, con semi a parte, poi le letture storiche: una modifica alla geografia, ai sacchetti o alla parte storica non cambia il resto. Anche la quota di passaggi registrata in ogni comune dal sistema precedente ha un seme suo. Aggiungere comuni alla tabella cambia invece il comune dei giri, e con quello posizioni e letture storiche: date, mezzi e servizi delle letture con le antenne restano gli stessi. Il giro di ogni lettura è ricavato senza numeri casuali: `giro_del_mezzo()` dà il servizio e `indice_turno_del_mezzo()` il turno, cioè quello in cui cade la lettura o, fuori orario, il più vicino del mezzo in quel giorno, come fa sui dati reali `associa_servizio_atteso_da_calendario()`. Il comune di lettura è quello del giro, dalla tabella `giri` dello script: una lettura fatta altrove risulta fuori giro. Test e report fanno riferimento a questi RFID:
 
 | RFID | Caso |
 |---|---|
@@ -133,15 +146,16 @@ Lo script genera prima le letture dei bidoni, poi la geografia e i sacchetti, co
 | `RFD20250901050` | Utenza cambiata da `UTZ001` a `UTZ025` |
 | `RFD20250915201` | Non censito, quattro letture, stima 100% `SECCO PAP`. Indicatore `GHOST_TAG` |
 | `RFD20250920250` | Non censito con stima incerta: due letture, `SECCO PAP` e `CARTA/CARTONE PAP` |
-| `RFD20250905100` | Spostato di 20 km: censito a `LIMENA`, cantiere `RUBANO`, poi letto a `CITTADELLA`. Indicatore `RELOCATED_BIN` |
-| `RFD20241001301` | Tag fermo in deposito. Indicatore `DEPOT_STUCK`. Non censito, letto dai giri di tutti i mezzi: stima incerta |
-| `RFD20250203302` | Tag rimasto sul mezzo. Indicatore `TRUCK_STOWAWAY` |
+| `RFD20250905100` | Spostato di 17 km: censito a `LIMENA`, prima lettura lì, poi otto letture a `CITTADELLA`, dove lo legge il giro di Cittadella. Fuori comune, mai fuori giro. Indicatore `RELOCATED_BIN`, secondo cluster `FUORI_COMUNE` |
+| `RFD20241001301` | Tag fermo in deposito, a `CAMPOSAMPIERO`. Indicatore `DEPOT_STUCK`. Non censito, letto dai giri di tutti i mezzi: stima incerta, e quasi tutte le letture fuori giro |
+| `RFD20250203302` | Tag rimasto sul mezzo `VEH004`, letto lungo lo stesso percorso a `MAROSTICA` qualunque sia il giro. Indicatore `TRUCK_STOWAWAY`. Tutte le letture fuori giro, 69 anche fuori comune |
 | `RFD20241003303` | GPS impreciso, 17 cluster. Indicatore `SCATTERED_READS / GPS_NOISE` |
-| `RFD20241004003` | Letto dalle antenne con regolarità, senza letture storiche nel 2021 e nel 2023. Comune e cantiere `RUBANO`. Letture per anno dal 2020: 16, 0, 6, 0, 13, 25 |
-| `00BD00000000000000000005` | Sacchetto censito, utenza `SAC002`: una lettura a `CAMPOSAMPIERO` nel 2025. I censiti vanno da `…0001` a `…0008` |
-| `00BD00000000000000000102` | Sacchetto non censito: una lettura a `CITTADELLA` nel 2025. I non censiti vanno da `…0101` a `…0104` |
+| `RFD20241004003` | Letto dalle antenne con regolarità, senza letture storiche nel 2021 e nel 2023. Comune `LIMENA`, cantiere `RUBANO`. Letture per anno dal 2020: 13, 0, 16, 0, 12, 25 |
+| `00BD00000000000000000005` | Sacchetto censito, utenza `SAC002`: una lettura a `ROANA` nel 2025. I censiti vanno da `…0001` a `…0008` |
+| `00BD00000000000000000102` | Sacchetto non censito: una lettura a `ROANA` nel 2025. I non censiti vanno da `…0101` a `…0104` |
+| `VEH001`, 24 settembre 2025 | Giro sbagliato: il calendario dava `SECCO PAP` a `LIMENA`, il mezzo ha letto dieci bidoni a `BORGORICCO`. Dieci letture fuori giro, nessuna fuori comune. È il giro con più letture fuori giro dell'anno |
 
-Numeri del confronto tra i due sistemi sul dataset di esempio, usati dai test: 162 RFID nel confronto, 415 anni di servizio di cui 90 vuoti, tasso di lettura dal 31% all'82%. Per cantiere, tasso precedente e con le antenne: `ASIAGO` 19% e 84%, `BASSANO` 46% e 77%, `CAMPOSAMPIERO` 30% e 83%, `RUBANO` 21% e 85%.
+Numeri del confronto tra i due sistemi sul dataset di esempio, usati dai test: 161 RFID nel confronto, 418 anni di servizio di cui 78 vuoti, tasso di lettura dal 32% all'83%. Per cantiere, tasso precedente e con le antenne: `ASIAGO` 14% e 86%, `BASSANO` 41% e 78%, `CAMPOSAMPIERO` 36% e 86%, `RUBANO` 22% e 80%. Nel 2025, per ultima lettura: 248 RFID sulla mappa, 1 fuori comune e 20 fuori giro; i bidoni per cantiere sono 33, 66, 92 e 60.
 
 ### Dati reali
 
@@ -154,9 +168,9 @@ I dati veri dell'azienda non sono nel repository. Gli script in `data-raw/` li p
 | 3 | `data-raw/03_crea_letture_app.R` | le tabelle del passo 2 | `data-raw/output/letture_app.csv` |
 | 4, facoltativo | `data-raw/04_crea_letture_storiche.R` | `data-raw/origine/letture_storiche.csv`, le letture precedenti alle antenne | `data-raw/output/letture_storiche.csv` |
 
-Le regole di trasformazione sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`. Il passo 3 le applica in questo ordine: `filtra_letture_post_test()`, `formatta_rfid()`, `associa_servizio()`, `associa_servizio_atteso_da_calendario()`. L'ultima restituisce le colonne del CSV dell'app. `comune_da_database` viene da `comune_servizio` dell'anagrafica dei contenitori. `comune_lettura` viene dalla colonna del calendario indicata con l'argomento `colonna_comune`: lo script usa `"comune"`, e il proprietario del progetto lo ha lasciato così. Se nei dati veri la colonna ha un altro nome basta cambiare l'argomento. `cantiere` viene dalla tabella dei comuni. Ogni colonna geografica manca se manca la sua origine. Il passo 3 compila `servizio_atteso` e `comune_lettura` per ogni lettura, anche dei censiti: restano vuoti solo se il mezzo non ha turni in quel giorno, cosa che secondo il proprietario del progetto nei dati reali non accade.
+Le regole di trasformazione sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`. Il passo 3 le applica in questo ordine: `filtra_letture_post_test()`, `formatta_rfid()`, `associa_servizio()`, `associa_servizio_atteso_da_calendario()`. L'ultima restituisce le colonne del CSV dell'app. `comune_da_database` lo scrive `associa_servizio()`, dalla colonna `comune_servizio` dell'anagrafica dei contenitori. `comune_lettura` viene dalla colonna `comune` del calendario. Le due colonne di origine devono esserci: il proprietario del progetto ha tolto l'argomento `colonna_comune` e reso obbligatoria la colonna del calendario. `cantiere` viene dalla tabella dei comuni. I nomi dei comuni si correggono nel codice commentato del passo 2, sulla colonna `comune_servizio` dell'anagrafica dei contenitori: `LUSINA CONCO` diventa `LUSIANA CONCO`, `VALSTAGNA` diventa `VALBRENTA`. L'app non corregge i nomi: un comune che la tabella non contiene viene segnalato tra i comuni assenti. Il passo 3 compila `servizio_atteso` e `comune_lettura` per ogni lettura, anche dei censiti: restano vuoti solo se il mezzo non ha turni in quel giorno, cosa che secondo il proprietario del progetto nei dati reali non accade.
 
-**I passi 3 e 4 oggi scartano i codici che iniziano per `00BD`, cioè i sacchetti**: finché quella riga resta negli script, nel CSV dell'app non ce ne sono. Toglierla è una scelta del proprietario del progetto.
+**I passi 3 e 4 oggi scartano i codici che iniziano per `00BD`, cioè i sacchetti**: finché quella riga resta negli script, nel CSV dell'app non ce ne sono. Toglierla è una scelta del proprietario del progetto. Il passo 3 scarta anche i codici che iniziano con dieci zeri.
 
 Il passo 4 non dipende dagli altri. In cima allo script si indicano il nome del file di origine e i nomi delle sue due colonne, che non sono noti a priori. Applica `formatta_rfid()`, così i codici hanno lo stesso formato del passo 3, e la stessa esclusione dei codici che iniziano per `00BD`.
 
@@ -171,7 +185,7 @@ file delle letture              file delle letture storiche (facoltativo)
 dal browser o da run_app(letture = , storico = )
    │                               │
    ▼                               ▼
-mod_caricamento ──► dati_caricati: tutte le letture validate, con comune_assegnato e cantiere
+mod_caricamento ──► dati_caricati: tutte le letture validate, con comune_geografico, comune_assegnato, cantiere, fuori_comune e fuori_giro
    │            └─► storico: letture storiche validate ──► solo al dettaglio del bidone
    │
    ├──► mod_periodo ──► dati: letture del periodo, con la colonna servizio_icona
@@ -179,6 +193,7 @@ mod_caricamento ──► dati_caricati: tutte le letture validate, con comune_a
    │        ├──► mod_filtri ──► dati_filtrati: una riga per RFID ──► mod_mappa "mappa_principale"
    │        │              └─► area: coordinate del cantiere e del comune scelti ──► inquadratura della mappa
    │        ├──► mod_ricerca "ricerca_rfid" ──► risultati ──► mod_mappa "mappa_rfid"
+   │        ├──► mod_giro "giro" ──► risultati ──► mod_mappa "mappa_giro"
    │        ├──► mod_ricerca "ricerca_utenza" ──► risultati ──► mod_mappa "mappa_utenza"
    │        └──► dettaglio del bidone: output$info_panel in app_server.
    │             L'istogramma per anno usa invece dati_caricati e storico
@@ -200,14 +215,15 @@ Ogni modulo ha due file: `R/mod_<nome>_ui.R` e `R/mod_<nome>_server.R`.
 |---|---|---|---|
 | `mod_caricamento` (`caricamento`) | `demo`, `percorsi`: di norma le opzioni di `run_app()` | lista di reactive: `letture` e `storico`, ciascuno con il dataset validato o `NULL` | `file_upload`, `file_storico`, `carica_esempio` |
 | `mod_periodo` (`periodo`) | `dati` | lista di reactive: `periodo`, `etichetta`, `dati` | `anno_filtro`, `personalizzato`, `intervallo` |
-| `mod_filtri` (`filtri`) | `dati`, `azzera` | lista di reactive: `dati_filtrati` e `area` | `cantiere_check`, `comuni`, `presente_filter`, `servizio_transponder_check`, `transponder_tutti`, `transponder_nessuno`, `servizio_atteso_check`, `atteso_tutti`, `atteso_nessuno`, `includi_stima_incerta`, `reset` |
+| `mod_filtri` (`filtri`) | `dati`, `azzera` | lista di reactive: `dati_filtrati` e `area` | `cantiere_check`, `comuni`, `coerenza_check`, `presente_filter`, `servizio_transponder_check`, `transponder_tutti`, `transponder_nessuno`, `servizio_atteso_check`, `atteso_tutti`, `atteso_nessuno`, `includi_stima_incerta`, `reset` |
 | `mod_ricerca` (`ricerca_rfid`, `ricerca_utenza`) | `dati`, `tipo` | lista di reactive: `risultati`, `codici` | `testo`, `cerca`, `pulisci` |
-| `mod_mappa` (`mappa_principale`, `mappa_rfid`, `mappa_utenza`) | `dati`, `modalita`, `dati_vista`, `attiva`, `messaggio` | reactive con il marker cliccato: lista con `rfid` e `quando` | `mappa_marker_click`, `mappa_zoom`, `mappa_bounds` |
+| `mod_giro` (`giro`) | `dati` | lista di reactive: `risultati`, `riepilogo`, `messaggio` | `mezzo`, `giorni`, `solo`, `tabella_rows_selected` |
+| `mod_mappa` (`mappa_principale`, `mappa_rfid`, `mappa_giro`, `mappa_utenza`) | `dati`, `modalita`, `dati_vista`, `attiva`, `messaggio` | reactive con il marker cliccato: lista con `rfid` e `quando` | `mappa_marker_click`, `mappa_zoom`, `mappa_bounds` |
 | `mod_cluster_analysis` (`cluster`) | `dati`, `periodo`, `etichetta` | reactive con il cluster scelto: lista con `rfid` e `quando` | `eps_m`, `min_pts`, `genera`, `tabella_rows_all`, `tabella_rows_selected`, `mappa_marker_click` |
 
 `mod_caricamento` tiene i due file separati: un file storico non valido non tocca le letture con le antenne. `carica_esempio` e `run_app(demo = TRUE)` caricano entrambi i dataset di esempio. Caricare a mano un file di letture toglie le letture storiche di esempio, non quelle caricate a mano. I file indicati in `run_app(letture = , storico = )` sono letti da `leggi_una_volta()`: una volta sola per processo, condivisi tra le sessioni.
 
-`mod_mappa` ha tre modalità: `"cluster"`, `"rfid"`, `"utenza"`. La modalità decide come `disegna_marker()` disegna i dati. In modalità `"cluster"`, con più bidoni del limite, il modulo segue `mappa_bounds` e `mappa_zoom` e ridisegna la vista scelta da `scegli_vista()`. Lo stato sta in tre `reactiveVal` interni: `disegnati`, `bolle`, `vista`. In modalità `"rfid"` disegna al massimo le letture di `limita_letture_ricerca()`. `mod_cluster_analysis` ha due funzioni di interfaccia: `mod_cluster_analysis_ui()` per il corpo e `mod_cluster_analysis_sidebar_ui()` per la barra laterale. Grafici e mappa seguono le righe mostrate dalla tabella, tenute nel `reactiveVal` interno `righe_tabella`: `NULL` vuol dire tutte, un vettore vuoto nessuna. Una nuova analisi lo azzera. Le righe comunicate dal browser valgono solo dopo l'attesa di `attesa_righe_tabella()`.
+`mod_mappa` ha quattro modalità: `"cluster"`, `"rfid"`, `"utenza"`, `"giro"`. La modalità decide come `disegna_marker()` disegna i dati. In modalità `"cluster"`, con più bidoni del limite, il modulo segue `mappa_bounds` e `mappa_zoom` e ridisegna la vista scelta da `scegli_vista()`. Lo stato sta in tre `reactiveVal` interni: `disegnati`, `bolle`, `vista`. In modalità `"rfid"` disegna al massimo le letture di `limita_letture_ricerca()`, in modalità `"giro"` quelle di `limita_letture_giro()`. `mod_giro` ha due funzioni di interfaccia, `mod_giro_sidebar_ui()` e `mod_giro_ui()` con la tabella dei giri; tiene lo stato sul server e torna all'ultimo giorno con letture a ogni cambio delle letture del periodo. Il giro scelto in tabella vale finché la ricerca non cambia. La mappa dei giri riceve come `dati_vista` l'area di `area_giri()`, che comprende i comuni dei giri. `mod_cluster_analysis` ha due funzioni di interfaccia: `mod_cluster_analysis_ui()` per il corpo e `mod_cluster_analysis_sidebar_ui()` per la barra laterale. Grafici e mappa seguono le righe mostrate dalla tabella, tenute nel `reactiveVal` interno `righe_tabella`: `NULL` vuol dire tutte, un vettore vuoto nessuna. Una nuova analisi lo azzera. Le righe comunicate dal browser valgono solo dopo l'attesa di `attesa_righe_tabella()`.
 
 ### Scelte di progetto da rispettare
 
@@ -222,14 +238,21 @@ Ogni modulo ha due file: `R/mod_<nome>_ui.R` e `R/mod_<nome>_server.R`.
 9. **Analisi dei cluster in una funzione sola.** `calcola_analisi_cluster()` è usata dall'app, dalla funzione esportata `genera_analisi_cluster()` e dallo script a riga di comando.
 10. **Orari senza fuso.** Date e ore sono lette e scritte sempre in UTC, come se fossero ora locale. Non convertire i fusi orari.
 11. **Filtri come maschera.** `maschera_filtri()` restituisce un vettore logico, `deduplica_ultimo_rfid()` sceglie l'ultima lettura tra le righe indicate. Non si crea mai una copia filtrata di tutte le letture: con milioni di righe è la parte più costosa.
-12. **Cantieri filtrati per esclusione, comuni per scelta.** I cantieri seguono la regola dei servizi. I comuni scelti stanno in un vettore: vuoto vuol dire tutti. I comuni di un cantiere deselezionato escono dalla scelta, gli altri restano.
-13. **Vista aggregata calcolata dal server.** Sopra il limite di `limiti_mappa()` il browser riceve bolle, non marker: il messaggio resta sotto il megabyte. Dopo uno spostamento o uno zoom la mappa si ridisegna solo se `vista_da_rifare()` lo dice, con un'attesa di 250 millisecondi. L'area caricata è più larga del 30% di quella inquadrata, così i piccoli spostamenti non ridisegnano niente.
+12. **Cantieri e posizione filtrati per esclusione, comuni per scelta.** Anche le voci del filtro sulla posizione si memorizzano come escluse, in `coerenza_escluse`. I cantieri seguono la regola dei servizi. I comuni scelti stanno in un vettore: vuoto vuol dire tutti. I comuni di un cantiere deselezionato escono dalla scelta, gli altri restano.
+13. **Vista della mappa principale calcolata dal server.** `scegli_vista()` decide dallo zoom: bolle per cantiere, bolle per comune, poi i bidoni. Le bolle le calcola il server, con qualsiasi numero di bidoni. Da vicino il browser riceve tutti i bidoni fino al limite di `limiti_mappa()`; oltre riceve i soli bidoni dell'area inquadrata o una bolla per riquadro, e il messaggio resta sotto il megabyte. Dopo uno spostamento o uno zoom la mappa si ridisegna solo se `vista_da_rifare()` lo dice, con un'attesa di 250 millisecondi: sotto il limite succede solo quando lo zoom cambia fascia. L'area caricata è più larga del 30% di quella inquadrata, così i piccoli spostamenti non ridisegnano niente.
 14. **Calcoli per gruppo senza cicli.** Con centinaia di migliaia di RFID un `summarise()` valutato gruppo per gruppo costa decine di secondi. L'analisi dei cluster, l'anagrafica e il confronto tra i sistemi usano le funzioni di `R/utils_gruppi.R`, che lavorano su vettori interi.
 15. **Valori ripetuti trattati una volta.** I campi di testo hanno pochi valori ripetuti milioni di volte: maiuscole, pulizia e ricerca del cantiere passano da `per_valori_distinti()`.
 16. **Una sola tabella dei comuni.** Comuni e cantieri stanno solo in `inst/extdata/comuni_cantieri.csv`. Il confronto dei nomi passa sempre da `chiave_comune()`.
 17. **Elenchi a discesa con lo stesso aspetto.** L'elenco dell'anno è un elenco del browser, quello dei comuni è un selectize a scelta multipla, dentro un `div` con classe `elenco-comuni`. La sezione "Elenchi a discesa della barra laterale" del CSS dà a tutti e due lo stesso riquadro e la stessa freccia, disegnata nel CSS perché quella del browser cambia da un sistema all'altro. Un elenco nuovo nella barra laterale deve usare gli stessi stili.
 18. **Un elenco di servizi per stato a database.** I servizi transponder filtrano le sole letture "Presente". I servizi attesi filtrano le sole letture "Non Presente", e per il servizio stimato dell'RFID, non per il giro della singola lettura: un non censito sta sotto una voce sola, il suo servizio stimato oppure la stima incerta. Così voci dei filtri, icone dei marker e statistiche coincidono. Nessuna regola dell'app deve leggere `servizio_atteso` senza guardare lo stato a database: nei dati reali la colonna è compilata anche per i censiti.
 19. **Sacchetti riconosciuti dal codice.** `rfid_sacchetto()` è l'unica regola. La validazione dà ai sacchetti censiti senza servizio il servizio `SACCHETTI`; `aggiungi_servizio_icona()` lo dà anche ai non censiti, al posto della stima dai giri, perché un sacchetto non ha una tipologia di rifiuto da stimare. Da lì in poi è un servizio come gli altri: voce nei filtri del suo stato, riga nelle statistiche, icona, legenda. Fanno eccezione l'analisi dei cluster e il report sul beneficio delle antenne, che riguardano i contenitori: `calcola_analisi_cluster()` e il blocco `dati` del report tolgono i sacchetti con `senza_sacchetti()`, prima di ogni conto. Il risultato deve essere quello di un file che non li contiene.
+20. **Confini come livello GeoJSON a parte.** `aggiungi_confini()` li disegna con `addGeoJSON()` in un riquadro Leaflet suo, `confini`, sotto marker e forme, senza interazione. `pulisci_mappa()` usa `clearShapes()`, che non tocca i livelli GeoJSON: i confini restano a ogni ridisegno. Il testo GeoJSON lo prepara `geojson_confini()` una volta per sessione, con cinque decimali: pesa circa 125 kB. Colore e stile stanno in `colori_cantieri()` e `stile_confini()`.
+21. **Colore del cantiere legato al nome.** `colori_cantieri()` dà un colore a ogni cantiere per nome, non per posizione nell'elenco. Le quattro tinte sono state scelte perché si distinguano a coppie anche con un difetto della visione dei colori, e stiano lontane dal verde, dal rosso e dall'arancio di stato e cluster. Un cantiere nuovo va aggiunto lì, altrimenti è grigio.
+22. **Bolla di un comune nel baricentro del comune.** `aggrega_marker()` mette la bolla di un comune nel punto dato da `baricentri_comuni()`: il baricentro dell'area del confine, calcolato una volta per sessione da `baricentro_poligoni()`. La posizione non dipende dai bidoni filtrati. Un comune fuori tabella, o mancante, non ha baricentro: la sua bolla sta nel punto medio dei bidoni, come quelle di cantieri e riquadri.
+23. **Il comune di una lettura viene dalla posizione.** `aggiungi_geografia()`, alla validazione, trova il comune geografico di ogni lettura e da quello ricava comune assegnato e cantiere: filtri, bolle e statistiche lavorano sul territorio, non sulle colonne del file. I comuni dichiarati restano nelle loro colonne, per il confronto. Il comune di un RFID per i report e per la tabella dei cluster resta quello dichiarato, da `geografia_per_gruppo()`. La preparazione dei dati chiama `aggiungi_geografia(da_posizione = FALSE)`: nel CSV il cantiere è quello del comune dichiarato.
+24. **Griglia dei comuni.** Trovare il comune di milioni di punti contro 66 confini, punto per punto, costerebbe decine di secondi. `griglia_comuni()` prepara una volta per sessione una griglia di celle di 55 metri: una cella che nessun confine attraversa vale per intero il comune del suo centro, le altre sono marcate. `indice_comune_geografico()` cerca la cella e fa il controllo esatto, con `indice_comune_esatto()`, solo per i punti delle celle marcate. Il risultato è identico al controllo punto per punto: lo verificano i test.
+25. **Incongruenze calcolate una volta, con la tolleranza.** `fuori_comune` e `fuori_giro` sono colonne delle letture, scritte dalla validazione con `oltre_il_comune()`: filtri, marker, popup, dettaglio, statistiche e ricerca dei giri le leggono, senza ricalcolare distanze. La distanza esatta dal confine si calcola solo per i punti vicini al comune dichiarato; per quelli lontani basta la distanza dal suo riquadro. Le due incongruenze sono indipendenti: una lettura può averle tutte e due.
+26. **Ricerca dei giri sulle colonne delle letture.** Un giro non è una tabella a parte: è il gruppo delle letture con lo stesso giorno, mezzo, `servizio_atteso` e `comune_lettura`. `riepilogo_giri()` li raggruppa con le funzioni di `R/utils_gruppi.R`. La scheda non ha un pulsante «Cerca»: segue gli input, e all'avvio cerca un giorno solo, così la mappa non riceve mai un anno di letture senza che l'utente lo chieda.
 
 ## Mappa del repository
 
@@ -249,11 +272,12 @@ trackerfid/
 │   ├── mod_periodo_ui.R / _server.R            anno o periodo personalizzato
 │   ├── mod_filtri_ui.R / _server.R             filtri laterali e statistiche
 │   ├── mod_ricerca_ui.R / _server.R            ricerca per RFID o per utenza
+│   ├── mod_giro_ui.R / _server.R               ricerca dei giri di un mezzo: pannello laterale e tabella dei giri
 │   ├── mod_mappa_ui.R / _server.R              mappa Leaflet, tre modalità
 │   ├── mod_cluster_analysis_ui.R / _server.R   scheda di analisi dei cluster spaziali
 │   ├── utils_data_processing.R   lettura, validazione, periodo, filtri, ricerche, storia di un RFID
 │   ├── utils_styling.R           tipologie di servizio, colori, marker SVG, cluster di marker, legenda
-│   ├── utils_mapping.R           mappa di base e disegno dei marker
+│   ├── utils_mapping.R           mappa di base, confini dei comuni e disegno dei marker
 │   ├── utils_popup.R             popup, pannello di dettaglio, riquadro statistiche
 │   ├── utils_dbscan_clustering.R DBSCAN, distanze, dispersione
 │   ├── utils_cluster_output.R    tabella di analisi, soglie, indicatori, indice di fiducia
@@ -261,7 +285,9 @@ trackerfid/
 │   ├── utils_storico.R           letture storiche: lettura, conteggi per anno, confronto con le antenne
 │   ├── utils_geografia.R         comuni, cantieri e confini del territorio servito
 │   ├── utils_gruppi.R            calcoli per gruppo su vettori, senza cicli
-│   ├── utils_mappa_aggregata.R   limiti delle mappe e vista aggregata della mappa principale
+│   ├── utils_mappa_aggregata.R   limiti delle mappe e vista della mappa principale secondo lo zoom
+│   ├── utils_comune_geografico.R comune in cui cade una lettura, distanza da un comune, fuori comune e fuori giro
+│   ├── utils_giri.R              giri dei mezzi: ricerca, riepilogo, tabella
 │   ├── fct_preparazione_letture.R   regole che trasformano i dati aziendali nel CSV dell'app
 │   ├── fct_confini_comuni.R      scarica i confini dei comuni e sceglie quelli serviti
 │   └── generate_cluster_analysis.R   genera_analisi_cluster(), scrivi_analisi_cluster(). Esportate
@@ -309,29 +335,29 @@ Le funzioni esportate sono tre: `run_app()`, `genera_analisi_cluster()`, `scrivi
 
 | Gruppo | Funzioni |
 |---|---|
-| Schema del dataset | `colonne_obbligatorie()`, `colonne_facoltative()`, `colonne_quantita()` per le facoltative numeriche, `colonne_geografiche()`, `colonne_derivate()`, `colonne_dataset()`, `stati_database()`, `percorso_dataset_esempio()` |
+| Schema del dataset | `colonne_obbligatorie()`, `colonne_facoltative()`, `colonne_quantita()` per le facoltative numeriche, `colonne_geografiche()`, `colonne_derivate()`, `colonne_dataset()`, `stati_database()`, `stati_coerenza()`, `percorso_dataset_esempio()` |
 | Sacchetti | `rfid_sacchetto()` li riconosce dal codice, `servizio_sacchetti()` dà il nome del loro servizio, `senza_sacchetti()` li toglie dalle letture |
 | Lettura e validazione | `carica_dataset()` è il punto di ingresso: chiama `leggi_tabella()` e `validate_dataset()`. `leggi_tabella()` sceglie il formato tra quelli di `formati_file()`: `read_csv_auto()`, `decomprimi_gz()`, Parquet. `leggi_una_volta()` tiene in memoria i file letti da percorso. Ausiliarie: `rileva_separatore()`, `converti_data_ora()`, `converti_numero()`, `pulisci_testo()`, `celle_da_pulire()`, `elenco_righe()`, `errore_validazione()` |
 | Periodo | `anni_disponibili()`, `periodo_anno()`, `etichetta_periodo()`, `filtra_periodo()` |
 | Servizio stimato dei non censiti | `servizio_prevalente_non_censiti()` applica la regola dell'80%, `aggiungi_servizio_icona()` scrive la colonna `servizio_icona`, `servizio_mostrato()` la legge o, se manca, la calcola |
-| Filtri e statistiche | `maschera_filtri()` dice quali letture superano i filtri, `deduplica_ultimo_rfid()` tiene l'ultima per RFID tra quelle. `ordina_servizi()`, `conta_servizi()`, `ordina_cantieri()`, `conta_cantieri()`, `senza_cantiere()`, `calcola_statistiche()` |
+| Filtri e statistiche | `maschera_filtri()` dice quali letture superano i filtri, `coerenza_letture()` quali sono fuori comune, fuori giro o coerenti, `deduplica_ultimo_rfid()` tiene l'ultima per RFID tra quelle. `ordina_servizi()`, `conta_servizi()`, `ordina_cantieri()`, `conta_cantieri()`, `senza_cantiere()`, `calcola_statistiche()` |
 | Ricerche | `analizza_input_ricerca()`, `codice_in()`, `cerca_per_rfid()`, `filtra_ultimo_per_utenza()`, `calcola_bbox()` |
-| Storia di un RFID | `analizza_rfid()` decide il caso da mostrare nel dettaglio. Ausiliarie: `cronologia_transizioni()`, `stima_servizio_atteso()` |
+| Storia di un RFID | `analizza_rfid()` decide il caso da mostrare nel dettaglio. Ausiliarie: `posizione_rfid()` per le letture fuori comune e fuori giro, `cronologia_transizioni()`, `stima_servizio_atteso()` |
 
 ### `R/utils_styling.R`
 
 | Gruppo | Funzioni |
 |---|---|
 | Servizi | `tipologie_servizio()` è l'unico elenco di servizi, icone, colori ed emoji. Da lì derivano `servizi_config()`, `info_servizio()`, `tipologia_servizio()` |
-| Colori | `colori_stato()`, `get_color()`, `genera_colore_cluster()` |
-| Marker | `svg_marker()` disegna il marker, `get_leaflet_icon()` lo trasforma in icone Leaflet. Ausiliarie: `glifo_fa()`, `svg_glifo()`, `svg_icona_servizio()`, `uri_svg()` |
+| Colori | `colori_stato()`, `get_color()`, `genera_colore_cluster()`. Per i cantieri: `colori_cantieri()`, `colore_cantiere()`, e `stile_confini()` per bordo e riempimento dei confini |
+| Marker | `svg_marker()` disegna il marker, `get_leaflet_icon()` lo trasforma in icone Leaflet. `svg_segnale()` disegna i bollini `C` e `G`. Ausiliarie: `glifo_fa()`, `svg_glifo()`, `svg_icona_servizio()`, `uri_svg()` |
 | Cluster di marker | `js_icona_cluster()` restituisce il JavaScript che colora i cluster |
-| Bolle della vista aggregata | `svg_bolla()` disegna una bolla con lo stesso aspetto di un cluster, `icone_bolle()` la trasforma in icone Leaflet, `lato_bolla()` ne dà la dimensione |
+| Bolle della mappa principale | `svg_bolla()` disegna una bolla con lo stesso aspetto di un cluster, `icone_bolle()` la trasforma in icone Leaflet, `lato_bolla()` ne dà la dimensione |
 | Legenda | `html_legenda()` |
 
 ### `R/utils_mapping.R`
 
-`mappa_base()`, `opzioni_cluster()`, `pulisci_mappa()`, `aggiungi_marker()`, `aggiungi_bolle()`, `add_rfid_bounds()`, `disegna_marker()`, `adatta_vista()`. Funzionano sia su una mappa `leaflet()` sia su un `leafletProxy()`. `mappa_base()` inquadra la zona servita.
+`mappa_base()`, `geojson_confini()`, `aggiungi_confini()`, `opzioni_cluster()`, `pulisci_mappa()`, `aggiungi_marker()`, `aggiungi_bolle()`, `aggiungi_comuni_giro()` per il contorno dei comuni dei giri, `add_rfid_bounds()`, `disegna_marker()`, `adatta_vista()`. Funzionano sia su una mappa `leaflet()` sia su un `leafletProxy()`. `mappa_base()` inquadra la zona servita e disegna i confini dei comuni.
 
 ### `R/utils_popup.R`
 
@@ -339,7 +365,7 @@ Le funzioni esportate sono tre: `run_app()`, `genera_analisi_cluster()`, `scrivi
 |---|---|
 | Formati | `formatta_data_ora()`, `formatta_numero()`, `conta()` per singolari e plurali, ad esempio "1 bidone" |
 | Popup del marker | `create_popup_html()` |
-| Dettaglio del bidone | `crea_info_panel()` sceglie tra `blocco_bidone()` e `blocco_sacchetto()`. Ausiliarie: `blocco_info()`, `elenco_cronologia()`, `barre_stima()`, `istogramma_annuale()` |
+| Dettaglio del bidone | `crea_info_panel()` sceglie tra `blocco_bidone()` e `blocco_sacchetto()`. `blocco_posizione()` aggiunge le letture fuori comune e fuori giro. Ausiliarie: `blocco_info()`, `elenco_cronologia()`, `barre_stima()`, `istogramma_annuale()` |
 | Statistiche | `crea_box_statistiche()`, `righe_servizi()`, `righe_cantieri()` |
 
 ### `R/utils_dbscan_clustering.R`
@@ -351,7 +377,7 @@ Le funzioni esportate sono tre: `run_app()`, `genera_analisi_cluster()`, `scrivi
 | Gruppo | Funzioni |
 |---|---|
 | Parametri | `soglie_indicatore()`, `pesi_fiducia()`, `indicatori_config()`, `colonne_analisi_cluster()` |
-| Calcolo | `calcola_analisi_cluster()` produce la tabella con una riga per cluster. Usa `classifica_cluster()` e `indice_fiducia()` |
+| Calcolo | `calcola_analisi_cluster()` produce la tabella con una riga per cluster. Usa `classifica_cluster()`, `indice_fiducia()` e `posizione_cluster()` per comune geografico, incongruenza e distanza dal comune dichiarato |
 | Esportazione | `nome_file_analisi_cluster()`, `esporta_analisi_cluster()` |
 | Ausiliarie | `analisi_cluster_vuota()`, `sequenza_valori()`, `tra_zero_e_uno()` |
 
@@ -373,21 +399,34 @@ Le funzioni esportate sono tre: `run_app()`, `genera_analisi_cluster()`, `scrivi
 | Gruppo | Funzioni |
 |---|---|
 | Tabelle | `comuni_cantieri()`, `cantieri()`, `poligoni_comuni()` con i vertici dei confini, `riquadro_zona()`. Lette una volta per sessione di R |
-| Confini | `percorso_confini_comuni()`. `anelli_geometria()` e `anelli_geojson()` trasformano un GeoJSON in una tabella di vertici, con poligoni e fori. `dentro_poligoni()` dice se un punto è dentro un confine |
+| Confini | `percorso_confini_comuni()`. `anelli_geometria()` e `anelli_geojson()` trasformano un GeoJSON in una tabella di vertici, con poligoni e fori. `dentro_poligoni()` dice se un punto è dentro un confine. `baricentro_poligoni()` dà baricentro e superficie di uno o più poligoni, `baricentri_comuni()` il baricentro di ogni comune, sempre dentro il suo confine |
 | Nomi dei comuni | `chiave_comune()` per il confronto, `normalizza_comune()` per la grafia della tabella, `cantiere_di_comune()` |
-| Geografia delle letture | `aggiungi_geografia()` compila `comune_assegnato` e `cantiere` di ogni lettura. `geografia_per_gruppo()` dà comune e cantiere di ogni RFID |
+| Geografia delle letture | `aggiungi_geografia()` compila `comune_geografico`, `comune_assegnato`, `cantiere`, `fuori_comune` e `fuori_giro` di ogni lettura. `geografia_per_gruppo()` dà comune e cantiere di ogni RFID |
 | Ausiliaria | `per_valori_distinti()` applica una funzione ai soli valori distinti di un vettore |
 
 ### `R/utils_gruppi.R`
 
 Calcoli per gruppo su vettori interi. Il gruppo è un intero da 1 al numero dei gruppi, dato da `indice_gruppi()`. `primo_per_gruppo()`, `ultimo_per_gruppo()`, `ultimo_valido_per_gruppo()`, `somma_per_gruppo()`, `media_per_gruppo()`, `estremi_per_gruppo()`, `quantile_per_gruppo()`, `n_distinti_per_gruppo()`, `piu_frequente_per_gruppo()`. I test li confrontano con il calcolo gruppo per gruppo.
 
+### `R/utils_comune_geografico.R`
+
+| Gruppo | Funzioni |
+|---|---|
+| Parametri | `tolleranza_confine_m()`, `metri_per_grado()` |
+| Confini pronti per i conti | `lati_comuni()`: per ogni comune i vertici, quelli che li precedono, l'anello e il riquadro |
+| Comune di un punto | `comune_geografico()` dà il nome, `indice_comune_geografico()` la riga della tabella dei comuni. Dietro: `griglia_comuni()`, `indice_comune_esatto()`, `punti_nel_comune()` |
+| Confronto con un comune | `indice_comune()` trova un comune per nome, `distanza_dal_comune_m()` misura la distanza dal suo confine, `oltre_il_comune()` applica la tolleranza |
+
+### `R/utils_giri.R`
+
+`mezzi_presenti()` e `giorni_letture()` danno le scelte della ricerca. `cerca_giri()` trova le letture di un mezzo in un intervallo di giorni. `riepilogo_giri()` le riassume, una riga per giorno, mezzo, servizio e comune del giro: colonne in `colonne_riepilogo_giri()`. `letture_del_giro()` dà le letture di una riga del riepilogo. Per la mappa: `limita_letture_giro()`, `area_giri()`, `descrizione_giri()`. `tabella_giri_dt()` costruisce la tabella interattiva.
+
 ### `R/utils_mappa_aggregata.R`
 
 | Gruppo | Funzioni |
 |---|---|
 | Limiti | `limiti_mappa()`: bidoni disegnati uno per uno e letture disegnate dalla ricerca RFID. `limita_letture_ricerca()` |
-| Scelta della vista | `scegli_vista()` restituisce `"tutti"`, `"singoli"`, `"cantiere"`, `"comune"` o `"griglia"`. `livello_aggregazione()`, `vista_da_rifare()`, `descrizione_vista()` |
+| Scelta della vista | `scegli_vista()` restituisce `"cantiere"` o `"comune"` da lontano, poi `"tutti"`, `"singoli"` o `"griglia"`. `livello_aggregazione()` dà la fascia di zoom, `vista_da_rifare()`, `descrizione_vista()` |
 | Bolle | `aggrega_marker()` raggruppa i bidoni e ne conta i censiti. `passo_griglia()` |
 | Riquadri | `allarga_riquadro()`, `riquadro_contiene()`, `nel_riquadro()` |
 
@@ -411,8 +450,8 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 |---|---|
 | `filtra_letture_post_test()` | Tiene le letture dei mezzi con test delle antenne positivo, fatte dopo la data del test |
 | `formatta_rfid()` | Porta i codici RFID a 10 o 24 caratteri e corregge un carattere letto male tra gli zeri iniziali |
-| `associa_servizio()` | Associa servizio, utenza, volume e raccolte del contenitore attivo nel giorno della lettura. In mancanza cerca tra i sacchetti. Calcola `presente_a_database` |
-| `associa_servizio_atteso_da_calendario()` | Sceglie per ogni lettura il turno del mezzo in cui cade, o il più vicino. Un turno che finisce dopo mezzanotte vale anche per il giorno successivo. Dal turno prende anche il comune di lettura. Restituisce le colonne del CSV dell'app. Ausiliaria: `completa_cantiere()` |
+| `associa_servizio()` | Associa servizio, utenza, volume e raccolte del contenitore attivo nel giorno della lettura. In mancanza cerca tra i sacchetti. Calcola `presente_a_database` e rinomina `comune_servizio` in `comune_da_database` |
+| `associa_servizio_atteso_da_calendario()` | Sceglie per ogni lettura il turno del mezzo in cui cade, o il più vicino. Un turno che finisce dopo mezzanotte vale anche per il giorno successivo. Dal turno prende anche il comune di lettura, dalla colonna `comune` del calendario. Restituisce le colonne del CSV dell'app. Ausiliaria: `completa_cantiere()` |
 | `estrai_rfid()` | Ricava i codici RFID dal testo degli eventi. Non usata dagli script attuali |
 
 ### Altri file
@@ -421,6 +460,7 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 |---|---|
 | `R/app_ui.R` | `app_ui()`, `sezione_sidebar()` per i riquadri della barra laterale, `golem_add_external_resources()` |
 | `R/app_server.R` | `app_server()` |
+| `R/mod_giro_ui.R` | `mod_giro_sidebar_ui()` per la barra laterale, `mod_giro_ui()` per la tabella dei giri |
 | `R/mod_ricerca_ui.R` | `mod_ricerca_ui()`, `testi_ricerca()` con le etichette delle due ricerche |
 | `R/mod_caricamento_ui.R` | `mod_caricamento_ui()`, `estensioni_accettate()` per i campi di caricamento |
 | `R/mod_filtri_ui.R` | `mod_filtri_ui()`, `intestazione_filtro()` per il titolo di un elenco di servizi con "Tutti" e "Nessuno" |
@@ -442,14 +482,25 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Nome, icona, colore ed emoji della tipologia dei sacchetti | `servizio_sacchetti()` per il nome, la voce "Sacchetti" di `tipologie_servizio()` per il resto | `test-utils_styling.R` |
 | Testi del dettaglio di un sacchetto | `blocco_sacchetto()` in `R/utils_popup.R` | `test-utils_popup.R` |
 | Testo del popup dei marker | `create_popup_html()` | `test-utils_popup.R` |
-| Comuni serviti, cantiere di un comune | `inst/extdata/comuni_cantieri.csv`. Per un comune nuovo: una riga con cantiere e coordinate del centro abitato, poi `Rscript data-raw/prepara_comuni.R` per i confini | `test-utils_geografia.R`, `test-sample_dataset.R` |
+| Comuni serviti, cantiere di un comune | `inst/extdata/comuni_cantieri.csv`. Per un comune nuovo: una riga con cantiere e coordinate del centro abitato, poi `Rscript data-raw/prepara_comuni.R` per i confini e `Rscript data-raw/genera_sample_dataset.R` per il dataset di esempio | `test-utils_geografia.R`, `test-sample_dataset.R` |
 | Confini dei comuni: aggiornarli, cambiare la fonte o le regole con cui i nomi si associano | `scarica_confini_comuni()`, `origine_confini()`, `seleziona_confini_comuni()` in `R/fct_confini_comuni.R` | `test-fct_confini_comuni.R`, `test-utils_geografia.R` |
-| Regola del comune assegnato e del cantiere di una lettura | `aggiungi_geografia()` | `test-utils_geografia.R` |
+| Regola del comune assegnato e del cantiere di una lettura, regola del fuori comune e del fuori giro | `aggiungi_geografia()` in `R/utils_geografia.R` | `test-utils_comune_geografico.R`, `test-sample_dataset.R` |
+| Tolleranza dal confine oltre la quale una lettura è fuori comune o fuori giro | `tolleranza_confine_m()` in `R/utils_comune_geografico.R`. Vale per letture e cluster; il testo del dettaglio la legge da lì. Poi rigenerare l'analisi dei cluster di esempio | `test-utils_comune_geografico.R`, `test-sample_dataset.R` |
+| Come si trova il comune di un punto: passo della griglia, controllo esatto | `griglia_comuni()`, `indice_comune_geografico()` | `test-utils_comune_geografico.R`, che confronta con il controllo punto per punto |
+| Voci del filtro sulla posizione, regola con cui si combinano | `stati_coerenza()`, `maschera_filtri()`, interfaccia in `R/mod_filtri_ui.R` | `test-utils_data_processing.R`, `test-moduli.R` |
+| Segnali `C` e `G` sui marker | `svg_segnale()` e `svg_marker()` in `R/utils_styling.R`, voci in `html_legenda()` | `test-utils_styling.R` |
+| Righe del popup e blocchi del dettaglio sulle incongruenze | `create_popup_html()`, `posizione_rfid()`, `blocco_posizione()`, classi `popup-incongruenza` e `info-nota` nel CSS | `test-utils_popup.R`, `test-utils_data_processing.R` |
+| Scheda «Ricerca Giro»: che cosa cerca, colonne e ordine della tabella dei giri | `cerca_giri()`, `riepilogo_giri()`, `tabella_giri_dt()` in `R/utils_giri.R`; modulo in `R/mod_giro_ui.R` e `R/mod_giro_server.R` | `test-utils_giri.R`, `test-moduli.R` |
+| Mappa dei giri: contorno dei comuni dei giri, area inquadrata, numero massimo di comuni in evidenza | `aggiungi_comuni_giro()` in `R/utils_mapping.R`, `area_giri()` in `R/utils_giri.R`, classi `scheda-giro` e `tabella-giri` nel CSS | `test-utils_mapping.R`, `test-utils_giri.R`, poi guardarla nel browser |
+| Colonne sulla posizione nella tabella dei cluster | `posizione_cluster()` in `R/utils_cluster_output.R` | `test-utils_cluster_output.R` |
 | Regola del comune e del cantiere di un RFID | `geografia_per_gruppo()` | `test-utils_geografia.R`, `test-utils_storico.R` |
-| Filtri per cantiere e comune | interfaccia in `R/mod_filtri_ui.R`, stato e scelte in `R/mod_filtri_server.R`, regola in `maschera_filtri()` | `test-moduli.R`, `test-utils_data_processing.R` |
+| Filtri per cantiere, comune e posizione | interfaccia in `R/mod_filtri_ui.R`, stato e scelte in `R/mod_filtri_server.R`, regola in `maschera_filtri()` | `test-moduli.R`, `test-utils_data_processing.R` |
 | Aspetto degli elenchi a discesa della barra laterale: riquadro, freccia, comuni scelti | sezione "Elenchi a discesa della barra laterale" di `inst/app/www/custom_style.css` | nessuno: guardarli nel browser |
-| Numero di bidoni oltre il quale la mappa passa alle bolle, letture disegnate dalla ricerca RFID | `limiti_mappa()`, oppure le opzioni `trackerfid.max_marker` e `trackerfid.max_letture_ricerca` | `test-utils_mappa_aggregata.R` |
-| Zoom a cui le bolle passano da cantiere a comune a riquadro, dimensione dei riquadri | `livello_aggregazione()`, `passo_griglia()` | `test-utils_mappa_aggregata.R` |
+| Numero di bidoni oltre il quale, da vicino, la mappa passa ai soli bidoni inquadrati o alle bolle per riquadro; letture disegnate dalla ricerca RFID | `limiti_mappa()`, oppure le opzioni `trackerfid.max_marker` e `trackerfid.max_letture_ricerca` | `test-utils_mappa_aggregata.R` |
+| Zoom a cui la mappa passa dalle bolle per cantiere a quelle per comune e ai singoli bidoni, dimensione dei riquadri | `livello_aggregazione()`, `passo_griglia()`, e la regola in `scegli_vista()` | `test-utils_mappa_aggregata.R`, `test-moduli.R` |
+| Punto in cui sta la bolla di un comune, o di un cantiere | `aggrega_marker()` in `R/utils_mappa_aggregata.R`. Per i comuni il punto viene da `baricentri_comuni()` in `R/utils_geografia.R` | `test-utils_mappa_aggregata.R`, `test-utils_geografia.R` |
+| Colori dei cantieri, bordo e riempimento dei confini dei comuni | `colori_cantieri()` e `stile_confini()` in `R/utils_styling.R`, classe `legenda-cantiere` nel CSS. Una palette nuova va controllata a coppie anche per chi non distingue i colori | `test-utils_styling.R`, `test-utils_mapping.R`, poi guardarli nel browser |
+| Su quali mappe compaiono i confini, in che ordine rispetto ai marker | `aggiungi_confini()` in `R/utils_mapping.R`, chiamata da `mappa_base()` e da `mappa_cluster()` | `test-utils_mapping.R` |
 | Aspetto delle bolle | `svg_bolla()`, `lato_bolla()`, `aggiungi_bolle()`, classe `etichetta-bolla` nel CSS | `test-utils_styling.R`, `test-utils_mapping.R` |
 | Attesa prima di ridisegnare dopo uno spostamento | `debounce()` in `R/mod_mappa_server.R` | `test-moduli.R` |
 | Formati di file accettati | `formati_file()`, `leggi_tabella()` | `test-utils_data_processing.R` |
@@ -472,7 +523,7 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Selezione del periodo, preimpostazioni | `R/mod_periodo_ui.R`, `R/mod_periodo_server.R`, `periodo_anno()`, `etichetta_periodo()` | `test-moduli.R` |
 | Titolo in alto | `output$titolo` in `R/app_server.R` | nessuno |
 | Favicon | `favicon(ext = "png")` in `golem_add_external_resources()`. File `inst/app/www/favicon.png`: quadrato di 192 pixel con il simbolo aziendale su fondo bianco. L'immagine di origine non è nel repository | `test-moduli.R` |
-| Aggiungere una scheda | `tabBox` e `conditionalPanel` in `R/app_ui.R`, collegamenti in `R/app_server.R` | `test-moduli.R` |
+| Aggiungere una scheda | `tabBox` e `conditionalPanel` in `R/app_ui.R`, collegamenti in `R/app_server.R`. Solo se il proprietario del progetto la chiede | `test-moduli.R` |
 | Regole di ricerca: separatori, maiuscole | `analizza_input_ricerca()`, `codice_in()`, `cerca_per_rfid()`, `filtra_ultimo_per_utenza()` | `test-utils_data_processing.R` |
 | Aspetto della ricerca RFID: evidenza, opacità, riquadri | ramo `rfid` di `disegna_marker()`, `add_rfid_bounds()` | `test-utils_mapping.R` |
 | Raggio dei cluster di marker | `opzioni_cluster()` | `test-utils_mapping.R` |
@@ -481,7 +532,7 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Soglie degli indicatori | `soglie_indicatore()` | `test-utils_cluster_output.R` |
 | Regole degli indicatori | `classifica_cluster()` | `test-utils_cluster_output.R` |
 | Pesi o formula dell'indice di fiducia | `pesi_fiducia()`, `indice_fiducia()` | `test-utils_cluster_output.R` |
-| Colonne della tabella dei cluster | `colonne_analisi_cluster()`, `analisi_cluster_vuota()` e l'ultimo `mutate` di `calcola_analisi_cluster()`: i tre devono coincidere | `test-utils_cluster_output.R` |
+| Colonne della tabella dei cluster | `colonne_analisi_cluster()`, `analisi_cluster_vuota()` e l'ultimo `mutate` di `calcola_analisi_cluster()`: i tre devono coincidere. Oggi sono 30 | `test-utils_cluster_output.R` |
 | Nomi e colori degli indicatori | `indicatori_config()` | `test-utils_cluster_viste.R` |
 | Tabella, grafici o mappa dei cluster spaziali | `R/utils_cluster_viste.R` | `test-utils_cluster_viste.R` |
 | Stili grafici dell'app | `inst/app/www/custom_style.css` | nessuno |
@@ -490,7 +541,7 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Regole di preparazione dei dati reali: mezzi validi, formato degli RFID, associazione al database, servizio atteso | `R/fct_preparazione_letture.R` | `test-fct_preparazione_letture.R` |
 | Tabelle estratte dal database, filtri sull'estrazione | `data-raw/01_estrai_tabelle.R` | nessuno |
 | Pulizia delle singole tabelle estratte | codice commentato in `data-raw/02_importa_tabelle.R` | nessuno |
-| Filtri finali e nome del CSV per l'app | `data-raw/03_crea_letture_app.R` | nessuno |
+| Filtri finali e nome del CSV per l'app | `data-raw/03_crea_letture_app.R`: oggi scarta i codici che iniziano per `00BD` e quelli che iniziano con dieci zeri | nessuno |
 | Dipendenze | `DESCRIPTION`, poi `devtools::document()` | `devtools::check()` |
 
 Dopo una modifica alle regole dell'analisi dei cluster vanno aggiornati anche `docs/analisi_cluster.md` e `README.md`. Il report `docs/indice_fiducia.Rmd` contiene controlli che fermano la compilazione se il testo non corrisponde più ai dati.
@@ -503,13 +554,14 @@ Il dataset reale atteso è di circa 2 milioni di letture l'anno. Ogni modifica d
 
 | Passaggio | Tempo |
 |---|---|
-| Lettura del CSV da 320 MB, e validazione | 2,3 s e 2,5 s. Da Parquet 1,3 s e 1,7 s |
+| Lettura del CSV da 320 MB, e validazione | 2,3 s e 3,8 s. Da Parquet 1,3 s e 3 s. Nella validazione 1,3 s sono del comune geografico e delle incongruenze |
 | Filtro del periodo e icone dei non censiti | 0,2 s |
 | Cambio di un filtro: maschera e ultima lettura per RFID | 0,15 s |
 | Disegno della mappa, lato server | meno di 0,1 s, messaggio sotto il megabyte |
 | Nel browser, dal click al ridisegno finito | da 0,3 a 0,5 s per filtri, zoom e spostamenti |
 | Ricerca di un RFID, dettaglio di un bidone | 0,1 s, 0,03 s |
-| Analisi dei cluster | 1,8 s |
+| Ricerca dei giri: un mezzo in un giorno, tutti i mezzi in un mese | 0,01 s, 0,3 s con il riepilogo. Su tutto l'anno e tutti i mezzi qualche secondo |
+| Analisi dei cluster | circa 2 s |
 
 I tempi dipendono dallo stato del computer: da una sessione all'altra gli stessi passaggi, a codice invariato, sono cambiati fino a una volta e mezza. Per confrontare due versioni vanno misurate di seguito.
 
@@ -589,7 +641,11 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 - **`summarise()` e nomi riusati.** Dentro un `dplyr::summarise()` una colonna appena creata nasconde quella originale nelle espressioni successive. I riepiloghi che servono la colonna originale vanno calcolati prima di sovrascriverla.
 - **`dbscan::dbscan()` e matrici.** Una matrice viene letta come coordinate dei punti, non come distanze. Il progetto passa coordinate proiettate in metri.
 - **Date nella tabella interattiva.** Le colonne di tipo `Date` slittano di un giorno con i formati data del browser. In `tabella_cluster_dt()` sono convertite in testo.
-- **Confini e dataset di esempio.** Lo script del dataset di esempio mette ogni contenitore dentro il confine del suo comune e ricava il comune di lettura dal punto. Dopo un aggiornamento dei confini il dataset va rigenerato: possono cambiare le coordinate di qualche contenitore vicino a un confine e il comune di lettura di qualche lettura. Vanno poi rigenerata l'analisi dei cluster di esempio e rieseguiti i test.
+- **Confini e dataset di esempio.** Lo script del dataset di esempio mette ogni contenitore dentro il confine del suo comune e ricava il comune di lettura dal punto. Dopo un aggiornamento dei confini il dataset va rigenerato: possono cambiare le coordinate di qualche contenitore vicino a un confine e il comune di lettura di qualche lettura. Vanno poi rigenerata l'analisi dei cluster di esempio e rieseguiti i test. Lo stesso dopo aver aggiunto un comune alla tabella o averne cambiato il cantiere: i bidoni dell'esempio vengono redistribuiti tra i comuni del loro cantiere, e cambiano i conteggi per comune e i numeri del confronto tra i sistemi.
+- **Confini e pulizia della mappa.** I confini restano sulla mappa perché Leaflet li tiene tra i livelli GeoJSON, che `clearShapes()` non tocca. Disegnati con `addPolygons()` sparirebbero al primo ridisegno dei marker. Per lo stesso motivo `pulisci_mappa()` non deve chiamare `clearGeoJSON()`.
+- **Marker assenti da lontano.** All'avvio la mappa principale inquadra tutta la zona, a zoom 10 o meno, e disegna quattro bolle: i marker dei bidoni non ci sono finché non si arriva a zoom 13. Una prova nel browser che conta i marker deve prima ingrandire. Nei test del modulo lo zoom si imposta con `session$setInputs(mappa_zoom = )`.
+- **`VALSTAGNA` non è in tabella.** È un comune soppresso: il passo 2 della preparazione lo riporta a `VALBRENTA`, ma solo nella colonna `comune_servizio` dei contenitori. Se un file lo contiene ancora, ad esempio perché compare nel calendario dei giri, l'app lo tratta come ogni comune fuori tabella: avviso al caricamento, cantiere dal file, nessun confine e nessun baricentro. Il riconoscimento nell'app, aggiunto e poi tolto, non va rimesso senza che il proprietario del progetto lo chieda.
+- **Baricentro fuori dal confine.** Il baricentro dell'area di un comune dalla forma irregolare può cadere fuori dal suo confine: succede a `POVE DEL GRAPPA` e a `TEOLO`. `baricentri_comuni()` usa allora il baricentro della parte più grande, se il comune ha più poligoni, e altrimenti il centro abitato della tabella dei comuni. Dopo aver aggiunto un comune conviene guardare dove cade la sua bolla.
 - **Dati di esempio citati per nome.** Test e report fanno riferimento a RFID e conteggi precisi. Cambiare il seme o le regole dello script del dataset li fa fallire: vanno aggiornati insieme.
 - **Compilazione dei report.** Vanno compilati dalla cartella `docs/`, senza l'opzione `intermediates_dir`, che produce avvisi spuri. `output_dir` invece si può usare.
 - **Confronto tra i sistemi e coorte.** Il confronto parte dagli RFID letti dalle antenne, quindi per le antenne la quota di contenitori letti è il 100% per costruzione: non è un risultato e non va scritto come tale. Per lo stesso motivo un contenitore conta solo dall'anno successivo a quello della sua prima lettura.
@@ -603,6 +659,12 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 - **Servizio atteso sui censiti.** Nei dati reali `servizio_atteso` è compilato per ogni lettura. Una regola che legge quella colonna senza guardare `presente_a_database` tratta i censiti come non censiti: è l'errore che avevano i filtri e le statistiche. Filtri, statistiche, stima del pannello di dettaglio e composizione dei giri nell'analisi dei cluster contano le sole letture "Non Presente".
 - **Sacchetti nell'esempio, non nei dati reali.** Il dataset di esempio contiene 12 sacchetti, per scelta del proprietario del progetto, che vuole vedere come l'app li tratta. Nei dati reali i passi 3 e 4 li scartano ancora. Per questo i conteggi dell'esempio vanno letti come 239 bidoni più 12 sacchetti: i test sulle regole dei bidoni, come volume, raccolte e comune del database, li escludono con `rfid_sacchetto()`.
 - **Sacchetti fuori dalle analisi.** L'analisi dei cluster e il report sul beneficio delle antenne tolgono i sacchetti con `senza_sacchetti()`. Le funzioni di `R/utils_storico.R` non lo fanno da sole: `anagrafica_rfid()`, `unisci_letture()` e `andamento_rfid()` servono anche al dettaglio di un sacchetto nell'app, che ne mostra l'istogramma. Un'analisi nuova sui contenitori deve togliere i sacchetti all'inizio, come fa il report. Mappa, ricerche, filtri e statistiche della barra laterale invece li comprendono: per questo sulla mappa del 2025 ci sono 248 RFID e nell'analisi dei cluster 238.
+- **Due comuni per lettura, più uno.** `comune_da_database` e `comune_lettura` sono dichiarati, `comune_geografico` viene dalla posizione, `comune_assegnato` è quello che usano filtri e bolle. Una regola nuova deve scegliere quale le serve: per dire dove sta un bidone il geografico, per confrontare con l'anagrafica o con il calendario i dichiarati. `geografia_per_gruppo()` usa i dichiarati di proposito.
+- **Cantiere di una lettura e cantiere di un RFID.** Il `cantiere` di una lettura è quello del comune in cui cade; quello di un RFID in `anagrafica_rfid()` e nella tabella dei cluster è quello del comune dichiarato. Per un bidone spostato in un altro cantiere i due sono diversi: sulla mappa del 2025 i bidoni per cantiere sono 33, 66, 92 e 60, in anagrafica 34, 67, 89 e 61.
+- **Colonna `letture` dentro `tibble()`.** In `riepilogo_giri()` il conteggio delle letture si chiama `letture`, come il data frame: dentro `dplyr::tibble()` la colonna appena creata nasconde il data frame nelle espressioni successive. I valori che servono le letture sono calcolati prima.
+- **Click sulle righe di una tabella DT nelle prove.** La selezione di una riga parte dagli eventi del mouse: un `click()` di jQuery non basta, servono `mousedown`, `mouseup` e `click` veri.
+- **Giri del dataset di esempio.** Nell'esempio il comune di lettura viene dal calendario simulato, non dal punto: le letture fatte da un giro in un altro comune, come quelle dei due tag anomali e di qualche non censito letto di passaggio, sono fuori giro. È voluto. Il giro sbagliato dimostrativo è scritto a mano nello script: cambiarne giorno o turno richiede di aggiornare test e documenti.
+- **Comuni con più poligoni nel contorno del giro.** `aggiungi_comuni_giro()` separa gli anelli con un valore mancante, usando il numero dell'anello di `lati_comuni()`: dedurre la fine di un anello dai vertici non basta, `VALBRENTA` ha due parti.
 - **Statistiche e servizio stimato.** `calcola_statistiche()` riceve una riga per RFID: il servizio stimato va calcolato prima, su tutte le letture del periodo, con `aggiungi_servizio_icona()`. Se la colonna `servizio_icona` manca, `servizio_mostrato()` la calcola sulle sole righe ricevute, e la stima può risultare diversa.
 - **Elenco di caselle senza etichetta.** Con `label = NULL` Shiny lascia un'etichetta nascosta e sposta le voci 10 pixel più in alto: finirebbero sopra la riga che sta sotto il titolo. La regola CSS su `.gruppo-servizi .shiny-options-group` lo corregge.
 - **Righe della tabella dei cluster dopo una nuova analisi.** `input$tabella_rows_all` riporta le righe dell'ultima tabella disegnata dal browser, e la tabella non si ridisegna mentre la sua vista è nascosta. Dopo una nuova analisi quegli indici sono di un'altra tabella: usati così come sono danno righe vuote, un avviso di Leaflet e l'errore "Bounds are not valid" nel browser. Per questo `righe_tabella` viene azzerato a ogni nuova analisi.
@@ -618,6 +680,6 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 | Documento | Contenuto |
 |---|---|
 | `README.md` | Uso dell'app, formato del file, file grandi, differenze rispetto alle specifiche |
-| `docs/analisi_cluster.md` | Analisi dei cluster spaziali: colonne, indicatori, indice di fiducia, scelte e limiti |
+| `docs/analisi_cluster.md` | Analisi dei cluster spaziali: colonne, indicatori, indice di fiducia, posizione e comuni dichiarati, scelte e limiti |
 | `docs/indice_fiducia.Rmd` | Report sull'indice di fiducia, con esempi svolti e prove di efficacia |
 | `docs/beneficio_antenne.Rmd` | Report sul beneficio delle antenne: letture per anno, anni vuoti, tasso di lettura prima e dopo, a tre livelli: intero territorio, cantiere, comune |

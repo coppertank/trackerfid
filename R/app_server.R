@@ -31,6 +31,7 @@ app_server <- function(input, output, session) {
     dati = dati,
     tipo = "utenza"
   )
+  giri <- mod_giro_server("giro", dati = dati)
 
   output$titolo <- renderText({
     intervallo <- periodo$periodo()
@@ -113,6 +114,16 @@ app_server <- function(input, output, session) {
     )
   )
 
+  clic_giro <- mod_mappa_server(
+    "mappa_giro",
+    dati = giri$risultati,
+    modalita = "giro",
+    # La vista comprende i comuni in cui i giri dovevano lavorare.
+    dati_vista = reactive(area_giri(giri$risultati())),
+    attiva = scheda_attiva("giro"),
+    messaggio = reactive(senza_dati() %||% giri$messaggio())
+  )
+
   # --- Analisi dei cluster spaziali ---------------------------------------------
   clic_cluster <- mod_cluster_analysis_server(
     "cluster",
@@ -125,7 +136,7 @@ app_server <- function(input, output, session) {
   rfid_selezionato <- reactiveVal(NULL)
 
   purrr::walk(
-    list(clic_principale, clic_rfid, clic_utenza, clic_cluster),
+    list(clic_principale, clic_rfid, clic_giro, clic_utenza, clic_cluster),
     function(clic) {
       observeEvent(clic(), {
         rfid_selezionato(clic()$rfid)

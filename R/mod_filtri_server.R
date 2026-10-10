@@ -33,6 +33,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       includi_stima_incerta = TRUE,
       cantieri_esclusi = character(0),
       comuni = character(0),
+      coerenza_escluse = character(0),
       reimpostazioni = 0L
     )
 
@@ -47,11 +48,17 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       stato$includi_stima_incerta <- TRUE
       stato$cantieri_esclusi <- character(0)
       stato$comuni <- character(0)
+      stato$coerenza_escluse <- character(0)
       stato$reimpostazioni <- stato$reimpostazioni + 1L
       updateCheckboxGroupInput(
         session,
         "presente_filter",
         selected = stati_database()
+      )
+      updateCheckboxGroupInput(
+        session,
+        "coerenza_check",
+        selected = names(stati_coerenza())
       )
       updateCheckboxInput(session, "includi_stima_incerta", value = TRUE)
     }
@@ -267,6 +274,17 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ignoreNULL = FALSE,
       ignoreInit = TRUE
     )
+    observeEvent(
+      input$coerenza_check,
+      {
+        stato$coerenza_escluse <- setdiff(
+          names(stati_coerenza()),
+          input$coerenza_check %||% character(0)
+        )
+      },
+      ignoreNULL = FALSE,
+      ignoreInit = TRUE
+    )
     # Senza comuni scelti l'input è `NULL`: valgono tutti.
     observeEvent(
       input$comuni,
@@ -292,7 +310,8 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
         atteso_esclusi = stato$atteso_esclusi,
         includi_stima_incerta = stato$includi_stima_incerta,
         cantieri_esclusi = stato$cantieri_esclusi,
-        comuni = stato$comuni
+        comuni = stato$comuni,
+        coerenza_escluse = stato$coerenza_escluse
       )
     })
 

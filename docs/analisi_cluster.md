@@ -19,7 +19,7 @@ Le quantità annue non usano la lunghezza del periodo, ma i **giorni osservati**
 
 ## La tabella di output
 
-Una riga per ogni cluster di ogni RFID, 27 campi. La specifica parlava di 25 campi ma ne definiva 22: i cinque aggiunti sono segnati con un asterisco.
+Una riga per ogni cluster di ogni RFID, 30 campi. La specifica parlava di 25 campi ma ne definiva 22: gli otto aggiunti sono segnati con un asterisco.
 
 | Campo | Contenuto |
 |---|---|
@@ -30,6 +30,9 @@ Una riga per ogni cluster di ogni RFID, 27 campi. La specifica parlava di 25 cam
 | `cluster_prima_lettura`, `cluster_ultima_lettura` | Prima e ultima lettura del cluster |
 | `presente_a_database` * | Stato dell'ultima lettura del periodo. Stabilisce quali campi sono compilati |
 | `cantiere` *, `comune` * | Comune dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello in cui è stato letto più spesso. Il cantiere è quello del comune. Sono uguali per tutti i cluster dell'RFID |
+| `comune_geografico` * | Comune servito in cui cade il baricentro del cluster, trovato dai confini dei comuni. Vuoto se il baricentro è fuori da tutti i comuni serviti |
+| `incongruenza_comune` * | `FUORI_COMUNE` se il cluster è di un censito e il baricentro sta a più di un chilometro dal confine del comune del database: il contenitore è stato letto lontano da dove risulta. `FUORI_GIRO` se il baricentro sta a più di un chilometro dal comune del giro che ha letto il cluster più spesso. Le due voci possono comparire insieme, separate da una virgola. Vuoto se il cluster è coerente |
+| `distanza_comune_m` * | Distanza in metri del baricentro dal confine del comune dichiarato: quello del database per un censito, quello del giro prevalente per un non censito. Zero se il baricentro è dentro il comune |
 | `servizio_transponder` | Servizio dell'ultima lettura del periodo. Vuoto per i non censiti |
 | `servizio_transponder_cronologia` * | Sequenza dei servizi quando è cambiato, ad esempio `CARTA > SECCO > CARTA`. Vuoto se non è cambiato |
 | `servizio_atteso` | Solo per i non censiti: il giro prevalente nel cluster se copre almeno l'80% delle sue letture, altrimenti vuoto |
@@ -154,6 +157,14 @@ Le tre correzioni applicate sono descritte sopra. Restano alcuni punti deboli, l
 - **Soglia delle 300 letture.** Un contenitore svuotato sei giorni la settimana supera le 300 letture l'anno e verrebbe trattato come anomalo. Dove le raccolte previste sono note, la soglia potrebbe essere un multiplo di quelle, ad esempio il triplo.
 - **Soglia dei 50 m.** È realistica per il GPS di bordo, che sbaglia di 5-15 m. Un contenitore stradale letto dai due lati della strada, o in vie strette tra edifici alti, può arrivare a 50-80 m.
 - **Letture o raccolte.** Due letture nello stesso giorno contano come due. Contare i giorni distinti di lettura darebbe una stima più fedele delle raccolte.
+
+### Posizione e comuni dichiarati
+
+Ogni cluster ha due comuni dichiarati: quello del database, se l'RFID è censito, e quello dei giri che lo hanno letto. Il campo `comune_geografico` dice invece dove sta davvero il cluster. Il confronto usa la stessa tolleranza dell'app, un chilometro dal confine: un contenitore su una strada di confine, o letto con un GPS poco preciso, non viene segnalato.
+
+- **`FUORI_COMUNE` e `RELOCATED_BIN` dicono cose diverse.** `RELOCATED_BIN` guarda le letture: due o tre luoghi distinti nello stesso periodo. `FUORI_COMUNE` guarda il database: il luogo sta in un comune diverso da quello dell'anagrafica. Un contenitore spostato da tempo ha un cluster solo, regolare, ma fuori comune: è l'anagrafica da correggere.
+- **`FUORI_GIRO` riguarda il mezzo più del contenitore.** Vuol dire che i mezzi che hanno letto quel luogo dovevano lavorare altrove. Per capire quale mezzo e in quale giorno serve la scheda «Ricerca Giro» dell'app.
+- **Gli indicatori e l'indice di fiducia non cambiano.** I tre campi si aggiungono alla tabella: non entrano nelle regole di classificazione né nei pesi.
 
 ### Casi limite
 

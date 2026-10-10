@@ -487,6 +487,7 @@ mappa_cluster <- function(righe) {
     options = leaflet::leafletOptions(preferCanvas = TRUE)
   ) |>
     leaflet::addTiles() |>
+    aggiungi_confini() |>
     leaflet::addScaleBar(
       position = "bottomleft",
       options = leaflet::scaleBarOptions(imperial = FALSE)

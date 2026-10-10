@@ -16,6 +16,51 @@ colori_stato <- function() {
   )
 }
 
+#' Colori dei cantieri sulla mappa
+#'
+#' Una tinta per cantiere, usata dai confini dei comuni e dalla legenda. Le
+#' quattro tinte si distinguono a coppie anche per chi non distingue rosso e
+#' verde, e stanno lontane dal verde e dal rosso dello stato a database e dai
+#' colori dei cluster. Il colore segue il nome del cantiere, non la sua
+#' posizione nell'elenco.
+#'
+#' @return Vettore di colori con i nomi dei cantieri.
+#' @noRd
+colori_cantieri <- function() {
+  c(
+    ASIAGO = "#5b3a9e",
+    BASSANO = "#8f5a0a",
+    CAMPOSAMPIERO = "#2a78d6",
+    RUBANO = "#c2548f"
+  )
+}
+
+#' Colore di un cantiere
+#'
+#' @param cantiere Nomi di cantiere.
+#' @return Il colore di `colori_cantieri()`, grigio per un cantiere che non ne
+#'   ha uno.
+#' @noRd
+colore_cantiere <- function(cantiere) {
+  dplyr::coalesce(
+    unname(colori_cantieri()[as.character(cantiere)]),
+    "#6b7280"
+  )
+}
+
+#' Stile dei confini dei comuni sulle mappe
+#'
+#' Bordo sottile e riempimento appena accennato, nel colore del cantiere: i
+#' confini devono leggersi senza coprire lo sfondo né i marker. Il bordo è
+#' tratteggiato, come i confini amministrativi sulle carte: così non si
+#' confonde con le strade dello sfondo.
+#'
+#' @return Lista con `weight`, `opacity`, `fillOpacity` e `dashArray`.
+#' @noRd
+stile_confini <- function() {
+  list(weight = 1.5, opacity = 0.75, fillOpacity = 0.1, dashArray = "5 4")
+}
+
 #' Tipologie di servizio: icona Font Awesome, colore del glifo, emoji
 #'
 #' PUNTO UNICO DA MODIFICARE per aggiungere servizi o cambiare icone.
@@ -268,7 +313,14 @@ svg_icona_servizio <- function(servizio, lato = 16) {
 #' @param glifo Se `FALSE` il marker non riporta l'icona del servizio.
 #' @return Stringa SVG.
 #' @noRd
-svg_marker <- function(servizio, presente, stile = "normale", glifo = TRUE) {
+svg_marker <- function(
+  servizio,
+  presente,
+  stile = "normale",
+  glifo = TRUE,
+  fuori_comune = FALSE,
+  fuori_giro = FALSE
+) {
   colori <- colori_stato()
   censito <- !is.na(presente) && presente == "Presente"
   sagoma <- if (censito) {
@@ -296,7 +348,32 @@ svg_marker <- function(servizio, presente, stile = "normale", glifo = TRUE) {
     "/>",
     "<circle cx=\"18\" cy=\"17\" r=\"10.5\" fill=\"#ffffff\"/>",
     if (glifo) svg_glifo(info$icona, info$colore, 11, 10, 14),
+    if (isTRUE(fuori_comune)) svg_segnale("C", 7.5),
+    if (isTRUE(fuori_giro)) svg_segnale("G", 28.5),
     "</svg>"
+  )
+}
+
+#' Segnale di incongruenza sul marker
+#'
+#' Un bollino scuro con una lettera, in un angolo del marker: `C` per una
+#' lettura fuori comune, `G` per una fuori giro. Non cambia colore, forma né
+#' icona del marker, che continuano a dire stato e servizio.
+#'
+#' @param lettera Lettera del segnale.
+#' @param x Ascissa del centro del bollino, nel riquadro del marker.
+#' @noRd
+svg_segnale <- function(lettera, x) {
+  sprintf(
+    paste0(
+      "<circle cx=\"%s\" cy=\"7.5\" r=\"7\" fill=\"%s\" stroke=\"#ffffff\" stroke-width=\"1.5\"/>",
+      "<text x=\"%s\" y=\"10.9\" text-anchor=\"middle\" font-family=\"Arial, Helvetica, sans-serif\" ",
+      "font-size=\"9.5\" font-weight=\"bold\" fill=\"#ffffff\">%s</text>"
+    ),
+    x,
+    colori_stato()$bordo,
+    x,
+    lettera
   )
 }
 
@@ -316,17 +393,33 @@ uri_svg <- function(svg) {
 #' @param stile Stile del bordo, vedi `svg_marker()`.
 #' @return Oggetto icone di Leaflet, un'icona per elemento.
 #' @noRd
-get_leaflet_icon <- function(servizio, presente, stile = "normale") {
+get_leaflet_icon <- function(
+  servizio,
+  presente,
+  stile = "normale",
+  fuori_comune = FALSE,
+  fuori_giro = FALSE
+) {
   n <- length(servizio)
   presente <- rep_len(presente, n)
   stile <- rep_len(stile, n)
+  fuori_comune <- rep_len(fuori_comune %in% TRUE, n)
+  fuori_giro <- rep_len(fuori_giro %in% TRUE, n)
 
   # Ogni combinazione viene disegnata una sola volta.
-  chiave <- paste(servizio, presente, stile, sep = "|")
+  chiave <- paste(servizio, presente, stile, fuori_comune, fuori_giro, sep = "|")
   uniche <- !duplicated(chiave)
   uri <- purrr::pmap_chr(
-    list(servizio[uniche], presente[uniche], stile[uniche]),
-    function(s, p, st) uri_svg(svg_marker(s, p, st))
+    list(
+      servizio[uniche],
+      presente[uniche],
+      stile[uniche],
+      fuori_comune[uniche],
+      fuori_giro[uniche]
+    ),
+    function(s, p, st, fc, fg) {
+      uri_svg(svg_marker(s, p, st, fuori_comune = fc, fuori_giro = fg))
+    }
   )
 
   leaflet::icons(
@@ -520,8 +613,41 @@ html_legenda <- function(modalita = "cluster") {
       ),
       voce(tags$span(class = "legenda-riquadro"), "Area di spostamento")
     ),
+    giro = list(
+      tags$div(class = "legenda-titolo", "Giro"),
+      voce(tags$span(class = "legenda-comune-giro"), "Comune del giro")
+    ),
     NULL
   )
+  # Segnali sui marker: posizione lontana dal comune dichiarato.
+  segnale <- function(...) {
+    immagine(svg_marker(NA, "Presente", glifo = FALSE, ...), 15, 20)
+  }
+  voci_posizione <- list(
+    tags$div(class = "legenda-titolo", "Posizione"),
+    voce(segnale(fuori_comune = TRUE), "C: fuori dal comune del database"),
+    voce(segnale(fuori_giro = TRUE), "G: fuori dal comune del giro")
+  )
+
+  # Una voce per cantiere, con il colore dei confini dei suoi comuni.
+  stile <- stile_confini()
+  voci_cantiere <- purrr::imap(colori_cantieri(), function(colore, cantiere) {
+    rgb <- grDevices::col2rgb(colore)[, 1]
+    voce(
+      tags$span(
+        class = "legenda-cantiere",
+        style = sprintf(
+          "border-color: %s; background: rgba(%d, %d, %d, %s);",
+          colore,
+          rgb[["red"]],
+          rgb[["green"]],
+          rgb[["blue"]],
+          format(2 * stile$fillOpacity)
+        )
+      ),
+      cantiere
+    )
+  })
 
   as.character(tags$details(
     open = NA,
@@ -537,6 +663,9 @@ html_legenda <- function(modalita = "cluster") {
     ),
     tags$div(class = "legenda-titolo", "Servizio"),
     voci_servizio,
-    extra
+    voci_posizione,
+    extra,
+    tags$div(class = "legenda-titolo", "Confini dei comuni: cantiere"),
+    unname(voci_cantiere)
   ))
 }

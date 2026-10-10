@@ -100,6 +100,39 @@ test_that("i sacchetti hanno una tipologia e un'icona loro", {
   )
 })
 
+test_that("ogni cantiere ha un colore suo, lontano da quelli dello stato", {
+  colori <- colori_cantieri()
+  expect_setequal(names(colori), cantieri())
+  expect_equal(anyDuplicated(colori), 0)
+  expect_match(colori, "^#[0-9a-f]{6}$")
+  # il verde, il rosso e l'arancio dicono lo stato a database e la quota di
+  # censiti: i cantieri non li usano
+  expect_false(any(colori %in% unlist(colori_stato())))
+  expect_false(any(colori %in% genera_colore_cluster(c(0, 0.5, 1))))
+
+  expect_identical(
+    colore_cantiere(c("RUBANO", "ASIAGO", "RUBANO")),
+    unname(colori[c("RUBANO", "ASIAGO", "RUBANO")])
+  )
+  # un cantiere senza colore, o mancante, è grigio
+  expect_identical(colore_cantiere(c("ALTRO", NA)), rep("#6b7280", 2))
+  expect_identical(colore_cantiere(character(0)), character(0))
+
+  # la legenda di ogni mappa riporta i cantieri con il loro colore
+  for (modalita in c("cluster", "rfid", "utenza")) {
+    legenda <- html_legenda(modalita)
+    expect_match(legenda, "Confini dei comuni: cantiere", fixed = TRUE)
+    for (cantiere in names(colori)) {
+      expect_match(legenda, cantiere, fixed = TRUE)
+      expect_match(
+        legenda,
+        paste0("border-color: ", colori[[cantiere]]),
+        fixed = TRUE
+      )
+    }
+  }
+})
+
 test_that("le icone Font Awesome usate esistono", {
   for (nome in c(servizi_config()$icona, "question")) {
     glifo <- glifo_fa(nome)
@@ -125,6 +158,42 @@ test_that("il marker SVG codifica stato, servizio e stile", {
   precedente <- svg_marker("CARTA", "Presente", "precedente")
   expect_match(precedente, "stroke-width=\"1\"", fixed = TRUE)
   expect_match(precedente, "stroke-dasharray=\"5,5\"", fixed = TRUE)
+})
+
+test_that("i segnali sul marker dicono fuori comune e fuori giro", {
+  semplice <- svg_marker("CARTA", "Presente")
+  fuori_comune <- svg_marker("CARTA", "Presente", fuori_comune = TRUE)
+  fuori_giro <- svg_marker("CARTA", "Presente", fuori_giro = TRUE)
+  entrambi <- svg_marker("CARTA", "Presente", fuori_comune = TRUE, fuori_giro = TRUE)
+  expect_no_match(semplice, "<text", fixed = TRUE)
+  expect_match(fuori_comune, ">C</text>", fixed = TRUE)
+  expect_no_match(fuori_comune, ">G</text>", fixed = TRUE)
+  expect_match(fuori_giro, ">G</text>", fixed = TRUE)
+  expect_match(entrambi, ">C</text>", fixed = TRUE)
+  expect_match(entrambi, ">G</text>", fixed = TRUE)
+  # colore, forma e icona del marker restano quelli di stato e servizio
+  expect_true(startsWith(entrambi, sub("</svg>$", "", semplice)))
+
+  icone <- get_leaflet_icon(
+    rep("CARTA", 5),
+    "Presente",
+    fuori_comune = c(FALSE, TRUE, TRUE, NA, FALSE),
+    fuori_giro = c(FALSE, FALSE, TRUE, FALSE, FALSE)
+  )
+  expect_equal(dplyr::n_distinct(icone$iconUrl), 3)
+  # un valore mancante vale come nessun segnale
+  expect_identical(icone$iconUrl[4], icone$iconUrl[1])
+  expect_identical(icone$iconUrl[5], icone$iconUrl[1])
+
+  # la legenda di ogni mappa spiega i due segnali; quella dei giri anche il
+  # contorno del comune del giro
+  for (modalita in c("cluster", "rfid", "utenza", "giro")) {
+    legenda <- html_legenda(modalita)
+    expect_match(legenda, "C: fuori dal comune del database", fixed = TRUE)
+    expect_match(legenda, "G: fuori dal comune del giro", fixed = TRUE)
+  }
+  expect_match(html_legenda("giro"), "Comune del giro", fixed = TRUE)
+  expect_no_match(html_legenda("cluster"), "legenda-comune-giro", fixed = TRUE)
 })
 
 test_that("le icone Leaflet sono una per lettura", {

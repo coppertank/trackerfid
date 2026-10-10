@@ -355,13 +355,15 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   # tutti i comuni sono in tabella; il cantiere è quello del comune assegnato
   comuni <- stats::na.omit(c(d$comune_da_database, d$comune_lettura))
   expect_true(all(comuni %in% comuni_cantieri()$comune))
+  # il comune assegnato è quello in cui cade il punto: nel dataset di esempio
+  # ogni lettura sta in un comune servito
+  expect_false(anyNA(d$comune_geografico))
   expect_identical(
-    d$comune_assegnato,
-    dplyr::coalesce(d$comune_da_database, d$comune_lettura)
+    d$comune_geografico,
+    comune_geografico(d$latitudine, d$longitudine)
   )
+  expect_identical(d$comune_assegnato, d$comune_geografico)
   expect_identical(d$cantiere, cantiere_di_comune(d$comune_assegnato))
-  # per un non censito il comune assegnato è quello del giro che l'ha letto
-  expect_identical(d$comune_assegnato[non_presente], d$comune_lettura[non_presente])
   expect_false(anyNA(d$cantiere))
 
   # quote dei cantieri tra i contenitori: 12%, 26%, 37% e 25%
@@ -372,7 +374,8 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
     c(0.12, 0.26, 0.37, 0.25),
     tolerance = 0.1
   )
-  expect_equal(dplyr::n_distinct(anagrafica$comune, na.rm = TRUE), 54)
+  # i giri del calendario lavorano in 32 comuni
+  expect_equal(dplyr::n_distinct(anagrafica$comune, na.rm = TRUE), 32)
 
   # tutte le letture cadono nella zona servita
   zona <- riquadro_zona()
@@ -383,8 +386,20 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   # dalla seconda lettura in poi viene letto a Cittadella
   spostato <- d[d$RFID == "RFD20250905100", ]
   expect_identical(unique(spostato$comune_da_database), "LIMENA")
-  expect_identical(unique(spostato$cantiere), "RUBANO")
   expect_identical(spostato$comune_lettura[1:2], c("LIMENA", "CITTADELLA"))
+  expect_identical(spostato$comune_geografico[1:2], c("LIMENA", "CITTADELLA"))
+  # il cantiere di una lettura è quello del comune in cui cade
+  expect_identical(
+    spostato$cantiere,
+    c("RUBANO", rep("CAMPOSAMPIERO", nrow(spostato) - 1))
+  )
+  # fuori comune dopo lo spostamento, mai fuori giro: lo legge il giro di
+  # Cittadella
+  expect_identical(
+    spostato$fuori_comune,
+    c(FALSE, rep(TRUE, nrow(spostato) - 1))
+  )
+  expect_false(any(spostato$fuori_giro))
   expect_identical(
     unique(d$comune_da_database[d$RFID == "RFD20250901001"]),
     "BASSANO DEL GRAPPA"
@@ -401,7 +416,7 @@ test_that("le letture storiche di esempio precedono quelle con le antenne", {
 
   expect_length(esito$avvisi, 0)
   expect_identical(names(storico), colonne_storico())
-  expect_equal(nrow(storico), 7025)
+  expect_equal(nrow(storico), 6893)
   expect_lt(max(storico$giorno_lettura), min(d$giorno_lettura))
   expect_equal(
     as.Date(range(storico$giorno_lettura)),
@@ -412,11 +427,11 @@ test_that("le letture storiche di esempio precedono quelle con le antenne", {
   # RFID letti da entrambi i sistemi, solo dalle antenne, solo in passato
   rfid_storico <- unique(storico$RFID)
   rfid_antenne <- unique(d$RFID)
-  expect_length(rfid_storico, 227)
-  expect_length(intersect(rfid_storico, rfid_antenne), 183)
-  # solo dalle antenne: 56 contenitori e i 12 sacchetti
+  expect_length(rfid_storico, 228)
+  expect_length(intersect(rfid_storico, rfid_antenne), 184)
+  # solo dalle antenne: 55 contenitori e i 12 sacchetti
   solo_antenne <- setdiff(rfid_antenne, rfid_storico)
-  expect_length(solo_antenne, 68)
+  expect_length(solo_antenne, 67)
   expect_equal(sum(rfid_sacchetto(solo_antenne)), 12)
   expect_false(any(rfid_sacchetto(rfid_storico)))
   expect_length(setdiff(rfid_storico, rfid_antenne), 44)
@@ -437,7 +452,7 @@ test_that("le letture storiche contengono anni interi senza letture", {
   anni <- lubridate::year(storico$giorno_lettura[
     storico$RFID == "RFD20241004003"
   ])
-  expect_identical(as.integer(table(anni)), c(16L, 6L, 7L))
+  expect_identical(as.integer(table(anni)), c(13L, 16L, 6L))
   expect_identical(sort(unique(anni)), c(2020, 2022, 2024))
 
   tabella <- tabella_letture_annuali(
@@ -448,9 +463,9 @@ test_that("le letture storiche contengono anni interi senza letture", {
   esempio <- tabella[tabella$RFID == "RFD20241004003", ]
   expect_equal(
     unlist(esempio[, paste0("letture_", 2020:2025)], use.names = FALSE),
-    c(16, 0, 6, 0, 13, 25)
+    c(13, 0, 16, 0, 12, 25)
   )
-  expect_identical(esempio$comune, "RUBANO")
+  expect_identical(esempio$comune, "LIMENA")
   expect_identical(esempio$cantiere, "RUBANO")
   expect_equal(esempio$numero_raccolte_annue_previste, 26)
 })

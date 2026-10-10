@@ -4,7 +4,66 @@
 # `leafletProxy()`: i moduli disegnano la mappa di base una volta sola e poi
 # aggiornano i marker tramite proxy.
 
-#' Mappa di base: sfondo, scala e legenda
+#' Confini dei comuni serviti, pronti per Leaflet
+#'
+#' Ogni comune porta il colore del suo cantiere, vedi `colori_cantieri()`. Le
+#' coordinate hanno cinque decimali, circa un metro: il testo pesa poco più
+#' di 100 kB e viene preparato una volta per sessione di R.
+#'
+#' @return Testo GeoJSON: una `FeatureCollection` con un comune per elemento
+#'   e, tra le proprietà, `comune`, `cantiere` e lo stile del confine.
+#' @noRd
+geojson_confini <- function() {
+  if (is.null(memoria_geografia$geojson_mappa)) {
+    confini <- jsonlite::fromJSON(
+      percorso_confini_comuni(),
+      simplifyVector = FALSE
+    )
+    elementi <- lapply(confini$features, function(elemento) {
+      colore <- colore_cantiere(elemento$properties$cantiere)
+      list(
+        type = "Feature",
+        properties = list(
+          comune = elemento$properties$comune,
+          cantiere = elemento$properties$cantiere,
+          style = list(color = colore, fillColor = colore)
+        ),
+        geometry = elemento$geometry[c("type", "coordinates")]
+      )
+    })
+    memoria_geografia$geojson_mappa <- as.character(jsonlite::toJSON(
+      list(type = "FeatureCollection", features = elementi),
+      auto_unbox = TRUE,
+      digits = 5
+    ))
+  }
+  memoria_geografia$geojson_mappa
+}
+
+#' Disegna sulla mappa i confini dei comuni, colorati per cantiere
+#'
+#' I confini stanno in un livello loro, sotto marker, cluster e riquadri, e
+#' non rispondono al mouse: click e passaggi arrivano alla mappa e ai marker.
+#' `pulisci_mappa()` non li tocca.
+#'
+#' @param map Mappa Leaflet.
+#' @noRd
+aggiungi_confini <- function(map) {
+  stile <- stile_confini()
+  map |>
+    leaflet::addMapPane("confini", zIndex = 350) |>
+    leaflet::addGeoJSON(
+      geojson_confini(),
+      group = "confini",
+      weight = stile$weight,
+      opacity = stile$opacity,
+      fillOpacity = stile$fillOpacity,
+      dashArray = stile$dashArray,
+      options = leaflet::pathOptions(pane = "confini", interactive = FALSE)
+    )
+}
+
+#' Mappa di base: sfondo, confini dei comuni, scala e legenda
 #'
 #' @param modalita `"cluster"`, `"rfid"` o `"utenza"`.
 #' @return Mappa Leaflet che inquadra tutta la zona servita.
@@ -13,6 +72,7 @@ mappa_base <- function(modalita = "cluster") {
   zona <- riquadro_zona()
   leaflet::leaflet() |>
     leaflet::addTiles() |>
+    aggiungi_confini() |>
     leaflet::fitBounds(
       lng1 = zona$lng_min,
       lat1 = zona$lat_min,
@@ -42,6 +102,9 @@ opzioni_cluster <- function() {
 }
 
 #' Rimuove marker, cluster e riquadri dalla mappa
+#'
+#' I confini dei comuni restano: Leaflet li tiene tra i livelli GeoJSON, non
+#' tra le forme.
 #' @noRd
 pulisci_mappa <- function(map) {
   map |>
@@ -82,7 +145,13 @@ aggiungi_marker <- function(
     lng = df$longitudine,
     lat = df$latitudine,
     layerId = as.character(seq_len(nrow(df))),
-    icon = get_leaflet_icon(servizio, df$presente_a_database, stile),
+    icon = get_leaflet_icon(
+      servizio,
+      df$presente_a_database,
+      stile,
+      fuori_comune = df[["fuori_comune"]] %||% FALSE,
+      fuori_giro = df[["fuori_giro"]] %||% FALSE
+    ),
     popup = create_popup_html(
       rfid = df$RFID,
       servizio = df$servizio_transponder,
@@ -94,7 +163,10 @@ aggiungi_marker <- function(
       presente = df$presente_a_database,
       comune = df[["comune_da_database"]],
       comune_lettura = df[["comune_lettura"]],
-      cantiere = df[["cantiere"]]
+      cantiere = df[["cantiere"]],
+      comune_geografico = df[["comune_geografico"]],
+      fuori_comune = df[["fuori_comune"]],
+      fuori_giro = df[["fuori_giro"]]
     ),
     label = df$RFID,
     options = leaflet::markerOptions(
@@ -178,12 +250,63 @@ add_rfid_bounds <- function(map, df) {
   )
 }
 
+#' Mette in evidenza il confine dei comuni dei giri
+#'
+#' Un contorno scuro e continuo attorno ai comuni in cui i giri dovevano
+#' lavorare: le letture che stanno fuori si vedono a colpo d'occhio. Con molti
+#' comuni, come in una ricerca su tutti i mezzi, il contorno non aiuta e non
+#' viene disegnato.
+#'
+#' @param map Mappa o proxy Leaflet.
+#' @param comuni Comuni dei giri, anche ripetuti.
+#' @param massimo Numero massimo di comuni messi in evidenza.
+#' @noRd
+aggiungi_comuni_giro <- function(map, comuni, massimo = 6) {
+  indici <- unique(stats::na.omit(indice_comune(unique(comuni))))
+  if (length(indici) == 0 || length(indici) > massimo) {
+    return(map)
+  }
+  lati <- lati_comuni()[indici]
+  nomi <- comuni_cantieri()$comune[indici]
+  for (i in seq_along(lati)) {
+    confine <- lati[[i]]
+    if (is.null(confine)) {
+      next
+    }
+    # Tra un anello e il successivo va un valore mancante: così Leaflet li
+    # disegna separati.
+    n <- length(confine$x)
+    chiude <- c(diff(confine$anello) != 0, TRUE)
+    posizione <- seq_len(n) + cumsum(c(0L, chiude[-n]))
+    lng <- rep(NA_real_, n + sum(chiude) - 1L)
+    lat <- lng
+    lng[posizione] <- confine$x
+    lat[posizione] <- confine$y
+    map <- leaflet::addPolygons(
+      map,
+      lng = lng,
+      lat = lat,
+      color = colori_stato()$bordo,
+      weight = 3,
+      opacity = 0.9,
+      fill = FALSE,
+      label = paste("Comune del giro:", nomi[i]),
+      group = "comuni_giro"
+    )
+  }
+  map
+}
+
 #' Ridisegna i contenuti della mappa secondo la modalità
 #'
-#' - `"cluster"`: una riga per RFID, marker raggruppati in cluster colorati.
+#' - `"cluster"`: una riga per RFID, marker vicini raggruppati in cluster
+#'   colorati. Da lontano la mappa principale disegna al loro posto una bolla
+#'   per cantiere o per comune, vedi `scegli_vista()`.
 #' - `"rfid"`: tutte le letture degli RFID cercati, senza clustering, con
 #'   l'ultima lettura in evidenza e il riquadro degli spostamenti.
 #' - `"utenza"`: ultima lettura di ogni RFID, senza clustering.
+#' - `"giro"`: tutte le letture di uno o più giri, senza clustering, con il
+#'   confine dei comuni dei giri in evidenza.
 #'
 #' @param map Mappa o proxy Leaflet.
 #' @param df Letture da disegnare, oppure `NULL`.
@@ -194,7 +317,7 @@ add_rfid_bounds <- function(map, df) {
 disegna_marker <- function(
   map,
   df,
-  modalita = c("cluster", "rfid", "utenza"),
+  modalita = c("cluster", "rfid", "utenza", "giro"),
   riquadri = df
 ) {
   modalita <- match.arg(modalita)
@@ -206,6 +329,9 @@ disegna_marker <- function(
     modalita,
     cluster = aggiungi_marker(map, df, cluster = TRUE),
     utenza = aggiungi_marker(map, df),
+    giro = map |>
+      aggiungi_comuni_giro(riquadri[["comune_lettura"]]) |>
+      aggiungi_marker(df),
     rfid = map |>
       add_rfid_bounds(riquadri) |>
       aggiungi_marker(

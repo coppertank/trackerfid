@@ -57,15 +57,15 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     fixed = TRUE
   )
   # il comune di lettura compare solo se è diverso da quello del database
-  expect_no_match(con_geografia[1], "Comune di lettura", fixed = TRUE)
+  expect_no_match(con_geografia[1], "Comune del giro", fixed = TRUE)
   expect_match(
     con_geografia[2],
-    "<b>Comune:</b> LIMENA<br><b>Comune di lettura:</b> CITTADELLA<br>",
+    "<b>Comune:</b> LIMENA<br><b>Comune del giro:</b> CITTADELLA<br>",
     fixed = TRUE
   )
   expect_match(
     con_geografia[5],
-    "<b>Comune di lettura:</b> ASIAGO<br><b>Cantiere:</b> ASIAGO<br>",
+    "<b>Comune del giro:</b> ASIAGO<br><b>Cantiere:</b> ASIAGO<br>",
     fixed = TRUE
   )
   expect_no_match(con_geografia[5], "<b>Comune:</b>", fixed = TRUE)
@@ -209,8 +209,8 @@ test_that("il riquadro statistiche riporta i conteggi", {
     esempio$cantiere
   )))
   expect_match(con_letture, "RFID e letture per Cantiere:", fixed = TRUE)
-  expect_match(con_letture, "<span>ASIAGO:</span>\\s*<b>30</b>")
-  expect_match(con_letture, "669 letture", fixed = TRUE)
+  expect_match(con_letture, "<span>ASIAGO:</span>\\s*<b>33</b>")
+  expect_match(con_letture, "691 letture", fixed = TRUE)
   # nel dataset di esempio ogni lettura ha un cantiere
   expect_no_match(con_letture, "Non assegnato:", fixed = TRUE)
   senza_alcune <- esempio
@@ -300,4 +300,67 @@ test_that("il pannello di dettaglio ha un blocco per i sacchetti", {
   bidone <- pannello(letture_rfid("0000ABC123", date_2025(3)))
   expect_match(bidone, "TRANSPONDER CENSITO", fixed = TRUE)
   expect_no_match(bidone, "SACCHETTO", fixed = TRUE)
+})
+
+test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fuori giro", {
+  popup <- create_popup_html(
+    rfid = c("A", "B", "C", "D"),
+    servizio = "CARTA",
+    servizio_atteso = "SECCO PAP",
+    targa = "AB123CD",
+    matricola = "VEH001",
+    giorno_lettura = as.POSIXct("2025-03-01 08:00:00", tz = "UTC"),
+    id_utenza = "U1",
+    presente = "Presente",
+    comune = c("LIMENA", "LIMENA", "LIMENA", "LIMENA"),
+    comune_lettura = c("LIMENA", "CITTADELLA", "ASIAGO", "ASIAGO"),
+    cantiere = "RUBANO",
+    comune_geografico = c("LIMENA", "CITTADELLA", "LIMENA", NA),
+    fuori_comune = c(FALSE, TRUE, FALSE, TRUE),
+    fuori_giro = c(FALSE, FALSE, TRUE, TRUE)
+  )
+  expect_no_match(popup[1], "Fuori", fixed = TRUE)
+  expect_match(
+    popup[2],
+    "Fuori comune:</b> a database LIMENA, letto a CITTADELLA<br>",
+    fixed = TRUE
+  )
+  expect_no_match(popup[2], "Fuori giro", fixed = TRUE)
+  expect_match(popup[3], "Fuori giro:</b> giro a ASIAGO, letto a LIMENA<br>", fixed = TRUE)
+  expect_no_match(popup[3], "Fuori comune", fixed = TRUE)
+  # un punto fuori da tutti i comuni serviti
+  expect_match(
+    popup[4],
+    "Fuori comune:</b> a database LIMENA, letto fuori dai comuni serviti<br>",
+    fixed = TRUE
+  )
+  expect_match(popup[4], "Fuori giro:</b> giro a ASIAGO, letto fuori dai comuni serviti", fixed = TRUE)
+  # senza le colonne della posizione il popup resta quello di sempre
+  semplice <- create_popup_html("A", "CARTA", NA, "AB123CD", "VEH001", Sys.time(), "U1", "Presente")
+  expect_no_match(semplice, "Fuori", fixed = TRUE)
+
+  # dettaglio: un blocco per il fuori comune, uno per il fuori giro
+  d <- dati_esempio()
+  spostato <- as.character(crea_info_panel(analizza_rfid(d[d$RFID == "RFD20250905100", ])))
+  expect_match(spostato, "LETTO FUORI DAL SUO COMUNE", fixed = TRUE)
+  expect_match(spostato, "<b>LIMENA</b>", fixed = TRUE)
+  expect_match(spostato, "8 letture su 9", fixed = TRUE)
+  expect_match(spostato, "a pi\u00f9 di 1 km dal confine", fixed = TRUE)
+  expect_match(spostato, "<b>CITTADELLA</b>", fixed = TRUE)
+  expect_no_match(spostato, "FUORI DAL GIRO", fixed = TRUE)
+  deposito <- as.character(crea_info_panel(analizza_rfid(d[d$RFID == "RFD20241001301", ])))
+  expect_match(deposito, "LETTO FUORI DAL GIRO DEL MEZZO", fixed = TRUE)
+  expect_match(deposito, "letto a CAMPOSAMPIERO", fixed = TRUE)
+  expect_match(deposito, "scheda Ricerca Giro", fixed = TRUE)
+  expect_equal(lengths(regmatches(deposito, gregexpr("giro a ", deposito, fixed = TRUE))), 5)
+  coerente <- as.character(crea_info_panel(analizza_rfid(d[d$RFID == "RFD20250901001", ])))
+  expect_no_match(coerente, "LETTO FUORI", fixed = TRUE)
+  expect_null(blocco_posizione(NULL, 3))
+
+  # statistiche: due righe, anche a zero
+  stat <- calcola_statistiche(deduplica_ultimo_rfid(aggiungi_servizio_icona(d)))
+  html <- as.character(crea_box_statistiche(stat))
+  expect_match(html, "Posizione e comuni dichiarati:", fixed = TRUE)
+  expect_match(html, sprintf("Fuori comune:</span>\\s*<b>%d</b>", stat$fuori_comune))
+  expect_match(html, sprintf("Fuori giro:</span>\\s*<b>%d</b>", stat$fuori_giro))
 })

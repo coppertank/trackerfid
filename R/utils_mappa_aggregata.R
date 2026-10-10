@@ -1,11 +1,14 @@
-# Vista aggregata della mappa principale.
+# Vista della mappa principale secondo lo zoom.
 #
-# Finché i bidoni da disegnare sono pochi la mappa li riceve tutti e li
-# raggruppa nel browser. Oltre il limite di `limiti_mappa()` il browser
-# riceverebbe decine di megabyte a ogni cambio di filtro: la mappa mostra
-# allora una bolla per cantiere, per comune o per riquadro, secondo lo zoom, e
-# i singoli bidoni solo quando quelli nell'area inquadrata tornano sotto il
-# limite. I conti restano sul server, che conosce l'area inquadrata.
+# Da lontano la mappa mostra una bolla per cantiere, avvicinandosi una bolla
+# per comune, da vicino i singoli bidoni: i gruppi che si vedono sono quelli
+# del territorio, non raggruppamenti casuali di marker vicini. I conti li fa
+# il server, che conosce zoom e area inquadrata.
+#
+# Da vicino i bidoni arrivano tutti al browser finché stanno sotto il limite
+# di `limiti_mappa()`. Oltre, il browser riceverebbe decine di megabyte a
+# ogni cambio di filtro: la mappa disegna allora i soli bidoni dell'area
+# inquadrata oppure, se sono ancora troppi, una bolla per riquadro.
 
 #' Limiti del disegno delle mappe
 #'
@@ -25,8 +28,13 @@ limiti_mappa <- function() {
 
 #' Livello di aggregazione adatto a uno zoom
 #'
+#' Con la zona servita inquadrata per intero lo zoom è 10 o meno: si vedono
+#' i cantieri. A 11 e 12 un comune occupa da uno a due centinaia di pixel: si
+#' vedono i comuni. Da 13 in su si vedono le strade, e i singoli bidoni.
+#'
 #' @param zoom Zoom della mappa.
-#' @return `"cantiere"` fino a zoom 10, `"comune"` a 11 e 12, poi `"griglia"`.
+#' @return `"cantiere"` fino a zoom 10, `"comune"` a 11 e 12, poi `"griglia"`,
+#'   cioè nessun raggruppamento per territorio.
 #' @noRd
 livello_aggregazione <- function(zoom) {
   if (is.null(zoom) || zoom <= 10) {
@@ -95,8 +103,12 @@ passo_griglia <- function(zoom) {
 
 #' Raggruppa i bidoni in bolle
 #'
-#' Ogni bolla sta nel punto medio dei suoi bidoni e ne riporta il numero, i
-#' censiti e il riquadro che li contiene.
+#' Ogni bolla riporta il numero dei suoi bidoni, i censiti e il riquadro che
+#' li contiene. La bolla di un comune sta nel baricentro del comune, vedi
+#' `baricentri_comuni()`: resta ferma qualunque siano i bidoni filtrati, in
+#' mezzo al confine disegnato sulla mappa. Le altre bolle, e quelle di un
+#' comune che non è nella tabella dei comuni, stanno nel punto medio dei loro
+#' bidoni.
 #'
 #' @param df Una riga per bidone, con stato a database, coordinate, `cantiere`
 #'   e `comune_assegnato`.
@@ -144,15 +156,24 @@ aggrega_marker <- function(
   n_gruppi <- max(gruppo)
   lat <- estremi_per_gruppo(df$latitudine, gruppo, n_gruppi)
   lng <- estremi_per_gruppo(df$longitudine, gruppo, n_gruppi)
+  nome <- if (livello == "griglia") {
+    rep(NA_character_, n_gruppi)
+  } else {
+    primo_per_gruppo(chiave, gruppo, n_gruppi)
+  }
+  latitudine <- media_per_gruppo(df$latitudine, gruppo, n_gruppi)
+  longitudine <- media_per_gruppo(df$longitudine, gruppo, n_gruppi)
+  if (livello == "comune") {
+    baricentri <- baricentri_comuni()
+    riga <- match(chiave_comune(nome), chiave_comune(baricentri$comune))
+    latitudine <- dplyr::coalesce(baricentri$latitudine[riga], latitudine)
+    longitudine <- dplyr::coalesce(baricentri$longitudine[riga], longitudine)
+  }
   dplyr::tibble(
     livello = livello,
-    nome = if (livello == "griglia") {
-      rep(NA_character_, n_gruppi)
-    } else {
-      primo_per_gruppo(chiave, gruppo, n_gruppi)
-    },
-    latitudine = media_per_gruppo(df$latitudine, gruppo, n_gruppi),
-    longitudine = media_per_gruppo(df$longitudine, gruppo, n_gruppi),
+    nome = nome,
+    latitudine = latitudine,
+    longitudine = longitudine,
     n = tabulate(gruppo, n_gruppi),
     censiti = as.integer(somma_per_gruppo(
       df$presente_a_database == "Presente",
@@ -168,18 +189,33 @@ aggrega_marker <- function(
 
 #' Sceglie come disegnare la mappa principale
 #'
+#' Da lontano una bolla per cantiere, poi una per comune, secondo
+#' `livello_aggregazione()`: vale per qualsiasi numero di bidoni. Da vicino,
+#' o se il file non ha cantieri né comuni, i singoli bidoni: tutti, se
+#' stanno sotto il limite, altrimenti quelli dell'area inquadrata o, se sono
+#' ancora troppi, una bolla per riquadro.
+#'
 #' @param df Una riga per bidone, oppure `NULL`.
 #' @param riquadro Area inquadrata, oppure `NULL` se non è ancora nota.
 #' @param zoom Zoom della mappa.
 #' @param limite Numero massimo di bidoni disegnati uno per uno.
-#' @return Lista con `tipo`: `"tutti"` se i bidoni stanno tutti sotto il
-#'   limite, `"singoli"` se ci stanno quelli dell'area inquadrata, altrimenti
-#'   il livello di aggregazione. Con `"singoli"` e `"griglia"` la lista
-#'   riporta anche `riquadro`, l'area caricata, e `righe`, i bidoni che
-#'   contiene.
+#' @return Lista con `tipo`: `"cantiere"` o `"comune"` per le bolle del
+#'   territorio, `"tutti"` per tutti i bidoni, `"singoli"` per quelli
+#'   dell'area inquadrata, `"griglia"` per le bolle per riquadro. Con
+#'   `"singoli"` e `"griglia"` la lista riporta anche `riquadro`, l'area
+#'   caricata, e `righe`, i bidoni che contiene.
 #' @noRd
 scegli_vista <- function(df, riquadro, zoom, limite = limiti_mappa()$marker) {
-  if (is.null(df) || nrow(df) <= limite) {
+  if (is.null(df) || nrow(df) == 0) {
+    return(list(tipo = "tutti"))
+  }
+  livello <- livello_aggregazione(zoom)
+  colonna <- c(cantiere = "cantiere", comune = "comune_assegnato")[livello]
+  # Senza cantieri o comuni nel dataset non ci sono bolle del territorio.
+  if (livello != "griglia" && !all(is.na(df[[colonna]]))) {
+    return(list(tipo = livello))
+  }
+  if (nrow(df) <= limite) {
     return(list(tipo = "tutti"))
   }
   caricato <- if (!is.null(riquadro)) allarga_riquadro(riquadro)
@@ -187,23 +223,15 @@ scegli_vista <- function(df, riquadro, zoom, limite = limiti_mappa()$marker) {
   if (!is.null(riquadro) && sum(righe) <= limite) {
     return(list(tipo = "singoli", riquadro = caricato, righe = righe))
   }
-  livello <- livello_aggregazione(zoom)
-  # Senza cantieri o comuni nel dataset resta solo la griglia.
-  colonna <- c(cantiere = "cantiere", comune = "comune_assegnato")[livello]
-  if (livello != "griglia" && all(is.na(df[[colonna]]))) {
-    livello <- "griglia"
-  }
-  if (livello == "griglia") {
-    return(list(tipo = "griglia", riquadro = caricato, righe = righe))
-  }
-  list(tipo = livello)
+  list(tipo = "griglia", riquadro = caricato, righe = righe)
 }
 
 #' La vista disegnata va rifatta dopo uno spostamento o uno zoom?
 #'
 #' Le bolle di cantieri e comuni coprono tutto il territorio e restano valide
-#' finché lo zoom non cambia fascia. I singoli bidoni e la griglia valgono
-#' per l'area caricata; la griglia cambia anche a ogni zoom.
+#' finché lo zoom non cambia fascia, come tutti i bidoni disegnati insieme.
+#' I bidoni dell'area inquadrata e la griglia valgono per l'area caricata; la
+#' griglia cambia anche a ogni zoom.
 #'
 #' @param disegnata Vista disegnata: lista con `tipo`, `riquadro` e `zoom`.
 #' @param nuova Vista scelta da `scegli_vista()` per la posizione attuale.
@@ -222,12 +250,12 @@ vista_da_rifare <- function(disegnata, nuova, riquadro, zoom) {
   )
 }
 
-#' Frase che descrive la vista aggregata, per l'intestazione della mappa
+#' Frase che descrive la vista della mappa, per la sua intestazione
 #' @noRd
 descrizione_vista <- function(tipo) {
   switch(
     tipo,
-    cantiere = "una bolla per cantiere: ingrandisci per il dettaglio",
+    cantiere = "una bolla per cantiere: ingrandisci per vedere i comuni",
     comune = "una bolla per comune: ingrandisci per vedere i singoli bidoni",
     griglia = "bolle per zona: ingrandisci per vedere i singoli bidoni",
     singoli = "solo i bidoni dell'area inquadrata",
