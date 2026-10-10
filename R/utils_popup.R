@@ -7,9 +7,23 @@ formatta_data_ora <- function(x, formato = "%d/%m/%Y %H:%M:%S") {
 }
 
 #' Formatta un conteggio con il separatore delle migliaia italiano
+#'
+#' Mai in notazione scientifica: centomila resta "100.000", non "1e+05".
 #' @noRd
 formatta_numero <- function(x) {
-  format(x, big.mark = ".", decimal.mark = ",", trim = TRUE)
+  format(
+    x,
+    big.mark = ".",
+    decimal.mark = ",",
+    trim = TRUE,
+    scientific = FALSE
+  )
+}
+
+#' "1 bidone", "12 bidoni": conteggio con singolare e plurale
+#' @noRd
+conta <- function(n, singolare, plurale) {
+  paste(formatta_numero(n), if (n == 1) singolare else plurale)
 }
 
 #' Crea HTML popup per marker
@@ -25,8 +39,10 @@ formatta_numero <- function(x) {
 #' @param giorno_lettura POSIXct
 #' @param id_utenza Character
 #' @param presente Character
-#' @param comune Character, facoltativo. La riga del comune compare solo se
-#'   almeno una lettura ne ha uno.
+#' @param comune Character, facoltativo: comune del database.
+#' @param comune_lettura Character, facoltativo: comune del giro che ha fatto
+#'   la lettura. Compare solo se è diverso dal comune del database.
+#' @param cantiere Character, facoltativo.
 #' @return HTML string
 #' @noRd
 create_popup_html <- function(
@@ -38,17 +54,32 @@ create_popup_html <- function(
   giorno_lettura,
   id_utenza,
   presente,
-  comune = NULL
+  comune = NULL,
+  comune_lettura = NULL,
+  cantiere = NULL
 ) {
   testo <- function(x, se_mancante = "N/A") {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
   }
   data_formattata <- formatta_data_ora(giorno_lettura)
-  riga_comune <- if (!is.null(comune) && !all(is.na(comune))) {
-    paste0("<b>Comune:</b> ", testo(comune), "<br>")
-  } else {
-    ""
+  # Le righe geografiche compaiono solo nei popup delle letture che hanno il dato.
+  riga_facoltativa <- function(etichetta, valori, mostra = TRUE) {
+    if (is.null(valori)) {
+      return("")
+    }
+    ifelse(
+      !is.na(valori) & mostra,
+      paste0("<b>", etichetta, ":</b> ", testo(valori), "<br>"),
+      ""
+    )
   }
+  riga_comune <- riga_facoltativa("Comune", comune)
+  riga_lettura <- riga_facoltativa(
+    "Comune di lettura",
+    comune_lettura,
+    if (is.null(comune)) TRUE else is.na(comune) | comune != comune_lettura
+  )
+  riga_cantiere <- riga_facoltativa("Cantiere", cantiere)
 
   paste0(
     "<div style='font-family: Arial; font-size: 12px;'>",
@@ -74,6 +105,8 @@ create_popup_html <- function(
     testo(id_utenza, "Non Censito"),
     "<br>",
     riga_comune,
+    riga_lettura,
+    riga_cantiere,
     "<b>Censito:</b> ",
     testo(presente),
     "<br>",
@@ -195,21 +228,16 @@ istogramma_annuale <- function(andamento) {
   )
 }
 
-#' Pannello di dettaglio di un bidone
+#' Blocco del pannello di dettaglio per un bidone
 #'
-#' Sceglie il messaggio da mostrare in base alla storia dell'RFID: censito con
-#' servizio coerente, censito con cambio di servizio, non censito con o senza
-#' stima. In più segnala l'eventuale cambio di utenza e, se viene passato
-#' l'andamento, mostra l'istogramma delle letture per anno.
+#' Sceglie il messaggio in base alla storia dell'RFID: censito con servizio
+#' coerente, censito con cambio di servizio, non censito con o senza stima.
 #'
 #' @param analisi Risultato di `analizza_rfid()`.
-#' @param andamento Risultato di `andamento_rfid()`, facoltativo.
-#' @return Tag HTML.
 #' @noRd
-crea_info_panel <- function(analisi, andamento = NULL) {
+blocco_bidone <- function(analisi) {
   tags <- htmltools::tags
-
-  corpo <- switch(
+  switch(
     analisi$caso,
     censito_coerente = blocco_info(
       "ok",
@@ -254,6 +282,64 @@ crea_info_panel <- function(analisi, andamento = NULL) {
       )
     )
   )
+}
+
+#' Blocco del pannello di dettaglio per un sacchetto
+#'
+#' Un sacchetto si riconosce dal codice RFID e non ha una tipologia di
+#' rifiuto. Se è censito il blocco lo conferma. Se non lo è riporta i giri
+#' che lo hanno letto, senza presentarli come stima di un servizio.
+#'
+#' @param analisi Risultato di `analizza_rfid()`.
+#' @noRd
+blocco_sacchetto <- function(analisi) {
+  tags <- htmltools::tags
+  riconoscimento <- tags$p(
+    class = "info-avvertenza",
+    "Riconosciuto dal codice RFID. I sacchetti non hanno una tipologia di rifiuto."
+  )
+  if (analisi$censito) {
+    return(blocco_info(
+      "ok",
+      "\u2713 SACCHETTO CENSITO",
+      tags$p("Questo sacchetto \u00e8 censito nel database aziendale."),
+      riconoscimento
+    ))
+  }
+  blocco_info(
+    "errore",
+    "\u274c SACCHETTO NON CENSITO NEL DATABASE",
+    if (nrow(analisi$stima) > 0) {
+      htmltools::tagList(
+        tags$p(tags$b("Giri che lo hanno letto (da Calendario Mezzi):")),
+        barre_stima(analisi$stima)
+      )
+    },
+    riconoscimento
+  )
+}
+
+#' Pannello di dettaglio di un bidone
+#'
+#' Sceglie il messaggio da mostrare in base alla storia dell'RFID, vedi
+#' `blocco_bidone()`; per un sacchetto, vedi `blocco_sacchetto()`. In più
+#' segnala l'eventuale cambio di utenza e, se viene passato l'andamento,
+#' mostra l'istogramma delle letture per anno.
+#'
+#' @param analisi Risultato di `analizza_rfid()`.
+#' @param andamento Risultato di `andamento_rfid()`, facoltativo.
+#' @return Tag HTML.
+#' @noRd
+crea_info_panel <- function(analisi, andamento = NULL) {
+  tags <- htmltools::tags
+
+  # Un sacchetto non ha una tipologia di rifiuto: ha un blocco suo.
+  di_sacchetto <- isTRUE(analisi$sacchetto) && analisi$caso != "cambio_servizio"
+  corpo <- if (di_sacchetto) {
+    blocco_sacchetto(analisi)
+  } else {
+    blocco_bidone(analisi)
+  }
 
   utenza <- if (analisi$cambio_utenza) {
     blocco_info(
@@ -308,7 +394,49 @@ righe_servizi <- function(conteggi) {
   )
 }
 
+#' Righe "cantiere: RFID e letture" del riquadro statistiche
+#'
+#' @param rfid Numero di RFID per cantiere, vedi `conta_cantieri()`.
+#' @param letture Numero di letture per cantiere, facoltativo.
+#' @return Lista di tag, oppure `NULL` se il dataset non ha cantieri.
+#' @noRd
+righe_cantieri <- function(rfid, letture = NULL) {
+  if (length(rfid) == 0) {
+    return(NULL)
+  }
+  tags <- htmltools::tags
+  con_letture <- length(letture) > 0
+  righe <- purrr::map(names(rfid), function(cantiere) {
+    tags$div(
+      class = "stat-riga",
+      tags$span(paste0(cantiere, ":")),
+      tags$b(formatta_numero(rfid[[cantiere]])),
+      if (con_letture) {
+        tags$span(
+          class = "stat-letture",
+          paste0(
+            "\u00b7 ",
+            formatta_numero(dplyr::coalesce(letture[cantiere], 0L)),
+            " letture"
+          )
+        )
+      }
+    )
+  })
+  htmltools::tagList(
+    tags$div(
+      class = "stat-gruppo",
+      if (con_letture) "RFID e letture per Cantiere:" else "RFID per Cantiere:"
+    ),
+    righe
+  )
+}
+
 #' Riquadro con le statistiche del dataset filtrato
+#'
+#' Il servizio transponder conta i censiti. Il servizio atteso conta i non
+#' censiti: una riga per servizio stimato e, in fondo, quelli con la stima
+#' incerta, che sulla mappa hanno il punto di domanda.
 #'
 #' @param stat Risultato di `calcola_statistiche()`.
 #' @return Tag HTML.
@@ -323,6 +451,7 @@ crea_box_statistiche <- function(stat) {
       tags$span("TOTALE RFID (Ultimo):"),
       tags$b(formatta_numero(stat$totale))
     ),
+    righe_cantieri(stat$rfid_cantieri, stat$letture_cantieri),
     tags$div(class = "stat-gruppo", "Presente a Database:"),
     tags$div(
       class = "stat-riga",
@@ -337,12 +466,15 @@ crea_box_statistiche <- function(stat) {
     tags$div(class = "stat-gruppo", "Servizio Transponder:"),
     righe_servizi(stat$transponder),
     tags$div(class = "stat-gruppo", "Servizio Atteso:"),
-    righe_servizi(stat$atteso),
-    if (stat$senza_stima > 0) {
+    # Senza servizi stimati resta "nessuno" solo se mancano anche gli incerti.
+    if (length(stat$atteso) > 0 || stat$stima_incerta == 0) {
+      righe_servizi(stat$atteso)
+    },
+    if (stat$stima_incerta > 0) {
       tags$div(
         class = "stat-riga",
-        tags$span("\u2753 Senza stima:"),
-        tags$b(formatta_numero(stat$senza_stima))
+        tags$span("\u2753 Stima incerta:"),
+        tags$b(formatta_numero(stat$stima_incerta))
       )
     }
   )

@@ -21,6 +21,16 @@
     bottom: 0;
     overflow-y: auto;
   }
+
+  /* Il tema allunga il contenuto fino all'altezza della barra laterale, perché
+     di norma la barra scorre con la pagina. Qui scorre per conto suo: il
+     contenuto resta alto quanto la finestra, tolta l'intestazione, e la
+     pagina scorre solo se una scheda è davvero più alta. La regola del tema
+     è scritta sull'elemento, quindi serve !important. */
+  .content-wrapper,
+  .right-side {
+    min-height: calc(100vh - 50px) !important;
+  }
 }
 
 section.sidebar {
@@ -94,16 +104,6 @@ section.sidebar .form-group {
   margin-bottom: 12px;
 }
 
-/* Le etichette delle date sporgono dai cursori: serve margine ai lati. */
-section.sidebar .irs {
-  margin: 0 22px;
-}
-
-.sidebar .irs-min,
-.sidebar .irs-max {
-  color: #5f6b76;
-}
-
 /* La barra di avanzamento del caricamento occupa spazio anche da nascosta. */
 section.sidebar .shiny-file-input-progress {
   margin-bottom: 8px;
@@ -111,18 +111,6 @@ section.sidebar .shiny-file-input-progress {
 
 section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
   margin-bottom: 0;
-}
-
-.irs--shiny .irs-bar {
-  background: #00a65a;
-  border-top-color: #00a65a;
-  border-bottom-color: #00a65a;
-}
-
-.irs--shiny .irs-from,
-.irs--shiny .irs-to,
-.irs--shiny .irs-single {
-  background-color: #00703c;
 }
 
 .suggerimento {
@@ -135,6 +123,45 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* ---------- Filtri dei servizi: titolo con le scelte rapide ---------- */
+/* A destra del titolo di ogni elenco stanno "Tutti" e "Nessuno". Sotto, una
+   riga dice a quali bidoni si applica l'elenco. */
+.titolo-filtro {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.azioni-filtro {
+  display: inline-flex;
+  gap: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nota-filtro {
+  margin: 0 0 4px;
+  color: #5f6b76;
+  font-size: 12px;
+}
+
+/* Titolo, elenco e casella della stima incerta formano un blocco solo: lo
+   spazio sta sotto il blocco, non tra le sue parti. */
+.gruppo-servizi {
+  margin-bottom: 12px;
+}
+
+section.sidebar .gruppo-servizi .shiny-input-container {
+  margin-bottom: 0;
+}
+
+/* L'elenco non ha un'etichetta sua. Senza questa regola Shiny lo accosta a
+   un'etichetta che non c'è, e le voci salgono sopra la riga della nota. */
+section.sidebar .gruppo-servizi .shiny-options-group {
+  margin-top: 0;
 }
 
 /* ---------- Esiti di caricamento e ricerca ---------- */
@@ -631,4 +658,116 @@ details.parametri-dbscan summary {
   margin-bottom: 8px;
   color: #0b7a43;
   cursor: pointer;
+}
+
+/* ---------- Statistiche per cantiere ---------- */
+.stat-letture {
+  margin-left: 6px;
+  color: #5f6b76;
+  font-size: 12px;
+}
+
+/* ---------- Vista aggregata della mappa principale ---------- */
+.leaflet-tooltip.etichetta-bolla {
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
+  border-radius: 9px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  color: #1f2d3a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.leaflet-tooltip.etichetta-bolla::before {
+  display: none;
+}
+
+/* ---------- Nota sui cluster campionati ---------- */
+.leaflet-control.nota-campione {
+  max-width: 340px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.93);
+  border-left: 4px solid #f39c12;
+  border-radius: 5px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+  color: #2c3e50;
+  font-size: 12px;
+}
+
+/* ---------- Elenchi a discesa della barra laterale ---------- */
+/* L'elenco dell'anno di analisi e quello dei comuni hanno lo stesso riquadro,
+   lo stesso testo e la stessa freccia, qualunque sia il browser. Il primo è
+   un elenco del browser, il secondo permette più scelte. */
+.main-sidebar select.form-control,
+.elenco-comuni .selectize-control .selectize-input {
+  min-height: 34px;
+  border: 1px solid #d2d6de;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.5 6 6l4.5-4.5' fill='none' stroke='%23444444' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px top 12px;
+  background-size: 12px 8px;
+  color: #555555;
+  font-size: 14px;
+}
+
+.main-sidebar select.form-control {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding: 6px 30px 6px 16px;
+}
+
+.elenco-comuni .selectize-control .selectize-input {
+  padding: 6px 30px 6px 16px;
+}
+
+/* Con dei comuni scelti il riquadro cresce in altezza: la freccia resta in alto. */
+.elenco-comuni .selectize-control.multi .selectize-input.has-items {
+  padding: 4px 30px 1px 8px;
+}
+
+.main-sidebar select.form-control:focus,
+.elenco-comuni .selectize-control .selectize-input.focus {
+  border-color: #3c8dbc;
+  box-shadow: none;
+  outline: 0;
+}
+
+/* "Tutti i comuni" è lo stato dell'elenco, non un suggerimento: stesso
+   inchiostro del valore mostrato dall'elenco dell'anno. */
+.elenco-comuni .selectize-input input::placeholder {
+  color: #555555;
+  opacity: 1;
+}
+
+.elenco-comuni .selectize-control.multi .selectize-input > div {
+  margin: 0 4px 3px 0;
+  padding: 2px 8px;
+  background: #eef1f4;
+  border-radius: 2px;
+  color: #555555;
+}
+
+.elenco-comuni .selectize-control.multi .selectize-input > div.active {
+  background: #d9e6f2;
+  color: #2c3e50;
+}
+
+.elenco-comuni .selectize-dropdown {
+  border: 1px solid #d2d6de;
+  border-radius: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  color: #555555;
+  font-size: 14px;
+}
+
+.elenco-comuni .selectize-dropdown .optgroup-header {
+  color: #7b8a8b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }

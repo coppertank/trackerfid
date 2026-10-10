@@ -6,7 +6,7 @@ L'analisi risponde a una domanda: nel periodo scelto, ogni tag è rimasto in un 
 
 ## Come funziona
 
-1. **Periodo.** Si considerano le letture comprese tra `analisi_dal` e `analisi_al`, estremi inclusi.
+1. **Periodo.** Si considerano le letture comprese tra `analisi_dal` e `analisi_al`, estremi inclusi. I sacchetti restano fuori: vedi i casi limite.
 2. **Cluster.** Per ogni RFID, DBSCAN raggruppa le letture vicine. Con i parametri predefiniti due letture stanno nello stesso cluster se sono collegate da una catena di letture distanti al massimo 100 metri. I cluster sono numerati in ordine di prima lettura: il cluster 1 è il luogo in cui il contenitore è stato visto per primo.
 3. **Descrizione.** Per ogni cluster si calcolano tempi, numero di letture, baricentro e dispersione. La dispersione è il 90° percentile della distanza di Haversine delle letture dal baricentro.
 4. **Valutazione.** Ogni cluster riceve un indicatore e un indice di fiducia.
@@ -19,7 +19,7 @@ Le quantità annue non usano la lunghezza del periodo, ma i **giorni osservati**
 
 ## La tabella di output
 
-Una riga per ogni cluster di ogni RFID. La specifica parlava di 25 campi ma ne definiva 22: i tre aggiunti sono segnati con un asterisco.
+Una riga per ogni cluster di ogni RFID, 27 campi. La specifica parlava di 25 campi ma ne definiva 22: i cinque aggiunti sono segnati con un asterisco.
 
 | Campo | Contenuto |
 |---|---|
@@ -29,9 +29,10 @@ Una riga per ogni cluster di ogni RFID. La specifica parlava di 25 campi ma ne d
 | `globale_prima_lettura`, `globale_ultima_lettura` | Prima e ultima lettura dell'RFID nel periodo |
 | `cluster_prima_lettura`, `cluster_ultima_lettura` | Prima e ultima lettura del cluster |
 | `presente_a_database` * | Stato dell'ultima lettura del periodo. Stabilisce quali campi sono compilati |
+| `cantiere` *, `comune` * | Comune dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello in cui è stato letto più spesso. Il cantiere è quello del comune. Sono uguali per tutti i cluster dell'RFID |
 | `servizio_transponder` | Servizio dell'ultima lettura del periodo. Vuoto per i non censiti |
 | `servizio_transponder_cronologia` * | Sequenza dei servizi quando è cambiato, ad esempio `CARTA > SECCO > CARTA`. Vuoto se non è cambiato |
-| `servizio_atteso` | Solo per i non censiti: il giro prevalente nel cluster se copre almeno l'80% delle letture con stima, altrimenti vuoto |
+| `servizio_atteso` | Solo per i non censiti: il giro prevalente nel cluster se copre almeno l'80% delle sue letture, altrimenti vuoto |
 | `servizio_atteso_dettaglio` * | Solo per i non censiti: composizione completa, ad esempio `CARTA CONT.STRADALI (40%); SECCO PAP (35%); UMIDO PAP (25%)` |
 | `volume_previsto` | Volume a database, solo per i censiti |
 | `volume_atteso` | Copia di `volume_previsto`, riservata a sviluppi futuri |
@@ -133,6 +134,8 @@ Risposte alle richieste di consiglio della specifica. Per ognuna: cosa è stato 
 
 **Una differenza da conoscere.** Per l'icona sulla mappa la quota si calcola per tipologia: `CARTA CONT.STRADALI` e `CARTA/CARTONE PAP` contano insieme, perché l'icona è la stessa. Nella tabella dei cluster si calcola sul nome esatto del giro, perché stradale e porta a porta sono servizi diversi.
 
+**Quali letture contano.** Il giro c'è su ogni lettura, anche su quelle dei contenitori censiti: ogni lettura è fatta da un mezzo durante un giro. Per la composizione contano le sole letture «Non Presente», come per l'icona sulla mappa e per i filtri dell'app.
+
 ### Periodo di analisi
 
 **Fatto.** Un solo controllo nella barra laterale, valido per tutta l'app: selezione dell'anno, con l'anno più recente come predefinito, e una casella «Periodo personalizzato» che mostra le due date.
@@ -161,6 +164,7 @@ Le tre correzioni applicate sono descritte sopra. Restano alcuni punti deboli, l
 | RFID letto solo a inizio e fine anno | La durata del cluster copre l'anno, la stima resta bassa |
 | Dataset di pochi mesi | Frequenze e raccolte rapportate ai giorni osservati |
 | Censito senza servizio a database | Analizzato normalmente, `servizio_transponder` vuoto, punto di domanda sulla mappa |
+| Sacchetto | Escluso dall'analisi. È monouso, con una lettura sola, e l'analisi riguarda i contenitori. Il risultato, giorni osservati compresi, è quello di un file senza sacchetti |
 | Stato a database che cambia nel periodo | Vale lo stato dell'ultima lettura |
 | Periodo senza letture | Tabella vuota e messaggio nell'app |
 | File senza volume e raccolte previste | Analisi eseguita, campi vuoti, avviso al caricamento |
@@ -169,14 +173,19 @@ Un limite della formula delle raccolte presunte: divide le letture per la durata
 
 ### Prestazioni
 
-Misure su un portatile, con un dataset di prova ottenuto replicando quello di esempio.
+Misure su un portatile, con dataset sintetici di 2 milioni di letture in un anno.
 
-| Operazione | Dati | Tempo |
-|---|---|---|
-| Analisi dei cluster | 142.000 letture, 5.200 RFID | 1,6 s |
-| Periodo e icone dei non censiti | 142.000 letture | 0,03 s |
-| Un solo tag | 20.000 letture | 0,06 s |
+| Dati | Tempo dell'analisi |
+|---|---|
+| 100.000 RFID, 20 letture ciascuno | circa 2 s |
+| 300 RFID, 6.700 letture ciascuno | circa 2 s |
 
-Cosa rende veloce il calcolo: l'indice spaziale al posto delle matrici di distanze, e i riepiloghi calcolati per gruppi su tutta la tabella, con una sola chiamata alla distanza di Haversine per tutte le letture.
+Cosa rende veloce il calcolo.
 
-Con questi volumi non servono `data.table`, parallelizzazione o cache. Nell'app il risultato resta in memoria finché non cambiano dataset o periodo. Oltre il milione di letture il primo collo di bottiglia sarebbe la mappa principale, non l'analisi: converrebbe disegnare i marker solo per l'area visibile.
+- **Un solo punto, nessun DBSCAN.** Quasi tutti i contenitori sono letti sempre nello stesso posto. Se il riquadro che contiene le letture di un RFID ha la diagonale più corta del raggio di ricerca, le letture formano per forza un solo cluster: DBSCAN viene eseguito solo sugli altri RFID. Il risultato è identico.
+- **Letture ripetute.** Per un RFID con almeno 200 letture, quelle con le stesse coordinate entrano in DBSCAN una volta sola, con il loro numero come peso. Il risultato è identico anche con le letture minime maggiori di 1.
+- **Coordinate arrotondate oltre le 2.000 letture.** Per un RFID con più di 2.000 letture le coordinate sono arrotondate a 2 metri prima del clustering: molto meno dell'errore del GPS. Baricentro e dispersione usano sempre le coordinate originali.
+- **Indice spaziale** al posto delle matrici di distanze.
+- **Riepiloghi senza cicli sui gruppi.** Le quantità di ogni cluster sono calcolate con operazioni su tutta la tabella, e la distanza di Haversine con una sola chiamata per tutte le letture.
+
+Nell'app il risultato resta in memoria finché non cambiano dataset o periodo. La tabella interattiva è paginata dal server. Il grafico a dispersione disegna al massimo 20.000 cluster e la mappa 5.000: tutti gli anomali e un campione dei regolari, con un avviso. I limiti sono in `limiti_viste_cluster()`, in `R/utils_cluster_viste.R`.

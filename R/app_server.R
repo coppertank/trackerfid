@@ -12,8 +12,12 @@
 #' @importFrom rlang .data %||%
 #' @noRd
 app_server <- function(input, output, session) {
-  # I file di letture superano facilmente il limite predefinito di 5 MB.
-  options(shiny.maxRequestSize = 100 * 1024^2)
+  # Un anno di letture supera di molto il limite predefinito di 5 MB: il
+  # limite del caricamento dal browser è di 2 GB, modificabile con l'opzione
+  # `trackerfid.max_upload_mb`.
+  options(
+    shiny.maxRequestSize = getOption("trackerfid.max_upload_mb", 2048) * 1024^2
+  )
 
   caricamento <- mod_caricamento_server("caricamento")
   dati_caricati <- caricamento$letture
@@ -80,8 +84,9 @@ app_server <- function(input, output, session) {
     "mappa_principale",
     dati = filtri$dati_filtrati,
     modalita = "cluster",
-    # La vista si adatta al periodo, non a ogni modifica dei filtri.
-    dati_vista = dati,
+    # La vista si adatta al periodo e ai filtri di cantiere e comune, non
+    # agli altri filtri.
+    dati_vista = filtri$area,
     attiva = scheda_attiva("mappa"),
     messaggio = messaggio_principale
   )

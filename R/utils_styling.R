@@ -21,7 +21,9 @@ colori_stato <- function() {
 #' PUNTO UNICO DA MODIFICARE per aggiungere servizi o cambiare icone.
 #' Ogni tipologia raggruppa i nomi che condividono la stessa icona: i valori
 #' di `servizio_transponder` e i nomi dei giri usati in `servizio_atteso`
-#' (PAP = porta a porta). Per un nuovo nome basta aggiungerlo al vettore
+#' (PAP = porta a porta). I sacchetti hanno una tipologia loro: non hanno un
+#' servizio a database, e l'app glielo assegna riconoscendoli dal codice
+#' RFID, vedi `rfid_sacchetto()`. Per un nuovo nome basta aggiungerlo al vettore
 #' `servizi` della tipologia giusta; per una nuova tipologia si aggiunge una
 #' voce alla lista. I nomi vanno scritti in maiuscolo, come dopo il caricamento
 #' del CSV. Le icone sono nomi Font Awesome (https://fontawesome.com/icons).
@@ -70,6 +72,13 @@ tipologie_servizio <- function() {
       colore = "#6b8e23",
       emoji = "\U0001F333",
       servizi = c("VERDE E RAMAGLIE", "VERDE PAP")
+    ),
+    list(
+      tipologia = "Sacchetti",
+      icona = "sack-xmark",
+      colore = "#ad1457",
+      emoji = "\U0001F6CD\ufe0f",
+      servizi = servizio_sacchetti()
     ),
     list(
       tipologia = "Assistente servizi",
@@ -377,6 +386,70 @@ js_icona_cluster <- function() {
         iconSize: L.point(lato, lato)
       });
     }"
+  )
+}
+
+#' Lato in pixel della bolla di un gruppo di bidoni
+#'
+#' Cresce con il numero dei bidoni, come i cluster disegnati dal browser.
+#' @noRd
+lato_bolla <- function(n) {
+  dplyr::case_when(
+    n < 10 ~ 40,
+    n < 100 ~ 46,
+    n < 1000 ~ 54,
+    n < 10000 ~ 62,
+    .default = 72
+  )
+}
+
+#' Bolla SVG di un gruppo di bidoni
+#'
+#' Ha lo stesso aspetto dei cluster di marker disegnati dal browser: colore
+#' secondo la quota di censiti, numero dei bidoni e percentuale. Serve alla
+#' vista aggregata, dove i gruppi sono calcolati dal server.
+#'
+#' @param n Numero di bidoni del gruppo.
+#' @param censiti Numero di bidoni censiti.
+#' @return Testo SVG, un elemento per gruppo.
+#' @noRd
+svg_bolla <- function(n, censiti) {
+  quota <- ifelse(n > 0, censiti / n, 0)
+  lato <- lato_bolla(n)
+  sprintf(
+    paste0(
+      "<svg xmlns='http://www.w3.org/2000/svg' width='%1$d' height='%1$d' viewBox='0 0 %1$d %1$d'>",
+      "<circle cx='%2$s' cy='%2$s' r='%3$s' fill='%4$s' stroke='#ffffff' stroke-opacity='0.92' stroke-width='3'/>",
+      "<circle cx='%2$s' cy='%2$s' r='%5$s' fill='none' stroke='#000000' stroke-opacity='0.22' stroke-width='1'/>",
+      "<text x='%2$s' y='%6$s' text-anchor='middle' font-family='Arial,sans-serif' font-size='13' font-weight='700' fill='%7$s'>%8$s</text>",
+      "<text x='%2$s' y='%9$s' text-anchor='middle' font-family='Arial,sans-serif' font-size='9' font-weight='600' fill='%7$s'>%10$d%%</text>",
+      "</svg>"
+    ),
+    as.integer(lato),
+    lato / 2,
+    lato / 2 - 2.5,
+    genera_colore_cluster(quota),
+    lato / 2 - 0.5,
+    lato / 2 + 2,
+    colori_stato()$bordo,
+    formatta_numero(n),
+    lato / 2 + 13,
+    as.integer(round(100 * quota))
+  )
+}
+
+#' Icone Leaflet delle bolle della vista aggregata
+#'
+#' @param n,censiti Bidoni e bidoni censiti di ogni gruppo.
+#' @noRd
+icone_bolle <- function(n, censiti) {
+  lato <- lato_bolla(n)
+  leaflet::icons(
+    iconUrl = uri_svg(svg_bolla(n, censiti)),
+    iconWidth = lato,
+    iconHeight = lato,
+    iconAnchorX = lato / 2,
+    iconAnchorY = lato / 2
   )
 }
 

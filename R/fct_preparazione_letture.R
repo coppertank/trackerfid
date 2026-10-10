@@ -167,16 +167,29 @@ associa_servizio <- function(
 #' inizia e il successivo. Così una lettura fatta dopo mezzanotte ritrova il
 #' turno iniziato la sera prima.
 #'
-#' Restituisce le colonne con i nomi che l'app si aspetta. Il comune arriva
-#' dalla colonna `comune_servizio` dell'anagrafica dei contenitori: se manca,
-#' il risultato non ha la colonna `comune`.
+#' Restituisce le colonne con i nomi che l'app si aspetta, comprese quelle
+#' geografiche quando i dati le permettono:
+#' - `comune_da_database` dalla colonna `comune_servizio` dell'anagrafica dei
+#'   contenitori;
+#' - `comune_lettura` dalla colonna del calendario indicata con
+#'   `colonna_comune`, cioè il comune in cui lavora il giro scelto;
+#' - `cantiere` dalla tabella dei comuni, per il comune del database se c'è,
+#'   altrimenti per quello di lettura.
+#'
+#' Se un giro compare nel calendario con più comuni, alla lettura va il primo.
 #'
 #' @param df_letture Letture prodotte da `associa_servizio()`.
 #' @param df_calendario Calendario dei giri, con `giorno`, `ora_inizio`,
 #'   `ora_fine`, `matricola_mezzo` e `descrizione_servizio`.
+#' @param colonna_comune Nome della colonna del calendario con il comune del
+#'   giro. Se la colonna non c'è, il risultato non ha `comune_lettura`.
 #' @return Una riga per lettura, con le colonne del CSV dell'app.
 #' @noRd
-associa_servizio_atteso_da_calendario <- function(df_letture, df_calendario) {
+associa_servizio_atteso_da_calendario <- function(
+  df_letture,
+  df_calendario,
+  colonna_comune = "comune"
+) {
   # 1. Preparazione delle letture
   df_letture_clean <- dplyr::mutate(
     df_letture,
@@ -185,13 +198,16 @@ associa_servizio_atteso_da_calendario <- function(df_letture, df_calendario) {
 
   # 2. Preparazione del calendario
   df_calendario_clean <- df_calendario |>
-    dplyr::select(dplyr::all_of(c(
-      "giorno",
-      "ora_inizio",
-      "ora_fine",
-      "matricola_mezzo",
-      "descrizione_servizio"
-    ))) |>
+    dplyr::select(
+      dplyr::all_of(c(
+        "giorno",
+        "ora_inizio",
+        "ora_fine",
+        "matricola_mezzo",
+        "descrizione_servizio"
+      )),
+      dplyr::any_of(c(comune_lettura = colonna_comune))
+    ) |>
     dplyr::distinct() |>
     dplyr::mutate(
       # Data e ora di inizio e fine turno
@@ -251,22 +267,20 @@ associa_servizio_atteso_da_calendario <- function(df_letture, df_calendario) {
         TRUE ~ pmin(.data$distanza_inizio, .data$distanza_fine, na.rm = TRUE)
       )
     ) |>
-    # Per ogni lettura resta il turno con la distanza più bassa. A parità di
-    # distanza `with_ties = FALSE` ne tiene uno solo.
-    dplyr::group_by(.data$id_lettura) |>
-    dplyr::slice_min(
-      order_by = .data$distanza_minima,
-      n = 1,
-      with_ties = FALSE
-    ) |>
-    dplyr::ungroup() |>
+    # Per ogni lettura resta il turno con la distanza più bassa: a parità di
+    # distanza, il primo. Ordinare e tenere la prima riga di ogni lettura dà
+    # lo stesso risultato di una scelta fatta lettura per lettura, che con
+    # milioni di letture costa minuti.
+    dplyr::arrange(.data$id_lettura, .data$distanza_minima) |>
+    dplyr::filter(!duplicated(.data$id_lettura)) |>
     dplyr::rename(
       servizio_transponder = "descrizione_rifiuto",
       servizio_atteso = "descrizione_servizio",
       volume_previsto = "volume",
       numero_raccolte_annue_previste = "numero_raccolte_annue"
     ) |>
-    dplyr::rename(dplyr::any_of(c(comune = "comune_servizio"))) |>
+    dplyr::rename(dplyr::any_of(c(comune_da_database = "comune_servizio"))) |>
+    completa_cantiere() |>
     # Solo le colonne del CSV dell'app
     dplyr::select(
       dplyr::all_of(c(
@@ -283,6 +297,17 @@ associa_servizio_atteso_da_calendario <- function(df_letture, df_calendario) {
         "latitudine",
         "longitudine"
       )),
-      dplyr::any_of("comune")
+      dplyr::any_of(colonne_geografiche())
     )
+}
+
+#' Aggiunge il cantiere alle letture che hanno almeno un comune
+#'
+#' Senza colonne con il comune le letture restano come sono.
+#' @noRd
+completa_cantiere <- function(df) {
+  if (!any(c("comune_da_database", "comune_lettura") %in% names(df))) {
+    return(df)
+  }
+  aggiungi_geografia(df)
 }

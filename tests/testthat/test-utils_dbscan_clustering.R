@@ -23,23 +23,42 @@ test_that("la distanza di Haversine usa il raggio medio terrestre", {
     c(0, 0)
   )
   expect_length(distanza_haversine_m(numeric(0), numeric(0), 41.9, 12.5), 0)
+  # un centro per ogni punto, e punti lontani: un grado di meridiano
+  expect_equal(
+    distanza_haversine_m(c(45, 0), c(11, 0), c(46, 0), c(11, 180)),
+    raggio_terra_m() * c(pi / 180, pi),
+    tolerance = 1e-9
+  )
+})
+
+test_that("la distanza di Haversine coincide con quella di geosphere", {
+  skip_if_not_installed("geosphere")
+  set.seed(7)
+  n <- 500
+  lat <- 45.6 + stats::runif(n, -0.3, 0.3)
+  lon <- 11.7 + stats::runif(n, -0.4, 0.4)
+  lat_centro <- lat + stats::rnorm(n, 0, 0.01)
+  lon_centro <- lon + stats::rnorm(n, 0, 0.01)
+  expect_equal(
+    distanza_haversine_m(lat, lon, lat_centro, lon_centro),
+    geosphere::distHaversine(
+      cbind(lon, lat),
+      cbind(lon_centro, lat_centro),
+      r = raggio_terra_m()
+    ),
+    tolerance = 1e-9
+  )
 })
 
 test_that("la dispersione è il 90° percentile della distanza dal baricentro", {
   metri <- c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 1000)
   lat <- 41.9 + gradi_lat(metri)
-  dispersione <- calcola_dispersione_90th(
-    lat,
-    rep(12.5, length(lat)),
-    41.9,
-    12.5
-  )
+  distanze <- distanza_haversine_m(lat, rep(12.5, length(lat)), 41.9, 12.5)
   expect_equal(
-    dispersione,
+    quantile_per_gruppo(distanze, rep(1L, length(distanze)), 0.9),
     as.numeric(stats::quantile(metri, 0.9)),
     tolerance = 1e-6
   )
-  expect_equal(calcola_dispersione_90th(41.9, 12.5, 41.9, 12.5), 0)
 })
 
 test_that("DBSCAN unisce le letture a catena entro il raggio e separa le altre", {
@@ -102,6 +121,7 @@ test_that("il clustering è indipendente per ogni RFID", {
 })
 
 test_that("sul dataset di esempio la proiezione dà gli stessi cluster di Haversine", {
+  skip_if_not_installed("geosphere")
   d <- filtra_periodo(dati_esempio(), periodo_anno(2025))
   per_rfid <- split(d, d$RFID)
   # il tag sul camion ha 570 letture: prova anche un caso numeroso
@@ -130,4 +150,70 @@ test_that("sul dataset di esempio la proiezione dà gli stessi cluster di Havers
     )
     expect_true(stessa_partizione(esatto, proiettato), info = letture$RFID[1])
   }
+})
+
+test_that("gli RFID letti in un solo punto saltano DBSCAN con lo stesso risultato", {
+  d <- filtra_periodo(dati_esempio(), periodo_anno(2025))
+  per_rfid <- split(seq_len(nrow(d)), d$RFID)
+  for (parametri in list(c(100, 1), c(100, 3), c(15, 1), c(2000, 2))) {
+    veloce <- assegna_cluster(d, parametri[1], parametri[2])$cluster_id
+    lento <- integer(nrow(d))
+    for (righe in per_rfid) {
+      lento[righe] <- ordina_cluster(
+        cluster_dbscan(
+          d$latitudine[righe],
+          d$longitudine[righe],
+          parametri[1],
+          parametri[2]
+        ),
+        d$giorno_lettura[righe]
+      )
+    }
+    expect_identical(veloce, lento, info = paste(parametri, collapse = ", "))
+  }
+
+  # con più letture minime un RFID compatto ma poco letto è rumore
+  poche <- letture_rfid("A", date_2025(2))
+  expect_identical(assegna_cluster(poche, 100, 3)$cluster_id, c(0L, 0L))
+  expect_identical(assegna_cluster(poche, 100, 2)$cluster_id, c(1L, 1L))
+  expect_identical(assegna_cluster(d[0, ])$cluster_id, integer(0))
+})
+
+test_that("le letture ripetute nello stesso punto entrano in DBSCAN con il loro peso", {
+  # tre punti in catena a 60 m, un punto letto 48 volte a 1 km e uno letto
+  # due volte a 3 km: 300 letture in ordine sparso
+  metri <- rep(c(0, 60, 120, 1000, 3000), c(100, 80, 70, 48, 2))
+  set.seed(3)
+  metri <- sample(metri)
+  lat <- 45.6 + gradi_lat(metri)
+  lon <- rep(11.8, length(lat))
+  esatto <- function(min_pts) {
+    dbscan::dbscan(proietta_metri(lat, lon), eps = 100, minPts = min_pts)$cluster
+  }
+
+  tutti <- cluster_dbscan(lat, lon, 100, 1)
+  expect_equal(dplyr::n_distinct(tutti), 3)
+  expect_true(stessa_partizione(tutti, esatto(1)))
+  expect_equal(dplyr::n_distinct(tutti[metri <= 120]), 1)
+
+  # con tre letture minime il punto letto due volte è rumore, quello letto 48
+  # volte no: conta il numero di letture, non di punti distinti
+  con_minimo <- cluster_dbscan(lat, lon, 100, 3)
+  expect_identical(con_minimo == 0, metri == 3000)
+  expect_true(stessa_partizione(con_minimo, esatto(3)))
+})
+
+test_that("oltre la soglia le coordinate sono arrotondate senza cambiare i cluster", {
+  expect_identical(soglia_arrotondamento_cluster(), 2000)
+  # due luoghi a 400 m, 1.200 letture ciascuno con qualche metro di errore
+  set.seed(4)
+  n <- 1200
+  lat <- 45.6 + gradi_lat(c(stats::rnorm(n, 0, 3), stats::rnorm(n, 400, 3)))
+  lon <- 11.8 + gradi_lat(stats::rnorm(2 * n, 0, 3))
+  cluster <- cluster_dbscan(lat, lon, 100, 1)
+  expect_length(cluster, 2 * n)
+  expect_equal(dplyr::n_distinct(cluster), 2)
+  expect_equal(dplyr::n_distinct(cluster[1:n]), 1)
+  esatto <- dbscan::dbscan(proietta_metri(lat, lon), eps = 100, minPts = 1)$cluster
+  expect_true(stessa_partizione(cluster, esatto))
 })

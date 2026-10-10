@@ -78,6 +78,28 @@ test_that("ogni servizio ha la sua icona, con ripiego per i non censiti", {
   expect_equal(nrow(info_servizio(character(0))), 0)
 })
 
+test_that("i sacchetti hanno una tipologia e un'icona loro", {
+  sacchetti <- info_servizio(servizio_sacchetti())
+  expect_identical(sacchetti$icona, "sack-xmark")
+  expect_identical(tipologia_servizio(servizio_sacchetti()), "Sacchetti")
+  # icona, colore ed emoji non sono quelli di un'altra tipologia
+  altre <- servizi_config()[servizi_config()$tipologia != "Sacchetti", ]
+  expect_false(sacchetti$icona %in% altre$icona)
+  expect_false(sacchetti$colore %in% altre$colore)
+  expect_false(sacchetti$emoji %in% altre$emoji)
+  # il marker di un sacchetto non è quello con il punto di domanda
+  expect_false(identical(
+    svg_marker(servizio_sacchetti(), "Presente"),
+    svg_marker(NA, "Presente")
+  ))
+  expect_match(html_legenda("cluster"), "Sacchetti", fixed = TRUE)
+  # nell'ordine dei servizi stanno dopo le sei tipologie di rifiuto
+  expect_identical(
+    ordina_servizi(c("VERDE E RAMAGLIE", servizio_sacchetti(), "SECCO")),
+    c("SECCO", "VERDE E RAMAGLIE", servizio_sacchetti())
+  )
+})
+
 test_that("le icone Font Awesome usate esistono", {
   for (nome in c(servizi_config()$icona, "question")) {
     glifo <- glifo_fa(nome)
@@ -131,4 +153,38 @@ test_that("la legenda cambia con la modalita", {
   for (tipologia in unique(servizi_config()$tipologia)) {
     expect_match(html_legenda("utenza"), tipologia, fixed = TRUE)
   }
+})
+
+test_that("le bolle della vista aggregata crescono con i bidoni e si colorano con i censiti", {
+  expect_identical(
+    lato_bolla(c(1, 9, 10, 99, 100, 999, 1000, 9999, 10000, 5e5)),
+    c(40, 40, 46, 46, 54, 54, 62, 62, 72, 72)
+  )
+
+  n <- c(120, 8, 0, 25000)
+  censiti <- c(120, 2, 0, 12500)
+  svg <- svg_bolla(n, censiti)
+  expect_length(svg, 4)
+  expect_match(svg[1], "width='54' height='54'", fixed = TRUE)
+  expect_match(svg[1], ">120</text>", fixed = TRUE)
+  expect_match(svg[1], ">100%</text>", fixed = TRUE)
+  expect_match(svg[2], ">25%</text>", fixed = TRUE)
+  expect_match(svg[4], ">25.000</text>", fixed = TRUE)
+  expect_match(svg[4], ">50%</text>", fixed = TRUE)
+  # un gruppo vuoto non divide per zero
+  expect_match(svg[3], ">0%</text>", fixed = TRUE)
+  # stesso colore dei cluster di marker disegnati dal browser
+  colori <- genera_colore_cluster(c(1, 0.25, 0, 0.5))
+  for (i in seq_along(svg)) {
+    expect_match(svg[i], sprintf("fill='%s'", colori[i]), fixed = TRUE)
+  }
+
+  icone <- icone_bolle(n[1:2], censiti[1:2])
+  expect_identical(icone$iconWidth, c(54, 40))
+  expect_identical(icone$iconHeight, c(54, 40))
+  # l'ancora è il centro della bolla
+  expect_identical(icone$iconAnchorX, c(27, 20))
+  expect_identical(icone$iconAnchorY, c(27, 20))
+  expect_match(icone$iconUrl, "^data:image/svg\\+xml")
+  expect_match(utils::URLdecode(icone$iconUrl[1]), ">120</text>", fixed = TRUE)
 })

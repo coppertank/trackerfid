@@ -40,7 +40,7 @@ contenitori_prova <- dplyr::tibble(
   )),
   stato_servizio = "ATTIVO",
   id_utenza = c("U1", "U2", "U3"),
-  comune_servizio = "X"
+  comune_servizio = "Rosà"
 )
 tag_prova <- dplyr::tibble(codice_transponder = c("0000ABC123", "0000000042"))
 sacchetti_prova <- dplyr::tibble(
@@ -225,6 +225,30 @@ test_that("il servizio atteso è il turno in cui cade la lettura, o il più vici
   )
 })
 
+test_that("a parità di distanza resta il primo turno, e le letture restano in ordine", {
+  # 12:30 dista mezz'ora dalla fine del mattino e dall'inizio del pomeriggio
+  quando <- c(
+    "2026-03-02 15:00:00",
+    "2026-03-02 12:30:00",
+    "2026-03-02 08:30:00"
+  )
+  risultato <- associa_servizio_atteso_da_calendario(
+    letture_associate(quando),
+    calendario_prova
+  )
+  expect_identical(format(risultato$giorno_lettura, "%H:%M"), substr(quando, 12, 16))
+  expect_identical(
+    risultato$servizio_atteso,
+    c("CARTA/CARTONE PAP", "SECCO PAP", "SECCO PAP")
+  )
+  # con il pomeriggio scritto per primo nel calendario, vince il pomeriggio
+  rovesciato <- associa_servizio_atteso_da_calendario(
+    letture_associate(quando),
+    calendario_prova[c(2, 1), ]
+  )
+  expect_identical(rovesciato$servizio_atteso[2], "CARTA/CARTONE PAP")
+})
+
 test_that("senza turni il servizio atteso resta vuoto", {
   senza_turni <- associa_servizio_atteso_da_calendario(
     letture_associate("2026-03-02 08:30:00", matricola = "999"),
@@ -302,8 +326,11 @@ test_that("i turni che finiscono in giornata non passano al giorno dopo", {
     calendario_prova
   )
   expect_true(all(is.na(giorno_dopo$servizio_atteso)))
-  # senza `comune_servizio` in ingresso il risultato non ha la colonna `comune`
-  expect_setequal(names(giorno_dopo), setdiff(colonne_dataset(), "comune"))
+  # senza comuni in ingresso il risultato non ha le colonne geografiche
+  expect_setequal(
+    names(giorno_dopo),
+    c(colonne_obbligatorie(), colonne_quantita())
+  )
 })
 
 test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
@@ -320,9 +347,16 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
     filtra_letture_post_test(test_mezzi_prova) |>
     formatta_rfid() |>
     associa_servizio(contenitori_prova, tag_prova, sacchetti_prova) |>
-    associa_servizio_atteso_da_calendario(calendario_prova)
+    associa_servizio_atteso_da_calendario(
+      # il calendario dice in quale comune lavora ogni giro
+      dplyr::mutate(calendario_prova, comune = "Bassano del Grappa")
+    )
 
-  expect_setequal(names(risultato), colonne_dataset())
+  # le colonne del CSV: il comune assegnato lo calcola l'app
+  expect_setequal(
+    names(risultato),
+    setdiff(colonne_dataset(), colonne_derivate())
+  )
   expect_equal(nrow(risultato), 4)
 
   file <- withr::local_tempfile(fileext = ".csv")
@@ -345,8 +379,21 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
     c("Presente", "Non Presente", "Presente", "Presente")
   )
   expect_equal(caricate$volume_previsto, c(240, NA, 1100, 240))
-  # il comune arriva dall'anagrafica dei contenitori: solo per i censiti
-  expect_identical(caricate$comune, c("X", NA, "X", "X"))
+  # il comune del database arriva dall'anagrafica dei contenitori, solo per i
+  # censiti; quello di lettura dal calendario del mezzo; il cantiere dai due
+  expect_identical(
+    caricate$comune_da_database,
+    c("ROSA'", NA, "ROSA'", "ROSA'")
+  )
+  expect_identical(
+    caricate$comune_lettura,
+    c("BASSANO DEL GRAPPA", "BASSANO DEL GRAPPA", "BASSANO DEL GRAPPA", NA)
+  )
+  expect_identical(caricate$cantiere, rep("BASSANO", 4))
+  expect_identical(
+    caricate$comune_assegnato,
+    c("ROSA'", "BASSANO DEL GRAPPA", "ROSA'", "ROSA'")
+  )
   # l'orario scritto nel CSV è quello della lettura, senza spostamenti di fuso
   expect_identical(format(caricate$giorno_lettura[1], "%H:%M"), "08:30")
 })

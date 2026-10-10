@@ -7,12 +7,18 @@
 #' Mappa di base: sfondo, scala e legenda
 #'
 #' @param modalita `"cluster"`, `"rfid"` o `"utenza"`.
-#' @return Mappa Leaflet centrata su Roma.
+#' @return Mappa Leaflet che inquadra tutta la zona servita.
 #' @noRd
 mappa_base <- function(modalita = "cluster") {
+  zona <- riquadro_zona()
   leaflet::leaflet() |>
     leaflet::addTiles() |>
-    leaflet::setView(lng = 12.5, lat = 41.9, zoom = 11) |>
+    leaflet::fitBounds(
+      lng1 = zona$lng_min,
+      lat1 = zona$lat_min,
+      lng2 = zona$lng_max,
+      lat2 = zona$lat_max
+    ) |>
     leaflet::addScaleBar(
       position = "bottomleft",
       options = leaflet::scaleBarOptions(imperial = FALSE)
@@ -28,7 +34,7 @@ mappa_base <- function(modalita = "cluster") {
 #' @noRd
 opzioni_cluster <- function() {
   leaflet::markerClusterOptions(
-    iconCreateFunction = htmlwidgets::JS(js_icona_cluster()),
+    iconCreateFunction = leaflet::JS(js_icona_cluster()),
     showCoverageOnHover = FALSE,
     spiderfyOnMaxZoom = TRUE,
     maxClusterRadius = 60
@@ -86,7 +92,9 @@ aggiungi_marker <- function(
       giorno_lettura = df$giorno_lettura,
       id_utenza = df$id_utenza,
       presente = df$presente_a_database,
-      comune = df[["comune"]]
+      comune = df[["comune_da_database"]],
+      comune_lettura = df[["comune_lettura"]],
+      cantiere = df[["cantiere"]]
     ),
     label = df$RFID,
     options = leaflet::markerOptions(
@@ -96,6 +104,48 @@ aggiungi_marker <- function(
       riseOnHover = TRUE
     ),
     clusterOptions = if (cluster) opzioni_cluster()
+  )
+}
+
+#' Aggiunge alla mappa le bolle della vista aggregata
+#'
+#' L'identificativo di una bolla è `bolla-` seguito dal numero di riga: il
+#' click la distingue così da un marker. Il nome di un cantiere resta
+#' sempre visibile sotto la bolla, gli altri compaiono al passaggio.
+#'
+#' @param map Mappa o proxy Leaflet.
+#' @param bolle Risultato di `aggrega_marker()`.
+#' @noRd
+aggiungi_bolle <- function(map, bolle) {
+  if (nrow(bolle) == 0) {
+    return(map)
+  }
+  per_cantiere <- identical(bolle$livello[1], "cantiere")
+  nome <- dplyr::coalesce(
+    bolle$nome,
+    if (identical(bolle$livello[1], "griglia")) "Zona" else senza_cantiere()
+  )
+  descrizione <- sprintf(
+    "%s: %s, %s censiti",
+    nome,
+    purrr::map_chr(bolle$n, conta, "bidone", "bidoni"),
+    formatta_numero(bolle$censiti)
+  )
+  leaflet::addMarkers(
+    map,
+    lng = bolle$longitudine,
+    lat = bolle$latitudine,
+    layerId = paste0("bolla-", seq_len(nrow(bolle))),
+    icon = icone_bolle(bolle$n, bolle$censiti),
+    label = if (per_cantiere) nome else descrizione,
+    labelOptions = leaflet::labelOptions(
+      permanent = per_cantiere,
+      direction = "bottom",
+      # L'etichetta sta sotto la bolla, senza coprirne la percentuale.
+      offset = c(0, max(lato_bolla(bolle$n)) / 2 - 6),
+      className = "etichetta-bolla"
+    ),
+    options = leaflet::markerOptions(riseOnHover = TRUE)
   )
 }
 
@@ -138,8 +188,15 @@ add_rfid_bounds <- function(map, df) {
 #' @param map Mappa o proxy Leaflet.
 #' @param df Letture da disegnare, oppure `NULL`.
 #' @param modalita Modalità di visualizzazione.
+#' @param riquadri Letture su cui calcolare i riquadri della ricerca RFID:
+#'   tutte quelle trovate, anche quando `df` ne contiene solo una parte.
 #' @noRd
-disegna_marker <- function(map, df, modalita = c("cluster", "rfid", "utenza")) {
+disegna_marker <- function(
+  map,
+  df,
+  modalita = c("cluster", "rfid", "utenza"),
+  riquadri = df
+) {
   modalita <- match.arg(modalita)
   map <- pulisci_mappa(map)
   if (is.null(df) || nrow(df) == 0) {
@@ -150,7 +207,7 @@ disegna_marker <- function(map, df, modalita = c("cluster", "rfid", "utenza")) {
     cluster = aggiungi_marker(map, df, cluster = TRUE),
     utenza = aggiungi_marker(map, df),
     rfid = map |>
-      add_rfid_bounds(df) |>
+      add_rfid_bounds(riquadri) |>
       aggiungi_marker(
         df,
         stile = ifelse(df$is_ultimo, "ultimo", "precedente"),

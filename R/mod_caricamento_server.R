@@ -1,15 +1,33 @@
 #' Modulo caricamento dati: logica
 #'
-#' Legge i CSV caricati, li valida e mostra l'esito: statistiche di
+#' Legge i file caricati, li valida e mostra l'esito: statistiche di
 #' caricamento oppure messaggi di errore espliciti. I file sono due: le
 #' letture con le antenne, da cui dipende tutta l'app, e le letture storiche,
 #' facoltative, che servono all'istogramma per anno del dettaglio del bidone.
 #'
+#' Un file molto grande non va per forza caricato dal browser: con
+#' `run_app(letture = "percorso", storico = "percorso")` l'app lo legge dal
+#' disco all'avvio, una volta sola per tutte le sessioni.
+#'
 #' @param id Identificativo del modulo.
+#' @param demo `TRUE` per aprire l'app con i dati di esempio già caricati.
+#'   Il valore predefinito viene da `run_app(demo = )`.
+#' @param percorsi Lista con `letture` e `storico`: i file da leggere dal
+#'   disco all'avvio, oppure `NULL`. Il valore predefinito viene da
+#'   `run_app(letture = , storico = )`.
 #' @return Lista di due reactive, `letture` e `storico`: ciascuno contiene il
 #'   dataset validato, oppure `NULL` se manca un dataset valido.
 #' @noRd
-mod_caricamento_server <- function(id) {
+mod_caricamento_server <- function(
+  id,
+  demo = isTRUE(golem::get_golem_options("demo")),
+  percorsi = list(
+    letture = golem::get_golem_options("letture"),
+    storico = golem::get_golem_options("storico")
+  )
+) {
+  force(demo)
+  force(percorsi)
   moduleServer(id, function(input, output, session) {
     stato <- reactiveValues(
       dati = NULL,
@@ -41,6 +59,21 @@ mod_caricamento_server <- function(id) {
       destinazione$errori <- esito$errori
       destinazione$origine <- origine
     }
+    # Un file caricato dal browser ha un percorso temporaneo: l'estensione,
+    # che dice il formato, sta nel nome originale. Con milioni di righe la
+    # lettura dura qualche secondo: un avviso dice che è in corso.
+    carica_file <- function(destinazione, lettore, file) {
+      withProgress(
+        message = "Lettura e controllo del file\u2026",
+        value = 0.5,
+        carica(
+          destinazione,
+          function(percorso) lettore(percorso, file$name),
+          file$datapath,
+          file$name
+        )
+      )
+    }
     carica_esempio <- function() {
       carica(
         stato,
@@ -57,12 +90,7 @@ mod_caricamento_server <- function(id) {
     }
 
     observeEvent(input$file_upload, {
-      carica(
-        stato,
-        carica_dataset,
-        input$file_upload$datapath,
-        input$file_upload$name
-      )
+      carica_file(stato, carica_dataset, input$file_upload)
       # Le letture storiche di esempio non riguardano un file caricato a mano.
       if (identical(stato_storico$origine, storico_esempio)) {
         for (campo in names(stato_storico)) {
@@ -72,19 +100,32 @@ mod_caricamento_server <- function(id) {
     })
 
     observeEvent(input$file_storico, {
-      carica(
-        stato_storico,
-        carica_storico,
-        input$file_storico$datapath,
-        input$file_storico$name
-      )
+      carica_file(stato_storico, carica_storico, input$file_storico)
     })
 
     observeEvent(input$carica_esempio, carica_esempio())
 
     # `run_app(demo = TRUE)` apre l'app con i dati di esempio già caricati.
-    if (isTRUE(golem::get_golem_options("demo"))) {
+    # `run_app(letture = , storico = )` la apre con i file indicati, letti dal
+    # disco una volta sola per tutte le sessioni.
+    if (isTRUE(demo)) {
       carica_esempio()
+    }
+    if (!is.null(percorsi$letture)) {
+      carica(
+        stato,
+        function(percorso) leggi_una_volta(carica_dataset, percorso),
+        percorsi$letture,
+        basename(percorsi$letture)
+      )
+    }
+    if (!is.null(percorsi$storico)) {
+      carica(
+        stato_storico,
+        function(percorso) leggi_una_volta(carica_storico, percorso),
+        percorsi$storico,
+        basename(percorsi$storico)
+      )
     }
 
     # Riquadro con l'esito di un caricamento: errori, oppure righe, RFID e periodo.

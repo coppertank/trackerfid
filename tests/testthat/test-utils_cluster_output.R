@@ -94,7 +94,7 @@ test_that("l'indice di fiducia è tra 0 e 1 e premia i cluster affidabili", {
   expect_false(anyNA(tutti))
 })
 
-test_that("la tabella ha 25 colonne e una riga per cluster", {
+test_that("la tabella ha 27 colonne e una riga per cluster", {
   letture <- dplyr::bind_rows(
     letture_rfid("FERMO", date_2025(26)),
     letture_rfid(
@@ -113,7 +113,7 @@ test_that("la tabella ha 25 colonne e una riga per cluster", {
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
 
   expect_identical(names(analisi), colonne_analisi_cluster())
-  expect_length(names(analisi), 25)
+  expect_length(names(analisi), 27)
   expect_equal(nrow(analisi), 5)
   expect_identical(analisi$RFID, c("FERMO", "IGNOTO", "MOSSO", "MOSSO", "RARO"))
   expect_identical(analisi$cluster_id, c(1L, 1L, 1L, 2L, 1L))
@@ -312,6 +312,59 @@ test_that("periodi senza letture o non validi sono gestiti", {
   )
 })
 
+test_that("i sacchetti restano fuori dall'analisi", {
+  bidoni <- dplyr::bind_rows(
+    letture_rfid("A", date_2025(8)),
+    letture_rfid("B", date_2025(3), presente = "Non Presente", atteso = "SECCO PAP")
+  )
+  sacchetti <- dplyr::bind_rows(
+    # censito e non censito, uno letto prima e uno dopo tutti i bidoni
+    letture_rfid(
+      sprintf("00BD%020d", 1),
+      "2025-01-02",
+      servizio = servizio_sacchetti(),
+      volume = NA,
+      raccolte = NA
+    ),
+    letture_rfid(
+      sprintf("00BD%020d", 2),
+      "2025-12-30",
+      presente = "Non Presente",
+      atteso = "SECCO PAP"
+    )
+  )
+  attesa <- calcola_analisi_cluster(bidoni, "2025-01-01", "2025-12-31")
+  analisi <- calcola_analisi_cluster(
+    dplyr::bind_rows(bidoni, sacchetti),
+    "2025-01-01",
+    "2025-12-31"
+  )
+  expect_setequal(analisi$RFID, c("A", "B"))
+  # il risultato è quello di un file senza sacchetti, giorni osservati compresi
+  expect_identical(analisi, attesa)
+  expect_identical(
+    attr(analisi, "parametri")$giorni_osservati,
+    attr(attesa, "parametri")$giorni_osservati
+  )
+
+  # un file di soli sacchetti dà la tabella vuota
+  vuota <- calcola_analisi_cluster(sacchetti, "2025-01-01", "2025-12-31")
+  expect_equal(nrow(vuota), 0)
+  expect_identical(names(vuota), colonne_analisi_cluster())
+
+  # sul dataset di esempio: nessun sacchetto, stessa analisi dei soli bidoni
+  esempio <- dati_esempio()
+  expect_true(any(rfid_sacchetto(esempio$RFID)))
+  expect_identical(
+    analisi_esempio(),
+    calcola_analisi_cluster(
+      senza_sacchetti(esempio),
+      "2025-01-01",
+      "2025-12-31"
+    )
+  )
+})
+
 test_that("l'analisi funziona senza le colonne facoltative e con contenitori incoerenti", {
   letture <- letture_rfid("A", date_2025(8))
   letture$volume_previsto <- NULL
@@ -375,7 +428,8 @@ test_that("l'esportazione scrive date leggibili e celle vuote per i mancanti", {
     colonne_analisi_cluster()
   )
   expect_match(righe[2], "\"2025-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\"")
-  expect_no_match(righe[2], "NA", fixed = TRUE)
+  # nessun campo mancante scritto come NA
+  expect_no_match(righe[2], "(^|,)\"?NA\"?(,|$)")
   expect_identical(
     nome_file_analisi_cluster("2025-01-01", as.Date("2025-12-31")),
     "cluster_analysis_2025-01-01_2025-12-31.csv"

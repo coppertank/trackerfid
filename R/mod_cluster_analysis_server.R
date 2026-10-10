@@ -149,12 +149,46 @@ mod_cluster_analysis_server <- function(
       tabella_cluster_dt(risultato())
     })
 
+    # Righe mostrate dalla tabella: `NULL` vuol dire tutte, un vettore vuoto
+    # nessuna. Una nuova analisi le azzera: il browser riporta le righe della
+    # tabella precedente finché quella nuova non viene disegnata, e la tabella
+    # non si ridisegna mentre la sua vista è nascosta.
+    righe_tabella <- reactiveVal(NULL)
+    observeEvent(
+      risultato(),
+      righe_tabella(NULL),
+      ignoreNULL = FALSE,
+      priority = 10
+    )
+    # Il browser comunica un elenco vuoto quando il filtro non lascia righe,
+    # ma anche, per qualche centesimo di secondo, ogni volta che ridisegna la
+    # tabella: un elenco vale solo se dura.
+    righe_browser <- debounce(
+      reactive(input$tabella_rows_all),
+      attesa_righe_tabella()
+    )
+    observeEvent(
+      righe_browser(),
+      {
+        indici <- as.integer(unlist(righe_browser()))
+        # Tutte le righe, in qualunque ordine: come nessun filtro.
+        tutte <- length(indici) == NROW(risultato())
+        righe_tabella(if (!tutte) indici)
+      },
+      ignoreNULL = FALSE,
+      ignoreInit = TRUE
+    )
+
     # Grafici e mappa seguono i filtri della tabella.
     righe_filtrate <- reactive({
       req(pronta())
       analisi <- risultato()
-      indici <- input$tabella_rows_all
-      if (is.null(indici)) analisi else analisi[indici, , drop = FALSE]
+      indici <- righe_tabella()
+      if (is.null(indici)) {
+        return(analisi)
+      }
+      # Un indice arrivato in ritardo può superare la fine della tabella nuova.
+      analisi[indici[indici <= nrow(analisi)], , drop = FALSE]
     })
 
     # --- Grafici ---------------------------------------------------------------------

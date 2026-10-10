@@ -5,6 +5,10 @@
 #' tempi, numero di letture, baricentro, dispersione, servizio, raccolte
 #' annue, indice di fiducia e indicatore.
 #'
+#' L'analisi riguarda i contenitori. I sacchetti, riconosciuti dal codice RFID
+#' di 24 caratteri che inizia per `00BD`, sono monouso e restano fuori: il
+#' risultato è quello di un file che non li contiene.
+#'
 #' La funzione non richiede l'app Shiny. Lo script
 #' `system.file("scripts", "generate_cluster_analysis.R", package = "trackerfid")`
 #' la rende disponibile anche da riga di comando.
@@ -19,9 +23,10 @@
 #'   lettura appartiene a un cluster; con valori maggiori le letture isolate
 #'   finiscono nel cluster 0.
 #'
-#' @return Un tibble con 25 colonne, una riga per cluster di ogni RFID:
+#' @return Un tibble con 27 colonne, una riga per cluster di ogni RFID:
 #'   identificazione (`RFID`, `cluster_id`, `globale_conteggio_cluster`),
-#'   tempi globali e del cluster, `presente_a_database`, servizio transponder
+#'   tempi globali e del cluster, `presente_a_database`, `cantiere` e
+#'   `comune` dell'RFID, servizio transponder
 #'   (attuale e cronologia dei cambi), servizio atteso (prevalente e
 #'   composizione), volumi, periodo di analisi, raccolte annue previste e
 #'   presunte, numero di letture, baricentro, `cluster_dispersione_90th_m`,

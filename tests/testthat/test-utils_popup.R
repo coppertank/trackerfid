@@ -35,9 +35,10 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
   expect_match(popup[5], "<b>Servizio:</b> N/A", fixed = TRUE)
   expect_match(popup[5], "<b>Utenza:</b> Non Censito", fixed = TRUE)
 
-  # il comune compare solo se almeno una lettura ne ha uno
+  # le righe geografiche compaiono solo nelle letture che hanno il dato
   expect_no_match(popup[1], "Comune", fixed = TRUE)
-  con_comune <- create_popup_html(
+  expect_no_match(popup[1], "Cantiere", fixed = TRUE)
+  con_geografia <- create_popup_html(
     d$RFID,
     d$servizio_transponder,
     d$servizio_atteso,
@@ -46,26 +47,29 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     d$giorno_lettura,
     d$id_utenza,
     d$presente_a_database,
-    comune = c(rep("COMUNE NORD", 4), NA, NA)
+    comune = c(rep("LIMENA", 4), NA, NA),
+    comune_lettura = c("LIMENA", "CITTADELLA", NA, NA, "ASIAGO", NA),
+    cantiere = c(rep("RUBANO", 4), "ASIAGO", NA)
   )
   expect_match(
-    con_comune[1],
-    "<b>Utenza:</b> U1<br><b>Comune:</b> COMUNE NORD<br>",
+    con_geografia[1],
+    "<b>Utenza:</b> U1<br><b>Comune:</b> LIMENA<br><b>Cantiere:</b> RUBANO<br>",
     fixed = TRUE
   )
-  expect_match(con_comune[5], "<b>Comune:</b> N/A", fixed = TRUE)
-  senza_comune <- create_popup_html(
-    d$RFID,
-    d$servizio_transponder,
-    d$servizio_atteso,
-    d$targa_veicolo,
-    d$matricola_veicolo,
-    d$giorno_lettura,
-    d$id_utenza,
-    d$presente_a_database,
-    comune = rep(NA_character_, nrow(d))
+  # il comune di lettura compare solo se è diverso da quello del database
+  expect_no_match(con_geografia[1], "Comune di lettura", fixed = TRUE)
+  expect_match(
+    con_geografia[2],
+    "<b>Comune:</b> LIMENA<br><b>Comune di lettura:</b> CITTADELLA<br>",
+    fixed = TRUE
   )
-  expect_identical(senza_comune, popup)
+  expect_match(
+    con_geografia[5],
+    "<b>Comune di lettura:</b> ASIAGO<br><b>Cantiere:</b> ASIAGO<br>",
+    fixed = TRUE
+  )
+  expect_no_match(con_geografia[5], "<b>Comune:</b>", fixed = TRUE)
+  expect_identical(con_geografia[6], popup[6])
 
   pericoloso <- create_popup_html(
     "<script>alert(1)</script>",
@@ -176,24 +180,124 @@ test_that("l'istogramma mostra una colonna per anno e mette in evidenza gli anni
 })
 
 test_that("il riquadro statistiche riporta i conteggi", {
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(dati_esempio()))
+  esempio <- aggiungi_servizio_icona(dati_esempio())
+  stat <- calcola_statistiche(deduplica_ultimo_rfid(esempio))
   html <- as.character(crea_box_statistiche(stat))
   expect_match(html, "STATISTICHE FILTRATE", fixed = TRUE)
   expect_match(html, "TOTALE RFID (Ultimo):", fixed = TRUE)
   expect_match(html, sprintf("<b>%d</b>", stat$totale), fixed = TRUE)
   expect_match(html, sprintf("<b>%d</b>", stat$presente), fixed = TRUE)
   expect_match(html, sprintf("<b>%d</b>", stat$non_presente), fixed = TRUE)
-  expect_equal(stat$totale, 239)
+  expect_equal(stat$totale, 251)
   expect_equal(stat$presente + stat$non_presente, stat$totale)
   expect_match(html, "SECCO:", fixed = TRUE)
+  # i non censiti: una riga per servizio stimato, poi quelli con la stima
+  # incerta, che sulla mappa hanno il punto di domanda
+  expect_match(html, "SECCO PAP:", fixed = TRUE)
+  expect_match(
+    html,
+    sprintf("Stima incerta:</span>\\s*<b>%d</b>", stat$stima_incerta)
+  )
+  expect_gt(stat$stima_incerta, 5)
+  expect_equal(sum(stat$atteso) + stat$stima_incerta, stat$non_presente)
+  expect_equal(sum(stat$transponder), stat$presente)
+
+  # con le letture filtrate compaiono RFID e letture di ogni cantiere
+  expect_match(html, "RFID per Cantiere:", fixed = TRUE)
+  con_letture <- as.character(crea_box_statistiche(calcola_statistiche(
+    deduplica_ultimo_rfid(esempio),
+    esempio$cantiere
+  )))
+  expect_match(con_letture, "RFID e letture per Cantiere:", fixed = TRUE)
+  expect_match(con_letture, "<span>ASIAGO:</span>\\s*<b>30</b>")
+  expect_match(con_letture, "669 letture", fixed = TRUE)
+  # nel dataset di esempio ogni lettura ha un cantiere
+  expect_no_match(con_letture, "Non assegnato:", fixed = TRUE)
+  senza_alcune <- esempio
+  senza_alcune$cantiere[senza_alcune$RFID == "RFD20241001301"] <- NA
+  expect_match(
+    as.character(crea_box_statistiche(calcola_statistiche(
+      deduplica_ultimo_rfid(senza_alcune),
+      senza_alcune$cantiere
+    ))),
+    "Non assegnato:",
+    fixed = TRUE
+  )
+  # un dataset senza cantieri non ha la sezione
+  senza_cantieri <- as.character(crea_box_statistiche(calcola_statistiche(
+    letture_test()
+  )))
+  expect_no_match(senza_cantieri, "Cantiere", fixed = TRUE)
 
   vuoto <- as.character(crea_box_statistiche(calcola_statistiche(dati_esempio()[
     0,
   ])))
   expect_match(vuoto, "nessuno", fixed = TRUE)
+
+  # soli non censiti con la stima incerta: sotto il servizio atteso resta la
+  # loro riga, senza la voce "nessuno"
+  incerti <- esempio[esempio$RFID == "RFD20250920250", ]
+  solo_incerti <- as.character(crea_box_statistiche(calcola_statistiche(
+    deduplica_ultimo_rfid(incerti)
+  )))
+  expect_match(solo_incerti, "Stima incerta:</span>\\s*<b>1</b>")
+  expect_equal(lengths(regmatches(solo_incerti, gregexpr("nessuno", solo_incerti))), 1)
 })
 
 test_that("i numeri usano il separatore italiano delle migliaia", {
   expect_identical(formatta_numero(1234567), "1.234.567")
   expect_identical(formatta_numero(42L), "42")
+  # i numeri tondi non passano alla notazione scientifica
+  expect_identical(formatta_numero(1e5), "100.000")
+  expect_identical(formatta_numero(c(2e6, 15)), c("2.000.000", "15"))
+})
+
+test_that("i conteggi scelgono tra singolare e plurale", {
+  expect_identical(conta(1, "bidone", "bidoni"), "1 bidone")
+  expect_identical(conta(0, "bidone", "bidoni"), "0 bidoni")
+  expect_identical(conta(12500, "lettura", "letture"), "12.500 letture")
+})
+
+test_that("il pannello di dettaglio ha un blocco per i sacchetti", {
+  sacchetto <- sprintf("00BD%020d", 1)
+  pannello <- function(letture) {
+    as.character(crea_info_panel(analizza_rfid(letture)))
+  }
+
+  censito <- pannello(letture_rfid(
+    sacchetto,
+    date_2025(3),
+    servizio = servizio_sacchetti(),
+    atteso = "SECCO PAP"
+  ))
+  expect_match(censito, "SACCHETTO CENSITO", fixed = TRUE)
+  expect_match(censito, "Riconosciuto dal codice RFID", fixed = TRUE)
+  # un sacchetto non è un contenitore con una tipologia di rifiuto
+  expect_no_match(censito, "contenitore di", fixed = TRUE)
+  expect_no_match(censito, "Tipo di Rifiuto", fixed = TRUE)
+
+  # non censito: i giri che lo hanno letto, non una stima del servizio
+  non_censito <- pannello(letture_rfid(
+    sacchetto,
+    date_2025(3),
+    presente = "Non Presente",
+    atteso = c("SECCO PAP", "SECCO PAP", "VETRO PAP")
+  ))
+  expect_match(non_censito, "SACCHETTO NON CENSITO NEL DATABASE", fixed = TRUE)
+  expect_match(non_censito, "Giri che lo hanno letto", fixed = TRUE)
+  expect_match(non_censito, "SECCO PAP:", fixed = TRUE)
+  expect_no_match(non_censito, "Stima Predittiva", fixed = TRUE)
+  # senza giri nel file resta il solo riconoscimento
+  senza_giri <- pannello(letture_rfid(
+    sacchetto,
+    date_2025(2),
+    presente = "Non Presente"
+  ))
+  expect_match(senza_giri, "SACCHETTO NON CENSITO NEL DATABASE", fixed = TRUE)
+  expect_no_match(senza_giri, "Giri che lo hanno letto", fixed = TRUE)
+
+  # un bidone conserva i suoi testi
+  bidone <- pannello(letture_rfid("0000ABC123", date_2025(3)))
+  expect_match(bidone, "TRANSPONDER CENSITO", fixed = TRUE)
+  expect_no_match(bidone, "SACCHETTO", fixed = TRUE)
 })

@@ -164,7 +164,8 @@ servizi <- dplyr::summarise(
 quote_giro <- nel_periodo |>
   dplyr::arrange(RFID, giorno_lettura) |>
   assegna_cluster(parametri$eps_m, parametri$min_pts) |>
-  dplyr::filter(!is.na(servizio_atteso)) |>
+  # Il giro c'è su ogni lettura: per la stima contano quelle non censite.
+  dplyr::filter(presente_a_database == "Non Presente", !is.na(servizio_atteso)) |>
   dplyr::count(RFID, cluster_id, servizio_atteso) |>
   dplyr::summarise(
     quota_atteso = max(n) / sum(n),

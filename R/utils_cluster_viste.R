@@ -42,6 +42,8 @@ tabella_cluster_dt <- function(risultato) {
   config <- indicatori_config()
   categoriche <- c(
     "presente_a_database",
+    "cantiere",
+    "comune",
     "servizio_transponder",
     "servizio_atteso"
   )
@@ -114,6 +116,63 @@ tabella_cluster_dt <- function(risultato) {
       ),
       fontWeight = "600"
     )
+}
+
+#' Numero massimo di cluster disegnati nel grafico a dispersione e sulla mappa
+#'
+#' Oltre questi numeri il browser riceverebbe decine di megabyte e
+#' rallenterebbe senza mostrare di più: i punti si sovrappongono.
+#' @noRd
+limiti_viste_cluster <- function() list(grafico = 20000, mappa = 5000)
+
+#' Attesa prima di credere alle righe comunicate dalla tabella, in millisecondi
+#'
+#' A ogni ridisegno la tabella comunica per qualche centesimo di secondo un
+#' elenco vuoto, lo stesso di un filtro che non lascia righe: grafici e mappa
+#' seguono l'elenco solo se dura più di questa attesa. Il margine copre anche
+#' un collegamento lento tra browser e server.
+#' @noRd
+attesa_righe_tabella <- function() 300
+
+#' Sceglie i cluster da disegnare quando sono troppi
+#'
+#' Tiene per primi i cluster anomali, cioè quelli con un indicatore diverso
+#' da `VALID_TARGET`, che sono pochi e sono quelli da guardare. Lo spazio
+#' che resta va a un campione dei regolari, preso a intervalli costanti:
+#' la scelta non cambia da un disegno all'altro.
+#'
+#' @param righe Righe dell'analisi.
+#' @param massimo Numero massimo di righe da tenere.
+#' @return Le righe scelte, nell'ordine di partenza. L'attributo `totale`
+#'   riporta il numero di righe ricevute.
+#' @noRd
+campiona_cluster <- function(righe, massimo) {
+  totale <- nrow(righe)
+  if (totale > massimo) {
+    anomali <- which(righe$indicatore_cluster != "VALID_TARGET")
+    regolari <- setdiff(seq_len(totale), anomali)
+    anomali <- utils::head(anomali, massimo)
+    posto <- massimo - length(anomali)
+    scelti <- if (posto > 0 && length(regolari) > 0) {
+      regolari[unique(round(seq(1, length(regolari), length.out = posto)))]
+    }
+    righe <- righe[sort(c(anomali, scelti)), , drop = FALSE]
+  }
+  structure(righe, totale = totale)
+}
+
+#' Avviso da mostrare quando una vista disegna solo una parte dei cluster
+#' @noRd
+nota_campione <- function(righe) {
+  totale <- attr(righe, "totale")
+  if (is.null(totale) || totale <= nrow(righe)) {
+    return(NULL)
+  }
+  sprintf(
+    "Mostrati %s cluster su %s: tutti gli anomali e un campione dei regolari. Per vederne altri restringi la tabella con i filtri.",
+    formatta_numero(nrow(righe)),
+    formatta_numero(totale)
+  )
 }
 
 #' Grafico a barre: numero di cluster per indicatore
@@ -206,6 +265,10 @@ grafico_dispersione <- function(
     drop = FALSE
   ]
 
+  # I titoli dei riquadri contano tutti i cluster, anche quelli non disegnati.
+  conteggi <- table(risultato$indicatore_cluster)
+  risultato <- campiona_cluster(risultato, limiti_viste_cluster()$grafico)
+  nota <- nota_campione(risultato)
   dati <- dplyr::mutate(
     as.data.frame(risultato),
     x = .data$globale_numero_letture,
@@ -309,7 +372,7 @@ grafico_dispersione <- function(
           text = sprintf(
             "<b>%s</b> \u00b7 %s",
             presenti$indicatore[k],
-            formatta_numero(sum(scelto))
+            formatta_numero(conteggi[[presenti$indicatore[k]]])
           ),
           x = 0,
           y = 1,
@@ -335,7 +398,10 @@ grafico_dispersione <- function(
   ) |>
     plotly::layout(
       title = list(
-        text = "<b>Letture e dispersione dei cluster</b>",
+        text = paste0(
+          "<b>Letture e dispersione dei cluster</b>",
+          if (!is.null(nota)) paste0("<br><sub>", nota, "</sub>")
+        ),
         x = 0,
         xref = "paper",
         xanchor = "left",
@@ -410,7 +476,9 @@ popup_cluster <- function(righe) {
 #'
 #' Ogni cluster è un punto sul baricentro, circondato da un cerchio il cui
 #' raggio è la dispersione al 90° percentile. Gli indicatori sono livelli
-#' attivabili dal controllo in alto a destra, che fa anche da legenda.
+#' attivabili dal controllo in alto a destra, che fa anche da legenda. Oltre
+#' il limite di `limiti_viste_cluster()` la mappa disegna un campione, vedi
+#' `campiona_cluster()`.
 #'
 #' @param righe Righe dell'analisi da mostrare.
 #' @noRd
@@ -424,9 +492,22 @@ mappa_cluster <- function(righe) {
       options = leaflet::scaleBarOptions(imperial = FALSE)
     )
   if (is.null(righe) || nrow(righe) == 0) {
-    return(leaflet::setView(mappa, lng = 12.5, lat = 41.9, zoom = 11))
+    zona <- riquadro_zona()
+    return(leaflet::fitBounds(
+      mappa,
+      lng1 = zona$lng_min,
+      lat1 = zona$lat_min,
+      lng2 = zona$lng_max,
+      lat2 = zona$lat_max
+    ))
   }
 
+  # Il numero di riga va assegnato prima del campione: il click sulla mappa
+  # lo usa per risalire al cluster tra le righe ricevute.
+  righe$riga <- seq_len(nrow(righe))
+  righe <- campiona_cluster(righe, limiti_viste_cluster()$mappa)
+  nota <- nota_campione(righe)
+  # Gli indicatori da disegnare sono quelli rimasti dopo il campione.
   config <- indicatori_config()
   config <- config[
     config$indicatore %in% righe$indicatore_cluster,
@@ -438,7 +519,14 @@ mappa_cluster <- function(righe) {
     config$colore,
     config$indicatore
   )
-  righe$riga <- seq_len(nrow(righe))
+  if (!is.null(nota)) {
+    mappa <- leaflet::addControl(
+      mappa,
+      html = htmltools::htmlEscape(nota),
+      position = "topleft",
+      className = "info nota-campione"
+    )
+  }
 
   for (k in seq_len(nrow(config))) {
     parte <- righe[

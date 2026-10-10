@@ -41,8 +41,8 @@ valida_storico <- function(data) {
     )
   }
 
-  pulisci <- function(x) dplyr::na_if(stringr::str_squish(as.character(x)), "")
-  data <- dplyr::mutate(data, dplyr::across(dplyr::everything(), pulisci))
+  data$RFID <- as.character(pulisci_testo(data$RFID))
+  data$giorno_lettura <- pulisci_testo(data$giorno_lettura)
   giorno <- converti_data_ora(data$giorno_lettura)
   non_validi <- which(!is.na(data$giorno_lettura) & is.na(giorno))
   if (length(non_validi) > 0) {
@@ -84,13 +84,14 @@ valida_storico <- function(data) {
   list(dati = unici, avvisi = avvisi)
 }
 
-#' Legge e valida un file CSV di letture storiche
+#' Legge e valida un file di letture storiche
 #'
-#' @param path Percorso del file CSV.
+#' @param path Percorso del file: CSV, CSV compresso con gzip o Parquet.
+#' @param nome Nome originale del file, vedi `leggi_tabella()`.
 #' @return Lista con `dati` e `avvisi`, vedi `valida_storico()`.
 #' @noRd
-carica_storico <- function(path) {
-  valida_storico(read_csv_auto(path))
+carica_storico <- function(path, nome = basename(path)) {
+  valida_storico(leggi_tabella(path, nome))
 }
 
 # ---- Letture per anno --------------------------------------------------------
@@ -169,17 +170,17 @@ griglia_annuale <- function(unite, rfid = NULL) {
       names_expand = TRUE,
       values_fill = 0L
     )
-  primi <- dplyr::summarise(
-    conteggi,
-    primo_anno = min(.data$anno),
-    .by = "RFID"
-  )
+  # I conteggi sono in ordine di RFID e di anno: la prima riga di ogni RFID è
+  # il suo primo anno.
+  primi <- conteggi[!duplicated(conteggi$RFID), c("RFID", "anno")]
+  n_anni <- ultimo_anno - primi$anno + 1L
+  primo_anno <- rep(primi$anno, n_anni)
 
-  primi |>
-    dplyr::reframe(
-      anno = seq(.data$primo_anno, ultimo_anno),
-      .by = c("RFID", "primo_anno")
-    ) |>
+  dplyr::tibble(
+    RFID = rep(primi$RFID, n_anni),
+    primo_anno = primo_anno,
+    anno = primo_anno + sequence(n_anni) - 1L
+  ) |>
     dplyr::left_join(conteggi, by = c("RFID", "anno")) |>
     dplyr::mutate(
       storico = dplyr::coalesce(.data$storico, 0L),
@@ -296,52 +297,44 @@ copertura_annuale <- function(unite, quota_completo = 0.95) {
 #' Anagrafica degli RFID letti dalle antenne
 #'
 #' Una riga per RFID, con lo stato dell'ultima lettura e l'ultimo valore noto
-#' degli altri campi. Comune, raccolte e volume valgono solo per i censiti.
+#' degli altri campi. Servizio, raccolte e volume valgono solo per i censiti.
+#' Comune e cantiere ci sono anche per i non censiti, quando il giro che li
+#' ha letti ha un comune: vedi `geografia_per_gruppo()`.
 #'
 #' @param letture Letture con le antenne, validate.
 #' @return Tibble con `RFID`, `presente_a_database`, `servizio_transponder`,
-#'   `comune`, `numero_raccolte_annue_previste`, `volume_previsto`.
+#'   `cantiere`, `comune`, `numero_raccolte_annue_previste`, `volume_previsto`
+#'   e `letture`, il numero di letture con le antenne. Gli RFID sono
+#'   nell'ordine della loro prima lettura.
 #' @noRd
 anagrafica_rfid <- function(letture) {
   for (campo in colonne_quantita()) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_real_
   }
-  if (!"comune" %in% names(letture)) {
-    letture$comune <- NA_character_
+  letture <- letture[order(letture$giorno_lettura), , drop = FALSE]
+  rfid <- indice_gruppi(letture$RFID)
+  n_rfid <- if (length(rfid) > 0) max(rfid) else 0L
+  geografia <- geografia_per_gruppo(letture, rfid, n_rfid)
+  stato <- ultimo_per_gruppo(letture$presente_a_database, rfid, n_rfid)
+  censito <- stato == "Presente"
+  solo_censiti <- function(x) {
+    valori <- ultimo_valido_per_gruppo(x, rfid, n_rfid)
+    valori[!censito] <- NA
+    valori
   }
 
-  letture |>
-    dplyr::arrange(.data$giorno_lettura) |>
-    dplyr::summarise(
-      censito = dplyr::last(.data$presente_a_database) == "Presente",
-      presente_a_database = dplyr::last(.data$presente_a_database),
-      servizio_transponder = ultimo_valido(.data$servizio_transponder),
-      comune = ultimo_valido(.data$comune),
-      numero_raccolte_annue_previste = ultimo_valido(
-        .data$numero_raccolte_annue_previste
-      ),
-      volume_previsto = ultimo_valido(.data$volume_previsto),
-      .by = "RFID"
-    ) |>
-    dplyr::mutate(
-      servizio_transponder = dplyr::if_else(
-        .data$censito,
-        .data$servizio_transponder,
-        NA_character_
-      ),
-      comune = dplyr::if_else(.data$censito, .data$comune, NA_character_),
-      numero_raccolte_annue_previste = dplyr::if_else(
-        .data$censito,
-        .data$numero_raccolte_annue_previste,
-        NA_real_
-      ),
-      volume_previsto = dplyr::if_else(
-        .data$censito,
-        .data$volume_previsto,
-        NA_real_
-      )
-    ) |>
-    dplyr::select(-dplyr::all_of("censito"))
+  dplyr::tibble(
+    RFID = primo_per_gruppo(letture$RFID, rfid, n_rfid),
+    presente_a_database = stato,
+    servizio_transponder = solo_censiti(letture$servizio_transponder),
+    cantiere = geografia$cantiere,
+    comune = geografia$comune,
+    numero_raccolte_annue_previste = solo_censiti(
+      letture$numero_raccolte_annue_previste
+    ),
+    volume_previsto = solo_censiti(letture$volume_previsto),
+    letture = tabulate(rfid, n_rfid)
+  )
 }
 
 #' Tabella delle letture per anno, una riga per RFID
@@ -352,7 +345,7 @@ anagrafica_rfid <- function(letture) {
 #'
 #' @param unite Risultato di `unisci_letture()`.
 #' @param anagrafica Risultato di `anagrafica_rfid()`: decide gli RFID.
-#' @return Tibble con `RFID`, le colonne degli anni, `comune` e
+#' @return Tibble con `RFID`, le colonne degli anni, `cantiere`, `comune` e
 #'   `numero_raccolte_annue_previste`.
 #' @noRd
 tabella_letture_annuali <- function(unite, anagrafica) {
@@ -373,7 +366,12 @@ tabella_letture_annuali <- function(unite, anagrafica) {
     dplyr::select(dplyr::all_of("RFID")) |>
     dplyr::left_join(per_anno, by = "RFID") |>
     dplyr::left_join(
-      anagrafica[, c("RFID", "comune", "numero_raccolte_annue_previste")],
+      anagrafica[, c(
+        "RFID",
+        "cantiere",
+        "comune",
+        "numero_raccolte_annue_previste"
+      )],
       by = "RFID"
     )
 }
@@ -390,8 +388,8 @@ tabella_letture_annuali <- function(unite, anagrafica) {
 #'
 #' @param unite Risultato di `unisci_letture()`.
 #' @param anagrafica Risultato di `anagrafica_rfid()`.
-#' @param per Colonne dell'anagrafica per cui raggruppare, ad esempio
-#'   `"comune"`.
+#' @param per Colonne dell'anagrafica per cui raggruppare: `"cantiere"`,
+#'   `"comune"` o entrambe. Gli RFID senza quel dato restano fuori.
 #' @return Tibble con le colonne di `per`, `anno`, `sistema`, `completo`,
 #'   `n_rfid`, `letture_medie`, `letture_utili_medie`, `raccolte_medie`,
 #'   `tasso` (letture utili su raccolte previste).
@@ -409,7 +407,10 @@ media_annuale <- function(unite, anagrafica, per = NULL) {
 
   griglia_annuale(unite, anagrafica$RFID) |>
     dplyr::filter(.data$anno > .data$primo_anno) |>
-    dplyr::left_join(anagrafica, by = "RFID") |>
+    dplyr::left_join(
+      anagrafica[, c("RFID", per, "numero_raccolte_annue_previste")],
+      by = "RFID"
+    ) |>
     dplyr::left_join(
       copertura[, c("anno", "sistema", "completo", "fattore")],
       by = "anno"
@@ -440,11 +441,13 @@ media_annuale <- function(unite, anagrafica, per = NULL) {
 #'
 #' @param unite Risultato di `unisci_letture()`.
 #' @param anagrafica Risultato di `anagrafica_rfid()`.
-#' @return Una riga per RFID, con `comune`, `numero_raccolte_annue_previste`,
-#'   `volume_previsto`, `anni_servizio`, `anni_vuoti`, `letture_annue_storico`,
-#'   `letture_annue_antenne` e, dove le raccolte previste sono note, le letture
-#'   utili (mai più delle raccolte previste) e i tassi dei due sistemi.
-#'   L'attributo `giorni_antenne` riporta i giorni coperti dalle antenne.
+#' @return Una riga per RFID, con `cantiere`, `comune`,
+#'   `numero_raccolte_annue_previste`, `volume_previsto`, `anni_servizio`,
+#'   `anni_vuoti`, `letture_annue_storico`, `letture_annue_antenne` e, dove le
+#'   raccolte previste sono note, le letture utili (mai più delle raccolte
+#'   previste) e i tassi dei due sistemi. L'attributo `giorni_antenne`
+#'   riporta i giorni coperti dalle antenne, `anni_storico` gli anni interi
+#'   del sistema precedente.
 #' @noRd
 confronto_sistemi <- function(unite, anagrafica) {
   copertura <- copertura_annuale(unite)
@@ -454,31 +457,46 @@ confronto_sistemi <- function(unite, anagrafica) {
   giorni_antenne <- sum(copertura$giorni_antenne)
   griglia <- griglia_annuale(unite, anagrafica$RFID)
 
-  prima <- griglia |>
-    dplyr::filter(
-      .data$anno %in% anni_storico,
-      .data$anno > .data$primo_anno
-    ) |>
-    dplyr::summarise(
-      anni_servizio = dplyr::n(),
-      anni_vuoti = sum(.data$storico == 0),
-      letture_annue_storico = mean(.data$storico),
-      .by = "RFID"
-    )
-  dopo <- griglia |>
-    dplyr::summarise(letture_antenne = sum(.data$antenne), .by = "RFID") |>
-    dplyr::mutate(
-      letture_annue_antenne = .data$letture_antenne * 365 / giorni_antenne
-    )
+  # Sistema precedente: anni interi in cui il contenitore era in servizio.
+  servizio <- griglia[
+    griglia$anno %in% anni_storico & griglia$anno > griglia$primo_anno,
+    ,
+    drop = FALSE
+  ]
+  rfid <- indice_gruppi(servizio$RFID)
+  n_rfid <- if (length(rfid) > 0) max(rfid) else 0L
+  prima <- dplyr::tibble(
+    RFID = primo_per_gruppo(servizio$RFID, rfid, n_rfid),
+    anni_servizio = tabulate(rfid, n_rfid),
+    anni_vuoti = as.integer(somma_per_gruppo(
+      servizio$storico == 0,
+      rfid,
+      n_rfid
+    )),
+    letture_annue_storico = media_per_gruppo(servizio$storico, rfid, n_rfid)
+  )
+
+  # Antenne: letture di tutto il periodo, riportate a un anno.
+  con_antenne <- griglia[griglia$antenne > 0, , drop = FALSE]
+  rfid <- indice_gruppi(con_antenne$RFID)
+  n_rfid <- if (length(rfid) > 0) max(rfid) else 0L
+  dopo <- dplyr::tibble(
+    RFID = primo_per_gruppo(con_antenne$RFID, rfid, n_rfid),
+    letture_annue_antenne = somma_per_gruppo(
+      con_antenne$antenne,
+      rfid,
+      n_rfid
+    ) *
+      365 /
+      giorni_antenne
+  )
 
   confronto <- prima |>
-    dplyr::inner_join(
-      dopo[, c("RFID", "letture_annue_antenne")],
-      by = "RFID"
-    ) |>
+    dplyr::inner_join(dopo, by = "RFID") |>
     dplyr::left_join(
       anagrafica[, c(
         "RFID",
+        "cantiere",
         "comune",
         "numero_raccolte_annue_previste",
         "volume_previsto"
@@ -516,7 +534,8 @@ confronto_sistemi <- function(unite, anagrafica) {
 #' i litri recuperati le pesano con il volume del contenitore.
 #'
 #' @param confronto Risultato di `confronto_sistemi()`.
-#' @param per Colonne per cui raggruppare, ad esempio `"comune"`.
+#' @param per Colonne per cui raggruppare: `"cantiere"`, `"comune"` o
+#'   entrambe. Senza, il riepilogo riguarda tutta la zona servita.
 #' @return Una riga in tutto, oppure una per gruppo.
 #' @noRd
 riepilogo_confronto <- function(confronto, per = NULL) {
@@ -601,15 +620,15 @@ rfid_solo_storico <- function(unite) {
       ultimo_anno = integer(0)
     ))
   }
-  soli |>
-    dplyr::summarise(
-      letture = dplyr::n(),
-      prima_lettura = min(.data$giorno_lettura),
-      ultima_lettura = max(.data$giorno_lettura),
-      .by = "RFID"
-    ) |>
-    dplyr::mutate(
-      ultimo_anno = as.integer(lubridate::year(.data$ultima_lettura))
-    ) |>
-    dplyr::arrange(.data$RFID)
+  soli <- soli[order(soli$RFID, soli$giorno_lettura, method = "radix"), ]
+  rfid <- indice_gruppi(soli$RFID)
+  n_rfid <- max(rfid)
+  ultima <- ultimo_per_gruppo(soli$giorno_lettura, rfid, n_rfid)
+  dplyr::tibble(
+    RFID = primo_per_gruppo(soli$RFID, rfid, n_rfid),
+    letture = tabulate(rfid, n_rfid),
+    prima_lettura = primo_per_gruppo(soli$giorno_lettura, rfid, n_rfid),
+    ultima_lettura = ultima,
+    ultimo_anno = as.integer(lubridate::year(ultima))
+  )
 }

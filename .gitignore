@@ -9,3 +9,6 @@ data-raw/output/*
 .RData
 .Rhistory
 .Rproj.user/
+
+# File del Finder di macOS
+.DS_Store

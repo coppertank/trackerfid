@@ -44,10 +44,11 @@ test_that("la ricerca RFID mostra tutte le letture, senza cluster, con i riquadr
   # argomenti di addRectangles: lat1, lng1, lat2, lng2, ...
   expect_length(riquadri$args[[1]], 2)
   spostato <- which(names(split(trovate, trovate$RFID)) == "RFD20250905100")
-  expect_equal(riquadri$args[[1]][[spostato]], 41.85)
-  expect_equal(riquadri$args[[3]][[spostato]], 42.00, tolerance = 1e-4)
-  expect_equal(riquadri$args[[2]][[spostato]], 12.35)
-  expect_equal(riquadri$args[[4]][[spostato]], 12.50, tolerance = 1e-4)
+  # da Limena, a sud-est, a Cittadella, a nord-ovest
+  expect_equal(riquadri$args[[1]][[spostato]], 45.4744)
+  expect_equal(riquadri$args[[3]][[spostato]], 45.6488, tolerance = 1e-4)
+  expect_equal(riquadri$args[[2]][[spostato]], 11.7836, tolerance = 1e-4)
+  expect_equal(riquadri$args[[4]][[spostato]], 11.8449)
 })
 
 test_that("i bidoni mai spostati non hanno riquadro", {
@@ -118,4 +119,103 @@ test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
     "addMarkers"
   )$args[[3]]
   expect_length(icone$iconUrl$data, 1)
+})
+
+test_that("la mappa di base inquadra la zona servita", {
+  zona <- riquadro_zona()
+  limiti <- mappa_base("cluster")$x$fitBounds
+  # fitBounds: lat1, lng1, lat2, lng2
+  expect_equal(
+    unlist(limiti[1:4]),
+    c(zona$lat_min, zona$lng_min, zona$lat_max, zona$lng_max)
+  )
+})
+
+test_that("le bolle della vista aggregata hanno identificativo ed etichetta", {
+  ultimi <- deduplica_ultimo_rfid(dati_esempio())
+  per_cantiere <- aggrega_marker(ultimi, "cantiere")
+  bolle <- chiamata(
+    aggiungi_bolle(mappa_base("cluster"), per_cantiere),
+    "addMarkers"
+  )
+  # argomenti di addMarkers: lat, lng, icon, layerId, group, options, popup,
+  # popupOptions, clusterOptions, clusterId, label, labelOptions
+  expect_equal(bolle$args[[1]], per_cantiere$latitudine)
+  expect_equal(bolle$args[[2]], per_cantiere$longitudine)
+  # l'identificativo distingue una bolla da un marker
+  expect_identical(bolle$args[[4]], paste0("bolla-", seq_len(nrow(per_cantiere))))
+  # le bolle sono già gruppi: il browser non le raggruppa ancora
+  expect_null(bolle$args[[9]])
+  # il nome di un cantiere resta sempre visibile
+  expect_identical(
+    bolle$args[[11]],
+    dplyr::coalesce(per_cantiere$nome, senza_cantiere())
+  )
+  expect_true(bolle$args[[12]]$permanent)
+
+  # le altre bolle descrivono il gruppo al passaggio del mouse
+  per_comune <- aggrega_marker(ultimi, "comune")
+  bolle <- chiamata(
+    aggiungi_bolle(mappa_base("cluster"), per_comune),
+    "addMarkers"
+  )
+  expect_false(bolle$args[[12]]$permanent)
+  asiago <- which(per_comune$nome == "ASIAGO")
+  expect_identical(
+    bolle$args[[11]][asiago],
+    sprintf(
+      "ASIAGO: %d bidoni, %d censiti",
+      per_comune$n[asiago],
+      per_comune$censiti[asiago]
+    )
+  )
+  griglia <- aggrega_marker(ultimi, "griglia", 15)
+  bolle <- chiamata(
+    aggiungi_bolle(mappa_base("cluster"), griglia),
+    "addMarkers"
+  )
+  uno <- which(griglia$n == 1)[1]
+  expect_match(bolle$args[[11]][uno], "^Zona: 1 bidone, [01] censiti$")
+
+  # nessuna bolla: la mappa resta com'è
+  expect_identical(
+    aggiungi_bolle(mappa_base("cluster"), per_cantiere[0, ]),
+    mappa_base("cluster")
+  )
+})
+
+test_that("i riquadri della ricerca coprono tutte le letture anche con i marker limitati", {
+  trovate <- cerca_per_rfid(dati_esempio(), "RFD20250905100")
+  poche <- limita_letture_ricerca(trovate, 3)
+  mappa <- disegna_marker(mappa_base("rfid"), poche, "rfid", riquadri = trovate)
+  expect_length(chiamata(mappa, "addMarkers")$args[[1]], 3)
+  # addRectangles: lat1, lng1, lat2, lng2
+  riquadro <- chiamata(mappa, "addRectangles")
+  expect_equal(
+    c(riquadro$args[[1]], riquadro$args[[3]]),
+    range(trovate$latitudine),
+    ignore_attr = TRUE
+  )
+  expect_equal(
+    c(riquadro$args[[2]], riquadro$args[[4]]),
+    range(trovate$longitudine),
+    ignore_attr = TRUE
+  )
+})
+
+test_that("il popup dei marker riporta comune e cantiere della lettura", {
+  spostato <- cerca_per_rfid(dati_esempio(), "RFD20250905100")
+  popup <- chiamata(
+    disegna_marker(mappa_base("rfid"), spostato, "rfid"),
+    "addMarkers"
+  )$args[[7]]
+  expect_length(popup, nrow(spostato))
+  expect_true(all(grepl("<b>Comune:</b> LIMENA", popup, fixed = TRUE)))
+  expect_true(all(grepl("<b>Cantiere:</b> RUBANO", popup, fixed = TRUE)))
+  # dopo lo spostamento il giro lo legge in un altro comune
+  expect_true(any(grepl(
+    "<b>Comune di lettura:</b> CITTADELLA",
+    popup,
+    fixed = TRUE
+  )))
 })

@@ -13,6 +13,8 @@ colonne_analisi_cluster <- function() {
     "cluster_prima_lettura",
     "cluster_ultima_lettura",
     "presente_a_database",
+    "cantiere",
+    "comune",
     "servizio_transponder",
     "servizio_transponder_cronologia",
     "servizio_atteso",
@@ -105,13 +107,6 @@ indicatori_config <- function() {
     ),
     stringsAsFactors = FALSE
   )
-}
-
-#' Ultimo valore non mancante di un vettore (`NA` dello stesso tipo se assente)
-#' @noRd
-ultimo_valido <- function(x) {
-  validi <- x[!is.na(x)]
-  if (length(validi) > 0) validi[length(validi)] else x[NA_integer_]
 }
 
 #' Sequenza dei valori distinti consecutivi, ignorando i mancanti
@@ -247,6 +242,8 @@ analisi_cluster_vuota <- function() {
     cluster_prima_lettura = istante,
     cluster_ultima_lettura = istante,
     presente_a_database = character(0),
+    cantiere = character(0),
+    comune = character(0),
     servizio_transponder = character(0),
     servizio_transponder_cronologia = character(0),
     servizio_atteso = character(0),
@@ -276,6 +273,13 @@ analisi_cluster_vuota <- function() {
 #' I conteggi annui usano i giorni osservati, cioè la parte del periodo di
 #' analisi effettivamente coperta dal dataset: così un dataset che copre solo
 #' alcuni mesi dell'anno non porta a sottostimare frequenze e raccolte.
+#'
+#' I sacchetti restano fuori dall'analisi, vedi `senza_sacchetti()`: sono
+#' monouso, con una lettura sola, e l'analisi riguarda i contenitori.
+#'
+#' I riepiloghi per RFID e per cluster sono calcolati con le funzioni di
+#' `R/utils_gruppi.R`, su tutte le letture insieme: con milioni di letture un
+#' calcolo ripetuto RFID per RFID richiederebbe minuti.
 #'
 #' @param letture Dataset validato (tutte le letture, non solo quelle del periodo).
 #' @param analisi_dal,analisi_al Estremi del periodo di analisi, inclusi.
@@ -312,6 +316,9 @@ calcola_analisi_cluster <- function(
   for (campo in colonne_quantita()) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_real_
   }
+  # L'analisi riguarda i contenitori: i sacchetti, monouso, restano fuori. Il
+  # risultato è quello di un file che non li contiene.
+  letture <- senza_sacchetti(letture)
 
   nel_periodo <- filtra_periodo(letture, c(analisi_dal, analisi_al))
   parametri <- list(
@@ -332,42 +339,81 @@ calcola_analisi_cluster <- function(
     1
   parametri$giorni_osservati <- giorni_osservati
 
-  dati <- nel_periodo |>
-    dplyr::arrange(.data$RFID, .data$giorno_lettura) |>
-    assegna_cluster(eps_m, min_pts) |>
-    dplyr::mutate(
-      lat_baricentro = mean(.data$latitudine),
-      lon_baricentro = mean(.data$longitudine),
-      .by = c("RFID", "cluster_id")
-    )
-  dati$distanza_m <- distanza_haversine_m(
+  # Letture in ordine di RFID e di tempo: i riepiloghi contano su quest'ordine.
+  ordine <- order(
+    nel_periodo$RFID,
+    nel_periodo$giorno_lettura,
+    method = "radix"
+  )
+  dati <- assegna_cluster(nel_periodo[ordine, , drop = FALSE], eps_m, min_pts)
+  rfid <- indice_gruppi(dati$RFID)
+  n_rfid <- max(rfid)
+
+  # Un gruppo per ogni cluster di ogni RFID, in ordine di RFID e di cluster.
+  chiave_cluster <- rfid * (max(dati$cluster_id) + 1) + dati$cluster_id
+  cluster <- match(chiave_cluster, sort(unique(chiave_cluster)))
+  n_cluster <- max(cluster)
+  rfid_del_cluster <- primo_per_gruppo(rfid, cluster, n_cluster)
+
+  lat_baricentro <- media_per_gruppo(dati$latitudine, cluster, n_cluster)
+  lon_baricentro <- media_per_gruppo(dati$longitudine, cluster, n_cluster)
+  distanza_m <- distanza_haversine_m(
     dati$latitudine,
     dati$longitudine,
-    dati$lat_baricentro,
-    dati$lon_baricentro
+    lat_baricentro[cluster],
+    lon_baricentro[cluster]
   )
 
   # --- Valori globali dell'RFID nel periodo -----------------------------------
-  per_rfid <- dati |>
-    dplyr::summarise(
-      globale_conteggio_cluster = dplyr::n_distinct(.data$cluster_id),
-      globale_prima_lettura = min(.data$giorno_lettura),
-      globale_ultima_lettura = max(.data$giorno_lettura),
-      globale_numero_letture = dplyr::n(),
-      presente_a_database = dplyr::last(.data$presente_a_database),
-      # Prima la cronologia: dopo il riepilogo la colonna contiene un solo valore.
-      sequenza_servizi = paste(
-        sequenza_valori(.data$servizio_transponder),
-        collapse = " > "
-      ),
-      n_servizi = dplyr::n_distinct(.data$servizio_transponder, na.rm = TRUE),
-      servizio_transponder = ultimo_valido(.data$servizio_transponder),
-      volume_previsto = ultimo_valido(.data$volume_previsto),
-      numero_raccolte_annue_previste = ultimo_valido(
-        .data$numero_raccolte_annue_previste
-      ),
-      .by = "RFID"
-    ) |>
+  n_servizi <- n_distinti_per_gruppo(dati$servizio_transponder, rfid, n_rfid)
+  # La cronologia dei servizi serve solo agli RFID che ne hanno più di uno.
+  sequenza_servizi <- rep(NA_character_, n_rfid)
+  con_cambi <- which(n_servizi[rfid] > 1)
+  if (length(con_cambi) > 0) {
+    sequenze <- tapply(
+      dati$servizio_transponder[con_cambi],
+      rfid[con_cambi],
+      function(servizi) paste(sequenza_valori(servizi), collapse = " > ")
+    )
+    sequenza_servizi[as.integer(names(sequenze))] <- sequenze
+  }
+  geografia <- geografia_per_gruppo(dati, rfid, n_rfid)
+
+  per_rfid <- dplyr::tibble(
+    RFID = primo_per_gruppo(dati$RFID, rfid, n_rfid),
+    globale_conteggio_cluster = tabulate(rfid_del_cluster, n_rfid),
+    globale_prima_lettura = primo_per_gruppo(dati$giorno_lettura, rfid, n_rfid),
+    globale_ultima_lettura = ultimo_per_gruppo(
+      dati$giorno_lettura,
+      rfid,
+      n_rfid
+    ),
+    globale_numero_letture = tabulate(rfid, n_rfid),
+    presente_a_database = ultimo_per_gruppo(
+      dati$presente_a_database,
+      rfid,
+      n_rfid
+    ),
+    cantiere = geografia$cantiere,
+    comune = geografia$comune,
+    n_servizi = n_servizi,
+    sequenza_servizi = sequenza_servizi,
+    servizio_transponder = ultimo_valido_per_gruppo(
+      dati$servizio_transponder,
+      rfid,
+      n_rfid
+    ),
+    volume_previsto = ultimo_valido_per_gruppo(
+      dati$volume_previsto,
+      rfid,
+      n_rfid
+    ),
+    numero_raccolte_annue_previste = ultimo_valido_per_gruppo(
+      dati$numero_raccolte_annue_previste,
+      rfid,
+      n_rfid
+    )
+  ) |>
     dplyr::mutate(
       censito = .data$presente_a_database == "Presente",
       # Servizio, volume e raccolte previste valgono solo per i censiti.
@@ -395,62 +441,87 @@ calcola_analisi_cluster <- function(
     )
 
   # --- Valori del singolo cluster ---------------------------------------------
-  per_cluster <- dati |>
-    dplyr::summarise(
-      cluster_prima_lettura = min(.data$giorno_lettura),
-      cluster_ultima_lettura = max(.data$giorno_lettura),
-      cluster_numero_letture = dplyr::n(),
-      lat_baricentro_cluster = dplyr::first(.data$lat_baricentro),
-      lon_baricentro_cluster = dplyr::first(.data$lon_baricentro),
-      cluster_dispersione_90th_m = as.numeric(stats::quantile(
-        .data$distanza_m,
-        0.90,
-        names = FALSE
-      )),
-      .by = c("RFID", "cluster_id")
-    )
+  per_cluster <- dplyr::tibble(
+    RFID = per_rfid$RFID[rfid_del_cluster],
+    cluster_id = primo_per_gruppo(dati$cluster_id, cluster, n_cluster),
+    cluster_prima_lettura = primo_per_gruppo(
+      dati$giorno_lettura,
+      cluster,
+      n_cluster
+    ),
+    cluster_ultima_lettura = ultimo_per_gruppo(
+      dati$giorno_lettura,
+      cluster,
+      n_cluster
+    ),
+    cluster_numero_letture = tabulate(cluster, n_cluster),
+    lat_baricentro_cluster = lat_baricentro,
+    lon_baricentro_cluster = lon_baricentro,
+    cluster_dispersione_90th_m = quantile_per_gruppo(
+      distanza_m,
+      cluster,
+      0.90,
+      n_cluster
+    ),
+    atteso_prevalente = NA_character_,
+    quota_atteso = NA_real_,
+    composizione_atteso = NA_character_
+  )
+  # Un RFID ha tutti i cluster compatti se nessuno supera la soglia.
+  non_compatti <- tabulate(
+    rfid_del_cluster[
+      !(per_cluster$cluster_dispersione_90th_m < soglie$compatto_m)
+    ],
+    n_rfid
+  )
+  per_cluster$tutti_compatti <- (non_compatti == 0)[rfid_del_cluster]
 
   # Composizione del servizio atteso nel cluster, dal più al meno frequente.
-  atteso <- dati |>
-    dplyr::filter(!is.na(.data$servizio_atteso)) |>
-    dplyr::count(
-      .data$RFID,
-      .data$cluster_id,
+  # Contano le sole letture non censite, come per l'icona dei marker: nei
+  # dati reali il giro c'è su ogni lettura, e quello dei censiti non serve.
+  con_atteso <- which(
+    !is.na(dati$servizio_atteso) & dati$presente_a_database == "Non Presente"
+  )
+  if (length(con_atteso) > 0) {
+    atteso <- dplyr::count(
+      dplyr::tibble(
+        cluster = cluster[con_atteso],
+        servizio_atteso = dati$servizio_atteso[con_atteso]
+      ),
+      .data$cluster,
       .data$servizio_atteso,
       name = "n"
-    ) |>
-    dplyr::mutate(
-      quota = .data$n / sum(.data$n),
-      .by = c("RFID", "cluster_id")
-    ) |>
-    dplyr::arrange(
-      .data$RFID,
-      .data$cluster_id,
-      dplyr::desc(.data$n),
-      .data$servizio_atteso
-    ) |>
-    dplyr::summarise(
-      atteso_prevalente = dplyr::first(.data$servizio_atteso),
-      quota_atteso = dplyr::first(.data$quota),
-      composizione_atteso = paste0(
-        .data$servizio_atteso,
-        " (",
-        round(100 * .data$quota),
-        "%)",
-        collapse = "; "
-      ),
-      .by = c("RFID", "cluster_id")
     )
+    atteso$quota <- atteso$n /
+      somma_per_gruppo(atteso$n, atteso$cluster, n_cluster)[atteso$cluster]
+    atteso <- atteso[
+      order(
+        atteso$cluster,
+        -atteso$n,
+        atteso$servizio_atteso,
+        method = "radix"
+      ),
+    ]
+    prevalente <- !duplicated(atteso$cluster)
+    per_cluster$atteso_prevalente[
+      atteso$cluster[prevalente]
+    ] <- atteso$servizio_atteso[prevalente]
+    per_cluster$quota_atteso[atteso$cluster[prevalente]] <- atteso$quota[
+      prevalente
+    ]
+    composizione <- tapply(
+      paste0(atteso$servizio_atteso, " (", round(100 * atteso$quota), "%)"),
+      atteso$cluster,
+      paste,
+      collapse = "; "
+    )
+    per_cluster$composizione_atteso[
+      as.integer(names(composizione))
+    ] <- composizione
+  }
 
   risultato <- per_cluster |>
     dplyr::left_join(per_rfid, by = "RFID") |>
-    dplyr::left_join(atteso, by = c("RFID", "cluster_id")) |>
-    dplyr::mutate(
-      tutti_compatti = all(
-        .data$cluster_dispersione_90th_m < soglie$compatto_m
-      ),
-      .by = "RFID"
-    ) |>
     dplyr::mutate(
       servizio_atteso = dplyr::if_else(
         !.data$censito &
