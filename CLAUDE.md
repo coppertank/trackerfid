@@ -24,7 +24,10 @@ Quando aggiungi o sposti file e funzioni, o cambi il flusso dei dati, aggiorna a
 - L'obiettivo finale dell'analisi è **censire a mano i bidoni che oggi non sono a database**. Gli operatori cercano: bidoni non censiti, cambi di servizio o di utenza, bidoni spostati, tag anomali (smarriti, fermi in deposito, rimasti su un mezzo).
 - Ogni lettura ha una posizione e fino a due **comuni dichiarati**: quello del database, per i censiti, e quello del giro. Il proprietario del progetto vuole che il comune di una lettura venga dalla posizione, e che le differenze con i comuni dichiarati saltino all'occhio. Un censito letto lontano dal comune del database è **fuori comune**: di solito un bidone spostato. Una lettura lontana dal comune del giro è **fuori giro**: di solito il mezzo ha fatto un giro diverso da quello del calendario, e quel giorno ha molte letture fuori giro. La tolleranza, scelta dal proprietario del progetto, è di un chilometro dal confine del comune.
 - Il territorio servito è diviso in quattro **cantieri**: `ASIAGO`, `BASSANO`, `CAMPOSAMPIERO`, `RUBANO`. Ogni comune appartiene a un cantiere. Gli operatori filtrano le letture per cantiere e per comune.
-- Le antenne sui mezzi sono recenti. Prima un altro sistema registrava solo RFID e istante della lettura, senza mezzo e senza posizione: sono le **letture storiche**. L'azienda vuole misurare quanto le antenne leggono in più, anche per la fatturazione.
+- Le antenne sui mezzi sono recenti. Prima un altro sistema registrava solo RFID e istante della lettura, senza mezzo e senza posizione: sono le **letture storiche**. L'operatore leggeva a mano il tag di ogni contenitore. L'azienda vuole misurare quanto le antenne leggono in più, anche per la fatturazione.
+- Nei dati reali, a ottobre 2026, le letture storiche vanno dal primo gennaio 2025 a oggi e quelle con le antenne dal primo agosto 2026: le antenne sono montate solo su una parte dei mezzi, e i due sistemi lavorano insieme. Per questo il report sul beneficio delle antenne non confronta i totali: parte dai contenitori che le antenne hanno letto, la **coorte**, e guarda quante volte li aveva letti il sistema precedente.
+- Il report serve a mostrare ai soci dell'azienda il beneficio delle antenne, di oggi e atteso. **Non deve contenere stime in euro**: l'ha chiesto il proprietario del progetto. L'analisi parte dal **secco**, l'unico servizio che l'azienda fattura, e si estende poi agli altri servizi. Per il secco le raccolte previste sono di norma 26 l'anno; un'utenza ne chiede di solito una decina.
+- Il **bit flip**: un contenitore tenuto sotto controllo compariva nelle letture storiche con due codici, quello giusto e uno diverso per un carattere, in parti quasi uguali. Con il codice sbagliato il database non lo riconosce. La preparazione dei dati corregge già l'errore quando cade negli zeri iniziali del codice, vedi `formatta_rfid()`; nelle cifre che contano non si riconosce da solo.
 
 ## Glossario
 
@@ -63,10 +66,17 @@ Quando aggiungi o sposti file e funzioni, o cambi il flusso dei dati, aggiorna a
 | Letture storiche, sistema precedente | Letture fatte prima dell'installazione delle antenne: solo RFID e istante | secondo file CSV, `fonte == "storico"`, `R/utils_storico.R` |
 | Fonte | Sistema che ha fatto una lettura | `fonte`: `"storico"` o `"antenne"`, aggiunta da `unisci_letture()` |
 | Anno misto, anno parziale | Anno coperto da tutti e due i sistemi. Anno coperto per meno del 95% dei giorni, riportato a dodici mesi | `sistema`, `completo`, `fattore` in `copertura_annuale()` |
-| Anni di servizio | Anni interi del sistema precedente successivi all'anno della prima lettura di un RFID: lì il contenitore era di sicuro in servizio | `anni_servizio` in `confronto_sistemi()` |
-| Anno vuoto | Anno di servizio senza nemmeno una lettura | `anni_vuoti` |
-| Letture utili | Letture di un contenitore in un anno, mai più delle raccolte previste | `letture_utili_storico`, `letture_utili_antenne` |
-| Tasso di lettura | Letture utili divise per le raccolte previste | `tasso_storico`, `tasso_antenne` |
+| Coorte | I contenitori letti dalle antenne: su questi si fa il confronto tra i due sistemi. Entrano anche quelli che il sistema precedente non ha mai letto | righe di `anagrafica_rfid()` e di `confronto_sistemi()` |
+| Una lettura al giorno | Nel confronto due letture dello stesso contenitore nello stesso giorno contano una volta: sono lo stesso svuotamento | `una_lettura_al_giorno()` |
+| Periodo di riferimento | I 365 giorni che precedono la prima lettura con le antenne, o la parte coperta dalle letture storiche: lì il sistema precedente lavorava da solo | `riferimento`, `giorni_riferimento` in `periodi_confronto()` |
+| Già in servizio | Contenitore con almeno una lettura storica prima del periodo di riferimento: non può essere un contenitore nuovo | `letture_prima`, `gia_in_servizio` |
+| Giorni osservati | Per le antenne, i giorni dalla prima lettura di un contenitore all'ultimo giorno dei dati. Contano le sole letture successive alla prima | `giorni_dopo`, `letture_dopo` |
+| Tipologia di un RFID | Il rifiuto del contenitore: dal servizio del database per un censito, dal servizio stimato dai giri per un non censito | `tipologia` in `anagrafica_rfid()` |
+| Raccolte previste di un non censito | Le più frequenti tra i censiti dello stesso servizio nello stesso comune, o dello stesso servizio | `raccolte_previste`, `raccolte_stimate`, `raccolte_di_riferimento()` |
+| Letture utili | Letture di un contenitore, mai più delle raccolte previste nei giorni osservati | `utili_storico`, `utili_antenne` |
+| Tasso di lettura | Somma delle letture utili divisa per la somma delle raccolte previste nei giorni osservati | `tasso_storico`, `tasso_antenne` in `riepilogo_confronto()` |
+| Codici gemelli | Due codici RFID che differiscono per un solo carattere | `codici_gemelli()` |
+| Gemello sospetto | Coppia di codici gemelli che sembra un contenitore solo, letto male: uno censito e l'altro no, mai nello stesso giorno, stessi giorni della settimana, un bit di differenza | `sospetto` in `gemelli_sospetti()` |
 
 **Attenzione: la parola "cluster" ha due significati che non c'entrano l'uno con l'altro.** Sulla mappa principale è un effetto grafico. Nell'analisi è il risultato di DBSCAN. Le bolle per cantiere, per comune e per riquadro hanno l'aspetto dei cluster di marker ma sono calcolate dal server.
 
@@ -90,7 +100,7 @@ Altri comportamenti:
 - **Filtro sulla posizione.** «Filtro Posizione» ha tre voci, tutte spuntate all'avvio: «Coerente», «Fuori comune», «Fuori giro». Una lettura fuori comune e fuori giro insieme resta se è spuntata almeno una delle due voci. Compare con gli altri filtri geografici. Le statistiche riportano i bidoni fuori comune e fuori giro.
 - **Filtri dei servizi.** Lo stato a database toglie o rimette tutti i bidoni di uno stato. I servizi stanno in due elenchi, uno per stato. "Filtro Servizio Transponder" riguarda i bidoni "Presente": servizio del database. "Filtro Servizio Atteso" riguarda i bidoni "Non Presente": servizio stimato dai giri, lo stesso dell'icona. La casella "Includi Non Censiti con stima incerta (?)" riguarda i non censiti con il punto di domanda. Accanto a ogni titolo, "Tutti" e "Nessuno" spuntano o tolgono tutte le voci: "Nessuno" sul servizio atteso toglie anche la stima incerta. Non c'è una casella "Includi Non Censiti": il proprietario del progetto l'ha fatta togliere perché doppione dello stato "Non Presente".
 - **Elenchi a discesa.** L'elenco dei comuni e quello dell'anno di analisi hanno lo stesso aspetto, per richiesta del proprietario del progetto: stesso riquadro, stesso testo, stessa freccia.
-- **Vista per zoom.** La mappa principale mostra una bolla per cantiere fino a zoom 10, una per comune a zoom 11 e 12, i singoli bidoni da zoom 13: l'ha chiesto il proprietario del progetto, perché i gruppi che si vedono siano quelli del territorio. Vale per qualsiasi numero di bidoni. Da vicino i bidoni che si sovrappongono restano in un cluster di marker. Con più bidoni del limite, da zoom 13 la mappa mostra una bolla per riquadro e i singoli bidoni dell'area inquadrata solo quando tornano sotto il limite. La bolla di un comune sta nel baricentro del comune, per richiesta del proprietario del progetto: così resta ferma al variare dei filtri, in mezzo al confine disegnato. Le bolle dei cantieri e dei riquadri stanno nel punto medio dei loro bidoni. Un click su una bolla ingrandisce sui suoi bidoni. Un file senza cantieri né comuni non ha bolle del territorio.
+- **Vista per zoom.** La mappa principale mostra una bolla per cantiere fino a zoom 11, una per comune a zoom 12, i singoli bidoni da zoom 13: l'ha chiesto il proprietario del progetto, perché i gruppi che si vedono siano quelli del territorio. I cantieri arrivavano a zoom 10: il proprietario del progetto li ha voluti per un livello di zoom in più. Vale per qualsiasi numero di bidoni. Da vicino i bidoni che si sovrappongono restano in un cluster di marker. Con più bidoni del limite, da zoom 13 la mappa mostra una bolla per riquadro e i singoli bidoni dell'area inquadrata solo quando tornano sotto il limite. La bolla di un comune sta nel baricentro del comune, per richiesta del proprietario del progetto: così resta ferma al variare dei filtri, in mezzo al confine disegnato. Le bolle dei cantieri e dei riquadri stanno nel punto medio dei loro bidoni. Un click su una bolla la apre: ingrandisce sui suoi bidoni e arriva almeno al livello successivo, i comuni per un cantiere e i bidoni per un comune. Un file senza cantieri né comuni non ha bolle del territorio.
 - **Confini dei comuni.** Tutte le mappe, anche quella dei cluster spaziali, disegnano i confini dei comuni serviti: bordo tratteggiato e riempimento appena accennato, nel colore del cantiere. Il proprietario del progetto li ha chiesti poco saturi e poco invasivi. La legenda riporta i quattro colori. I confini non rispondono al mouse e stanno sotto marker, cluster e riquadri.
 - **Marker.** Verde a goccia se censito, rosso squadrato se non censito. L'icona interna indica il servizio. Per un non censito è il servizio stimato: il giro prevalente, se una tipologia raggiunge l'80% delle letture, altrimenti un punto di domanda. Un sacchetto ha sempre l'icona dei sacchetti, censito o no. Due bollini scuri con una lettera, negli angoli in alto, segnalano le incongruenze: `C` per una lettura fuori comune, `G` per una fuori giro. Non cambiano colore, forma né icona.
 - **Sacchetti.** Si vedono sulla mappa principale e nelle due ricerche, con la loro icona, la loro voce nei filtri e nelle statistiche e un dettaglio loro. Restano fuori dall'analisi dei cluster spaziali: la scheda riguarda i soli contenitori.
@@ -136,9 +146,9 @@ Il CSV delle letture storiche è un secondo file, facoltativo, con due colonne: 
 I dataset di esempio sono due, simulati dallo script `data-raw/genera_sample_dataset.R` con un seme fisso.
 
 - `inst/extdata/sample_rfid_dataset.csv`: 6.475 letture con le antenne di 251 RFID, cioè 239 bidoni e 12 sacchetti, da ottobre 2024 a dicembre 2025, cinque mezzi, 50 utenze dei bidoni. Come nei dati reali, il calendario dà un comune a ogni giro: nell'esempio un giro è un turno in un giorno della settimana, i giri sono 41 e lavorano in 32 comuni dei quattro cantieri. Ogni bidone sta nel comune del proprio giro, dentro il confine. Ogni lettura ha servizio atteso, comune di lettura e cantiere. I bidoni non censiti sono 37: nel 2025, 18 hanno il servizio stimato e 19 la stima incerta. I sacchetti hanno una lettura ciascuno, perché sono monouso: 8 sono censiti, con le utenze da `SAC001` a `SAC004`, e 4 non censiti. A database hanno solo l'utenza, come escono dal passo 3: niente servizio, volume, raccolte o comune. Li leggono i giri `SECCO PAP`, nel comune del giro. Due sono letti nel 2024, dieci nel 2025. Le letture fuori comune sono 77, di due RFID; quelle fuori giro sono circa 1.200, quasi tutte dei due tag anomali, quello in deposito e quello rimasto su un mezzo.
-- `inst/extdata/sample_letture_storiche.csv`: 6.893 letture storiche di 228 RFID, da gennaio 2020 a settembre 2024. 184 RFID sono letti da entrambi i sistemi, 67 solo dalle antenne, cioè 55 bidoni e i 12 sacchetti, 44 solo dal sistema precedente. Il sistema precedente registra una parte dei passaggi, diversa per cantiere, per comune e per anno, e lascia anni interi senza letture.
+- `inst/extdata/sample_letture_storiche.csv`: 6.893 letture storiche di 229 RFID, da gennaio 2020 a settembre 2024. 184 RFID sono letti da entrambi i sistemi, 67 solo dalle antenne, cioè 55 bidoni e i 12 sacchetti, 45 solo dal sistema precedente: 44 contenitori e un codice letto male. Il sistema precedente registra una parte dei passaggi, diversa per cantiere, per comune e per anno, e lascia anni interi senza letture. Un contenitore ha metà delle letture storiche sotto un codice alterato: è il caso del bit flip.
 
-Lo script genera prima le letture dei bidoni, poi la geografia e i sacchetti, con semi a parte, poi le letture storiche: una modifica alla geografia, ai sacchetti o alla parte storica non cambia il resto. Anche la quota di passaggi registrata in ogni comune dal sistema precedente ha un seme suo. Aggiungere comuni alla tabella cambia invece il comune dei giri, e con quello posizioni e letture storiche: date, mezzi e servizi delle letture con le antenne restano gli stessi. Il giro di ogni lettura è ricavato senza numeri casuali: `giro_del_mezzo()` dà il servizio e `indice_turno_del_mezzo()` il turno, cioè quello in cui cade la lettura o, fuori orario, il più vicino del mezzo in quel giorno, come fa sui dati reali `associa_servizio_atteso_da_calendario()`. Il comune di lettura è quello del giro, dalla tabella `giri` dello script: una lettura fatta altrove risulta fuori giro. Test e report fanno riferimento a questi RFID:
+Lo script genera prima le letture dei bidoni, poi la geografia e i sacchetti, con semi a parte, poi le letture storiche: una modifica alla geografia, ai sacchetti o alla parte storica non cambia il resto. Anche la quota di passaggi registrata in ogni comune dal sistema precedente ha un seme suo, e così la scelta delle letture storiche con il codice alterato. Aggiungere comuni alla tabella cambia invece il comune dei giri, e con quello posizioni e letture storiche: date, mezzi e servizi delle letture con le antenne restano gli stessi. Il giro di ogni lettura è ricavato senza numeri casuali: `giro_del_mezzo()` dà il servizio e `indice_turno_del_mezzo()` il turno, cioè quello in cui cade la lettura o, fuori orario, il più vicino del mezzo in quel giorno, come fa sui dati reali `associa_servizio_atteso_da_calendario()`. Il comune di lettura è quello del giro, dalla tabella `giri` dello script: una lettura fatta altrove risulta fuori giro. Test e report fanno riferimento a questi RFID:
 
 | RFID | Caso |
 |---|---|
@@ -151,11 +161,12 @@ Lo script genera prima le letture dei bidoni, poi la geografia e i sacchetti, co
 | `RFD20250203302` | Tag rimasto sul mezzo `VEH004`, letto lungo lo stesso percorso a `MAROSTICA` qualunque sia il giro. Indicatore `TRUCK_STOWAWAY`. Tutte le letture fuori giro, 69 anche fuori comune |
 | `RFD20241003303` | GPS impreciso, 17 cluster. Indicatore `SCATTERED_READS / GPS_NOISE` |
 | `RFD20241004003` | Letto dalle antenne con regolarità, senza letture storiche nel 2021 e nel 2023. Comune `LIMENA`, cantiere `RUBANO`. Letture per anno dal 2020: 13, 0, 16, 0, 12, 25 |
+| `RFD20241003061` | Codice letto male dal sistema precedente. Censito del secco: 39 letture storiche con il suo codice e 37 con `RFD20241003063`, che differisce per un bit dell'ultima cifra, non è a database e non è mai letto dalle antenne. I due codici non compaiono mai nello stesso giorno. È l'unica coppia sospetta di `gemelli_sospetti()` |
 | `00BD00000000000000000005` | Sacchetto censito, utenza `SAC002`: una lettura a `ROANA` nel 2025. I censiti vanno da `…0001` a `…0008` |
 | `00BD00000000000000000102` | Sacchetto non censito: una lettura a `ROANA` nel 2025. I non censiti vanno da `…0101` a `…0104` |
 | `VEH001`, 24 settembre 2025 | Giro sbagliato: il calendario dava `SECCO PAP` a `LIMENA`, il mezzo ha letto dieci bidoni a `BORGORICCO`. Dieci letture fuori giro, nessuna fuori comune. È il giro con più letture fuori giro dell'anno |
 
-Numeri del confronto tra i due sistemi sul dataset di esempio, usati dai test: 161 RFID nel confronto, 418 anni di servizio di cui 78 vuoti, tasso di lettura dal 32% all'83%. Per cantiere, tasso precedente e con le antenne: `ASIAGO` 14% e 86%, `BASSANO` 41% e 78%, `CAMPOSAMPIERO` 36% e 86%, `RUBANO` 22% e 80%. Nel 2025, per ultima lettura: 248 RFID sulla mappa, 1 fuori comune e 20 fuori giro; i bidoni per cantiere sono 33, 66, 92 e 60.
+Numeri del confronto tra i due sistemi sul dataset di esempio, usati dai test. Periodo di riferimento dal 2 ottobre 2023 al 30 settembre 2024, 457 giorni di antenne, nessuna sovrapposizione. La coorte ha 239 contenitori: 20 senza tipologia, 17 con le raccolte previste stimate. I contenitori del secco sono 84, di cui 79 censiti: 21 mai letti nel periodo di riferimento, 26 con al più una lettura; 65 già in servizio, di cui 7 con al più una lettura. Tasso di lettura del secco dal 23% all'82%. Per cantiere, sul secco, tasso precedente e con le antenne: `ASIAGO` 11% e 90%, `BASSANO` 17% e 67%, `CAMPOSAMPIERO` 28% e 85%, `RUBANO` 18% e 75%. Nel 2025, per ultima lettura: 248 RFID sulla mappa, 1 fuori comune e 20 fuori giro; i bidoni per cantiere sono 33, 66, 92 e 60.
 
 ### Dati reali
 
@@ -205,7 +216,7 @@ mod_caricamento ──► dati_caricati: tutte le letture validate, con comune_g
 
 Le funzioni di `R/fct_preparazione_letture.R` stanno fuori da questo flusso: l'app non le richiama mai. Servono a produrre il file CSV in ingresso.
 
-Di `R/utils_storico.R` l'app usa solo la lettura del file e `andamento_rfid()`. Le funzioni del confronto tra i due sistemi servono al report `docs/beneficio_antenne.Rmd`, che le applica a tre livelli: intero territorio, cantiere, comune.
+Di `R/utils_storico.R` l'app usa solo la lettura del file e `andamento_rfid()`. Il confronto tra i due sistemi sta in `R/utils_confronto.R` e serve al report `docs/beneficio_antenne.Rmd`: l'app non lo richiama. Il report è uno solo, con parametri: si compila per l'intero territorio, per un cantiere o per un comune, e per un servizio. Lo script `docs/compila_report.R` li compila tutti.
 
 ### Moduli
 
@@ -253,6 +264,9 @@ Ogni modulo ha due file: `R/mod_<nome>_ui.R` e `R/mod_<nome>_server.R`.
 24. **Griglia dei comuni.** Trovare il comune di milioni di punti contro 66 confini, punto per punto, costerebbe decine di secondi. `griglia_comuni()` prepara una volta per sessione una griglia di celle di 55 metri: una cella che nessun confine attraversa vale per intero il comune del suo centro, le altre sono marcate. `indice_comune_geografico()` cerca la cella e fa il controllo esatto, con `indice_comune_esatto()`, solo per i punti delle celle marcate. Il risultato è identico al controllo punto per punto: lo verificano i test.
 25. **Incongruenze calcolate una volta, con la tolleranza.** `fuori_comune` e `fuori_giro` sono colonne delle letture, scritte dalla validazione con `oltre_il_comune()`: filtri, marker, popup, dettaglio, statistiche e ricerca dei giri le leggono, senza ricalcolare distanze. La distanza esatta dal confine si calcola solo per i punti vicini al comune dichiarato; per quelli lontani basta la distanza dal suo riquadro. Le due incongruenze sono indipendenti: una lettura può averle tutte e due.
 26. **Ricerca dei giri sulle colonne delle letture.** Un giro non è una tabella a parte: è il gruppo delle letture con lo stesso giorno, mezzo, `servizio_atteso` e `comune_lettura`. `riepilogo_giri()` li raggruppa con le funzioni di `R/utils_gruppi.R`. La scheda non ha un pulsante «Cerca»: segue gli input, e all'avvio cerca un giorno solo, così la mappa non riceve mai un anno di letture senza che l'utente lo chieda.
+27. **Confronto sulla coorte, non sui totali.** Le antenne coprono pochi mesi e una parte dei mezzi: il report misura i due sistemi sugli stessi contenitori, quelli letti dalle antenne, e ognuno sui giorni in cui lo si è potuto osservare. Per il sistema precedente il periodo di riferimento, per le antenne i giorni successivi alla prima lettura di ogni contenitore. La prima lettura non si conta: fa entrare il contenitore nella coorte, e contarla gonfierebbe il ritmo delle antenne. Tassi e ritmi sono rapporti tra somme, non medie di rapporti: un contenitore osservato per pochi giorni pesa poco.
+28. **Un report solo, con parametri.** Territorio, cantiere, comune e servizio sono parametri di `docs/beneficio_antenne.Rmd`, non documenti diversi: le regole restano le stesse a ogni livello. Le sezioni che a un livello non hanno senso, come i cantieri nel report di un comune, non vengono scritte. I periodi dei due sistemi si calcolano sempre su tutte le letture, prima di scegliere l'ambito.
+29. **Indizi sui codici letti male, non correzioni.** `codici_gemelli()` e `gemelli_sospetti()` segnalano le coppie di codici: nessuna regola dell'app o della preparazione dei dati unisce due codici da sola. La verifica si fa sul posto.
 
 ## Mappa del repository
 
@@ -282,7 +296,8 @@ trackerfid/
 │   ├── utils_dbscan_clustering.R DBSCAN, distanze, dispersione
 │   ├── utils_cluster_output.R    tabella di analisi, soglie, indicatori, indice di fiducia
 │   ├── utils_cluster_viste.R     tabella interattiva, grafici e mappa dei cluster spaziali
-│   ├── utils_storico.R           letture storiche: lettura, conteggi per anno, confronto con le antenne
+│   ├── utils_storico.R           letture storiche: lettura, conteggi per anno, anagrafica degli RFID
+│   ├── utils_confronto.R         confronto tra sistema precedente e antenne sulla coorte, codici gemelli, contenitori fuori comune
 │   ├── utils_geografia.R         comuni, cantieri e confini del territorio servito
 │   ├── utils_gruppi.R            calcoli per gruppo su vettori, senza cicli
 │   ├── utils_mappa_aggregata.R   limiti delle mappe e vista della mappa principale secondo lo zoom
@@ -314,7 +329,8 @@ trackerfid/
 ├── docs/
 │   ├── analisi_cluster.md        regole, colonne, soglie e scelte dell'analisi dei cluster
 │   ├── indice_fiducia.Rmd        report sull'indice di fiducia, da compilare in HTML
-│   └── beneficio_antenne.Rmd     report sul beneficio delle antenne, con parametri per i dati reali
+│   ├── beneficio_antenne.Rmd     report sul beneficio delle antenne: parametri per i file, l'ambito e il servizio
+│   └── compila_report.R          compila il report per l'intero territorio, per ogni cantiere e per ogni comune
 ├── tests/testthat/
 │   ├── helper-dati.R             dati di prova condivisi tra i test
 │   └── test-*.R                  un file per ogni file utils e fct, più moduli, dataset e script
@@ -391,8 +407,20 @@ Le funzioni esportate sono tre: `run_app()`, `genera_analisi_cluster()`, `scrivi
 |---|---|
 | Lettura e validazione | `carica_storico()` chiama `read_csv_auto()` e `valida_storico()`. `colonne_storico()`, `percorso_storico_esempio()` |
 | Letture per anno | `unisci_letture()` mette insieme i due sistemi e aggiunge `fonte`. Da lì: `conta_letture_annuali()`, `griglia_annuale()` con gli zeri dalla prima lettura in poi, `andamento_rfid()` per l'istogramma dell'app, `copertura_annuale()` |
-| Tabella per RFID | `anagrafica_rfid()` dà cantiere, comune e raccolte previste di ogni RFID, `tabella_letture_annuali()` una colonna per anno |
-| Confronto tra i sistemi | `confronto_sistemi()` produce una riga per RFID letto da entrambi. `riepilogo_confronto()` dà i totali e `media_annuale()` le letture medie per contenitore anno per anno: tutte e due con l'argomento `per`, per raggruppare per cantiere o per comune. Ausiliarie: `intervallo_media()`, `rfid_solo_storico()` |
+| Anagrafica | `anagrafica_rfid()` dà stato, tipologia, cantiere, comune e raccolte previste di ogni RFID letto dalle antenne |
+| RFID non letti dalle antenne | `rfid_solo_storico()` |
+
+### `R/utils_confronto.R`
+
+Confronto tra il sistema precedente e le antenne, per il report. L'app non le richiama.
+
+| Gruppo | Funzioni |
+|---|---|
+| Letture e periodi | `una_lettura_al_giorno()` tiene una lettura al giorno per contenitore e per sistema. `periodi_confronto()` dà i periodi dei due sistemi e il periodo di riferimento |
+| Confronto sulla coorte | `confronto_sistemi()` produce una riga per RFID dell'anagrafica, con le letture dei due sistemi nei giorni osservati. `raccolte_di_riferimento()` completa le raccolte previste dei non censiti. `riepilogo_confronto()` dà contenitori mai letti, ritmo e tasso di lettura, con l'argomento `per` per raggruppare per tipologia, cantiere o comune. `intervallo_jackknife()` dà l'intervallo di confidenza di una statistica fatta di somme |
+| Andamento nel tempo | `letture_mensili()` per i due sistemi, `copertura_settimanale()` per le antenne: mezzi attivi, contenitori letti, contenitori nuovi |
+| Codici letti male | `codici_gemelli()` trova le coppie di codici che differiscono per un carattere. `gemelli_sospetti()` tiene quelle con un solo codice censito e raccoglie gli indizi: giorni in comune, giorni della settimana, bit, distanza tra i punti di lettura |
+| Contenitori lontani dal comune | `rfid_fuori_comune()`: una riga per ogni censito con letture fuori comune |
 
 ### `R/utils_geografia.R`
 
@@ -426,7 +454,8 @@ Calcoli per gruppo su vettori interi. Il gruppo è un intero da 1 al numero dei 
 | Gruppo | Funzioni |
 |---|---|
 | Limiti | `limiti_mappa()`: bidoni disegnati uno per uno e letture disegnate dalla ricerca RFID. `limita_letture_ricerca()` |
-| Scelta della vista | `scegli_vista()` restituisce `"cantiere"` o `"comune"` da lontano, poi `"tutti"`, `"singoli"` o `"griglia"`. `livello_aggregazione()` dà la fascia di zoom, `vista_da_rifare()`, `descrizione_vista()` |
+| Scelta della vista | `scegli_vista()` restituisce `"cantiere"` o `"comune"` da lontano, poi `"tutti"`, `"singoli"` o `"griglia"`. `soglie_zoom()` dà gli zoom a cui cambiano le bolle, `livello_aggregazione()` la fascia di uno zoom, `vista_da_rifare()`, `descrizione_vista()` |
+| Click su una bolla | `zoom_minimo_bolla()` dà lo zoom a cui una bolla si apre, `zoom_del_riquadro()` quello a cui i suoi bidoni entrano nella mappa |
 | Bolle | `aggrega_marker()` raggruppa i bidoni e ne conta i censiti. `passo_griglia()` |
 | Riquadri | `allarga_riquadro()`, `riquadro_contiene()`, `nel_riquadro()` |
 
@@ -497,7 +526,8 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Filtri per cantiere, comune e posizione | interfaccia in `R/mod_filtri_ui.R`, stato e scelte in `R/mod_filtri_server.R`, regola in `maschera_filtri()` | `test-moduli.R`, `test-utils_data_processing.R` |
 | Aspetto degli elenchi a discesa della barra laterale: riquadro, freccia, comuni scelti | sezione "Elenchi a discesa della barra laterale" di `inst/app/www/custom_style.css` | nessuno: guardarli nel browser |
 | Numero di bidoni oltre il quale, da vicino, la mappa passa ai soli bidoni inquadrati o alle bolle per riquadro; letture disegnate dalla ricerca RFID | `limiti_mappa()`, oppure le opzioni `trackerfid.max_marker` e `trackerfid.max_letture_ricerca` | `test-utils_mappa_aggregata.R` |
-| Zoom a cui la mappa passa dalle bolle per cantiere a quelle per comune e ai singoli bidoni, dimensione dei riquadri | `livello_aggregazione()`, `passo_griglia()`, e la regola in `scegli_vista()` | `test-utils_mappa_aggregata.R`, `test-moduli.R` |
+| Zoom a cui la mappa passa dalle bolle per cantiere a quelle per comune e ai singoli bidoni, dimensione dei riquadri | `soglie_zoom()`: è l'unico punto, lo leggono `livello_aggregazione()` e `zoom_minimo_bolla()`. `passo_griglia()` per i riquadri | `test-utils_mappa_aggregata.R`, `test-moduli.R`, poi guardarla nel browser |
+| Che cosa fa il click su una bolla | `zoom_minimo_bolla()`, `zoom_del_riquadro()`, e l'osservatore di `mappa_marker_click` in `R/mod_mappa_server.R` | `test-utils_mappa_aggregata.R`, poi provarlo nel browser |
 | Punto in cui sta la bolla di un comune, o di un cantiere | `aggrega_marker()` in `R/utils_mappa_aggregata.R`. Per i comuni il punto viene da `baricentri_comuni()` in `R/utils_geografia.R` | `test-utils_mappa_aggregata.R`, `test-utils_geografia.R` |
 | Colori dei cantieri, bordo e riempimento dei confini dei comuni | `colori_cantieri()` e `stile_confini()` in `R/utils_styling.R`, classe `legenda-cantiere` nel CSS. Una palette nuova va controllata a coppie anche per chi non distingue i colori | `test-utils_styling.R`, `test-utils_mapping.R`, poi guardarli nel browser |
 | Su quali mappe compaiono i confini, in che ordine rispetto ai marker | `aggiungi_confini()` in `R/utils_mapping.R`, chiamata da `mappa_base()` e da `mappa_cluster()` | `test-utils_mapping.R` |
@@ -509,12 +539,18 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Ridisegno delle mappe quando una scheda torna visibile | secondo gestore di `inst/app/www/script.js` | nessuno: provarlo nel browser |
 | Istogramma delle letture per anno nel dettaglio | `andamento_rfid()` per i conteggi, `istogramma_annuale()` per l'HTML, classi `anni-*` nel CSS | `test-utils_storico.R`, `test-utils_popup.R` |
 | Colonne o regole del file delle letture storiche | `colonne_storico()`, `valida_storico()` | `test-utils_storico.R` |
-| Regole del confronto tra sistema precedente e antenne: anni di servizio, letture utili, tasso | `confronto_sistemi()`, `media_annuale()`, `riepilogo_confronto()` | `test-utils_storico.R` |
+| Regole del confronto tra sistema precedente e antenne: letture contate, giorni osservati, letture utili, tasso | `confronto_sistemi()`, `riepilogo_confronto()` in `R/utils_confronto.R` | `test-utils_confronto.R` |
+| Durata del periodo di riferimento | argomento `giorni` di `periodi_confronto()`; `minimo_giorni_riferimento` nel blocco `dati` del report dice sotto quanti giorni il report si ferma | `test-utils_confronto.R` |
+| Raccolte previste dei contenitori non censiti | `raccolte_di_riferimento()` | `test-utils_confronto.R` |
+| Tipologia di un RFID nel report | `anagrafica_rfid()` in `R/utils_storico.R`; la soglia dell'80% è quella di `servizio_prevalente_non_censiti()` | `test-utils_storico.R` |
+| Ricerca dei codici letti male: quando una coppia è sospetta | `gemelli_sospetti()`: argomenti `quota_giorni` e `distanza_massima_m`, e la riga che calcola `sospetto` | `test-utils_confronto.R` |
+| Quali contenitori risultano fuori comune nel report | `rfid_fuori_comune()`; la regola della singola lettura resta in `aggiungi_geografia()` | `test-utils_confronto.R` |
 | Soglia del 95% per un anno completo | argomento `quota_completo` di `copertura_annuale()` | `test-utils_storico.R` |
-| Testi e grafici del report sul beneficio delle antenne | `docs/beneficio_antenne.Rmd` | nessuno: compilarlo |
-| Livelli del report: territorio, cantiere, comune | blocco `dati` del report: `per_cantiere`, `comuni`, `consistenza()`. Le regole restano in `riepilogo_confronto()` e `media_annuale()` | `test-utils_storico.R` per le regole, poi compilarlo |
-| Soglia sotto cui il tasso di un comune è indicativo | `minimo_contenitori` nel blocco `dati` del report | nessuno: compilarlo |
-| Righe massime della tabella per RFID del report | `massimo_righe_tabella` nel blocco `dati` del report | nessuno: compilarlo |
+| Testi e grafici del report sul beneficio delle antenne | `docs/beneficio_antenne.Rmd` | nessuno: compilarlo, anche per un cantiere e per un comune |
+| Ambito e servizio del report | parametri `cantiere`, `comune`, `servizio`; blocco `dati` del report: `contenitori` è l'ambito, `coorte` l'ambito ristretto al servizio. Le sezioni di cantieri e comuni dipendono da `mostra_cantieri`, `mostra_comuni`, `mostra_mappa` | nessuno: compilarlo ai tre livelli |
+| Quali report compila lo script, nomi dei file, cartella | `docs/compila_report.R` | nessuno: eseguirlo sui dati di esempio |
+| Soglie del report: contenitori letti con regolarità, comuni con pochi contenitori, letture minime di un giro, righe massime delle tabelle | `soglia_regolari`, `minimo_contenitori`, `minimo_letture_giro`, `massimo_righe_tabella` nel blocco `dati` del report | nessuno: compilarlo |
+| Linea degli svuotamenti che un'utenza chiede di norma | parametro `conferimenti_attesi` del report | nessuno: compilarlo |
 | Casi e testi del dettaglio del bidone | `analizza_rfid()` per la logica, `blocco_bidone()` per i testi | `test-utils_data_processing.R`, `test-utils_popup.R` |
 | Riquadro delle statistiche | `calcola_statistiche()` e `crea_box_statistiche()` | `test-utils_data_processing.R`, `test-utils_popup.R` |
 | Colonne del CSV, formati di data, regole di validazione | `colonne_obbligatorie()`, `colonne_facoltative()`, `converti_data_ora()`, `validate_dataset()` | `test-utils_data_processing.R` |
@@ -536,7 +572,7 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 | Nomi e colori degli indicatori | `indicatori_config()` | `test-utils_cluster_viste.R` |
 | Tabella, grafici o mappa dei cluster spaziali | `R/utils_cluster_viste.R` | `test-utils_cluster_viste.R` |
 | Stili grafici dell'app | `inst/app/www/custom_style.css` | nessuno |
-| Dataset di esempio | `data-raw/genera_sample_dataset.R`, poi rigenerare i file in `inst/extdata/` | `test-sample_dataset.R`, `test-utils_storico.R` |
+| Dataset di esempio | `data-raw/genera_sample_dataset.R`, poi rigenerare i file in `inst/extdata/` | `test-sample_dataset.R`, `test-utils_storico.R`, `test-utils_confronto.R` |
 | Velocità di un passaggio su file grandi | misurare prima e dopo con `dev/misura_prestazioni.R` | i test del file modificato |
 | Regole di preparazione dei dati reali: mezzi validi, formato degli RFID, associazione al database, servizio atteso | `R/fct_preparazione_letture.R` | `test-fct_preparazione_letture.R` |
 | Tabelle estratte dal database, filtri sull'estrazione | `data-raw/01_estrai_tabelle.R` | nessuno |
@@ -546,7 +582,9 @@ Preparazione dei dati reali, nell'ordine in cui le funzioni vengono applicate.
 
 Dopo una modifica alle regole dell'analisi dei cluster vanno aggiornati anche `docs/analisi_cluster.md` e `README.md`. Il report `docs/indice_fiducia.Rmd` contiene controlli che fermano la compilazione se il testo non corrisponde più ai dati.
 
-Il report `docs/beneficio_antenne.Rmd` gira anche sui dati reali, quindi nel testo non ha numeri scritti a mano: ogni numero è calcolato. Una frase nuova deve restare vera con qualsiasi dato: per questo i giudizi sono scelti con una condizione, e i confronti tra comuni usano solo quelli con abbastanza contenitori. Dopo una modifica alle regole del confronto vanno aggiornati anche il report, la sezione "Come sono fatti i conti" compresa, e `README.md`. Il report ha tre livelli: "L'intero territorio", "Cantiere per cantiere", "Comune per comune".
+Il report `docs/beneficio_antenne.Rmd` gira anche sui dati reali, quindi nel testo non ha numeri scritti a mano: ogni numero è calcolato. Una frase nuova deve restare vera con qualsiasi dato, anche se le antenne non leggessero di più: per questo i giudizi sono scelti con una condizione, e i confronti tra comuni usano solo quelli con abbastanza contenitori. Le ipotesi sulle cause e sulle conseguenze sono scritte come ipotesi. Il report non contiene stime in euro. Dopo una modifica alle regole del confronto vanno aggiornati anche il report, la sezione "Come sono fatti i conti" compresa, e `README.md`.
+
+Il report va provato in tre condizioni: sui dati di esempio, per un cantiere e per un comune, e su uno scenario simile ai dati reali, con le antenne attive da poche settimane su una parte dei mezzi e il sistema precedente ancora in uso. Lo scenario si ricava dai dataset di esempio, tenendo le letture con le antenne degli ultimi mesi di tre mezzi e trasformando le altre in letture storiche.
 
 ## File grandi
 
@@ -562,6 +600,7 @@ Il dataset reale atteso è di circa 2 milioni di letture l'anno. Ogni modifica d
 | Ricerca di un RFID, dettaglio di un bidone | 0,1 s, 0,03 s |
 | Ricerca dei giri: un mezzo in un giorno, tutti i mezzi in un mese | 0,01 s, 0,3 s con il riepilogo. Su tutto l'anno e tutti i mezzi qualche secondo |
 | Analisi dei cluster | circa 2 s |
+| Report sul beneficio delle antenne, con 2,5 milioni di letture storiche | circa 35 s. Il confronto sulla coorte 1,5 s; la ricerca dei codici gemelli 8 s su codici consecutivi, che sono il caso peggiore |
 
 I tempi dipendono dallo stato del computer: da una sessione all'altra gli stessi passaggi, a codice invariato, sono cambiati fino a una volta e mezza. Per confrontare due versioni vanno misurate di seguito.
 
@@ -602,6 +641,20 @@ rmarkdown::render(
 ```
 
 ```r
+# lo stesso report per un cantiere, per un comune o per un altro servizio
+rmarkdown::render(
+  "docs/beneficio_antenne.Rmd",
+  params = list(cantiere = "BASSANO", servizio = "Carta"),
+  output_dir = "data-raw/output"
+)
+```
+
+```sh
+# tutti i report in una volta: territorio, cantieri, comuni. Senza file usa i dati di esempio
+Rscript docs/compila_report.R data-raw/output/letture_app.csv data-raw/output/letture_storiche.csv
+```
+
+```r
 # dati reali: i passi, dalla radice del progetto
 source("data-raw/01_estrai_tabelle.R")     # si collega al database aziendale
 source("data-raw/03_crea_letture_app.R")   # esegue anche il passo 2
@@ -632,7 +685,7 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 - **File GeoJSON senza pacchetti geografici.** I confini si leggono con `jsonlite` e si disegnano con `ggplot2::geom_polygon()`: il progetto non dipende da `sf`.
 - **Licenza.** Il campo `License` di `DESCRIPTION` contiene un segnaposto. La scelta spetta al proprietario del progetto: non compilarlo.
 - **Git.** I commit li fa il proprietario del progetto. Non committare se non viene chiesto.
-- **Dati aziendali.** Estrazioni, tabelle intermedie e CSV reali stanno solo in `data-raw/origine/`, `data-raw/intermedi/` e `data-raw/output/`, escluse da git. Non copiarli in `inst/` o in `data/`, che entrano nel pacchetto, e non riportarne il contenuto in test, documenti o messaggi. Vale anche per i report compilati sui dati reali: vanno scritti in `data-raw/output/` con `output_dir`, mai lasciati in `docs/`.
+- **Dati aziendali.** Estrazioni, tabelle intermedie e CSV reali stanno solo in `data-raw/origine/`, `data-raw/intermedi/` e `data-raw/output/`, escluse da git. Non copiarli in `inst/` o in `data/`, che entrano nel pacchetto, e non riportarne il contenuto in test, documenti o messaggi. Vale anche per i report compilati sui dati reali: vanno scritti in `data-raw/output/` con `output_dir`, mai lasciati in `docs/`. Lo script `docs/compila_report.R` li scrive in `data-raw/output/report/`.
 
 ## Trappole note
 
@@ -648,7 +701,12 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 - **Baricentro fuori dal confine.** Il baricentro dell'area di un comune dalla forma irregolare può cadere fuori dal suo confine: succede a `POVE DEL GRAPPA` e a `TEOLO`. `baricentri_comuni()` usa allora il baricentro della parte più grande, se il comune ha più poligoni, e altrimenti il centro abitato della tabella dei comuni. Dopo aver aggiunto un comune conviene guardare dove cade la sua bolla.
 - **Dati di esempio citati per nome.** Test e report fanno riferimento a RFID e conteggi precisi. Cambiare il seme o le regole dello script del dataset li fa fallire: vanno aggiornati insieme.
 - **Compilazione dei report.** Vanno compilati dalla cartella `docs/`, senza l'opzione `intermediates_dir`, che produce avvisi spuri. `output_dir` invece si può usare.
-- **Confronto tra i sistemi e coorte.** Il confronto parte dagli RFID letti dalle antenne, quindi per le antenne la quota di contenitori letti è il 100% per costruzione: non è un risultato e non va scritto come tale. Per lo stesso motivo un contenitore conta solo dall'anno successivo a quello della sua prima lettura.
+- **Confronto tra i sistemi e coorte.** Il confronto parte dagli RFID letti dalle antenne, quindi per le antenne la quota di contenitori letti è il 100% per costruzione: non è un risultato e non va scritto come tale. Per lo stesso motivo le letture delle antenne si contano dal giorno dopo la prima: una regola nuova che conti anche la prima gonfia il risultato, tanto più quanto più breve è il periodo delle antenne.
+- **Contenitori nuovi e contenitori mai letti.** Un contenitore della coorte senza letture storiche può essere stato consegnato da poco. Il report non lo dà per mai letto: accanto a ogni conto riporta quello sui contenitori già in servizio, che hanno letture storiche prima del periodo di riferimento. Una frase sui contenitori mai letti deve tenere conto di tutti e due i numeri.
+- **Ordine dell'anagrafica.** `anagrafica_rfid()` e `confronto_sistemi()` danno gli RFID nell'ordine della prima lettura con le antenne, non in ordine alfabetico. Nei test i valori attesi vanno cercati per codice.
+- **Codici consecutivi.** Con codici RFID consecutivi, come nei file di prova sintetici, le coppie a un carattere di distanza sono milioni: `gemelli_sospetti()` lavora per questo su vettori, senza unire tabelle. Nei dataset di esempio i codici sono quasi tutti lontani tra loro.
+- **Titolo del report e parametri.** Il sottotitolo del report è scritto nell'intestazione YAML, che viene valutata prima dei blocchi di codice: può usare solo `params`, non gli oggetti calcolati dopo.
+- **Numeri preceduti da un articolo.** "I 8 comuni" e "dei 84 contenitori" sono sbagliati, e il numero cambia con i dati. Nel report un numero non segue mai un articolo o una preposizione articolata: "comuni in questa condizione: 8". Per le percentuali c'è `con_articolo()`.
 - **Codice nei report e `highlight.js`.** Con l'evidenziazione predefinita di R Markdown un blocco di codice nel testo fa incorporare `highlight.js`, che su questo computer arriva troncato e dà un errore JavaScript nella pagina. `beneficio_antenne.Rmd` usa `highlight: tango`, che non richiede script.
 - **`favicon()` e test dell'interfaccia.** golem mette il favicon nella sezione `head`, che `as.character(app_ui(NULL))` non riporta. Per controllarla nei test serve `htmltools::renderTags(app_ui(NULL))$head`.
 - **Intestazioni delle tabelle DT.** L'argomento `colnames` di `DT::datatable()` cambia i nomi che `formatStyle()` deve usare. Nel report le colonne sono rinominate prima, nel data frame.
@@ -682,4 +740,5 @@ Rscript inst/scripts/generate_cluster_analysis.R inst/extdata/sample_rfid_datase
 | `README.md` | Uso dell'app, formato del file, file grandi, differenze rispetto alle specifiche |
 | `docs/analisi_cluster.md` | Analisi dei cluster spaziali: colonne, indicatori, indice di fiducia, posizione e comuni dichiarati, scelte e limiti |
 | `docs/indice_fiducia.Rmd` | Report sull'indice di fiducia, con esempi svolti e prove di efficacia |
-| `docs/beneficio_antenne.Rmd` | Report sul beneficio delle antenne: letture per anno, anni vuoti, tasso di lettura prima e dopo, a tre livelli: intero territorio, cantiere, comune |
+| `docs/beneficio_antenne.Rmd` | Report sul beneficio delle antenne: quanto leggeva il sistema precedente i contenitori che le antenne leggono oggi, tasso di lettura a parità di tempo, ipotesi sulle cause, contenitori fuori comune, non censiti, codici letti male, giri diversi dal calendario. Per l'intero territorio, un cantiere o un comune, e per servizio |
+| `docs/compila_report.R` | Script che compila il report a tutti i livelli |

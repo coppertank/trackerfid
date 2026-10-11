@@ -26,24 +26,79 @@ limiti_mappa <- function() {
   )
 }
 
+#' Zoom fino a cui la mappa mostra le bolle di cantieri e comuni
+#'
+#' @return Lista con `cantiere` e `comune`: l'ultimo zoom a cui si vede una
+#'   bolla per cantiere e l'ultimo a cui se ne vede una per comune.
+#' @noRd
+soglie_zoom <- function() {
+  list(cantiere = 11, comune = 12)
+}
+
 #' Livello di aggregazione adatto a uno zoom
 #'
 #' Con la zona servita inquadrata per intero lo zoom è 10 o meno: si vedono
-#' i cantieri. A 11 e 12 un comune occupa da uno a due centinaia di pixel: si
-#' vedono i comuni. Da 13 in su si vedono le strade, e i singoli bidoni.
+#' i cantieri, e restano anche a zoom 11, quando un cantiere occupa buona
+#' parte della mappa. A zoom 12 un comune occupa un paio di centinaia di
+#' pixel: si vedono i comuni. Da 13 in su si vedono le strade, e i singoli
+#' bidoni. Le soglie stanno in `soglie_zoom()`.
 #'
 #' @param zoom Zoom della mappa.
-#' @return `"cantiere"` fino a zoom 10, `"comune"` a 11 e 12, poi `"griglia"`,
+#' @return `"cantiere"` fino a zoom 11, `"comune"` a zoom 12, poi `"griglia"`,
 #'   cioè nessun raggruppamento per territorio.
 #' @noRd
 livello_aggregazione <- function(zoom) {
-  if (is.null(zoom) || zoom <= 10) {
+  soglie <- soglie_zoom()
+  if (is.null(zoom) || zoom <= soglie$cantiere) {
     "cantiere"
-  } else if (zoom <= 12) {
+  } else if (zoom <= soglie$comune) {
     "comune"
   } else {
     "griglia"
   }
+}
+
+#' Zoom minimo a cui porta il click su una bolla
+#'
+#' Il click su una bolla deve aprirla: quella di un cantiere mostra i suoi
+#' comuni, quella di un comune i suoi bidoni. Lo zoom a cui i bidoni della
+#' bolla entrano nella mappa può non bastare: un cantiere entra per intero a
+#' uno zoom a cui si vedono ancora i cantieri.
+#'
+#' @param livello `"cantiere"`, `"comune"` oppure `"griglia"`.
+#' @return Il primo zoom del livello successivo. `NA` per una bolla per
+#'   riquadro, che non ha un livello successivo.
+#' @noRd
+zoom_minimo_bolla <- function(livello) {
+  soglie <- soglie_zoom()
+  switch(
+    as.character(livello),
+    cantiere = soglie$cantiere + 1,
+    comune = soglie$comune + 1,
+    NA_real_
+  )
+}
+
+#' Zoom a cui un riquadro entra per intero nella mappa
+#'
+#' Lo ricava dall'area inquadrata e dallo zoom attuali, come fa Leaflet: a
+#' ogni livello di zoom l'area inquadrata dimezza di lato.
+#'
+#' @param riquadro Riquadro da inquadrare: lista con `north`, `south`, `east`,
+#'   `west`.
+#' @param vista Area inquadrata ora, nella stessa forma.
+#' @param zoom Zoom attuale.
+#' @return Lo zoom, intero. `Inf` per un riquadro ridotto a un punto.
+#' @noRd
+zoom_del_riquadro <- function(riquadro, vista, zoom) {
+  # In latitudine le distanze sullo schermo seguono la proiezione di Mercatore.
+  mercatore <- function(lat) log(tan(pi / 4 + lat * pi / 360))
+  rapporto <- min(
+    (vista$east - vista$west) / (riquadro$east - riquadro$west),
+    (mercatore(vista$north) - mercatore(vista$south)) /
+      (mercatore(riquadro$north) - mercatore(riquadro$south))
+  )
+  floor(zoom + log2(rapporto))
 }
 
 #' Allarga un riquadro di una quota della sua ampiezza

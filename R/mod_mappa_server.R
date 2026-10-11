@@ -125,15 +125,40 @@ mod_mappa_server <- function(
         gruppi <- bolle()
         riga <- suppressWarnings(as.integer(sub("^bolla-", "", id)))
         req(gruppi, !is.na(riga), riga >= 1, riga <= nrow(gruppi))
-        # Un click su una bolla ingrandisce sui suoi bidoni.
-        leaflet::fitBounds(
-          leaflet::leafletProxy("mappa", session = session),
-          lng1 = gruppi$lng_min[riga] - 0.001,
-          lat1 = gruppi$lat_min[riga] - 0.001,
-          lng2 = gruppi$lng_max[riga] + 0.001,
-          lat2 = gruppi$lat_max[riga] + 0.001,
-          options = list(maxZoom = 17)
+        # Un click su una bolla ingrandisce sui suoi bidoni, e almeno fino
+        # al livello successivo: i comuni di un cantiere, i bidoni di un
+        # comune. Se i bidoni entrano nella mappa a uno zoom più basso, la
+        # mappa si porta sulla bolla allo zoom minimo.
+        proxy <- leaflet::leafletProxy("mappa", session = session)
+        area <- list(
+          north = gruppi$lat_max[riga] + 0.001,
+          south = gruppi$lat_min[riga] - 0.001,
+          east = gruppi$lng_max[riga] + 0.001,
+          west = gruppi$lng_min[riga] - 0.001
         )
+        minimo <- zoom_minimo_bolla(gruppi$livello[riga])
+        inquadrata <- input$mappa_bounds
+        if (
+          !is.na(minimo) &&
+            !is.null(inquadrata) &&
+            zoom_del_riquadro(area, inquadrata, input$mappa_zoom) <= minimo
+        ) {
+          leaflet::setView(
+            proxy,
+            lng = gruppi$longitudine[riga],
+            lat = gruppi$latitudine[riga],
+            zoom = minimo
+          )
+        } else {
+          leaflet::fitBounds(
+            proxy,
+            lng1 = area$west,
+            lat1 = area$south,
+            lng2 = area$east,
+            lat2 = area$north,
+            options = list(maxZoom = 17)
+          )
+        }
         return()
       }
       df <- disegnati()

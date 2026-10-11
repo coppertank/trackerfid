@@ -921,9 +921,10 @@ test_that("oltre il limite la mappa principale passa alla vista aggregata", {
       session$setInputs(mappa_marker_click = list(id = "bolla-99"))
       expect_null(selezione())
 
-      # uno zoom che resta nella stessa fascia non ridisegna
+      # uno zoom che resta nella stessa fascia non ridisegna: i cantieri
+      # restano fino a zoom 11
       disegnate <- bolle()
-      session$setInputs(mappa_zoom = 10)
+      session$setInputs(mappa_zoom = 11)
       session$elapse(400)
       expect_identical(vista()$tipo, "cantiere")
       expect_identical(vista()$zoom, 9)
@@ -994,8 +995,14 @@ test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, 
       expect_match(output$riepilogo, "^251 bidoni sulla mappa \\(ultima lettura\\)")
       expect_match(output$riepilogo, "una bolla per cantiere")
 
-      # avvicinandosi una bolla per comune
+      # a zoom 11 restano i cantieri
       session$setInputs(mappa_zoom = 11)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "cantiere")
+      expect_match(output$riepilogo, "una bolla per cantiere")
+
+      # avvicinandosi ancora una bolla per comune
+      session$setInputs(mappa_zoom = 12)
       session$elapse(400)
       expect_identical(vista()$tipo, "comune")
       expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
@@ -1024,13 +1031,20 @@ test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, 
       expect_identical(vista()$zoom, 14)
 
       # tornando lontano tornano le bolle
-      session$setInputs(mappa_zoom = 10)
+      session$setInputs(mappa_zoom = 11)
       session$elapse(400)
       expect_identical(vista()$tipo, "cantiere")
       expect_null(disegnati())
-      # un click su una bolla non seleziona un bidone
+      # un click su una bolla non seleziona un bidone, con o senza l'area
+      # inquadrata comunicata dal browser
       session$setInputs(mappa_marker_click = list(id = "bolla-2"))
       expect_identical(selezione()$rfid, ultimi$RFID[3])
+      session$setInputs(
+        mappa_bounds = list(north = 46.1, south = 45.2, east = 12.2, west = 11.2)
+      )
+      session$setInputs(mappa_marker_click = list(id = "bolla-3"))
+      expect_identical(selezione()$rfid, ultimi$RFID[3])
+      expect_identical(vista()$tipo, "cantiere")
     }
   )
 })

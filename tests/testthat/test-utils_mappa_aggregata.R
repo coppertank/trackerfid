@@ -40,8 +40,13 @@ test_that("il livello di aggregazione segue lo zoom", {
   expect_identical(livello_aggregazione(NULL), "cantiere")
   expect_identical(
     vapply(c(8, 10, 11, 12, 13, 17), livello_aggregazione, character(1)),
-    c("cantiere", "cantiere", "comune", "comune", "griglia", "griglia")
+    c("cantiere", "cantiere", "cantiere", "comune", "griglia", "griglia")
   )
+  # le soglie stanno in un posto solo
+  expect_identical(soglie_zoom(), list(cantiere = 11, comune = 12))
+  expect_identical(livello_aggregazione(soglie_zoom()$cantiere), "cantiere")
+  expect_identical(livello_aggregazione(soglie_zoom()$cantiere + 1), "comune")
+  expect_identical(livello_aggregazione(soglie_zoom()$comune + 1), "griglia")
   # una cella della griglia occupa 90 pixel e dimezza a ogni livello di zoom
   expect_equal(passo_griglia(0), 360 * 90 / 256)
   expect_equal(passo_griglia(13) / passo_griglia(14), 2)
@@ -206,7 +211,7 @@ test_that("la vista dipende dallo zoom, dal numero di bidoni e dall'area", {
     )
     expect_identical(
       scegli_vista(ultimi, tutta, 11, limite = limite),
-      list(tipo = "comune")
+      list(tipo = "cantiere")
     )
     expect_identical(
       scegli_vista(ultimi, tutta, 12, limite = limite),
@@ -273,11 +278,67 @@ test_that("la vista dipende dallo zoom, dal numero di bidoni e dall'area", {
   expect_identical(livello_aggregazione(NULL), "cantiere")
   expect_identical(
     vapply(8:14, livello_aggregazione, character(1)),
-    c("cantiere", "cantiere", "cantiere", "comune", "comune", "griglia", "griglia")
+    c("cantiere", "cantiere", "cantiere", "cantiere", "comune", "griglia", "griglia")
   )
   expect_match(descrizione_vista("cantiere"), "una bolla per cantiere")
   expect_match(descrizione_vista("comune"), "una bolla per comune")
   expect_null(descrizione_vista("tutti"))
+})
+
+test_that("il click su una bolla porta almeno al livello successivo", {
+  # la bolla di un cantiere si apre sui comuni, quella di un comune sui bidoni
+  expect_identical(zoom_minimo_bolla("cantiere"), soglie_zoom()$cantiere + 1)
+  expect_identical(zoom_minimo_bolla("comune"), soglie_zoom()$comune + 1)
+  expect_identical(
+    livello_aggregazione(zoom_minimo_bolla("cantiere")),
+    "comune"
+  )
+  expect_identical(
+    livello_aggregazione(zoom_minimo_bolla("comune")),
+    "griglia"
+  )
+  # una bolla per riquadro non ha un livello successivo
+  expect_true(is.na(zoom_minimo_bolla("griglia")))
+
+  # lo zoom a cui un riquadro entra nella mappa: ogni livello dimezza il lato
+  vista <- list(north = 46, south = 45, east = 12, west = 11)
+  lato <- function(frazione, centro_lat = 45.5, centro_lng = 11.5) {
+    list(
+      north = centro_lat + frazione / 2,
+      south = centro_lat - frazione / 2,
+      east = centro_lng + frazione / 2,
+      west = centro_lng - frazione / 2
+    )
+  }
+  expect_equal(zoom_del_riquadro(vista, vista, 10), 10)
+  expect_equal(zoom_del_riquadro(lato(0.49), vista, 10), 11)
+  expect_equal(zoom_del_riquadro(lato(0.24), vista, 10), 12)
+  expect_equal(zoom_del_riquadro(lato(0.24), vista, 9), 11)
+  # un riquadro più grande della mappa chiede di allontanarsi
+  expect_equal(zoom_del_riquadro(lato(1.9), vista, 10), 9)
+  # conta il lato più stretto: un riquadro largo e basso segue la larghezza
+  largo <- list(north = 45.51, south = 45.49, east = 11.99, west = 11.01)
+  expect_equal(zoom_del_riquadro(largo, vista, 10), 10)
+  # un punto solo entra a qualsiasi zoom
+  expect_identical(zoom_del_riquadro(lato(0), vista, 10), Inf)
+
+  # nel dataset di esempio un cantiere entra nella mappa a uno zoom a cui si
+  # vedono ancora i cantieri: il click deve andare oltre
+  ultimi <- deduplica_ultimo_rfid(dati_esempio())
+  bolle <- aggrega_marker(ultimi, "cantiere")
+  tutta <- tutta_la_zona()
+  for (riga in seq_len(nrow(bolle))) {
+    area <- list(
+      north = bolle$lat_max[riga],
+      south = bolle$lat_min[riga],
+      east = bolle$lng_max[riga],
+      west = bolle$lng_min[riga]
+    )
+    expect_lte(
+      zoom_del_riquadro(area, tutta, 10),
+      zoom_minimo_bolla("cantiere")
+    )
+  }
 })
 
 test_that("la vista si ridisegna solo quando non copre più l'area inquadrata", {
@@ -288,10 +349,10 @@ test_that("la vista si ridisegna solo quando non copre più l'area inquadrata", 
   # primo disegno, o cambio di tipo
   expect_true(vista_da_rifare(NULL, list(tipo = "cantiere"), riquadro, 9))
   expect_true(vista_da_rifare(
-    list(tipo = "cantiere", zoom = 10),
+    list(tipo = "cantiere", zoom = 11),
     list(tipo = "comune"),
     riquadro,
-    11
+    12
   ))
 
   # le bolle di cantieri e comuni coprono tutto il territorio
@@ -302,7 +363,7 @@ test_that("la vista si ridisegna solo quando non copre più l'area inquadrata", 
     10
   ))
   expect_false(vista_da_rifare(
-    list(tipo = "comune", zoom = 11),
+    list(tipo = "comune", zoom = 12),
     list(tipo = "comune"),
     fuori,
     12

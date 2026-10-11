@@ -167,13 +167,32 @@ if (length(argomenti) >= 2) {
     carica_storico(argomenti[2])$dati
   })
   message(sprintf("  %s letture storiche", formatta_numero(nrow(storico))))
-  confronto <- misura("Confronto tra i due sistemi", {
-    confronto_sistemi(unisci_letture(letture, storico), anagrafica_rfid(letture))
+  contenitori <- senza_sacchetti(letture)
+  unite <- misura("Una lettura al giorno per contenitore", {
+    una_lettura_al_giorno(
+      unisci_letture(contenitori, senza_sacchetti(storico))
+    )
   })
-  misura("Riepilogo per territorio, cantiere e comune", {
+  confronto <- misura("Confronto tra i due sistemi", {
+    confronto_sistemi(unite, anagrafica_rfid(contenitori))
+  })
+  misura("Riepilogo per territorio, servizio, cantiere e comune", {
     riepilogo_confronto(confronto)
+    riepilogo_confronto(confronto, "tipologia")
     riepilogo_confronto(confronto, "cantiere")
     riepilogo_confronto(confronto, "comune")
+  })
+  gemelli <- misura("Codici a un carattere di distanza", {
+    gemelli_sospetti(codici_gemelli(unique(unite$RFID)), unite, contenitori)
+  })
+  message(sprintf(
+    "  %s coppie con un solo codice censito",
+    formatta_numero(nrow(gemelli))
+  ))
+  misura("Contenitori fuori comune, settimane e mesi", {
+    rfid_fuori_comune(contenitori)
+    copertura_settimanale(contenitori)
+    letture_mensili(unite, confronto$RFID)
   })
 }
 

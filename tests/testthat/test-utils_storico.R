@@ -1,4 +1,4 @@
-# Letture storiche e confronto tra il sistema precedente e le antenne.
+# Letture storiche: lettura del file, conteggi per anno, anagrafica degli RFID.
 
 # Letture storiche: una per data, alle 8 del mattino.
 storiche <- function(rfid, date) {
@@ -219,6 +219,7 @@ test_that("l'anagrafica ha una riga per RFID, con geografia e dati dei censiti",
       "RFID",
       "presente_a_database",
       "servizio_transponder",
+      "tipologia",
       "cantiere",
       "comune",
       "numero_raccolte_annue_previste",
@@ -227,6 +228,11 @@ test_that("l'anagrafica ha una riga per RFID, con geografia e dati dei censiti",
     )
   )
   expect_identical(anagrafica_prova$RFID, c("A", "B", "C", "D"))
+  # la tipologia viene dal database per i censiti, dai giri per il non censito
+  expect_identical(
+    anagrafica_prova$tipologia,
+    c("Carta", "Carta", "Secco", "Carta")
+  )
   # il non censito prende il comune in cui viene letto
   expect_identical(
     anagrafica_prova$comune,
@@ -265,6 +271,21 @@ test_that("l'anagrafica ha una riga per RFID, con geografia e dati dei censiti",
   expect_identical(anagrafica_rfid(girovago)$comune, "MAROSTICA")
   expect_identical(anagrafica_rfid(girovago)$cantiere, "BASSANO")
 
+  # un non censito letto da giri di rifiuti diversi non ha una tipologia
+  incerto <- dplyr::bind_rows(
+    letture_rfid("I", "2025-03-01", presente = "Non Presente", atteso = "SECCO PAP"),
+    letture_rfid("I", "2025-03-08", presente = "Non Presente", atteso = "VETRO PAP"),
+    letture_rfid("S", date_2025(5), presente = "Non Presente", atteso = c(rep("SECCO PAP", 4), "VETRO PAP"))
+  )
+  anagrafica_incerta <- anagrafica_rfid(incerto)
+  expect_identical(
+    anagrafica_incerta$tipologia[match(c("I", "S"), anagrafica_incerta$RFID)],
+    c(NA, "Secco")
+  )
+  # il servizio atteso di un censito non conta: vale quello del database
+  censito <- letture_rfid("K", date_2025(3), servizio = "UMIDO", atteso = "SECCO PAP")
+  expect_identical(anagrafica_rfid(censito)$tipologia, "Umido")
+
   # le colonne facoltative possono mancare
   senza <- anagrafica_rfid(letture_test())
   expect_true(all(is.na(senza$comune)))
@@ -273,197 +294,12 @@ test_that("l'anagrafica ha una riga per RFID, con geografia e dati dei censiti",
   expect_equal(nrow(anagrafica_rfid(letture_test()[0, ])), 0)
 })
 
-test_that("la tabella per anno ha una riga per RFID letto dalle antenne", {
-  tabella <- tabella_letture_annuali(unite_prova, anagrafica_prova)
-  expect_identical(
-    names(tabella),
-    c(
-      "RFID",
-      paste0("letture_", 2021:2025),
-      "cantiere",
-      "comune",
-      "numero_raccolte_annue_previste"
-    )
-  )
-  expect_identical(tabella$RFID, c("A", "B", "C", "D"))
-  anni <- as.matrix(tabella[, paste0("letture_", 2021:2025)])
-  dimnames(anni) <- NULL
-  expect_equal(
-    anni,
-    rbind(
-      c(2, 4, 0, 6, 12),
-      c(NA, 5, 10, 10, 15),
-      c(1, 0, 0, 1, 3),
-      c(NA, NA, NA, NA, 8)
-    )
-  )
-  expect_identical(tabella$comune, c("RUBANO", "CITTADELLA", "LIMENA", "RUBANO"))
-})
-
-test_that("il confronto usa gli stessi RFID e gli anni in cui erano di sicuro in servizio", {
-  confronto <- confronto_sistemi(unite_prova, anagrafica_prova)
-  # D è nuovo, E non è stato letto dalle antenne: restano fuori
-  expect_identical(confronto$RFID, c("A", "B", "C"))
-  expect_equal(attr(confronto, "giorni_antenne"), 365)
-  expect_identical(attr(confronto, "anni_storico"), 2021:2024)
-
-  # l'anno della prima lettura non conta: A dal 2022, B dal 2023, C dal 2022
-  expect_identical(confronto$anni_servizio, c(3L, 2L, 3L))
-  expect_identical(confronto$anni_vuoti, c(1L, 0L, 2L))
-  expect_equal(confronto$letture_annue_storico, c(10 / 3, 10, 1 / 3))
-  expect_equal(confronto$letture_annue_antenne, c(12, 15, 3))
-  # le letture utili non superano le raccolte previste: 12 letture, 10 previste
-  expect_equal(confronto$letture_utili_antenne, c(10, 15, NA))
-  expect_equal(confronto$tasso_storico, c(1 / 3, 0.5, NA))
-  expect_equal(confronto$tasso_antenne, c(1, 0.75, NA))
-
-  # le letture con le antenne sono riportate a un anno
-  mezzo_anno <- letture_prova[
-    letture_prova$giorno_lettura < as.POSIXct("2025-07-02", tz = "UTC"),
-  ]
-  mezzo_anno <- dplyr::bind_rows(mezzo_anno, letture_rfid("D", "2025-07-01"))
-  parziale <- confronto_sistemi(
-    unisci_letture(mezzo_anno, storico_prova),
-    anagrafica_rfid(mezzo_anno)
-  )
-  expect_equal(attr(parziale, "giorni_antenne"), 182)
-  n_a <- sum(mezzo_anno$RFID == "A")
-  expect_equal(
-    parziale$letture_annue_antenne[parziale$RFID == "A"],
-    n_a * 365 / 182
-  )
-
-  # senza letture storiche non c'è niente da confrontare
-  expect_equal(
-    nrow(confronto_sistemi(unisci_letture(letture_prova), anagrafica_prova)),
-    0
-  )
-})
-
-test_that("il riepilogo misura anni vuoti, rapporto e letture recuperate", {
-  confronto <- confronto_sistemi(unite_prova, anagrafica_prova)
-  r <- riepilogo_confronto(confronto)
-  expect_equal(nrow(r), 1)
-  expect_equal(r$n_rfid, 3)
-  expect_equal(r$rfid_con_anni_vuoti, 2)
-  expect_equal(r$totale_anni_servizio, 8)
-  expect_equal(r$totale_anni_vuoti, 3)
-  expect_equal(r$quota_anni_vuoti, 3 / 8)
-  expect_equal(r$media_storico, (10 / 3 + 10 + 1 / 3) / 3)
-  expect_equal(r$media_antenne, 10)
-  expect_equal(r$rapporto, 10 / ((10 / 3 + 10 + 1 / 3) / 3))
-  # i tassi riguardano solo A e B, che hanno le raccolte previste: 30 in tutto
-  expect_equal(r$n_con_raccolte, 2)
-  expect_equal(r$raccolte_previste, 30)
-  expect_equal(r$tasso_storico, (10 / 3 + 10) / 30)
-  expect_equal(r$tasso_antenne, 25 / 30)
-  expect_equal(r$letture_recuperate, 25 - (10 / 3 + 10))
-  # contenitori da 240 litri
-  expect_equal(r$litri_recuperati, 240 * (25 - (10 / 3 + 10)))
-
-  per_comune <- riepilogo_confronto(confronto, "comune")
-  expect_identical(per_comune$comune, c("CITTADELLA", "LIMENA", "RUBANO"))
-  expect_equal(per_comune$tasso_antenne, c(0.75, NaN, 1))
-  expect_equal(per_comune$quota_anni_vuoti, c(0, 2 / 3, 1 / 3))
-
-  # per cantiere: Rubano somma A e C, ma il tasso riguarda solo A
-  per_cantiere <- riepilogo_confronto(confronto, "cantiere")
-  expect_identical(per_cantiere$cantiere, c("CAMPOSAMPIERO", "RUBANO"))
-  expect_equal(per_cantiere$n_rfid, c(1, 2))
-  expect_equal(per_cantiere$quota_anni_vuoti, c(0, 3 / 6))
-  expect_equal(per_cantiere$tasso_antenne, c(0.75, 1))
-  expect_equal(per_cantiere$tasso_storico, c(0.5, 1 / 3))
-})
-
-test_that("le medie per anno contano un contenitore dall'anno dopo la prima lettura", {
-  medie <- media_annuale(unite_prova, anagrafica_prova)
-  expect_identical(medie$anno, 2022:2025)
-  expect_identical(medie$sistema, c("storico", "storico", "storico", "antenne"))
-  # 2022 solo A; 2023 e 2024 A e B; nel 2025 D è al primo anno e non conta
-  expect_identical(medie$n_rfid, c(1L, 2L, 2L, 2L))
-  expect_equal(medie$letture_medie, c(4, 5, 8, 13.5))
-  expect_equal(medie$letture_utili_medie, c(4, 5, 8, 12.5))
-  expect_equal(medie$raccolte_medie, c(10, 15, 15, 15))
-  expect_equal(medie$tasso, c(0.4, 1 / 3, 8 / 15, 12.5 / 15))
-
-  per_comune <- media_annuale(unite_prova, anagrafica_prova, "comune")
-  expect_identical(
-    per_comune$comune,
-    c(rep("CITTADELLA", 3), rep("RUBANO", 4))
-  )
-  expect_identical(per_comune$anno, c(2023:2025, 2022:2025))
-  expect_equal(per_comune$letture_utili_medie, c(10, 10, 15, 4, 0, 6, 10))
-
-  # un anno coperto a metà viene riportato a dodici mesi
-  mezzo_anno <- letture_prova[
-    letture_prova$giorno_lettura < as.POSIXct("2025-07-02", tz = "UTC"),
-  ]
-  mezzo_anno <- dplyr::bind_rows(mezzo_anno, letture_rfid("D", "2025-07-01"))
-  parziali <- media_annuale(
-    unisci_letture(mezzo_anno, storico_prova),
-    anagrafica_rfid(mezzo_anno)
-  )
-  ultimo <- parziali[parziali$anno == 2025, ]
-  expect_false(ultimo$completo)
-  n_ab <- sum(mezzo_anno$RFID %in% c("A", "B"))
-  expect_equal(ultimo$letture_medie, n_ab / 2 * 365 / 182)
-})
-
-test_that("media con intervallo di confidenza", {
-  x <- c(2, 4, 6, 8)
-  esito <- intervallo_media(c(x, NA))
-  atteso <- stats::t.test(x)$conf.int
-  expect_equal(esito[["media"]], 5)
-  expect_equal(unname(esito[c("inferiore", "superiore")]), as.numeric(atteso))
-  expect_true(all(is.na(intervallo_media(numeric(0)))))
-  expect_equal(intervallo_media(3)[["media"]], 3)
-  expect_true(is.na(intervallo_media(3)[["inferiore"]]))
-})
-
 test_that("gli RFID letti solo dal sistema precedente sono elencati a parte", {
   soli <- rfid_solo_storico(unite_prova)
   expect_identical(soli$RFID, "E")
   expect_equal(soli$letture, 3)
   expect_identical(soli$ultimo_anno, 2022L)
   expect_equal(nrow(rfid_solo_storico(unisci_letture(letture_prova))), 0)
-})
-
-test_that("sul dataset di esempio le antenne leggono molto di più del sistema precedente", {
-  unite <- unisci_letture(dati_esempio(), storico_esempio())
-  anagrafica <- anagrafica_rfid(dati_esempio())
-  confronto <- confronto_sistemi(unite, anagrafica)
-  r <- riepilogo_confronto(confronto)
-
-  expect_identical(attr(confronto, "anni_storico"), 2020:2023)
-  expect_equal(attr(confronto, "giorni_antenne"), 457)
-  expect_equal(r$n_rfid, 161)
-  # quasi un anno di servizio su cinque senza nemmeno una lettura
-  expect_equal(r$totale_anni_servizio, 418)
-  expect_equal(r$totale_anni_vuoti, 78)
-  expect_equal(r$rfid_con_anni_vuoti, 55)
-  # da meno di un terzo a oltre l'80% delle raccolte previste
-  expect_equal(r$tasso_storico, 0.32, tolerance = 0.03)
-  expect_equal(r$tasso_antenne, 0.83, tolerance = 0.03)
-  expect_gt(r$rapporto, 2)
-  # due contenitori, esposti di rado, sono letti meno di prima
-  expect_equal(
-    sum(confronto$letture_annue_antenne <= confronto$letture_annue_storico),
-    2
-  )
-
-  # il sistema precedente leggeva in modo diverso da cantiere a cantiere, le
-  # antenne no
-  per_cantiere <- riepilogo_confronto(
-    confronto[!is.na(confronto$cantiere), ],
-    "cantiere"
-  )
-  expect_identical(
-    per_cantiere$cantiere[order(per_cantiere$tasso_storico)],
-    c("ASIAGO", "RUBANO", "CAMPOSAMPIERO", "BASSANO")
-  )
-  expect_gt(diff(range(per_cantiere$tasso_storico)), 0.2)
-  expect_lt(diff(range(per_cantiere$tasso_antenne)), 0.1)
-  expect_true(all(per_cantiere$tasso_antenne - per_cantiere$tasso_storico > 0.3))
 })
 
 test_that("le letture storiche si leggono anche da un CSV compresso", {

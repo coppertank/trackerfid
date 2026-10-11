@@ -1126,6 +1126,51 @@ solo_storico <- lapply(seq_len(n_solo_storico), function(i) {
   )
 })
 
+# Contenitore con il codice letto male dal sistema precedente: circa meta'
+# delle sue letture storiche portano un codice che differisce da quello giusto
+# per un bit di una cifra. Con quel codice il database non lo riconosce: e' il
+# caso che il report sul beneficio delle antenne cerca tra i codici gemelli.
+# E' il contenitore del secco con piu' letture storiche tra quelli senza altri
+# casi particolari. La scelta delle letture alterate ha un seme proprio.
+candidati_gemello <- which(
+  bidoni$presente & bidoni$servizio == "SECCO" & bidoni$raccolte == 26L &
+    bidoni$chiave %in% con_storia &
+    !bidoni$chiave %in% c(speciali, tardivi, k_rari, k_recenti, k_utenza, k_servizio, k_mossi, k_vetrina)
+)
+letture_candidati <- vapply(
+  candidati_gemello,
+  function(k) NROW(storiche[[match(k, con_storia)]]),
+  numeric(1)
+)
+k_gemello <- candidati_gemello[which.max(letture_candidati)]
+# Il codice alterato: la prima cifra, dal fondo, che cambiando un bit resta
+# una cifra e da' un codice che nessun contenitore usa.
+codice_alterato <- function(rfid, usati) {
+  for (posizione in rev(seq_len(nchar(rfid)))) {
+    cifra <- suppressWarnings(as.integer(substr(rfid, posizione, posizione)))
+    if (is.na(cifra)) {
+      next
+    }
+    for (bit in c(2L, 4L, 1L, 8L)) {
+      nuova <- bitwXor(cifra, bit)
+      codice <- rfid
+      substr(codice, posizione, posizione) <- as.character(nuova)
+      if (nuova <= 9L && !codice %in% usati) {
+        return(codice)
+      }
+    }
+  }
+  stop("Nessun codice alterato disponibile per ", rfid)
+}
+rfid_gemello <- codice_alterato(
+  bidoni$RFID[k_gemello],
+  c(bidoni$RFID, unlist(lapply(solo_storico, function(x) x$RFID[1])))
+)
+i_gemello <- match(k_gemello, con_storia)
+alterate <- con_seme(2031, stats::runif(nrow(storiche[[i_gemello]])) < 0.5)
+storiche[[i_gemello]]$RFID[alterate] <- rfid_gemello
+stopifnot(sum(alterate) >= 10, sum(!alterate) >= 10)
+
 storico <- do.call(rbind, c(storiche, solo_storico))
 storico <- storico[order(storico$giorno_lettura, storico$RFID), ]
 storico_finale <- data.frame(
@@ -1149,7 +1194,10 @@ stopifnot(
   length(intersect(rfid_storico, rfid_antenne)) >= 150,
   length(setdiff(rfid_antenne, rfid_storico)) >= 30,
   length(setdiff(rfid_storico, rfid_antenne)) >= 30,
-  setequal(anni_vetrina, c("2020", "2022", "2024"))
+  setequal(anni_vetrina, c("2020", "2022", "2024")),
+  # il codice alterato compare solo nelle letture storiche
+  rfid_gemello %in% rfid_storico, !rfid_gemello %in% rfid_antenne,
+  bidoni$RFID[k_gemello] %in% rfid_antenne
 )
 
 utils::write.csv(
@@ -1166,4 +1214,8 @@ message(sprintf(
   "RFID in comune %d, solo antenne %d, solo storico %d. Esempio con anni vuoti: %s",
   length(intersect(rfid_storico, rfid_antenne)), length(setdiff(rfid_antenne, rfid_storico)),
   length(setdiff(rfid_storico, rfid_antenne)), bidoni$RFID[k_vetrina]
+))
+message(sprintf(
+  "Codice letto male: %s compare anche come %s, in %d letture storiche su %d",
+  bidoni$RFID[k_gemello], rfid_gemello, sum(alterate), length(alterate)
 ))

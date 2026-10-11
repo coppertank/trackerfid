@@ -427,14 +427,15 @@ test_that("le letture storiche di esempio precedono quelle con le antenne", {
   # RFID letti da entrambi i sistemi, solo dalle antenne, solo in passato
   rfid_storico <- unique(storico$RFID)
   rfid_antenne <- unique(d$RFID)
-  expect_length(rfid_storico, 228)
+  expect_length(rfid_storico, 229)
   expect_length(intersect(rfid_storico, rfid_antenne), 184)
   # solo dalle antenne: 55 contenitori e i 12 sacchetti
   solo_antenne <- setdiff(rfid_antenne, rfid_storico)
   expect_length(solo_antenne, 67)
   expect_equal(sum(rfid_sacchetto(solo_antenne)), 12)
   expect_false(any(rfid_sacchetto(rfid_storico)))
-  expect_length(setdiff(rfid_storico, rfid_antenne), 44)
+  # solo in passato: 44 contenitori e il codice letto male di un quarantacinquesimo
+  expect_length(setdiff(rfid_storico, rfid_antenne), 45)
 
   # tra gli RFID con una storia ci sono anche dei non censiti
   ultimi <- deduplica_ultimo_rfid(d)
@@ -455,17 +456,43 @@ test_that("le letture storiche contengono anni interi senza letture", {
   expect_identical(as.integer(table(anni)), c(13L, 16L, 6L))
   expect_identical(sort(unique(anni)), c(2020, 2022, 2024))
 
-  tabella <- tabella_letture_annuali(
-    unisci_letture(dati_esempio(), storico),
-    anagrafica_rfid(dati_esempio())
-  )
-  expect_equal(nrow(tabella), 251)
-  esempio <- tabella[tabella$RFID == "RFD20241004003", ]
-  expect_equal(
-    unlist(esempio[, paste0("letture_", 2020:2025)], use.names = FALSE),
-    c(13, 0, 16, 0, 12, 25)
-  )
+  # le stesse letture nell'istogramma del dettaglio del bidone, con le antenne
+  andamento <- andamento_rfid("RFD20241004003", dati_esempio(), storico)
+  expect_identical(andamento$anno, 2020:2025)
+  expect_equal(andamento$storico + andamento$antenne, c(13, 0, 16, 0, 12, 25))
+  anagrafica <- anagrafica_rfid(dati_esempio())
+  expect_equal(nrow(anagrafica), 251)
+  esempio <- anagrafica[anagrafica$RFID == "RFD20241004003", ]
   expect_identical(esempio$comune, "LIMENA")
   expect_identical(esempio$cantiere, "RUBANO")
   expect_equal(esempio$numero_raccolte_annue_previste, 26)
+})
+
+test_that("un contenitore di esempio ha metà delle letture storiche sotto un codice letto male", {
+  storico <- storico_esempio()
+  d <- dati_esempio()
+  giusto <- "RFD20241003061"
+  alterato <- "RFD20241003063"
+  # i due codici differiscono per l'ultima cifra, e per un bit solo: 1 e 3
+  expect_identical(substr(giusto, 1, 13), substr(alterato, 1, 13))
+  expect_identical(bitwXor(1L, 3L), 2L)
+  # il codice giusto è un censito del secco, letto anche dalle antenne
+  del_giusto <- d[d$RFID == giusto, ]
+  expect_true(all(del_giusto$presente_a_database == "Presente"))
+  expect_true(all(del_giusto$servizio_transponder == "SECCO"))
+  # quello alterato compare solo nelle letture storiche
+  expect_false(alterato %in% d$RFID)
+  letture <- table(storico$RFID[storico$RFID %in% c(giusto, alterato)])
+  expect_identical(as.integer(letture[c(giusto, alterato)]), c(39L, 37L))
+  # mai tutti e due nello stesso giorno: uno svuotamento, una lettura
+  giorni <- split(
+    lubridate::as_date(storico$giorno_lettura),
+    storico$RFID
+  )[c(giusto, alterato)]
+  expect_length(intersect(giorni[[1]], giorni[[2]]), 0)
+  # stesso giro: stesso giorno della settimana
+  expect_identical(
+    unique(lubridate::wday(giorni[[1]])),
+    unique(lubridate::wday(giorni[[2]]))
+  )
 })

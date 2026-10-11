@@ -1,12 +1,16 @@
 ---
 title: "Il beneficio delle antenne sui mezzi"
-subtitle: "Letture RFID prima e dopo l'installazione"
+subtitle: "`r if (nzchar(params$comune)) paste('Comune di', toupper(params$comune)) else if (nzchar(params$cantiere)) paste('Cantiere di', toupper(params$cantiere)) else 'Intero territorio servito'`"
 author: "Aldo Caumo"
 date: "`r format(Sys.Date(), '%d/%m/%Y')`"
 lang: it
 params:
   letture: ""
   storico: ""
+  cantiere: ""
+  comune: ""
+  servizio: "Secco"
+  conferimenti_attesi: 10
 output:
   html_document:
     toc: true
@@ -20,9 +24,18 @@ output:
 # Per compilare il report sui dati di esempio, dalla radice del progetto:
 #   rmarkdown::render("docs/beneficio_antenne.Rmd")
 #
-# Sui dati reali si indicano i due file, con il percorso a partire dalla
-# radice del progetto. L'HTML contiene dati aziendali: va scritto in una
-# cartella esclusa da git.
+# Parametri:
+#   letture, storico     i due file, con il percorso dalla radice del progetto.
+#                        Senza, il report usa i dataset di esempio.
+#   cantiere, comune     l'ambito: un cantiere, un comune, oppure niente per
+#                        l'intero territorio.
+#   servizio             la tipologia di rifiuto su cui si fa il confronto:
+#                        "Secco" se non si indica altro, "" per tutte insieme.
+#   conferimenti_attesi  svuotamenti che un'utenza chiede di norma in un anno:
+#                        è solo una linea di riferimento nei grafici.
+#
+# Sui dati reali l'HTML contiene dati aziendali: va scritto in una cartella
+# esclusa da git.
 #   rmarkdown::render(
 #     "docs/beneficio_antenne.Rmd",
 #     params = list(
@@ -31,6 +44,9 @@ output:
 #     ),
 #     output_dir = "data-raw/output"
 #   )
+#
+# Lo script docs/compila_report.R compila in una volta il report dell'intero
+# territorio, quelli dei cantieri e quelli dei comuni.
 #
 # Servono i pacchetti rmarkdown, ggplot2 e pkgload.
 
@@ -60,6 +76,12 @@ intero <- function(x) formatta_numero(round(x))
 pct <- function(x, cifre = 0) paste0(num(100 * x, cifre), "%")
 # Differenza in punti, con il segno: "+ 51", "− 3".
 con_segno <- function(x) paste(ifelse(x >= 0, "+", "−"), num(abs(x), 0))
+giorno <- function(x) format(x, "%d/%m/%Y")
+dal_al <- function(giorni) paste(giorno(giorni), collapse = " - ")
+# Una frase solo quando vale la condizione.
+se <- function(condizione, testo, altrimenti = "") {
+  if (isTRUE(condizione)) testo else altrimenti
+}
 
 # Percentuale preceduta da articolo o preposizione: "il 33%", "all'82%".
 # Davanti a 1, 8, 11 e da 80 a 89 serve l'apostrofo, davanti a zero "lo".
@@ -82,10 +104,10 @@ con_articolo <- function(x, forma = c("il", "al", "dal")) {
 ferma <- function(...) stop(..., call. = FALSE)
 
 # Colori dei grafici: grigio per il sistema precedente, blu per le antenne,
-# arancione per gli anni senza letture.
+# arancione per i contenitori senza letture o quasi.
 colori <- list(
   antenne = "#2a78d6",
-  misto = "#9dbfe8",
+  antenne_chiaro = "#9dbfe8",
   storico = "#b9b8ae",
   vuoto = "#e07b39",
   primario = "#0b0b0b",
@@ -96,16 +118,8 @@ colori <- list(
 )
 # Tasso di lettura sulla mappa: una sola tinta, dal chiaro allo scuro.
 rampa_tasso <- c("#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#0d366b")
-colori_sistema <- c(
-  storico = colori$storico,
-  misto = colori$misto,
-  antenne = colori$antenne
-)
-nomi_sistema <- c(
-  storico = "Sistema precedente",
-  misto = "Anno misto",
-  antenne = "Antenne"
-)
+colori_sistema <- c(storico = colori$storico, antenne = colori$antenne)
+nomi_sistema <- c(storico = "Sistema precedente", antenne = "Antenne")
 tema_grafico <- theme_minimal(base_size = 12) +
   theme(
     plot.title = element_text(
@@ -143,6 +157,25 @@ tema_grafico <- theme_minimal(base_size = 12) +
     legend.margin = margin(0, 0, 0, 0),
     plot.margin = margin(10, 12, 8, 12)
   )
+
+# Tabella interattiva, con i testi in italiano.
+tabella_dt <- function(dati, righe = 10, ordine = NULL) {
+  DT::datatable(
+    dati,
+    rownames = FALSE,
+    filter = "top",
+    class = "display nowrap",
+    options = list(
+      pageLength = righe,
+      scrollX = TRUE,
+      order = if (is.null(ordine)) list() else ordine,
+      language = lingua_dt()
+    ),
+    callback = DT::JS(
+      "$(table.table().container()).find('input[placeholder=\"All\"]').attr('placeholder', 'Tutti');"
+    )
+  )
+}
 ```
 
 ```{css}
@@ -174,6 +207,13 @@ tema_grafico <- theme_minimal(base_size = 12) +
   border-left: 4px solid #f39c12;
   border-radius: 5px;
 }
+.ambito {
+  margin: 1em 0;
+  padding: 0.7em 1em;
+  background: #eef4fc;
+  border-left: 4px solid #2a78d6;
+  border-radius: 5px;
+}
 .formula {
   margin: 1.2em 0;
   padding: 0.8em 1em;
@@ -181,9 +221,16 @@ tema_grafico <- theme_minimal(base_size = 12) +
   border-radius: 6px;
   text-align: center;
 }
+.ipotesi {
+  margin: 1em 0;
+  padding: 0.2em 1em;
+  border-left: 4px solid #c3c2b7;
+  color: #52514e;
+}
 ```
 
 ```{r dati}
+# ---- I due file ------------------------------------------------------------
 # Senza parametri il report usa i due dataset di esempio del pacchetto.
 dati_di_esempio <- !nzchar(params$letture) && !nzchar(params$storico)
 if (!dati_di_esempio && !(nzchar(params$letture) && nzchar(params$storico))) {
@@ -204,133 +251,291 @@ file_storico <- if (dati_di_esempio) {
   dalla_radice(params$storico)
 }
 
+# Lo script docs/compila_report.R compila molti report sugli stessi file: li
+# legge una volta sola e li passa con l'opzione trackerfid.report_dati.
+gia_letti <- getOption("trackerfid.report_dati")
+if (
+  !identical(gia_letti$file_letture, params$letture) ||
+    !identical(gia_letti$file_storico, params$storico)
+) {
+  gia_letti <- NULL
+}
 # Il report riguarda i contenitori. I sacchetti sono monouso, letti una volta
 # sola: restano fuori da tutti i conti, in tutti e due i file.
-letture_del_file <- carica_dataset(file_letture)$dati
-storico_del_file <- carica_storico(file_storico)$dati
+letture_del_file <- if (is.null(gia_letti)) {
+  carica_dataset(file_letture)$dati
+} else {
+  gia_letti$letture
+}
+storico_del_file <- if (is.null(gia_letti)) {
+  carica_storico(file_storico)$dati
+} else {
+  gia_letti$storico
+}
 n_sacchetti_esclusi <- sum(rfid_sacchetto(unique(c(
   letture_del_file$RFID,
   storico_del_file$RFID
 ))))
 letture <- senza_sacchetti(letture_del_file)
 storico <- senza_sacchetti(storico_del_file)
-unite <- unisci_letture(letture, storico)
-anagrafica <- anagrafica_rfid(letture)
-copertura <- copertura_annuale(unite)
-confronto <- confronto_sistemi(unite, anagrafica)
-riepilogo <- riepilogo_confronto(confronto)
+if (nrow(letture) == 0 || nrow(storico) == 0) {
+  ferma("Tolti i sacchetti, uno dei due file non ha più letture.")
+}
 
-if (nrow(confronto) == 0) {
+# Una lettura al giorno per contenitore: due letture dello stesso contenitore
+# nello stesso giorno sono lo stesso svuotamento.
+grezze <- unisci_letture(letture, storico)
+unite <- una_lettura_al_giorno(grezze)
+periodi <- periodi_confronto(unite)
+minimo_giorni_riferimento <- 60
+if (periodi$giorni_riferimento < minimo_giorni_riferimento) {
   ferma(
-    "Nessun RFID letto da entrambi i sistemi ha un anno intero di storia. ",
-    "Controlla che i codici RFID dei due file abbiano lo stesso formato."
+    "Le letture storiche coprono ",
+    periodi$giorni_riferimento,
+    " giorni prima della prima lettura con le antenne: ne servono almeno ",
+    minimo_giorni_riferimento,
+    " per il confronto."
   )
 }
+
+# Il confronto riguarda la coorte: i contenitori letti dalle antenne.
+anagrafica <- anagrafica_rfid(letture)
+confronto <- confronto_sistemi(unite, anagrafica, periodi)
+
+# ---- Ambito: territorio, cantiere o comune ---------------------------------
+cantiere_scelto <- toupper(trimws(params$cantiere))
+comune_scelto <- trimws(params$comune)
+ambito <- if (nzchar(comune_scelto)) {
+  "comune"
+} else if (nzchar(cantiere_scelto)) {
+  "cantiere"
+} else {
+  "territorio"
+}
+nell_ambito <- switch(
+  ambito,
+  territorio = rep(TRUE, nrow(confronto)),
+  cantiere = confronto$cantiere %in% cantiere_scelto,
+  comune = chiave_comune(confronto$comune) %in% chiave_comune(comune_scelto)
+)
+if (!any(nell_ambito)) {
+  ferma(
+    "Le antenne non hanno letto nessun contenitore ",
+    if (ambito == "comune") "del comune " else "del cantiere ",
+    if (ambito == "comune") comune_scelto else cantiere_scelto,
+    ". Controlla il nome: deve essere scritto come nella tabella dei comuni."
+  )
+}
+contenitori <- confronto[nell_ambito, ]
+if (ambito == "comune") {
+  comune_scelto <- contenitori$comune[1]
+}
+nome_ambito <- switch(
+  ambito,
+  territorio = "l'intero territorio servito",
+  cantiere = paste("il cantiere di", cantiere_scelto),
+  comune = paste("il comune di", comune_scelto)
+)
+nell_ambito_di <- switch(
+  ambito,
+  territorio = "nell'intero territorio servito",
+  cantiere = paste("nel cantiere di", cantiere_scelto),
+  comune = paste("nel comune di", comune_scelto)
+)
+letture_ambito <- letture[letture$RFID %in% contenitori$RFID, ]
+
+# ---- Servizio --------------------------------------------------------------
+tipologie <- vapply(
+  tipologie_servizio(),
+  function(tp) tp$tipologia,
+  character(1)
+)
+tutti_i_servizi <- !nzchar(trimws(params$servizio))
+servizio_scelto <- tipologie[match(
+  tolower(trimws(params$servizio)),
+  tolower(tipologie)
+)]
+if (!tutti_i_servizi && is.na(servizio_scelto)) {
+  ferma(
+    "Servizio non riconosciuto: ",
+    params$servizio,
+    ". Valori ammessi: ",
+    paste(setdiff(tipologie, "Sacchetti"), collapse = ", "),
+    "."
+  )
+}
+coorte <- if (tutti_i_servizi) {
+  contenitori
+} else {
+  contenitori[contenitori$tipologia %in% servizio_scelto, ]
+}
+nome_servizio <- if (tutti_i_servizi) {
+  "tutti i servizi"
+} else {
+  tolower(servizio_scelto)
+}
+# "del secco", "dell'umido".
+del_servizio <- if (tutti_i_servizi) {
+  ""
+} else if (grepl("^[aeiou]", nome_servizio)) {
+  paste0(" dell'", nome_servizio)
+} else {
+  paste0(" del ", nome_servizio)
+}
+if (nrow(coorte) == 0) {
+  ferma(
+    "Le antenne non hanno letto nessun contenitore",
+    del_servizio,
+    " ",
+    nell_ambito_di,
+    "."
+  )
+}
+riepilogo <- riepilogo_confronto(coorte)
 if (riepilogo$n_con_raccolte == 0) {
   ferma(
-    "Nessun contenitore del confronto ha le raccolte annue previste: ",
+    "Nessun contenitore della coorte ha le raccolte annue previste: ",
     "serve la colonna numero_raccolte_annue_previste."
   )
 }
-if (all(is.na(confronto$comune))) {
+if (riepilogo$giorni_dopo == 0) {
   ferma(
-    "Nessun contenitore del confronto ha il comune: servono le colonne ",
-    "comune_da_database o comune_lettura."
-  )
-}
-if (all(is.na(confronto$cantiere))) {
-  ferma(
-    "Nessun contenitore del confronto ha il cantiere: i comuni del file non ",
-    "sono nella tabella dei comuni del pacchetto, ",
-    "inst/extdata/comuni_cantieri.csv."
+    "Ogni contenitore della coorte è stato letto dalle antenne in un giorno ",
+    "solo: il ritmo di lettura delle antenne non si può ancora misurare."
   )
 }
 
-# RFID per sistema.
+# ---- Numeri usati in più punti ---------------------------------------------
+n_coorte <- nrow(coorte)
 rfid_antenne <- anagrafica$RFID
 rfid_storico <- unique(storico$RFID)
-n_entrambi <- length(intersect(rfid_antenne, rfid_storico))
-n_solo_antenne <- length(setdiff(rfid_antenne, rfid_storico))
-solo_storico <- rfid_solo_storico(unite)
-
-# Periodi dei due sistemi.
-giorni_storico <- range(lubridate::as_date(storico$giorno_lettura))
-giorni_antenne <- range(lubridate::as_date(letture$giorno_lettura))
-durata_antenne <- attr(confronto, "giorni_antenne")
-anni_storico <- attr(confronto, "anni_storico")
-periodi_sovrapposti <- giorni_storico[2] >= giorni_antenne[1]
-dal_al <- function(giorni) paste(format(giorni, "%d/%m/%Y"), collapse = " - ")
-elenco_anni <- function(anni) {
-  if (length(anni) == 1) {
-    return(as.character(anni))
-  }
-  if (all(diff(anni) == 1)) {
-    return(paste("dal", min(anni), "al", max(anni)))
-  }
-  paste(anni, collapse = ", ")
+giorni_rif <- periodi$giorni_riferimento
+riferimento_intero <- giorni_rif >= 365
+# "nei dodici mesi prima delle antenne", oppure "nei 212 giorni prima".
+nel_riferimento <- if (riferimento_intero) {
+  "nei dodici mesi prima delle antenne"
+} else {
+  sprintf("nei %s giorni prima delle antenne", intero(giorni_rif))
 }
+mezzi_antenne <- dplyr::n_distinct(letture_ambito$matricola_veicolo)
 
-# Etichette degli anni: sotto l'anno compare il sistema, se non è il precedente,
-# e l'avviso per gli anni coperti solo in parte.
-etichette_anni <- stats::setNames(
-  paste0(
-    copertura$anno,
-    ifelse(copertura$sistema == "misto", "\nmisto", ""),
-    ifelse(copertura$sistema == "antenne", "\nantenne", ""),
-    ifelse(copertura$completo, "", "\nparziale")
-  ),
-  copertura$anno
-)
-
-# Confronto sui contenitori con le raccolte previste.
-con_raccolte <- confronto[!is.na(confronto$numero_raccolte_annue_previste), ]
-raccolte_medie <- mean(con_raccolte$numero_raccolte_annue_previste)
+# Contenitori con le raccolte previste: su questi si calcola il tasso.
+con_raccolte <- coorte[!is.na(coorte$raccolte_previste), ]
+raccolte_medie <- mean(con_raccolte$raccolte_previste)
 punti <- riepilogo$tasso_antenne - riepilogo$tasso_storico
-recuperate <- intervallo_media(
-  con_raccolte$letture_utili_antenne - con_raccolte$letture_utili_storico
+somme_tasso <- con_raccolte[c(
+  "utili_antenne",
+  "previste_antenne",
+  "utili_storico",
+  "previste_storico"
+)]
+intervallo_punti <- intervallo_jackknife(somme_tasso, function(s) {
+  s$utili_antenne / s$previste_antenne - s$utili_storico / s$previste_storico
+})
+intervallo_storico <- intervallo_jackknife(somme_tasso, function(s) {
+  s$utili_storico / s$previste_storico
+})
+intervallo_antenne <- intervallo_jackknife(somme_tasso, function(s) {
+  s$utili_antenne / s$previste_antenne
+})
+# Con un contenitore solo l'intervallo non si può calcolare.
+intervallo_noto <- !anyNA(intervallo_punti)
+# Il guadagno è netto se tutto l'intervallo sta sopra lo zero.
+guadagno_netto <- isTRUE(intervallo_punti[["inferiore"]] > 0)
+# Punti percentuali: con molti contenitori l'intervallo è stretto, e senza un
+# decimale i suoi estremi coinciderebbero.
+ampiezza_punti <- 100 *
+  (intervallo_punti[["superiore"]] - intervallo_punti[["inferiore"]])
+cifre_punti <- if (isTRUE(ampiezza_punti < 2)) 1 else 0
+in_punti <- function(x) num(100 * x, cifre_punti)
+# ", tra 54 e 64 con un intervallo di confidenza al 95%", se si può calcolare.
+tra_e <- if (intervallo_noto) {
+  sprintf(
+    ", tra %s e %s con un intervallo di confidenza al 95%%",
+    in_punti(intervallo_punti[["inferiore"]]),
+    in_punti(intervallo_punti[["superiore"]])
+  )
+} else {
+  ""
+}
+senza_intervallo <- "I contenitori sono troppo pochi per calcolare un intervallo di confidenza: il dato è solo indicativo."
+antenne_di_piu <- punti > 0
+# Letture utili in un anno per contenitore: il tasso per le raccolte previste.
+utili_annue_storico <- riepilogo$tasso_storico * raccolte_medie
+utili_annue_antenne <- riepilogo$tasso_antenne * raccolte_medie
+
+# Contenitori che il sistema precedente aveva già letto prima del periodo di
+# riferimento: lì erano di sicuro in servizio.
+c_e_storia_prima <- periodi$giorni_prima > 0 && riepilogo$gia_in_servizio > 0
+# Perché il controllo manca: le letture storiche non vanno abbastanza indietro,
+# oppure nessun contenitore della coorte ne ha di così lontane.
+senza_storia_prima <- if (periodi$giorni_prima == 0) {
+  "Le letture storiche iniziano con il periodo di riferimento, quindi non dicono quali contenitori erano già in servizio: una parte di quelli senza letture può essere stata consegnata da poco. Servono letture storiche più lontane nel tempo, oppure la data di consegna dei contenitori."
+} else {
+  "Nessuno di questi contenitori ha letture del sistema precedente prima del periodo di riferimento: possono essere contenitori consegnati da poco. Per saperlo serve la data di consegna."
+}
+in_servizio <- coorte[coorte$letture_prima > 0, ]
+quota_in_servizio <- riepilogo$una_o_meno_in_servizio /
+  riepilogo$gia_in_servizio
+# Contenitori che le antenne leggono con regolarità.
+soglia_regolari <- 3
+regolari <- coorte[coorte$letture_antenne >= soglia_regolari, ]
+
+# Linee di riferimento dei grafici.
+conferimenti_attesi <- suppressWarnings(as.numeric(params$conferimenti_attesi))
+con_attesi <- length(conferimenti_attesi) == 1 &&
+  !is.na(conferimenti_attesi) &&
+  conferimenti_attesi > 0
+
+# ---- Che cosa vedono solo le antenne ---------------------------------------
+# Tutti i servizi dell'ambito: un contenitore spostato o un codice letto male
+# sono un problema qualunque sia il rifiuto.
+fuori_comune <- rfid_fuori_comune(letture_ambito)
+fuori_comune$tipologia <- contenitori$tipologia[match(
+  fuori_comune$RFID,
+  contenitori$RFID
+)]
+non_censiti <- contenitori[contenitori$presente_a_database == "Non Presente", ]
+non_censiti$letture_storico <- non_censiti$letture_prima +
+  non_censiti$letture_riferimento +
+  non_censiti$letture_sovrapposte
+
+coppie <- codici_gemelli(unique(unite$RFID))
+gemelli <- gemelli_sospetti(coppie, unite, letture)
+gemelli <- gemelli[gemelli$codice %in% contenitori$RFID, ]
+sospetti <- gemelli[gemelli$sospetto, ]
+
+# Giri dell'ambito: quelli previsti dal calendario nei suoi comuni.
+giri <- riepilogo_giri(letture)
+giri <- switch(
+  ambito,
+  territorio = giri,
+  cantiere = giri[cantiere_di_comune(giri$comune_giro) %in% cantiere_scelto, ],
+  comune = giri[
+    chiave_comune(giri$comune_giro) %in% chiave_comune(comune_scelto),
+  ]
 )
-punti_intervallo <- recuperate[c("inferiore", "superiore")] / raccolte_medie
-quota_migliorati <- mean(
-  confronto$letture_annue_antenne > confronto$letture_annue_storico
-)
+minimo_letture_giro <- 5
+giri <- giri[giri$letture >= minimo_letture_giro, ]
+giri_altrove <- giri[giri$fuori_giro >= giri$letture / 2, ]
 
-# Proiezione su tutti i contenitori censiti letti dalle antenne.
-tutti_con_raccolte <- anagrafica[
-  !is.na(anagrafica$numero_raccolte_annue_previste),
-]
-proiezione <- punti * sum(tutti_con_raccolte$numero_raccolte_annue_previste)
-
-# Contenitori che le antenne leggono almeno una volta al mese.
-soglia_regolari <- 12
-regolari <- confronto[confronto$letture_annue_antenne >= soglia_regolari, ]
-quota_vuoti_regolari <- sum(regolari$anni_vuoti) / sum(regolari$anni_servizio)
-
-medie <- media_annuale(unite, anagrafica)
-
-# ---- I tre livelli: intero territorio, cantiere, comune --------------------
-# Le regole sono le stesse a ogni livello: cambia solo il raggruppamento. I
-# tassi di un cantiere o di un comune sono somme sui suoi contenitori.
+# ---- Livelli sotto l'ambito ------------------------------------------------
 punti_di <- function(tabella) {
   100 * (tabella$tasso_antenne - tabella$tasso_storico)
 }
-# Un cantiere o un comune entra nei confronti se ha almeno un contenitore con
-# le raccolte previste.
+per_servizio <- riepilogo_confronto(contenitori, "tipologia")
+per_servizio$punti <- punti_di(per_servizio)
 per_cantiere <- riepilogo_confronto(
-  confronto[!is.na(confronto$cantiere), ],
+  coorte[!is.na(coorte$cantiere), ],
   "cantiere"
 )
 per_cantiere <- per_cantiere[per_cantiere$n_con_raccolte > 0, ]
 per_cantiere$punti <- punti_di(per_cantiere)
-medie_cantiere <- media_annuale(unite, anagrafica, "cantiere")
-medie_cantiere <- medie_cantiere[
-  medie_cantiere$cantiere %in% per_cantiere$cantiere,
-]
-
 comuni <- riepilogo_confronto(
-  confronto[!is.na(confronto$comune), ],
+  coorte[!is.na(coorte$comune), ],
   c("cantiere", "comune")
 )
-comuni <- comuni[comuni$n_con_raccolte > 0, ]
+comuni <- comuni[comuni$n_con_raccolte > 0 & comuni$giorni_dopo > 0, ]
 comuni$cantiere <- dplyr::coalesce(comuni$cantiere, "Senza cantiere")
 comuni$punti <- punti_di(comuni)
 # Sotto questa soglia bastano uno o due contenitori a spostare il tasso di un
@@ -338,24 +543,22 @@ comuni$punti <- punti_di(comuni)
 minimo_contenitori <- 5
 comuni$solido <- comuni$n_con_raccolte >= minimo_contenitori
 solidi <- comuni[comuni$solido, ]
+mostra_cantieri <- ambito == "territorio" && nrow(per_cantiere) > 1
+mostra_comuni <- ambito != "comune" && nrow(comuni) > 1
+mostra_mappa <- ambito == "territorio" && mostra_comuni
 
-# Consistenza: gli RFID letti dalle antenne, a ogni livello.
-consistenza <- function(per = NULL) {
-  dplyr::summarise(
-    anagrafica,
-    comuni = dplyr::n_distinct(comune, na.rm = TRUE),
-    rfid = dplyr::n(),
-    censiti = sum(presente_a_database == "Presente"),
-    letture = sum(letture),
-    .by = dplyr::all_of(per)
-  )
-}
-consistenza_cantiere <- dplyr::arrange(consistenza("cantiere"), cantiere)
-consistenza_comune <- consistenza(c("cantiere", "comune"))
-rfid_senza_cantiere <- sum(is.na(anagrafica$cantiere))
-rfid_senza_comune <- sum(is.na(anagrafica$comune))
+# ---- Quanto resta da coprire -----------------------------------------------
+settimane <- copertura_settimanale(letture_ambito)
+solo_storico <- rfid_solo_storico(unite)
+# Codici che il sistema precedente ha letto nel periodo di riferimento: i
+# contenitori che un anno fa risultavano in servizio.
+in_riferimento <- unite$fonte == "storico" &
+  lubridate::as_date(unite$giorno_lettura) >= periodi$riferimento[1] &
+  lubridate::as_date(unite$giorno_lettura) <= periodi$riferimento[2]
+attivi_riferimento <- unique(unite$RFID[in_riferimento])
+gia_raggiunti <- sum(attivi_riferimento %in% rfid_antenne)
 
-# Con molti RFID la tabella per RFID intera appesantirebbe la pagina.
+# Con molti RFID una tabella intera appesantirebbe la pagina.
 massimo_righe_tabella <- 2000
 
 # Altezza della zona servita rispetto alla larghezza, sulla mappa.
@@ -367,481 +570,772 @@ proporzione_zona <- (zona$lat_max - zona$lat_min) /
 
 `r if (dati_di_esempio) '<div class="avviso-esempio">Questo report è compilato sui <b>dati di esempio</b> del pacchetto, che sono simulati. I numeri mostrano il metodo, non i risultati dell\'azienda. L\'ultima sezione spiega come compilarlo sui dati reali.</div>'`
 
-## In breve
-
-Prima delle antenne una lettura registrava solo il codice del contenitore e l'istante. Con le antenne ogni lettura porta anche il mezzo e la posizione. Questo report misura quanto è cambiato il numero di letture, e lo fa sugli **stessi contenitori**, prima e dopo.
-
-<div class="numeri">
-<div class="numero"><b>× `r num(riepilogo$rapporto)`</b><span>letture di un contenitore in un anno: da `r num(riepilogo$media_storico)` a `r num(riepilogo$media_antenne)`</span></div>
-<div class="numero"><b>`r pct(riepilogo$quota_anni_vuoti)`</b><span>degli anni di servizio senza nemmeno una lettura, con il sistema precedente</span></div>
-<div class="numero"><b>`r pct(riepilogo$tasso_storico)` → `r pct(riepilogo$tasso_antenne)`</b><span>delle raccolte previste che risultano lette</span></div>
-<div class="numero"><b>+ `r intero(riepilogo$letture_recuperate)`</b><span>letture utili in più ogni anno, su `r intero(riepilogo$n_con_raccolte)` contenitori</span></div>
+<div class="ambito">
+**Ambito:** `r nome_ambito`. **Servizio:** `r nome_servizio`. **Sistema precedente:** letture dal `r giorno(periodi$storico[1])` al `r giorno(periodi$storico[2])`. **Antenne:** letture dal `r giorno(periodi$antenne[1])` al `r giorno(periodi$antenne[2])`, da `r conta(mezzi_antenne, "mezzo", "mezzi")`.
 </div>
 
-- **Stessi contenitori.** Il confronto riguarda i `r intero(riepilogo$n_rfid)` RFID letti da entrambi i sistemi e in servizio da almeno un anno intero prima delle antenne. Così un contenitore nuovo non passa per un contenitore mai letto.
-- **Anni vuoti.** Con il sistema precedente `r intero(riepilogo$rfid_con_anni_vuoti)` di questi contenitori, `r con_articolo(riepilogo$rfid_con_anni_vuoti / riepilogo$n_rfid)`, hanno almeno un anno intero senza letture. Non erano contenitori fermi: tra quelli che oggi le antenne leggono almeno una volta al mese gli anni vuoti sono `r con_articolo(quota_vuoti_regolari)`.
-- **Letture utili.** Per la fatturazione conta la quota delle raccolte previste che risulta letta. Passa `r con_articolo(riepilogo$tasso_storico, "dal")` `r con_articolo(riepilogo$tasso_antenne, "al")`: `r num(100 * punti, 0)` punti in più, tra `r num(100 * punti_intervallo[1], 0)` e `r num(100 * punti_intervallo[2], 0)` con un intervallo di confidenza al 95%.
-- **Territorio, cantieri, comuni.** Gli stessi conti sono ripetuti per cantiere e per comune. Cantieri in cui il tasso di lettura cresce: `r intero(sum(per_cantiere$punti > 0))` su `r intero(nrow(per_cantiere))`. Comuni: `r intero(sum(comuni$punti > 0))` su `r intero(nrow(comuni))`.
+## In breve
+
+Con il sistema precedente l'operatore leggeva a mano il tag di ogni contenitore, e la lettura registrava solo il codice e l'istante. Con le antenne la lettura è automatica e porta con sé il mezzo e la posizione.
+
+I due sistemi hanno lavorato in periodi diversi, e le antenne leggono solo i contenitori serviti dai mezzi su cui sono montate: confrontare i totali non avrebbe senso. Questo report parte invece dai **contenitori`r del_servizio` che le antenne hanno letto finora**: `r nell_ambito_di` sono `r intero(n_coorte)`. Di ognuno guarda che cosa ne sapeva il sistema precedente.
+
+<div class="numeri">
+<div class="numero"><b>`r pct(riepilogo$quota_una_o_meno)`</b><span>di questi contenitori ha al più una lettura del sistema precedente `r nel_riferimento`</span></div>
+<div class="numero"><b>`r pct(riepilogo$tasso_storico)` → `r pct(riepilogo$tasso_antenne)`</b><span>delle raccolte previste che risultano lette, a parità di giorni osservati</span></div>
+<div class="numero"><b>`r intero(nrow(fuori_comune))`</b><span>`r if (nrow(fuori_comune) == 1) "contenitore censito letto" else "contenitori censiti letti"` lontano dal comune del database</span></div>
+<div class="numero"><b>`r intero(nrow(non_censiti))`</b><span>`r if (nrow(non_censiti) == 1) "contenitore" else "contenitori"` non a database di cui ora si conosce la posizione</span></div>
+</div>
+
+- **Poche letture, prima.** `r sub("^(.)", "\\U\\1", nel_riferimento, perl = TRUE)` il sistema precedente non ha letto nemmeno una volta `r intero(riepilogo$mai_letti)` di questi contenitori, `r con_articolo(riepilogo$quota_mai_letti)`. Letti una volta sola: `r intero(riepilogo$una_o_meno - riepilogo$mai_letti)`. Il contenitore tipico ha `r num(riepilogo$mediana_storico, 0)` letture in un anno, contro `r num(raccolte_medie, 0)` raccolte previste`r se(con_attesi, sprintf(" e circa %s svuotamenti che un'utenza chiede di norma", num(conferimenti_attesi, 0)))`.
+- **Contenitori nuovi o letture mancate?** `r if (c_e_storia_prima) sprintf("%s di questi contenitori erano già stati letti dal sistema precedente prima del periodo di riferimento, quindi erano in servizio: tra loro quelli con al più una lettura sono %s.", intero(riepilogo$gia_in_servizio), con_articolo(quota_in_servizio)) else senza_storia_prima`
+- **A parità di tempo.** Il tasso di lettura è la quota delle raccolte previste che risulta letta. `r if (antenne_di_piu) sprintf("Passa %s %s: %s punti in più", con_articolo(riepilogo$tasso_storico, "dal"), con_articolo(riepilogo$tasso_antenne, "al"), in_punti(punti)) else sprintf("Con il sistema precedente era %s, con le antenne è %s: le antenne non leggono di più", con_articolo(riepilogo$tasso_storico), con_articolo(riepilogo$tasso_antenne))``r tra_e`. `r if (!intervallo_noto) senza_intervallo else if (!guadagno_netto && antenne_di_piu) "L'intervallo comprende lo zero: con i dati di oggi la differenza non è ancora certa."`
+- **Che cosa prima non si vedeva.** Contenitori censiti letti fuori dal comune del database: `r intero(nrow(fuori_comune))`. Contenitori non a database a cui ora si può dare un servizio probabile: `r intero(sum(!is.na(non_censiti$tipologia)))` su `r intero(nrow(non_censiti))`. Coppie di codici che sembrano lo stesso contenitore letto male: `r intero(nrow(sospetti))`. Senza il mezzo e la posizione di ogni lettura nessuno di questi conti si può fare.
+- **In prospettiva.** Una lettura automatica, con il mezzo e la posizione, è la condizione per far pagare ogni utenza secondo i suoi conferimenti. Le sezioni [Che cosa comporta](#che-cosa-comporta) e [Quanto resta da coprire](#quanto-resta-da-coprire) dicono che cosa manca.
+- **I limiti.** Le letture con le antenne coprono `r intero(periodi$giorni_antenne)` giorni e vengono da `r conta(mezzi_antenne, "mezzo", "mezzi")`. I numeri delle antenne vanno aggiornati man mano che coprono più mesi e più mezzi.
 
 ## I dati
 
 ```{r tabella-dati}
+giorni_di <- function(fonte) sum(unite$fonte == fonte)
 knitr::kable(
   data.frame(
     sistema = c("Sistema precedente", "Antenne"),
-    periodo = c(dal_al(giorni_storico), dal_al(giorni_antenne)),
+    periodo = c(dal_al(periodi$storico), dal_al(periodi$antenne)),
     letture = c(intero(nrow(storico)), intero(nrow(letture))),
+    al_giorno = c(intero(giorni_di("storico")), intero(giorni_di("antenne"))),
     rfid = c(intero(length(rfid_storico)), intero(length(rfid_antenne))),
     contenuto = c(
       "RFID, data e ora",
-      "RFID, data e ora, mezzo, posizione, anagrafica"
+      "RFID, data e ora, mezzo, posizione, giro, anagrafica"
     )
   ),
   col.names = c(
     "Sistema",
     "Periodo",
     "Letture",
+    "Una al giorno per contenitore",
     "RFID",
     "Cosa registra una lettura"
   ),
-  align = "llrrl"
+  align = "llrrrl"
 )
 ```
 
-`r if (n_sacchetti_esclusi > 0) sprintf("I file contengono anche %s. Un sacchetto è monouso e viene letto una volta sola: non entra in nessun conto di questo report.", conta(n_sacchetti_esclusi, "sacchetto", "sacchetti"))`
+La tabella riguarda tutto il territorio. `r if (n_sacchetti_esclusi > 0) sprintf("I file contengono anche %s: un sacchetto è monouso e viene letto una volta sola, quindi non entra in nessun conto.", conta(n_sacchetti_esclusi, "sacchetto", "sacchetti"))`
 
-Gli RFID si dividono in tre gruppi.
+**Una lettura al giorno.** Un contenitore viene svuotato al più una volta al giorno. Due letture dello stesso contenitore nello stesso giorno sono lo stesso svuotamento letto due volte: in tutto il report contano una volta sola, per entrambi i sistemi.
 
-- **Letti da entrambi i sistemi: `r intero(n_entrambi)`.** Su questi si misura il cambiamento.
-- **Letti solo dalle antenne: `r intero(n_solo_antenne)`.** Contenitori nuovi, oppure contenitori che il sistema precedente non ha mai letto: i dati non permettono di distinguerli.
-- **Letti solo dal sistema precedente: `r intero(nrow(solo_storico))`.** Contenitori ritirati, oppure non ancora raggiunti dalle antenne. Hanno una [sezione](#gli-rfid-che-le-antenne-non-hanno-ancora-letto) a parte.
+**Il periodo di riferimento.** Il sistema precedente si misura sui `r intero(giorni_rif)` giorni che precedono la prima lettura con le antenne, dal `r giorno(periodi$riferimento[1])` al `r giorno(periodi$riferimento[2])`: lì lavorava da solo. `r if (!riferimento_intero) "Le letture storiche non coprono dodici mesi prima delle antenne: i conteggi sono riportati a un anno."` `r if (periodi$sovrapposti) "Il sistema precedente ha continuato a leggere anche dopo l'arrivo delle antenne. Quelle letture non entrano nel confronto: da allora i due sistemi lavorano insieme, e non si può sapere quali contenitori toccassero all'uno e quali all'altro."`
 
-Il confronto è fatto a tre livelli: l'intero territorio servito, il cantiere e il comune. Il comune di un contenitore è quello indicato dal database. Per un contenitore non censito è il comune in cui i mezzi lo hanno letto più spesso. Il cantiere è quello del comune.
+**La coorte.** `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` le antenne hanno letto `r intero(nrow(contenitori))` contenitori. Il servizio di un contenitore censito è quello del database. Per un contenitore non censito è quello dei giri che lo hanno letto, se almeno l'80% delle letture viene da giri dello stesso rifiuto: altrimenti la stima è incerta. `r if (!tutti_i_servizi) sprintf("Il confronto riguarda %s contenitori%s; gli altri servizi hanno una [sezione](#gli-altri-servizi) a parte.", intero(n_coorte), del_servizio)`
 
-```{r tabella-territorio}
-nel_confronto <- dplyr::count(confronto, cantiere, name = "confronto")
-territorio <- consistenza_cantiere |>
-  dplyr::left_join(nel_confronto, by = "cantiere") |>
+```{r tabella-coorte}
+per_stato <- contenitori |>
   dplyr::mutate(
-    cantiere = dplyr::coalesce(cantiere, "Senza cantiere"),
-    confronto = dplyr::coalesce(confronto, 0L)
+    tipologia = dplyr::coalesce(tipologia, "Stima incerta"),
+    letto_prima = letture_prima + letture_riferimento + letture_sovrapposte > 0
   ) |>
-  dplyr::bind_rows(
-    dplyr::mutate(
-      consistenza(),
-      cantiere = "Intero territorio",
-      confronto = nrow(confronto)
-    )
-  )
+  dplyr::summarise(
+    contenitori = dplyr::n(),
+    censiti = sum(presente_a_database == "Presente"),
+    non_censiti = sum(presente_a_database == "Non Presente"),
+    gia_letti = sum(letto_prima),
+    .by = "tipologia"
+  ) |>
+  dplyr::arrange(tipologia == "Stima incerta", dplyr::desc(contenitori))
+totale_stato <- data.frame(
+  tipologia = "Totale",
+  contenitori = sum(per_stato$contenitori),
+  censiti = sum(per_stato$censiti),
+  non_censiti = sum(per_stato$non_censiti),
+  gia_letti = sum(per_stato$gia_letti)
+)
+per_stato <- rbind(as.data.frame(per_stato), totale_stato)
 knitr::kable(
   data.frame(
-    cantiere = territorio$cantiere,
-    comuni = intero(territorio$comuni),
-    rfid = intero(territorio$rfid),
-    censiti = intero(territorio$censiti),
-    letture = intero(territorio$letture),
-    confronto = intero(territorio$confronto)
+    servizio = per_stato$tipologia,
+    contenitori = intero(per_stato$contenitori),
+    censiti = intero(per_stato$censiti),
+    non_censiti = intero(per_stato$non_censiti),
+    gia_letti = intero(per_stato$gia_letti),
+    mai = intero(per_stato$contenitori - per_stato$gia_letti)
   ),
   col.names = c(
-    "Cantiere",
-    "Comuni",
-    "RFID letti dalle antenne",
-    "Di cui censiti",
-    "Letture con le antenne",
-    "Contenitori nel confronto"
+    "Servizio",
+    "Letti dalle antenne",
+    "Censiti",
+    "Non censiti",
+    "Già letti dal sistema precedente",
+    "Mai letti dal sistema precedente"
   ),
   align = "lrrrrr"
 )
 ```
 
-`r if (rfid_senza_cantiere > 0 || rfid_senza_comune > 0) sprintf("Gli RFID senza cantiere, %s, restano nei conti dell'intero territorio e non entrano in quelli per cantiere. Quelli senza comune, %s, non entrano in quelli per comune.", intero(rfid_senza_cantiere), intero(rfid_senza_comune))`
+Le ultime due colonne guardano tutte le letture del sistema precedente, dal `r giorno(periodi$storico[1])` in poi, non solo il periodo di riferimento.
 
-Ogni anno appartiene a un sistema, oppure a tutti e due.
+## Quanto leggeva il sistema precedente
 
-```{r tabella-anni}
-knitr::kable(
-  data.frame(
-    anno = copertura$anno,
-    sistema = unname(nomi_sistema[copertura$sistema]),
-    storico = intero(copertura$giorni_storico),
-    antenne = intero(copertura$giorni_antenne),
-    completo = ifelse(copertura$completo, "Sì", "No, riportato a 12 mesi")
-  ),
-  col.names = c(
-    "Anno",
-    "Sistema",
-    "Giorni del sistema precedente",
-    "Giorni delle antenne",
-    "Anno completo"
-  ),
-  align = "llrrl"
+I contenitori di questa sezione sono in servizio oggi: le antenne li hanno letti. La domanda è quante volte li aveva letti il sistema precedente.
+
+### Le letture nel periodo di riferimento
+
+```{r grafico-distribuzione, fig.width=8, fig.height=4.4}
+previste_nel_periodo <- raccolte_medie * giorni_rif / 365
+attesi_nel_periodo <- if (con_attesi) conferimenti_attesi * giorni_rif / 365
+tetto <- max(30, ceiling(previste_nel_periodo) + 2)
+distribuzione <- dplyr::count(
+  data.frame(letture = pmin(coorte$letture_riferimento, tetto)),
+  letture,
+  name = "contenitori"
 )
-```
+distribuzione$poche <- distribuzione$letture <= 1
+riferimenti <- data.frame(
+  valore = c(previste_nel_periodo, attesi_nel_periodo),
+  nome = c("Raccolte previste", if (con_attesi) "Svuotamenti di norma")
+)
 
-Un anno è *misto* quando i due sistemi si sono dati il cambio al suo interno: le letture si sommano. Un anno coperto per meno del 95% dei giorni è *parziale*: nei conteggi per contenitore viene riportato a dodici mesi. `r if (periodi_sovrapposti) "**Attenzione:** i periodi dei due sistemi si sovrappongono. Nei giorni in comune uno stesso svuotamento può essere contato due volte."`
-
-## L'intero territorio
-
-Le letture di tutti i contenitori, senza distinguere cantieri e comuni. Le due sezioni successive ripetono gli stessi conti per [cantiere](#cantiere-per-cantiere) e per [comune](#comune-per-comune).
-
-### Le letture anno per anno
-
-```{r grafico-totali, fig.width=8, fig.height=4.2}
-totali <- conta_letture_annuali(unite[unite$RFID %in% rfid_antenne, ]) |>
-  dplyr::summarise(letture = sum(letture), .by = c("anno", "fonte")) |>
-  dplyr::mutate(fonte = factor(fonte, levels = c("antenne", "storico")))
-totali_anno <- dplyr::summarise(totali, letture = sum(letture), .by = "anno")
-
-ggplot(totali, aes(factor(anno), letture)) +
-  geom_col(aes(fill = fonte), width = 0.68) +
-  geom_text(
-    data = totali_anno,
-    aes(label = intero(letture)),
-    vjust = -0.5,
-    size = 3.4,
-    colour = colori$primario
-  ) +
-  scale_fill_manual(
-    values = c(storico = colori$storico, antenne = colori$antenne),
-    labels = c(storico = "Sistema precedente", antenne = "Antenne"),
-    breaks = c("storico", "antenne")
-  ) +
-  scale_x_discrete(labels = etichette_anni) +
-  scale_y_continuous(
-    labels = intero,
-    expand = expansion(mult = c(0, 0.1))
-  ) +
-  labs(
-    title = "Le letture di ogni anno, vecchie e nuove insieme",
-    subtitle = sprintf(
-      "Letture dei %s RFID letti dalle antenne, per anno e per sistema.",
-      intero(length(rfid_antenne))
-    ),
-    x = NULL,
-    y = "Letture"
-  ) +
-  tema_grafico
-```
-
-Il totale dipende anche da quanti contenitori erano in servizio, che negli anni cambiano. Per un confronto alla pari serve la media per contenitore. Qui sotto ogni contenitore entra nel conteggio **dall'anno successivo a quello della sua prima lettura**: da lì in poi era di sicuro in servizio per tutto l'anno. Per questo il primo anno dei dati non compare.
-
-```{r grafico-medie, fig.width=8, fig.height=4.2}
-ggplot(medie, aes(factor(anno), letture_utili_medie)) +
-  geom_col(aes(fill = sistema), width = 0.68) +
-  geom_errorbar(
-    aes(ymin = raccolte_medie, ymax = raccolte_medie),
-    width = 0.86,
+ggplot(distribuzione, aes(letture, contenitori)) +
+  geom_col(aes(fill = poche), width = 0.82, show.legend = FALSE) +
+  geom_vline(
+    data = riferimenti,
+    aes(xintercept = valore),
     linetype = "dashed",
     colour = colori$secondario
   ) +
   geom_text(
-    aes(label = num(letture_utili_medie)),
-    vjust = -0.5,
-    size = 3.4,
-    colour = colori$primario
-  ) +
-  annotate(
-    "text",
-    x = 0.55,
-    y = max(medie$raccolte_medie),
-    label = "Raccolte previste",
-    hjust = 0,
-    vjust = -0.6,
-    size = 3.2,
+    data = riferimenti,
+    aes(x = valore, y = Inf, label = nome),
+    hjust = 1.06,
+    vjust = 1.7,
+    size = 3.1,
     colour = colori$secondario
   ) +
+  scale_fill_manual(
+    values = c(`TRUE` = colori$vuoto, `FALSE` = colori$storico)
+  ) +
+  scale_x_continuous(
+    breaks = seq(0, tetto, 5),
+    labels = function(x) ifelse(x == tetto, paste0(x, " o più"), x),
+    expand = expansion(mult = 0.02)
+  ) +
+  scale_y_continuous(labels = intero, expand = expansion(mult = c(0, 0.08))) +
+  labs(
+    title = sprintf(
+      "%s contenitori su %s hanno al più una lettura del sistema precedente",
+      intero(riepilogo$una_o_meno),
+      intero(n_coorte)
+    ),
+    subtitle = sprintf(
+      "Contenitori%s letti dalle antenne, per numero di letture del sistema precedente\ndal %s al %s. In arancione zero letture o una.",
+      del_servizio,
+      giorno(periodi$riferimento[1]),
+      giorno(periodi$riferimento[2])
+    ),
+    x = "Letture del sistema precedente nel periodo di riferimento",
+    y = "Contenitori"
+  ) +
+  tema_grafico
+```
+
+```{r tabella-classi}
+classi_letture <- c("Nessuna", "Una", "Da 2 a 5", "Da 6 a 12", "Più di 12")
+classe_di <- function(x) {
+  cut(x, breaks = c(-Inf, 0, 1, 5, 12, Inf), labels = classi_letture)
+}
+conta_classi <- function(x) as.integer(table(classe_di(x)))
+quota_di <- function(x) if (sum(x) > 0) pct(x / sum(x)) else rep("-", length(x))
+tutti <- conta_classi(coorte$letture_riferimento)
+gia <- conta_classi(in_servizio$letture_riferimento)
+regolari_classi <- conta_classi(regolari$letture_riferimento)
+knitr::kable(
+  data.frame(
+    classe = c(classi_letture, "Totale"),
+    tutti = c(intero(tutti), intero(sum(tutti))),
+    quota = c(quota_di(tutti), ""),
+    gia = c(intero(gia), intero(sum(gia))),
+    quota_gia = c(quota_di(gia), ""),
+    regolari = c(intero(regolari_classi), intero(sum(regolari_classi))),
+    quota_regolari = c(quota_di(regolari_classi), "")
+  ),
+  col.names = c(
+    "Letture nel periodo di riferimento",
+    "Contenitori",
+    "Quota",
+    "Già in servizio",
+    "Quota",
+    "Letti con regolarità dalle antenne",
+    "Quota"
+  ),
+  align = "lrrrrrr"
+)
+```
+
+Un contenitore`r del_servizio` della coorte ha in media `r num(riepilogo$media_storico)` letture del sistema precedente in un anno; la metà dei contenitori non supera `r num(riepilogo$mediana_storico, 0)`. Le raccolte previste in un anno sono in media `r num(raccolte_medie, 0)`. `r se(con_attesi, sprintf("Non ci si aspetta che un'utenza esponga il contenitore a ogni passaggio: di norma chiede circa %s svuotamenti l'anno. Un contenitore in servizio con al più una lettura in un anno resta lontano anche da questo numero.", num(conferimenti_attesi, 0)))`
+
+### Contenitori nuovi o letture mancate
+
+Un contenitore senza letture può essere stato consegnato da poco: il sistema precedente non lo ha letto perché non c'era. Due controlli separano questo caso da una lettura mancata. Sono le due coppie di colonne a destra della tabella.
+
+- **Già in servizio.** `r if (c_e_storia_prima) sprintf("%s contenitori hanno almeno una lettura del sistema precedente prima del %s: all'inizio del periodo di riferimento esistevano già. Tra loro, senza letture nel periodo di riferimento: %s; con una lettura sola: %s. Insieme sono %s.", intero(nrow(in_servizio)), giorno(periodi$riferimento[1]), intero(riepilogo$mai_letti_in_servizio), intero(riepilogo$una_o_meno_in_servizio - riepilogo$mai_letti_in_servizio), con_articolo(riepilogo$una_o_meno_in_servizio / riepilogo$gia_in_servizio)) else senza_storia_prima`
+- **Letti con regolarità dalle antenne.** `r if (nrow(regolari) > 0) sprintf("%s contenitori hanno almeno %s letture con le antenne in giorni diversi: sono esposti con regolarità. Tra loro quelli con al più una lettura del sistema precedente nel periodo di riferimento sono %s, %s.", intero(nrow(regolari)), soglia_regolari, intero(sum(regolari$letture_riferimento <= 1)), con_articolo(mean(regolari$letture_riferimento <= 1))) else sprintf("Nessun contenitore ha ancora %s letture con le antenne in giorni diversi: il controllo si potrà fare con qualche settimana di dati in più.", soglia_regolari)`
+
+`r if (c_e_storia_prima) sprintf("Tra tutti i contenitori della coorte quelli con al più una lettura sono %s, tra quelli già in servizio %s: %s", con_articolo(riepilogo$quota_una_o_meno), con_articolo(quota_in_servizio), if (quota_in_servizio >= riepilogo$quota_una_o_meno / 2) "le poche letture restano anche togliendo ogni dubbio sui contenitori nuovi." else "una parte importante dei contenitori senza letture può essere fatta di contenitori consegnati da poco. Il dato più solido è quello dei contenitori già in servizio.")`
+
+Resta il caso di un'utenza che per un anno espone di rado e poi, con le antenne, espone spesso: può spiegare qualche contenitore, non molti insieme.
+
+### Anno per anno
+
+Le letture del sistema precedente degli stessi contenitori, per anno solare. Contano tutti i contenitori della coorte, anche quelli che in quell'anno potevano non essere ancora in servizio.
+
+```{r tabella-anni}
+copertura <- copertura_annuale(unite)
+copertura <- copertura[copertura$giorni_storico > 0, ]
+storiche_coorte <- unite[
+  unite$fonte == "storico" & unite$RFID %in% coorte$RFID,
+]
+per_anno <- dplyr::count(
+  data.frame(
+    RFID = storiche_coorte$RFID,
+    anno = as.integer(lubridate::year(storiche_coorte$giorno_lettura))
+  ),
+  RFID,
+  anno,
+  name = "letture"
+)
+# Letture di ogni contenitore della coorte in un anno, zeri compresi.
+letture_nell_anno <- function(anno) {
+  dell_anno <- per_anno[per_anno$anno == anno, ]
+  dplyr::coalesce(dell_anno$letture[match(coorte$RFID, dell_anno$RFID)], 0L)
+}
+matrice_anni <- vapply(copertura$anno, letture_nell_anno, integer(n_coorte))
+dim(matrice_anni) <- c(n_coorte, nrow(copertura))
+knitr::kable(
+  data.frame(
+    anno = copertura$anno,
+    giorni = paste0(
+      intero(copertura$giorni_storico),
+      ifelse(copertura$giorni_antenne > 0, " (con le antenne in arrivo)", "")
+    ),
+    nessuna = intero(colSums(matrice_anni == 0)),
+    una = intero(colSums(matrice_anni == 1)),
+    poche = intero(colSums(matrice_anni >= 2 & matrice_anni <= 5)),
+    molte = intero(colSums(matrice_anni > 5)),
+    quota = pct(colMeans(matrice_anni <= 1))
+  ),
+  col.names = c(
+    "Anno",
+    "Giorni con il sistema precedente",
+    "Nessuna lettura",
+    "Una",
+    "Da 2 a 5",
+    "Più di 5",
+    "Al più una"
+  ),
+  align = "rlrrrrr"
+)
+mai_piu_di_una <- sum(apply(matrice_anni, 1, max) <= 1)
+```
+
+`r intero(mai_piu_di_una)` contenitori, `r con_articolo(mai_piu_di_una / n_coorte)`, non superano una lettura in nessuno degli anni della tabella.
+
+### Mese per mese
+
+```{r grafico-mesi, fig.width=8, fig.height=4.2}
+mensili <- letture_mensili(unite, coorte$RFID)
+mensili$fonte <- factor(mensili$fonte, levels = c("antenne", "storico"))
+# Andamento del sistema precedente quando lavorava da solo: i primi tre mesi
+# interi contro gli ultimi tre.
+mese_antenne <- lubridate::floor_date(periodi$antenne[1], "month")
+mese_inizio <- lubridate::ceiling_date(periodi$storico[1], "month")
+da_solo <- mensili[
+  mensili$fonte == "storico" &
+    mensili$mese >= mese_inizio &
+    mensili$mese < mese_antenne,
+]
+andamento <- if (nrow(da_solo) >= 6) {
+  c(
+    inizio = mean(utils::head(da_solo$letture, 3)),
+    fine = mean(utils::tail(da_solo$letture, 3))
+  )
+}
+
+ggplot(mensili, aes(mese, letture)) +
+  geom_col(aes(fill = fonte), width = 24) +
   scale_fill_manual(
     values = colori_sistema,
     labels = nomi_sistema,
     breaks = names(nomi_sistema)
   ) +
-  scale_x_discrete(labels = etichette_anni) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  scale_x_date(
+    date_labels = "%m/%Y",
+    expand = expansion(mult = c(0.02, 0.05))
+  ) +
+  scale_y_continuous(labels = intero, expand = expansion(mult = c(0, 0.08))) +
   labs(
-    title = sprintf(
-      "Un contenitore viene letto %s volte l'anno con le antenne, prima da %s a %s",
-      num(max(medie$letture_utili_medie[medie$sistema == "antenne"])),
-      num(min(medie$letture_utili_medie[medie$sistema == "storico"])),
-      num(max(medie$letture_utili_medie[medie$sistema == "storico"]))
-    ),
+    title = "Le letture degli stessi contenitori, mese per mese",
     subtitle = sprintf(
-      "Letture utili medie per contenitore, tra i censiti con le raccolte previste.\nTratteggio: raccolte previste in un anno, %s in media.",
-      num(mean(medie$raccolte_medie))
+      "Letture al mese di %s contenitori%s, quelli della coorte. Una lettura al giorno per contenitore.",
+      intero(n_coorte),
+      del_servizio
     ),
     x = NULL,
-    y = "Letture utili per contenitore"
+    y = "Letture al mese"
   ) +
   tema_grafico
 ```
 
-Le *letture utili* di un contenitore in un anno non superano mai le sue raccolte previste. Un tag letto più volte di quante il mezzo passi non è un contenitore svuotato più spesso: è un tag fermo in deposito o rimasto su un mezzo, e l'app lo segnala nell'analisi dei cluster.
+`r if (!is.null(andamento)) sprintf("Nei primi tre mesi interi il sistema precedente registrava in media %s letture al mese di questi contenitori, negli ultimi tre prima delle antenne %s: %s", intero(andamento[["inizio"]]), intero(andamento[["fine"]]), if (andamento[["fine"]] < 0.9 * andamento[["inizio"]]) "le letture sono calate nel tempo, come ci si aspetta se la lettura a mano viene via via trascurata." else if (andamento[["fine"]] > 1.1 * andamento[["inizio"]]) "le letture sono cresciute nel tempo. Una parte della crescita può venire da contenitori consegnati nel frattempo." else "il livello è rimasto più o meno lo stesso: le poche letture non sono un fenomeno degli ultimi mesi.") else "Il sistema precedente ha lavorato da solo per meno di sei mesi interi: l'andamento nel tempo non si può valutare."`
 
-### Tabella per RFID
+### I contenitori, uno per uno
 
-Una riga per ogni RFID letto dalle antenne, con le letture di ogni anno, il cantiere, il comune e le raccolte previste. La casella è vuota negli anni che precedono la prima lettura dell'RFID, ed è zero negli anni successivi senza letture. `r if (nrow(anagrafica) > massimo_righe_tabella) sprintf("Gli RFID sono %s: la tabella riporta i %s con più anni senza letture.", intero(nrow(anagrafica)), intero(massimo_righe_tabella))`
+Una riga per contenitore della coorte, con le letture del sistema precedente in ogni anno e quelle delle antenne. All'apertura sono in cima i contenitori che il sistema precedente leggeva meno. `r if (n_coorte > massimo_righe_tabella) sprintf("I contenitori sono %s: la tabella riporta i primi %s.", intero(n_coorte), intero(massimo_righe_tabella))`
 
 ```{r tabella-rfid}
-tabella <- tabella_letture_annuali(unite, anagrafica)
-if (nrow(tabella) > massimo_righe_tabella) {
-  anni_a_zero <- rowSums(
-    tabella[grep("^letture_", names(tabella))] == 0,
-    na.rm = TRUE
-  )
-  tabella <- utils::head(tabella[order(-anni_a_zero), ], massimo_righe_tabella)
-}
-# Le intestazioni riportano l'anno e il suo sistema, come nei grafici.
-colonne_anni <- gsub(
-  "\n",
-  " ",
-  etichette_anni[sub(
-    "letture_",
-    "",
-    grep("^letture_", names(tabella), value = TRUE)
-  )]
-)
-names(tabella) <- c(
-  "RFID",
-  colonne_anni,
-  "Cantiere",
-  "Comune",
-  "Raccolte previste"
-)
-DT::datatable(
-  tabella,
-  rownames = FALSE,
-  filter = "top",
-  class = "display nowrap",
-  options = list(
-    pageLength = 10,
-    scrollX = TRUE,
-    language = lingua_dt()
+colonne_anni <- paste("Sist. prec.", copertura$anno)
+tabella_rfid <- data.frame(
+  RFID = coorte$RFID,
+  Stato = ifelse(
+    coorte$presente_a_database == "Presente",
+    "Censito",
+    "Non censito"
   ),
-  callback = DT::JS(
-    "$(table.table().container()).find('input[placeholder=\"All\"]').attr('placeholder', 'Tutti');"
-  )
-) |>
+  Cantiere = coorte$cantiere,
+  Comune = coorte$comune,
+  check.names = FALSE
+)
+tabella_rfid[colonne_anni] <- as.data.frame(matrice_anni)
+tabella_rfid[["Periodo di riferimento"]] <- coorte$letture_riferimento
+tabella_rfid[["Antenne"]] <- coorte$letture_antenne
+tabella_rfid[["Prima lettura con le antenne"]] <- format(
+  coorte$prima_lettura_antenne
+)
+tabella_rfid[["Raccolte previste"]] <- coorte$raccolte_previste
+tabella_rfid <- tabella_rfid[
+  order(coorte$letture_riferimento, -coorte$letture_antenne),
+]
+tabella_rfid <- utils::head(tabella_rfid, massimo_righe_tabella)
+tabella_dt(tabella_rfid) |>
   DT::formatStyle(
-    colonne_anni,
+    c(colonne_anni, "Periodo di riferimento"),
     color = DT::styleEqual(0, colori$vuoto),
     fontWeight = DT::styleEqual(0, "bold")
   )
 ```
 
-### Gli anni senza letture
+## A parità di tempo
 
-Un *anno vuoto* è un anno intero del sistema precedente in cui un contenitore già in servizio non ha nemmeno una lettura. Contano gli anni `r elenco_anni(anni_storico)`, e per ogni contenitore solo quelli successivi all'anno della sua prima lettura.
+Contare le letture non basta: i due sistemi sono stati osservati per tempi diversi. Qui ogni sistema è misurato sui giorni in cui lo si è potuto osservare.
 
-```{r anni-vuoti}
-vuoti_per_anno <- griglia_annuale(unite, confronto$RFID) |>
-  dplyr::filter(anno %in% anni_storico, anno > primo_anno) |>
-  dplyr::summarise(
-    in_servizio = dplyr::n(),
-    senza_letture = sum(storico == 0),
-    .by = "anno"
-  ) |>
-  dplyr::arrange(anno)
+- **Sistema precedente:** le letture del periodo di riferimento, `r intero(giorni_rif)` giorni.
+- **Antenne:** le letture **successive alla prima**, nei giorni che vanno dalla prima lettura di ogni contenitore al `r giorno(periodi$antenne[2])`. La prima lettura è quella che fa entrare il contenitore nella coorte: contarla gonfierebbe il risultato, perché la coorte è fatta proprio dei contenitori che hanno almeno una lettura. In media ogni contenitore è osservato per `r intero(riepilogo$giorni_dopo / n_coorte)` giorni.
 
-knitr::kable(
-  data.frame(
-    anno = vuoti_per_anno$anno,
-    in_servizio = intero(vuoti_per_anno$in_servizio),
-    senza_letture = intero(vuoti_per_anno$senza_letture),
-    quota = pct(vuoti_per_anno$senza_letture / vuoti_per_anno$in_servizio)
+<div class="formula">
+tasso di lettura = letture utili ÷ raccolte previste nei giorni osservati
+</div>
+
+Le *letture utili* di un contenitore non superano mai le raccolte previste nei giorni in cui è osservato. Un tag letto più volte di quante il mezzo passi non è un contenitore svuotato più spesso: è un tag fermo in deposito o rimasto su un mezzo, e l'app lo segnala nell'analisi dei cluster.
+
+```{r grafico-tasso, fig.width=7, fig.height=4.4, out.width="80%"}
+tassi <- data.frame(
+  sistema = factor(names(nomi_sistema), levels = names(nomi_sistema)),
+  tasso = c(riepilogo$tasso_storico, riepilogo$tasso_antenne),
+  inferiore = c(
+    intervallo_storico[["inferiore"]],
+    intervallo_antenne[["inferiore"]]
   ),
-  col.names = c("Anno", "Contenitori in servizio", "Senza letture", "Quota"),
-  align = "rrrr"
-)
-```
-
-In tutto `r intero(riepilogo$totale_anni_vuoti)` anni vuoti su `r intero(riepilogo$totale_anni_servizio)` anni di servizio, `r con_articolo(riepilogo$quota_anni_vuoti)`. Riguardano `r intero(riepilogo$rfid_con_anni_vuoti)` contenitori su `r intero(riepilogo$n_rfid)`.
-
-Un anno vuoto può anche essere vero: un contenitore mai esposto, un'utenza sospesa. Per separare i due casi si guardano i soli contenitori che le antenne leggono almeno `r soglia_regolari` volte l'anno, cioè quelli esposti con regolarità. Sono `r intero(nrow(regolari))`, e per loro gli anni vuoti sono `r con_articolo(quota_vuoti_regolari)`: `r intero(sum(regolari$anni_vuoti))` su `r intero(sum(regolari$anni_servizio))`. Per un contenitore letto oggi una o due volte al mese, un anno intero senza letture è una mancata registrazione.
-
-```{r grafico-griglia, fig.width=8, fig.height=6}
-classi <- c(
-  "Nessuna lettura",
-  "Da 1 a 6",
-  "Da 7 a 12",
-  "Da 13 a 20",
-  "Più di 20"
-)
-ordine <- confronto$RFID[order(
-  confronto$letture_annue_storico,
-  confronto$letture_annue_antenne
-)]
-griglia <- griglia_annuale(unite, confronto$RFID) |>
-  dplyr::mutate(
-    riga = match(RFID, ordine),
-    classe = cut(letture, breaks = c(-Inf, 0, 6, 12, 20, Inf), labels = classi)
+  superiore = c(
+    intervallo_storico[["superiore"]],
+    intervallo_antenne[["superiore"]]
   )
-
-ggplot(griglia, aes(factor(anno), riga, fill = classe)) +
-  geom_tile(width = 0.96, height = 1) +
-  scale_fill_manual(
-    values = stats::setNames(
-      c(colori$vuoto, "#e4e3de", "#bdbcb3", "#85847c", "#3f3e3a"),
-      classi
-    ),
-    drop = FALSE
-  ) +
-  scale_x_discrete(labels = etichette_anni, position = "top") +
-  scale_y_reverse(expand = c(0, 0), breaks = NULL) +
-  labs(
-    title = "Ogni riga un contenitore, ogni colonna un anno",
-    subtitle = sprintf(
-      "Letture in un anno dei %s contenitori del confronto. In alto quelli che il sistema precedente leggeva meno.\nIn arancione gli anni senza letture. Casella bianca: prima della prima lettura del contenitore.",
-      intero(nrow(confronto))
-    ),
-    x = NULL,
-    y = NULL
-  ) +
-  tema_grafico +
-  theme(panel.grid = element_blank())
-```
-
-### Quanto si guadagna
-
-Il vantaggio si misura in tre modi, dal più semplice al più utile per la fatturazione.
-
-**1. Letture per contenitore.** Con il sistema precedente un contenitore veniva letto in media `r num(riepilogo$media_storico)` volte l'anno, con le antenne `r num(riepilogo$media_antenne)`: `r num(riepilogo$rapporto)` volte tanto. `r sub("^(.)", "\\U\\1", con_articolo(quota_migliorati), perl = TRUE)` dei contenitori è letto più spesso di prima.
-
-```{r grafico-confronto, fig.width=6.4, fig.height=5.6, out.width="72%"}
-limite <- max(
-  confronto$letture_annue_storico,
-  confronto$letture_annue_antenne
-) *
-  1.04
-ggplot(confronto, aes(letture_annue_storico, letture_annue_antenne)) +
-  geom_abline(
-    slope = 1,
-    intercept = 0,
-    linetype = "dashed",
-    colour = colori$secondario
-  ) +
-  geom_point(
-    aes(colour = letture_annue_antenne > letture_annue_storico),
-    size = 1.9,
-    alpha = 0.6,
-    show.legend = FALSE
-  ) +
-  annotate(
-    "text",
-    x = limite * 0.98,
-    y = limite * 0.6,
-    label = "Sulla diagonale:\nstesse letture\nprima e dopo",
-    hjust = 1,
-    vjust = 1,
-    size = 3.2,
-    lineheight = 0.95,
-    colour = colori$secondario
-  ) +
-  scale_colour_manual(
-    values = c(`TRUE` = colori$antenne, `FALSE` = colori$vuoto)
-  ) +
-  coord_equal(xlim = c(0, limite), ylim = c(0, limite), expand = FALSE) +
-  labs(
-    title = sprintf(
-      "%s contenitori su %s sono letti più spesso di prima",
-      intero(sum(
-        confronto$letture_annue_antenne > confronto$letture_annue_storico
-      )),
-      intero(nrow(confronto))
-    ),
-    subtitle = "Un punto per contenitore. Sopra la diagonale le antenne leggono di più.",
-    x = "Letture in un anno, sistema precedente",
-    y = "Letture in un anno, antenne"
-  ) +
-  tema_grafico +
-  theme(panel.grid.major.x = element_line(colour = colori$griglia))
-```
-
-**2. Quota delle raccolte previste.** Più letture non bastano: contano quelle che corrispondono a un passaggio del mezzo. Il *tasso di lettura* mette a confronto le letture utili con le raccolte previste dall'anagrafica.
-
-<div class="formula">
-tasso di lettura = letture utili in un anno ÷ raccolte previste in un anno
-</div>
-
-Sui `r intero(riepilogo$n_con_raccolte)` contenitori censiti del confronto le raccolte previste sono `r intero(riepilogo$raccolte_previste)` l'anno. Il sistema precedente ne registrava `r intero(riepilogo$utili_storico)`, `r con_articolo(riepilogo$tasso_storico)`. Le antenne ne registrano `r intero(riepilogo$utili_antenne)`, `r con_articolo(riepilogo$tasso_antenne)`.
-
-**3. Letture recuperate.** La differenza tra i due tassi, moltiplicata per le raccolte previste, dà le letture che prima mancavano.
-
-<div class="formula">
-letture recuperate in un anno = (tasso con le antenne − tasso precedente) × raccolte previste
-</div>
-
-- **Per contenitore:** `r num(recuperate["media"])` letture utili in più all'anno, tra `r num(recuperate["inferiore"])` e `r num(recuperate["superiore"])` con un intervallo di confidenza al 95%.
-- **Sui contenitori del confronto:** `r intero(riepilogo$letture_recuperate)` letture in più all'anno, pari a circa `r intero(riepilogo$litri_recuperati / 1000)` metri cubi di volume svuotato che prima non risultava.
-- **Su tutti i censiti letti dalle antenne:** se lo stesso guadagno vale per tutti i `r intero(nrow(tutti_con_raccolte))` contenitori con le raccolte previste, le letture recuperate sono circa `r intero(proiezione)` l'anno. È una proiezione: il confronto diretto è possibile solo sui contenitori con una storia.
-
-Ogni lettura recuperata è uno svuotamento che prima non risultava e che ora si può attribuire a un'utenza. Per tradurla in euro basta moltiplicarla per la tariffa a svuotamento o a litro.
-
-## Cantiere per cantiere
-
-Gli stessi conti, ripetuti per ogni cantiere. Un contenitore appartiene al cantiere del suo comune.
-
-### Anno per anno
-
-```{r grafico-cantieri, fig.width=8, fig.height=2.9 * ceiling(nrow(per_cantiere) / 2) + 0.9}
-previste_cantiere <- dplyr::summarise(
-  medie_cantiere,
-  raccolte_medie = mean(raccolte_medie),
-  .by = "cantiere"
 )
-cambia_di_piu <- per_cantiere[which.max(abs(per_cantiere$punti)), ]
+tassi$letture <- tassi$tasso * raccolte_medie
+# Senza intervallo l'etichetta sta sopra la barra.
+tassi$cima <- dplyr::coalesce(tassi$superiore, tassi$tasso) * raccolte_medie
+linee <- data.frame(
+  valore = c(raccolte_medie, if (con_attesi) conferimenti_attesi),
+  nome = c(
+    sprintf("Raccolte previste: %s", num(raccolte_medie, 0)),
+    if (con_attesi) {
+      sprintf("Svuotamenti di norma: %s", num(conferimenti_attesi, 0))
+    }
+  )
+)
 
-ggplot(medie_cantiere, aes(factor(anno), letture_utili_medie)) +
-  geom_col(aes(fill = sistema), width = 0.68) +
-  geom_hline(
-    data = previste_cantiere,
-    aes(yintercept = raccolte_medie),
-    linetype = "dashed",
-    colour = colori$secondario
-  ) +
-  geom_text(
-    aes(label = num(letture_utili_medie)),
-    vjust = -0.5,
-    size = 3.1,
+ggplot(tassi, aes(sistema, letture)) +
+  geom_col(aes(fill = sistema), width = 0.55, show.legend = FALSE) +
+  geom_errorbar(
+    aes(
+      ymin = pmax(inferiore, 0) * raccolte_medie,
+      ymax = superiore * raccolte_medie
+    ),
+    width = 0.12,
     colour = colori$primario
   ) +
-  geom_text(
-    data = previste_cantiere,
-    aes(
-      x = -Inf,
-      y = raccolte_medie,
-      label = paste("Raccolte previste:", num(raccolte_medie))
-    ),
-    hjust = -0.04,
-    vjust = -0.6,
-    size = 3,
+  geom_hline(
+    data = linee,
+    aes(yintercept = valore),
+    linetype = "dashed",
     colour = colori$secondario
   ) +
-  facet_wrap(~cantiere, ncol = 2) +
-  scale_fill_manual(
-    values = colori_sistema,
-    labels = nomi_sistema,
-    breaks = names(nomi_sistema)
+  geom_text(
+    data = linee,
+    aes(x = 1.5, y = valore, label = nome),
+    vjust = -0.6,
+    size = 3.1,
+    colour = colori$secondario
   ) +
-  scale_x_discrete(labels = etichette_anni) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) +
+  geom_text(
+    aes(
+      y = cima,
+      label = sprintf("%s\n%s delle previste", num(letture), pct(tasso))
+    ),
+    vjust = -0.35,
+    size = 3.5,
+    lineheight = 0.95,
+    colour = colori$primario
+  ) +
+  scale_fill_manual(values = colori_sistema) +
+  scale_x_discrete(labels = nomi_sistema) +
+  scale_y_continuous(
+    limits = c(0, max(raccolte_medie, tassi$cima) * 1.22),
+    expand = expansion(mult = c(0, 0))
+  ) +
   labs(
     title = sprintf(
-      "%s cambia di più: %s %s delle raccolte previste",
-      cambia_di_piu$cantiere,
-      con_articolo(cambia_di_piu$tasso_storico, "dal"),
-      con_articolo(cambia_di_piu$tasso_antenne, "al")
+      "Letture utili in un anno per contenitore: da %s a %s",
+      num(utili_annue_storico),
+      num(utili_annue_antenne)
     ),
-    subtitle = "Letture utili medie per contenitore, anno per anno. Tratteggio: media delle raccolte previste nel cantiere.",
+    subtitle = sprintf(
+      "Media su %s contenitori%s con le raccolte previste.%s",
+      intero(riepilogo$n_con_raccolte),
+      del_servizio,
+      if (intervallo_noto) {
+        "\nLe barre sottili sono l'intervallo di confidenza al 95%."
+      } else {
+        ""
+      }
+    ),
     x = NULL,
-    y = "Letture utili per contenitore"
+    y = "Letture utili in un anno"
   ) +
   tema_grafico
 ```
 
-### I cantieri prima e dopo
+```{r tabella-tasso}
+knitr::kable(
+  data.frame(
+    voce = c(
+      "Contenitori con le raccolte previste",
+      "Giorni osservati, in media per contenitore",
+      "Raccolte previste nei giorni osservati",
+      "Letture utili",
+      "Tasso di lettura",
+      "Letture utili in un anno per contenitore"
+    ),
+    storico = c(
+      intero(riepilogo$n_con_raccolte),
+      intero(giorni_rif),
+      intero(riepilogo$previste_storico),
+      intero(riepilogo$utili_storico),
+      pct(riepilogo$tasso_storico),
+      num(utili_annue_storico)
+    ),
+    antenne = c(
+      intero(riepilogo$n_con_raccolte),
+      intero(sum(con_raccolte$giorni_dopo) / nrow(con_raccolte)),
+      intero(riepilogo$previste_antenne),
+      intero(riepilogo$utili_antenne),
+      pct(riepilogo$tasso_antenne),
+      num(utili_annue_antenne)
+    )
+  ),
+  col.names = c("", "Sistema precedente", "Antenne"),
+  align = "lrr"
+)
+```
 
-L'ultima riga riporta l'intero territorio, con gli stessi conti.
+`r if (antenne_di_piu) sprintf("Il tasso di lettura passa %s %s: %s punti in più%s.", con_articolo(riepilogo$tasso_storico, "dal"), con_articolo(riepilogo$tasso_antenne, "al"), in_punti(punti), tra_e) else sprintf("Il tasso di lettura con le antenne, %s, non supera quello del sistema precedente, %s: la differenza è di %s punti%s.", pct(riepilogo$tasso_antenne), pct(riepilogo$tasso_storico), in_punti(punti), tra_e)` `r if (!intervallo_noto) senza_intervallo else if (antenne_di_piu && guadagno_netto) "L'intervallo sta tutto sopra lo zero: la differenza non dipende dal caso." else if (antenne_di_piu) "L'intervallo comprende lo zero: servono più giorni di letture con le antenne per dire che la differenza è reale."`
 
-```{r tabella-cantieri}
+`r if (antenne_di_piu) sprintf("Su questi %s contenitori le raccolte previste in un anno sono %s. Al ritmo osservato, le antenne ne registrano circa %s in più del sistema precedente: sono svuotamenti che prima non risultavano e che ora si possono attribuire a un'utenza.", intero(riepilogo$n_con_raccolte), intero(riepilogo$raccolte_previste), intero(riepilogo$letture_recuperate))`
+
+`r if (any(con_raccolte$raccolte_stimate)) sprintf("**Raccolte previste dei non censiti.** %s non hanno le raccolte previste, perché non sono a database. Il numero di passaggi dipende dal giro, non dal contenitore: per loro valgono le raccolte previste più frequenti tra i censiti dello stesso servizio nello stesso comune.", sub("^(.)", "\\U\\1", conta(sum(con_raccolte$raccolte_stimate), "contenitore", "contenitori"), perl = TRUE))`
+
+**Perché il dato delle antenne è prudente.** Finché non tutti i mezzi hanno le antenne, un contenitore può essere servito una volta da un mezzo attrezzato e la volta dopo da uno che non lo è: il secondo svuotamento alle antenne manca. Il loro tasso di lettura, misurato oggi, è quindi stimato per difetto.
+
+## Perché così poche letture
+
+I dati dicono quanto leggeva il sistema precedente, non perché: una sua lettura non riporta né il mezzo né l'operatore. Quelle che seguono sono ipotesi, ognuna con il modo per verificarla.
+
+<div class="ipotesi">
+
+**1. La lettura era un gesto in più.** L'operatore doveva avvicinare il lettore al tag di ogni contenitore. È il gesto che si salta quando il giro è in ritardo, piove, è buio, il tag è sporco o in una posizione scomoda. Con il tempo saltarlo può diventare un'abitudine. *Verifica:* l'andamento [mese per mese](#mese-per-mese); un calo progressivo va in questa direzione.
+
+**2. Dipendeva dalla persona.** Squadre diverse leggono con cura diversa. Il sistema precedente non dice chi ha letto: l'unico indizio sono le differenze tra cantieri e tra comuni, più avanti in questo report.
+
+**3. Il lettore.** Un lettore scarico, guasto o rimasto in sede; letture rimaste nel dispositivo e mai scaricate. *Verifica:* i giorni lavorativi in cui il file delle letture storiche non ha nemmeno una lettura.
+
+**4. Il tag.** Un tag danneggiato o coperto si legge male da vicino, con un lettore portatile.
+
+**5. Il codice letto male.** Una parte delle letture esiste, ma sotto un codice diverso da quello del contenitore: vedi [il «bit flip»](#codici-letti-male-il-bit-flip).
+
+**6. Il passaggio dei dati.** Importazioni saltate, file persi tra il dispositivo e il gestionale.
+
+**7. Cause che non sono errori.** Un contenitore consegnato da poco, un'utenza che espone di rado, una seconda casa, un tag sostituito. I controlli della sezione [Contenitori nuovi o letture mancate](#contenitori-nuovi-o-letture-mancate) servono a misurare quanto pesano.
+
+</div>
+
+### Che cosa comporta
+
+**Oggi.**
+
+- **Svuotamenti fatti e non registrati.** Il servizio è reso, il dato manca. `r if (!tutti_i_servizi && servizio_scelto == "Secco") "Per il secco, il servizio che viene fatturato, ogni lettura mancante è uno svuotamento che non si può attribuire a un'utenza." else "Ogni lettura mancante è uno svuotamento che non si può attribuire a un'utenza."`
+- **Numeri di base sbagliati.** Quanti contenitori sono esposti a ogni passaggio, quanto dura un giro, quali zone conferiscono di più: ogni stima fatta sulle letture precedenti parte da una frazione degli svuotamenti reali.
+- **Chi non espone e chi non viene letto sono indistinguibili.** Un'utenza senza letture può non conferire mai, e allora va controllata, oppure conferire regolarmente senza essere letta. Con il sistema precedente i due casi hanno lo stesso aspetto.
+
+**Con una tariffa a conferimento.**
+
+- **Pagherebbe chi viene letto, non chi conferisce.** Due utenze con le stesse abitudini riceverebbero bollette diverse secondo la cura di chi passa a svuotare.
+- **Ogni lettura persa sarebbe un conferimento gratuito.** E il costo del servizio, che resta lo stesso, verrebbe diviso su meno conferimenti: chi viene letto pagherebbe anche per chi non lo è.
+- **L'incentivo si perde.** Una tariffa a conferimento serve a premiare chi produce meno rifiuto. Se la tariffa prevede un numero minimo di conferimenti e le letture sono poche per tutti, quasi tutte le utenze restano sotto il minimo e pagano uguale.
+- **Le contestazioni non si possono chiudere.** Una lettura senza mezzo e senza posizione non si può dimostrare né smentire. Una lettura delle antenne riporta giorno, ora, mezzo e punto.
+
+## Che cosa vedono solo le antenne
+
+Il sistema precedente registrava un codice e un istante. Le antenne aggiungono il mezzo e la posizione, e dal mezzo si ricava il giro. Le quattro analisi di questa sezione ne dipendono: con le letture precedenti non si potevano fare. Riguardano tutti i servizi, non solo `r if (tutti_i_servizi) "uno" else paste0("il ", nome_servizio)`.
+
+### Contenitori lontani dal comune del database
+
+Un contenitore censito ha un comune a database. Una lettura è *fuori comune* se è fatta a più di `r intero(tolleranza_confine_m())` metri dal confine di quel comune.
+
+```{r fuori-comune}
+stabili <- fuori_comune[fuori_comune$stabile, ]
+flussi <- fuori_comune |>
+  dplyr::mutate(
+    letto_a = dplyr::coalesce(letto_a, "fuori dai comuni serviti")
+  ) |>
+  dplyr::summarise(
+    contenitori = dplyr::n(),
+    stabili = sum(stabile),
+    .by = c("comune_da_database", "letto_a")
+  ) |>
+  dplyr::arrange(dplyr::desc(contenitori), comune_da_database)
+```
+
+`r if (nrow(fuori_comune) == 0) sprintf("%s nessun contenitore censito ha letture fuori comune.", sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)) else sprintf("%s %s almeno una lettura fuori comune. Contenitori con anche l'ultima lettura fuori comune: %s. Per questi, con ogni probabilità, il contenitore è stato spostato oppure il comune a database è sbagliato. %s", sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE), conta(nrow(fuori_comune), "contenitore censito ha", "contenitori censiti hanno"), intero(nrow(stabili)), if (!tutti_i_servizi) sprintf("Contenitori%s con letture fuori comune: %s.", del_servizio, intero(sum(fuori_comune$tipologia %in% servizio_scelto))) else "")`
+
+```{r tabella-flussi, eval=nrow(fuori_comune) > 0}
+knitr::kable(
+  data.frame(
+    database = utils::head(flussi$comune_da_database, 15),
+    letto = utils::head(flussi$letto_a, 15),
+    contenitori = intero(utils::head(flussi$contenitori, 15)),
+    stabili = intero(utils::head(flussi$stabili, 15))
+  ),
+  col.names = c(
+    "Comune del database",
+    "Letto a",
+    "Contenitori",
+    "Di cui con l'ultima lettura fuori comune"
+  ),
+  align = "llrr"
+)
+```
+
+`r if (nrow(flussi) > 15) sprintf("La tabella riporta le prime 15 coppie di comuni su %s.", intero(nrow(flussi)))`
+
+```{r tabella-fuori-comune, eval=nrow(fuori_comune) > 0}
+elenco_fuori <- utils::head(fuori_comune, massimo_righe_tabella)
+tabella_dt(
+  data.frame(
+    RFID = elenco_fuori$RFID,
+    Servizio = elenco_fuori$tipologia,
+    `Comune del database` = elenco_fuori$comune_da_database,
+    `Letto a` = dplyr::coalesce(
+      elenco_fuori$letto_a,
+      "fuori dai comuni serviti"
+    ),
+    Letture = elenco_fuori$letture,
+    `Fuori comune` = elenco_fuori$letture_fuori,
+    `Prima volta` = format(elenco_fuori$prima_fuori),
+    `Ultima volta` = format(elenco_fuori$ultima_fuori),
+    `Ultima lettura fuori comune` = ifelse(elenco_fuori$stabile, "Sì", "No"),
+    check.names = FALSE
+  ),
+  righe = 8
+)
+```
+
+`r if (nrow(fuori_comune) > 0) "Un contenitore nel comune sbagliato è un'utenza servita da un giro che non è il suo, e un'anagrafica che non corrisponde al territorio. Se la tariffa o il calendario cambiano da comune a comune, a quell'utenza si applica la regola sbagliata. Un contenitore con poche letture fuori comune e l'ultima di nuovo nel suo comune è un altro caso: di solito un tag rimasto su un mezzo o un giro passato vicino al confine."`
+
+### Contenitori non a database
+
+```{r non-censiti}
+per_stima <- non_censiti |>
+  dplyr::mutate(tipologia = dplyr::coalesce(tipologia, "Stima incerta")) |>
+  dplyr::summarise(
+    contenitori = dplyr::n(),
+    gia_letti = sum(letture_storico > 0),
+    letture_storico = sum(letture_storico),
+    .by = "tipologia"
+  ) |>
+  dplyr::arrange(tipologia == "Stima incerta", dplyr::desc(contenitori))
+gia_letti_non_censiti <- sum(non_censiti$letture_storico > 0)
+```
+
+`r if (nrow(non_censiti) == 0) sprintf("%s tutti i contenitori letti dalle antenne sono a database.", sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)) else sprintf("%s le antenne hanno letto %s. Di ognuno ora si conosce il punto in cui viene svuotato, e per %s anche il servizio probabile, ricavato dai giri che lo leggono. È quello che serve per andare sul posto e censirlo.", sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE), conta(nrow(non_censiti), "contenitore che il database non conosce", "contenitori che il database non conosce"), intero(sum(!is.na(non_censiti$tipologia))))`
+
+```{r tabella-non-censiti, eval=nrow(non_censiti) > 0}
+knitr::kable(
+  data.frame(
+    servizio = per_stima$tipologia,
+    contenitori = intero(per_stima$contenitori),
+    gia_letti = intero(per_stima$gia_letti),
+    letture = intero(per_stima$letture_storico)
+  ),
+  col.names = c(
+    "Servizio stimato",
+    "Contenitori non censiti",
+    "Già letti dal sistema precedente",
+    "Letture del sistema precedente"
+  ),
+  align = "lrrr"
+)
+```
+
+`r if (gia_letti_non_censiti > 0) sprintf("%s di questi codici comparivano già nelle letture del sistema precedente, per %s letture in tutto. Erano svuotamenti fatti a contenitori senza utenza: il sistema precedente li registrava, ma senza una posizione e senza un mezzo non c'era modo di sapere dove fossero né di che rifiuto. %s", sub("^(.)", "\\U\\1", intero(gia_letti_non_censiti), perl = TRUE), intero(sum(non_censiti$letture_storico)), if (!tutti_i_servizi) sprintf("I non censiti con servizio stimato%s sono %s.", del_servizio, intero(sum(non_censiti$tipologia %in% servizio_scelto))) else "") else if (nrow(non_censiti) > 0) "Nessuno di questi codici compare nelle letture del sistema precedente."`
+
+### Codici letti male: il «bit flip»
+
+**Il problema.** Il codice di un tag è una sequenza di bit. Se un bit cambia valore cambia un carattere del codice, e per il database quel contenitore diventa un altro: uno sconosciuto. Il caso è stato osservato su un contenitore tenuto sotto controllo dal personale: nelle letture del sistema precedente compariva con due codici, quello giusto e uno diverso per un solo carattere, in parti quasi uguali. Metà dei suoi svuotamenti, quindi, non risultava a carico di nessuno.
+
+**Perché da soli questi errori non si vedono.** Il codice sbagliato è un codice plausibile: niente lo distingue da quello di un contenitore non censito. La preparazione dei dati corregge già l'errore quando cade nei caratteri iniziali del codice, che devono essere tutti zeri, perché lì il valore giusto è noto. Quando cade nelle cifre che identificano il contenitore non c'è niente con cui confrontarlo.
+
+**Come si cercano qui.** Si prendono tutti i codici letti dai due sistemi e si cercano le coppie che differiscono per un solo carattere. Due contenitori veri possono avere codici così vicini, quindi una coppia è solo un indizio. Diventa un sospetto se:
+
+- un codice è censito e l'altro no;
+- i due codici non compaiono mai nello stesso giorno: uno svuotamento dà una lettura sola;
+- il codice sconosciuto viene letto negli stessi giorni della settimana di quello censito, cioè dallo stesso giro;
+- la differenza, quando i caratteri sono cifre esadecimali, è di un bit solo;
+- se le antenne hanno letto entrambi i codici, i punti di lettura distano meno di 200 metri.
+
+```{r gemelli}
+letture_perse <- sum(sospetti$letture_gemello)
+```
+
+Le coppie di codici a un carattere di distanza sono `r intero(nrow(coppie))` in tutto il territorio. `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` quelle con un solo codice censito sono `r intero(nrow(gemelli))`, e `r if (nrow(sospetti) == 0) "nessuna supera tutti i controlli." else sprintf("%s: %s finite sotto un codice che il database non conosce.", conta(nrow(sospetti), "supera tutti i controlli", "superano tutti i controlli"), conta(letture_perse, "lettura", "letture"))`
+
+```{r tabella-gemelli, eval=nrow(gemelli) > 0}
+elenco_gemelli <- utils::head(gemelli, massimo_righe_tabella)
+tabella_dt(
+  data.frame(
+    `Codice censito` = elenco_gemelli$codice,
+    `Codice sconosciuto` = elenco_gemelli$gemello,
+    Sospetto = ifelse(elenco_gemelli$sospetto, "Sì", "No"),
+    `Carattere` = elenco_gemelli$posizione,
+    `Un solo bit` = ifelse(
+      is.na(elenco_gemelli$un_bit),
+      "non si può dire",
+      ifelse(elenco_gemelli$un_bit, "Sì", "No")
+    ),
+    `Letture del censito` = elenco_gemelli$letture_codice,
+    `Letture dello sconosciuto` = elenco_gemelli$letture_gemello,
+    `Quota sotto il codice sconosciuto` = elenco_gemelli$quota_gemello,
+    `Giorni in comune` = elenco_gemelli$giorni_in_comune,
+    `Sconosciuto letto da` = elenco_gemelli$gemello_letto_da,
+    `Distanza (m)` = round(elenco_gemelli$distanza_m),
+    check.names = FALSE
+  ),
+  righe = 8
+) |>
+  DT::formatPercentage("Quota sotto il codice sconosciuto", 0)
+```
+
+`r if (nrow(sospetti) > 0) "Una coppia sospetta va verificata sul posto, leggendo il tag più volte: se il contenitore è uno solo, basta associare all'utenza anche il secondo codice e sostituire il tag."`
+
+**Il limite di questo controllo.** Lo stato a database si conosce solo per i codici letti dalle antenne. Un contenitore con il codice instabile che le antenne non hanno ancora letto non compare tra i sospetti. Con l'elenco completo dei codici a database il controllo si può estendere a tutte le letture precedenti.
+
+**Perché un chip dà un codice sbagliato: ipotesi.** Vanno verificate con chi fornisce i tag e i lettori.
+
+<div class="ipotesi">
+
+**Una cella di memoria instabile.** È l'ipotesi che spiega meglio un errore che compare in metà delle letture. Un chip scritto male in modo stabile darebbe sempre lo stesso codice sbagliato, e il contenitore sarebbe stato censito con quello. Un bit che cambia da una lettura all'altra fa pensare a una cella scritta al limite: il chip la legge a volte come 0 e a volte come 1, secondo l'energia che riceve e la temperatura. Le cause possibili di una scrittura al limite sono una codifica fatta con poca potenza o con il tag troppo lontano, un tag che si muove mentre viene scritto, una scrittura non seguita da una rilettura di controllo. Una cella scritta bene può degradarsi con il calore, il gelo, l'umidità e gli urti dello svuotamento.
+
+**Un errore nella lettura.** Un segnale debole, per un tag danneggiato o in parte staccato, un lettore tenuto lontano o inclinato, la vicinanza di metallo e di acqua. Il lettore dovrebbe scartare una lettura incompleta: se non controlla l'integrità di tutto il codice, la accetta.
+
+**Un errore dopo la lettura.** Nel dispositivo, nella trasmissione o nell'importazione. È l'ipotesi meno probabile: un errore di questo tipo colpirebbe codici a caso, non sempre lo stesso contenitore nello stesso carattere.
+
+</div>
+
+**Le ricadute.**
+
+- **Svuotamenti a carico di nessuno.** Le letture sotto il codice sbagliato non hanno un'utenza. Per il contenitore osservato erano metà del totale.
+- **Un'utenza che risulta conferire la metà.** Con una tariffa a conferimento pagherebbe la metà, senza averne colpa e senza saperlo.
+- **Non censiti che non esistono.** Ogni codice sbagliato è un contenitore sconosciuto in più nell'elenco di quelli da cercare sul territorio.
+- **Un difetto che può peggiorare.** Una cella instabile tende a degradarsi: la quota di letture sbagliate non è fissa.
+
+**Che cosa cambia con le antenne.** Le antenne non riparano un chip difettoso: lo rendono riconoscibile. Un codice sconosciuto letto nello stesso punto di un contenitore censito, con un codice che differisce per un bit, e mai nello stesso giorno, non è un contenitore nuovo. Con le letture precedenti i due codici erano solo due righe in un elenco.
+
+### Giri diversi dal calendario
+
+Ogni lettura delle antenne riporta il mezzo, e dal calendario dei mezzi si ricava il giro: servizio e comune previsti. Una lettura è *fuori giro* se è fatta a più di `r intero(tolleranza_confine_m())` metri dal comune del giro.
+
+`r if (nrow(giri) == 0) sprintf("%s non ci sono giri con almeno %s letture.", sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE), minimo_letture_giro) else sprintf("I giri con almeno %s letture sono %s. Giri con almeno metà delle letture fuori giro: %s. %s", minimo_letture_giro, intero(nrow(giri)), intero(nrow(giri_altrove)), if (nrow(giri_altrove) > 0) "In quei giorni il mezzo ha lavorato in buona parte lontano dal comune del calendario, oppure portava con sé un tag che non è di un contenitore. La scheda «Ricerca Giro» dell'app li elenca, con il mezzo e il giorno." else "")`
+
+Con il sistema precedente il calendario e il lavoro svolto non si potevano confrontare: le letture non dicevano né quale mezzo né dove.
+
+## Gli altri servizi
+
+Gli stessi conti, per ogni servizio, `r nell_ambito_di`. `r if (!tutti_i_servizi) sprintf("La riga in grassetto è il servizio di questo report.")`
+
+```{r tabella-servizi}
+righe_servizi <- per_servizio |>
+  dplyr::mutate(tipologia = dplyr::coalesce(tipologia, "Stima incerta")) |>
+  dplyr::arrange(tipologia == "Stima incerta", dplyr::desc(n_rfid))
+o_trattino <- function(testo, valido) ifelse(valido, testo, "-")
+con_tasso <- righe_servizi$n_con_raccolte > 0 & righe_servizi$giorni_dopo > 0
+tabella_servizi <- data.frame(
+  servizio = righe_servizi$tipologia,
+  contenitori = intero(righe_servizi$n_rfid),
+  mai = pct(righe_servizi$quota_mai_letti),
+  una = pct(righe_servizi$quota_una_o_meno),
+  mediana = num(righe_servizi$mediana_storico, 0),
+  prima = o_trattino(pct(righe_servizi$tasso_storico), con_tasso),
+  dopo = o_trattino(pct(righe_servizi$tasso_antenne), con_tasso),
+  punti = o_trattino(con_segno(righe_servizi$punti), con_tasso)
+)
+if (!tutti_i_servizi) {
+  scelta <- tabella_servizi$servizio == servizio_scelto
+  tabella_servizi[scelta, ] <- lapply(
+    tabella_servizi[scelta, ],
+    function(x) paste0("**", x, "**")
+  )
+}
+knitr::kable(
+  tabella_servizi,
+  col.names = c(
+    "Servizio",
+    "Contenitori",
+    "Mai letti nel periodo di riferimento",
+    "Al più una lettura",
+    "Letture l'anno del contenitore tipico",
+    "Tasso prima",
+    "Tasso con le antenne",
+    "Punti"
+  ),
+  align = "lrrrrrrr"
+)
+```
+
+`r if (any(!con_tasso)) "Il tasso di lettura manca dove non ci sono raccolte previste, come per i contenitori con la stima del servizio incerta."` `r if (sum(con_tasso) > 1) sprintf("Il tasso con le antenne supera quello precedente in %s servizi su %s.", intero(sum(righe_servizi$punti[con_tasso] > 0)), intero(sum(con_tasso)))`
+
+`r if (mostra_cantieri) "## Cantiere per cantiere"`
+
+`r if (mostra_cantieri) sprintf("Gli stessi conti sui contenitori%s, per ogni cantiere. Un contenitore appartiene al cantiere del suo comune. L'ultima riga riporta l'intero territorio.", del_servizio)`
+
+```{r tabella-cantieri, eval=mostra_cantieri}
 righe_cantieri <- dplyr::bind_rows(
   per_cantiere,
   dplyr::mutate(
@@ -854,12 +1348,8 @@ knitr::kable(
   data.frame(
     cantiere = righe_cantieri$cantiere,
     contenitori = intero(righe_cantieri$n_rfid),
-    vuoti = pct(righe_cantieri$quota_anni_vuoti),
-    letture = paste(
-      num(righe_cantieri$media_storico),
-      "→",
-      num(righe_cantieri$media_antenne)
-    ),
+    mai = pct(righe_cantieri$quota_mai_letti),
+    una = pct(righe_cantieri$quota_una_o_meno),
     prima = pct(righe_cantieri$tasso_storico),
     dopo = pct(righe_cantieri$tasso_antenne),
     punti = con_segno(righe_cantieri$punti),
@@ -868,28 +1358,24 @@ knitr::kable(
   col.names = c(
     "Cantiere",
     "Contenitori",
-    "Anni vuoti",
-    "Letture l'anno, prima → dopo",
+    "Mai letti nel periodo di riferimento",
+    "Al più una lettura",
     "Tasso prima",
-    "Tasso dopo",
+    "Tasso con le antenne",
     "Punti",
-    "Letture recuperate"
+    "Letture in più in un anno"
   ),
   align = "lrrrrrrr"
 )
 ```
 
-*Contenitori*: quelli del confronto, letti da entrambi i sistemi. I tassi e le letture recuperate riguardano quelli, tra loro, con le raccolte previste in anagrafica.
+`r if (mostra_cantieri) sprintf("Con il sistema precedente il tasso di lettura andava %s %s secondo il cantiere. Con le antenne va %s %s. Lo scarto tra il cantiere letto meglio e quello letto peggio passa da %s a %s punti: %s", con_articolo(min(per_cantiere$tasso_storico), "dal"), con_articolo(max(per_cantiere$tasso_storico), "al"), con_articolo(min(per_cantiere$tasso_antenne), "dal"), con_articolo(max(per_cantiere$tasso_antenne), "al"), num(100 * diff(range(per_cantiere$tasso_storico)), 0), num(100 * diff(range(per_cantiere$tasso_antenne)), 0), if (diff(range(per_cantiere$tasso_antenne)) < diff(range(per_cantiere$tasso_storico))) "con le antenne i cantieri si somigliano di più, come ci si aspetta da una lettura che non dipende dalla squadra." else "le differenze tra i cantieri non si sono ridotte. Può dipendere da quanti mezzi con le antenne lavorano in ogni cantiere.")`
 
-`r if (nrow(per_cantiere) > 1) sprintf("Con il sistema precedente il tasso di lettura andava %s %s secondo il cantiere. Con le antenne va %s %s. Lo scarto tra il cantiere letto meglio e quello letto peggio passa da %s a %s punti: %s", con_articolo(min(per_cantiere$tasso_storico), "dal"), con_articolo(max(per_cantiere$tasso_storico), "al"), con_articolo(min(per_cantiere$tasso_antenne), "dal"), con_articolo(max(per_cantiere$tasso_antenne), "al"), num(100 * diff(range(per_cantiere$tasso_storico)), 0), num(100 * diff(range(per_cantiere$tasso_antenne)), 0), if (diff(range(per_cantiere$tasso_antenne)) < diff(range(per_cantiere$tasso_storico))) "con le antenne i cantieri si somigliano di più." else "le differenze tra i cantieri non si sono ridotte.")`
+`r if (mostra_comuni) "## Comune per comune"`
 
-## Comune per comune
+`r if (mostra_comuni) sprintf("I comuni con contenitori%s nella coorte sono %s. Il tasso di lettura di un comune con pochi contenitori va letto con cautela: sotto i %s contenitori bastano uno o due bidoni a spostarlo. Comuni in questa condizione: %s. Nel grafico hanno il cerchio vuoto, nella tabella sono segnati.", del_servizio, intero(nrow(comuni)), minimo_contenitori, intero(sum(!comuni$solido)))`
 
-I comuni con contenitori confrontabili sono `r intero(nrow(comuni))`. Il tasso di lettura di un comune con pochi contenitori va letto con cautela: sotto i `r minimo_contenitori` contenitori con le raccolte previste bastano uno o due bidoni a spostarlo. I comuni in questa condizione sono `r intero(sum(!comuni$solido))`: nel grafico hanno il cerchio vuoto, nella tabella sono segnati.
-
-### I comuni prima e dopo
-
-```{r grafico-comuni, fig.width=8, fig.height=0.21 * nrow(comuni) + 0.3 * length(unique(comuni$cantiere)) + 1.7}
+```{r grafico-comuni, eval=mostra_comuni, fig.width=8, fig.height=0.21 * nrow(comuni) + 0.3 * length(unique(comuni$cantiere)) + 1.7}
 da_disegnare <- comuni
 # In ogni cantiere, dall'alto il comune che le antenne leggono meglio.
 da_disegnare$comune <- factor(
@@ -924,9 +1410,9 @@ ggplot(da_disegnare, aes(y = comune)) +
   ) +
   facet_grid(rows = vars(cantiere), scales = "free_y", space = "free_y") +
   scale_colour_manual(
-    values = colori_sistema[c("storico", "antenne")],
-    labels = nomi_sistema[c("storico", "antenne")],
-    breaks = c("storico", "antenne")
+    values = colori_sistema,
+    labels = nomi_sistema,
+    breaks = names(nomi_sistema)
   ) +
   scale_fill_identity() +
   scale_x_continuous(
@@ -938,9 +1424,7 @@ ggplot(da_disegnare, aes(y = comune)) +
   ) +
   guides(
     colour = guide_legend(
-      override.aes = list(
-        fill = unname(colori_sistema[c("storico", "antenne")])
-      )
+      override.aes = list(fill = unname(colori_sistema))
     )
   ) +
   labs(
@@ -950,7 +1434,7 @@ ggplot(da_disegnare, aes(y = comune)) +
       intero(nrow(comuni))
     ),
     subtitle = sprintf(
-      "Tasso di lettura di ogni comune, prima e con le antenne. In ogni cantiere, dall'alto i comuni letti meglio oggi.\nCerchio vuoto: meno di %s contenitori con le raccolte previste.",
+      "Tasso di lettura di ogni comune, prima e con le antenne. In ogni cantiere, dall'alto i comuni letti meglio oggi.\nCerchio vuoto: meno di %s contenitori.",
       minimo_contenitori
     ),
     x = NULL,
@@ -966,15 +1450,15 @@ ggplot(da_disegnare, aes(y = comune)) +
   )
 ```
 
-`r if (nrow(solidi) > 1) sprintf("Tra i %s comuni con almeno %s contenitori confrontabili il tasso di lettura andava %s %s con il sistema precedente. Con le antenne va %s %s.", intero(nrow(solidi)), minimo_contenitori, con_articolo(min(solidi$tasso_storico), "dal"), con_articolo(max(solidi$tasso_storico), "al"), con_articolo(min(solidi$tasso_antenne), "dal"), con_articolo(max(solidi$tasso_antenne), "al")) else sprintf("I comuni con almeno %s contenitori confrontabili sono meno di due: i tassi per comune sono tutti indicativi.", minimo_contenitori)`
+`r if (mostra_comuni && nrow(solidi) > 1) sprintf("I comuni con almeno %2$s contenitori sono %1$s. Tra loro il tasso di lettura andava %3$s %4$s con il sistema precedente. Con le antenne va %5$s %6$s.", intero(nrow(solidi)), minimo_contenitori, con_articolo(min(solidi$tasso_storico), "dal"), con_articolo(max(solidi$tasso_storico), "al"), con_articolo(min(solidi$tasso_antenne), "dal"), con_articolo(max(solidi$tasso_antenne), "al")) else if (mostra_comuni) sprintf("I comuni con almeno %s contenitori sono meno di due: i tassi per comune sono tutti indicativi.", minimo_contenitori)`
 
-`r if (nrow(solidi) > 0) sprintf("Tra questi comuni, i primi da guardare sono quelli che le antenne leggono meno: %s.", paste(sprintf("%s (%s)", utils::head(solidi$comune[order(solidi$tasso_antenne)], 3), pct(utils::head(sort(solidi$tasso_antenne), 3))), collapse = ", "))`
+`r if (mostra_comuni && nrow(solidi) > 0) sprintf("Tra questi comuni, quelli in cui il sistema precedente leggeva meno: %s.", paste(sprintf("%s (%s)", utils::head(solidi$comune[order(solidi$tasso_storico)], 3), pct(utils::head(sort(solidi$tasso_storico), 3))), collapse = ", "))`
 
-### La mappa dei comuni
+`r if (mostra_mappa) "### La mappa dei comuni"`
 
-```{r mappa-comuni, fig.width=8, fig.height=3.75 * proporzione_zona + 1.75}
+```{r mappa-comuni, eval=mostra_mappa, fig.width=8, fig.height=3.75 * proporzione_zona + 1.75}
 classi_tasso <- c("fino al 20%", "20-40%", "40-60%", "60-80%", "oltre l'80%")
-senza_dati <- "senza contenitori confrontabili"
+senza_dati <- "senza contenitori nella coorte"
 sistemi_mappa <- c("Sistema precedente", "Antenne")
 # Confini dei comuni serviti: ogni comune può avere più poligoni, e ogni
 # poligono dei fori.
@@ -1026,7 +1510,8 @@ ggplot(poligoni, aes(longitudine, latitudine)) +
   geom_polygon(
     aes(group = poligono, subgroup = anello, fill = classe),
     colour = "#ffffff",
-    linewidth = 0.3
+    linewidth = 0.3,
+    show.legend = TRUE
   ) +
   geom_label(
     data = nomi_cantieri,
@@ -1056,7 +1541,7 @@ ggplot(poligoni, aes(longitudine, latitudine)) +
       intero(oltre_la_meta[["dopo"]]),
       intero(nrow(comuni))
     ),
-    subtitle = "Tasso di lettura di ogni comune: più scuro il colore, più raccolte previste risultano lette.",
+    subtitle = "Tasso di lettura di ogni comune: più scuro il colore, più raccolte previste risultano lette.\nIn grigio i comuni in cui le antenne non hanno ancora letto contenitori del servizio.",
     caption = paste0(
       sprintf(
         "Confini dei comuni: ISTAT, dalla raccolta geojson-italy, rilascio del %s.",
@@ -1064,7 +1549,7 @@ ggplot(poligoni, aes(longitudine, latitudine)) +
       ),
       if (fuori_mappa > 0) {
         sprintf(
-          " %s comuni del confronto non sono nella tabella dei comuni e non compaiono.",
+          " %s comuni della coorte non sono nella tabella dei comuni e non compaiono.",
           intero(fuori_mappa)
         )
       }
@@ -1083,102 +1568,138 @@ ggplot(poligoni, aes(longitudine, latitudine)) +
   )
 ```
 
-### Tabella dei comuni
+`r if (mostra_comuni) "### Tabella dei comuni"`
 
-Una riga per comune, ordinabile e filtrabile. All'apertura i comuni sono in ordine di tasso di lettura con le antenne, dal più basso.
+`r if (mostra_comuni) "Una riga per comune, ordinabile e filtrabile. All'apertura i comuni sono in ordine di tasso di lettura del sistema precedente, dal più basso."`
 
-```{r tabella-comuni}
-tabella_comuni <- comuni |>
-  dplyr::left_join(
-    consistenza_comune[, c("comune", "rfid")],
-    by = "comune"
-  ) |>
-  dplyr::transmute(
-    Cantiere = cantiere,
-    Comune = comune,
-    `RFID letti dalle antenne` = rfid,
-    `Contenitori confrontabili` = n_con_raccolte,
-    `Anni vuoti` = quota_anni_vuoti,
-    `Tasso prima` = tasso_storico,
-    `Tasso con le antenne` = tasso_antenne,
-    Punti = punti,
-    `Letture recuperate` = letture_recuperate,
-    `Pochi contenitori` = ifelse(solido, "", "Sì")
-  )
-DT::datatable(
-  tabella_comuni,
-  rownames = FALSE,
-  filter = "top",
-  class = "display nowrap",
-  options = list(
-    pageLength = 15,
-    scrollX = TRUE,
-    # colonna 6, contando da zero: il tasso con le antenne
-    order = list(list(6, "asc")),
-    language = lingua_dt()
-  ),
-  callback = DT::JS(
-    "$(table.table().container()).find('input[placeholder=\"All\"]').attr('placeholder', 'Tutti');"
-  )
-) |>
+```{r tabella-comuni, eval=mostra_comuni}
+tabella_comuni <- data.frame(
+  Cantiere = comuni$cantiere,
+  Comune = comuni$comune,
+  Contenitori = comuni$n_rfid,
+  `Mai letti nel periodo di riferimento` = comuni$quota_mai_letti,
+  `Al più una lettura` = comuni$quota_una_o_meno,
+  `Tasso prima` = comuni$tasso_storico,
+  `Tasso con le antenne` = comuni$tasso_antenne,
+  Punti = comuni$punti,
+  `Letture in più in un anno` = comuni$letture_recuperate,
+  `Pochi contenitori` = ifelse(comuni$solido, "", "Sì"),
+  check.names = FALSE
+)
+# colonna 5, contando da zero: il tasso del sistema precedente
+tabella_dt(tabella_comuni, righe = 15, ordine = list(list(5, "asc"))) |>
   DT::formatPercentage(
-    c("Anni vuoti", "Tasso prima", "Tasso con le antenne"),
+    c(
+      "Mai letti nel periodo di riferimento",
+      "Al più una lettura",
+      "Tasso prima",
+      "Tasso con le antenne"
+    ),
     0
   ) |>
   DT::formatRound("Punti", 0) |>
-  DT::formatRound("Letture recuperate", 0, mark = ".", dec.mark = ",")
+  DT::formatRound("Letture in più in un anno", 0, mark = ".", dec.mark = ",")
 ```
 
-*RFID letti dalle antenne*: tutti quelli del comune, anche senza una storia con il sistema precedente. *Contenitori confrontabili*: letti da entrambi i sistemi e con le raccolte previste in anagrafica. Su questi sono calcolati i tassi.
+## Quanto resta da coprire
 
-## Gli RFID che le antenne non hanno ancora letto
+Le antenne leggono i contenitori serviti dai mezzi su cui sono montate. Il grafico mostra quanti contenitori diversi hanno letto, settimana dopo settimana.
 
-`r intero(nrow(solo_storico))` RFID compaiono nelle letture del sistema precedente e non in quelle delle antenne. L'anno dell'ultima lettura aiuta a capire di che cosa si tratta.
+```{r grafico-settimane, fig.width=8, fig.height=4.2}
+ultime_quattro <- utils::tail(settimane, 4)
+ggplot(settimane, aes(settimana)) +
+  geom_area(aes(y = cumulati), fill = colori$antenne_chiaro, alpha = 0.55) +
+  geom_line(aes(y = cumulati), colour = colori$antenne, linewidth = 0.9) +
+  geom_col(aes(y = nuovi), fill = colori$antenne, width = 5) +
+  scale_x_date(
+    date_labels = "%m/%Y",
+    expand = expansion(mult = c(0.02, 0.05))
+  ) +
+  scale_y_continuous(labels = intero, expand = expansion(mult = c(0, 0.08))) +
+  labs(
+    title = sprintf(
+      "%s contenitori letti dalle antenne in %s settimane",
+      intero(max(settimane$cumulati)),
+      intero(nrow(settimane))
+    ),
+    subtitle = "Linea: contenitori diversi letti fino a quella settimana. Barre: contenitori letti per la prima volta nella settimana.",
+    x = NULL,
+    y = "Contenitori"
+  ) +
+  tema_grafico
+```
 
-```{r solo-storico}
+`r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` le letture con le antenne vengono da `r conta(mezzi_antenne, "mezzo", "mezzi")`. Nelle ultime `r nrow(ultime_quattro)` settimane i mezzi attivi sono stati in media `r num(mean(ultime_quattro$mezzi))` e i contenitori letti per la prima volta `r intero(sum(ultime_quattro$nuovi))`, `r con_articolo(sum(ultime_quattro$nuovi) / max(settimane$cumulati))` di quelli letti finora. `r if (sum(ultime_quattro$nuovi) / max(settimane$cumulati) > 0.1) "La coorte sta ancora crescendo: i numeri di questo report riguardano una parte dei contenitori, e vanno rifatti man mano che le antenne arrivano sugli altri mezzi." else "I contenitori nuovi sono ormai pochi: i mezzi attrezzati hanno già letto quasi tutti i contenitori dei loro giri."`
+
+`r if (ambito == "territorio") sprintf("**Rispetto al sistema precedente.** Nel periodo di riferimento il sistema precedente ha letto %s codici diversi. Le antenne ne hanno già letti %s, %s. In più hanno letto %s codici che nel periodo di riferimento il sistema precedente non aveva letto nemmeno una volta.", intero(length(attivi_riferimento)), intero(gia_raggiunti), con_articolo(gia_raggiunti / length(attivi_riferimento)), intero(sum(!rfid_antenne %in% attivi_riferimento))) else "Le letture del sistema precedente non hanno una posizione: i codici che le antenne non hanno ancora letto non si possono attribuire a un cantiere o a un comune. Il conto di quanti ne restano è nel report dell'intero territorio."`
+
+```{r solo-storico, eval=ambito == "territorio" && nrow(solo_storico) > 0}
 ultimo_anno_storico <- max(lubridate::year(storico$giorno_lettura))
 per_ultimo_anno <- dplyr::count(solo_storico, ultimo_anno, name = "rfid")
-recenti <- sum(solo_storico$ultimo_anno == ultimo_anno_storico)
-
 knitr::kable(
   data.frame(
     anno = per_ultimo_anno$ultimo_anno,
     rfid = intero(per_ultimo_anno$rfid)
   ),
-  col.names = c("Anno dell'ultima lettura", "RFID"),
+  col.names = c(
+    "Anno dell'ultima lettura del sistema precedente",
+    "Codici che le antenne non hanno ancora letto"
+  ),
   align = "rr"
 )
 ```
 
-- **Ultima lettura lontana nel tempo:** con ogni probabilità contenitori ritirati o tag sostituiti.
-- **Ultima lettura nel `r ultimo_anno_storico`: `r intero(recenti)` RFID.** Erano in servizio fino a poco prima delle antenne. Sono i primi da controllare: contenitori su giri non ancora coperti, tag che le antenne non riescono a leggere, oppure ritiri recenti.
+`r if (ambito == "territorio" && nrow(solo_storico) > 0) "I codici con l'ultima lettura lontana nel tempo sono con ogni probabilità contenitori ritirati o tag sostituiti. Quelli letti di recente sono contenitori su giri non ancora coperti dalle antenne, e tra loro possono esserci codici letti male dal sistema precedente."`
+
+**Che cosa ci si può aspettare a copertura completa.** Non è una previsione numerica: è quello che i dati di oggi lasciano intendere.
+
+- La lettura smette di dipendere dall'operatore: ogni contenitore svuotato da un mezzo attrezzato viene letto.
+- Ogni svuotamento ha un mezzo e una posizione: le analisi della sezione [Che cosa vedono solo le antenne](#che-cosa-vedono-solo-le-antenne) valgono per tutti i contenitori.
+- Il tasso di lettura delle antenne smette di essere una stima per difetto: con tutti i mezzi attrezzati un contenitore non può più essere servito da un mezzo che non lo legge.
+- I contenitori non a database emergono giro dopo giro, con il punto e il servizio che servono per censirli.
+
+## Altre analisi possibili
+
+Queste analisi non sono in questo report, perché servono dati che il file delle letture non contiene. Sono in ordine di utilità.
+
+1. **Quanti errori di codice corregge già la preparazione dei dati.** La regola che riporta a zero i caratteri iniziali del codice si applica a un numero di letture che si può contare, sistema per sistema. Se gli errori cadono a caso lungo il codice, per ogni 14 corretti nei caratteri iniziali ce ne sono circa 10 nelle cifre che identificano il contenitore, non corretti. È una stima dell'ampiezza del problema del [bit flip](#codici-letti-male-il-bit-flip) che non dipende dalle coppie di codici.
+2. **La data di consegna dei contenitori.** Con la data di attivazione dall'anagrafica, un contenitore mai letto si divide con certezza tra consegnato da poco e mai registrato.
+3. **L'elenco completo dei codici a database.** Estende la ricerca dei codici letti male a tutti i contenitori, anche a quelli che le antenne non hanno ancora letto.
+4. **I mezzi con e senza antenne, giro per giro.** Con l'elenco dei mezzi attrezzati e la data di installazione, il tasso di lettura delle antenne si può calcolare sui soli giri fatti da un mezzo attrezzato: smette di essere una stima per difetto.
+5. **Le letture doppie.** Nei giorni in cui un mezzo con le antenne ha fatto anche la lettura a mano, le due letture dello stesso contenitore si possono confrontare una per una: è la misura diretta di quanto ogni sistema perde.
+6. **Gli svuotamenti per utenza.** Raggruppando i contenitori per utenza si ottiene il numero di conferimenti di ogni utenza: è la base di una simulazione della tariffa a conferimento, da fare quando le antenne avranno coperto un anno.
+7. **I tag anomali.** L'analisi dei cluster dell'app riconosce i tag fermi in deposito e quelli rimasti su un mezzo: sono letture che il sistema precedente avrebbe contato come svuotamenti.
 
 ## Come sono fatti i conti
 
-1. **Coorte.** Entrano nel confronto gli RFID letti da entrambi i sistemi, con almeno un anno intero del sistema precedente dopo l'anno della loro prima lettura.
-2. **Anni di servizio.** Per il sistema precedente contano solo gli anni interi, non toccati dalle antenne. Per ogni contenitore si parte dall'anno successivo a quello della prima lettura: prima potrebbe non essere stato ancora consegnato.
-3. **Letture con le antenne.** Sono riportate a un anno in base ai giorni coperti dalle antenne: qui `r intero(durata_antenne)`.
-4. **Letture utili.** Per ogni contenitore non superano le raccolte annue previste. Le letture in eccesso non contano.
-5. **Tasso di lettura.** Somma delle letture utili divisa per la somma delle raccolte previste, sui contenitori censiti che le hanno in anagrafica.
-6. **Intervallo di confidenza.** Calcolato sulla differenza di letture utili di ogni contenitore, prima e dopo.
-7. **Territorio, cantiere, comune.** Le regole sono le stesse ai tre livelli. Il comune di un contenitore è l'ultimo indicato dal database; per un contenitore non censito è il comune in cui è stato letto più spesso. Il cantiere è quello del comune, secondo la tabella dei comuni del pacchetto. Il tasso di un cantiere o di un comune è la somma delle letture utili dei suoi contenitori divisa per la somma delle loro raccolte previste: non è la media dei tassi.
-8. **Sacchetti.** I sacchetti, riconosciuti dal codice RFID, sono monouso e vengono letti una volta sola. Sono tolti dai due file prima di ogni conto.
+1. **Coorte.** I contenitori letti almeno una volta dalle antenne, `r nell_ambito_di``r if (!tutti_i_servizi) paste0(", con il servizio", del_servizio)`. Entrano anche quelli che il sistema precedente non ha mai letto.
+2. **Sacchetti.** I sacchetti, riconosciuti dal codice RFID, sono monouso e vengono letti una volta sola. Sono tolti dai due file prima di ogni conto.
+3. **Una lettura al giorno.** Per ogni contenitore e per ogni sistema conta la prima lettura di ogni giorno.
+4. **Servizio.** Per un censito è quello del database. Per un non censito è quello dei giri che lo hanno letto, se una tipologia raggiunge l'80% delle letture.
+5. **Periodo di riferimento.** I 365 giorni che precedono la prima lettura con le antenne, o la parte di quei giorni coperta dalle letture storiche: qui `r intero(giorni_rif)`. I conteggi sono riportati a un anno.
+6. **Letture delle antenne.** Contano quelle successive al giorno della prima lettura di ogni contenitore. I giorni osservati vanno dalla prima lettura all'ultimo giorno dei dati.
+7. **Raccolte previste.** Per un censito sono quelle del database. Per un non censito valgono le più frequenti tra i censiti dello stesso servizio nello stesso comune o, in mancanza, dello stesso servizio.
+8. **Letture utili e tasso di lettura.** Le letture utili di un contenitore non superano le raccolte previste nei giorni osservati. Il tasso è la somma delle letture utili divisa per la somma delle raccolte previste nei giorni osservati: non è la media dei tassi dei contenitori, quindi un contenitore osservato per pochi giorni pesa poco.
+9. **Intervallo di confidenza.** Calcolato con il metodo jackknife: la statistica viene ricalcolata togliendo un contenitore alla volta.
+10. **Territorio, cantiere, comune.** Il comune di un contenitore è l'ultimo indicato dal database; per un non censito è il comune del giro che lo ha letto più spesso. Il cantiere è quello del comune, secondo la tabella dei comuni del pacchetto.
+11. **Fuori comune e fuori giro.** Una lettura è incongruente oltre `r intero(tolleranza_confine_m())` metri dal confine del comune dichiarato.
 
-Le funzioni sono in `R/utils_storico.R` e hanno i loro test: `anagrafica_rfid()`, `confronto_sistemi()`, `riepilogo_confronto()`, `media_annuale()`, `tabella_letture_annuali()`. I sacchetti li toglie `senza_sacchetti()`, in `R/utils_data_processing.R`. `riepilogo_confronto()` e `media_annuale()` accettano il livello a cui raggruppare.
+Le funzioni sono in `R/utils_confronto.R` e hanno i loro test: `una_lettura_al_giorno()`, `periodi_confronto()`, `confronto_sistemi()`, `riepilogo_confronto()`, `intervallo_jackknife()`, `codici_gemelli()`, `gemelli_sospetti()`, `rfid_fuori_comune()`. L'anagrafica dei contenitori viene da `anagrafica_rfid()`, in `R/utils_storico.R`.
 
 ## Cosa resta da verificare
 
-- **Gli anni vuoti delle antenne.** Il confronto parte dagli RFID che le antenne hanno letto, quindi per le antenne gli anni vuoti non si possono ancora contare allo stesso modo. Servirà un secondo anno completo: quanti contenitori letti nel primo anno non lo sono nel secondo.
-- **Raccolte previste di oggi.** L'anagrafica riporta le raccolte previste attuali. Il confronto le applica anche agli anni passati, come se il calendario non fosse cambiato.
-- **Anni vuoti veri.** Un contenitore può non essere stato esposto per un anno. La verifica sui contenitori regolari riduce questo dubbio, non lo elimina.
-- **Periodo delle antenne.** Le letture con le antenne coprono `r intero(durata_antenne)` giorni. `r if (durata_antenne < 365) "Meno di un anno: il riporto a dodici mesi risente delle stagioni e dei mezzi attrezzati per ultimi." else "Se alcuni mezzi sono stati attrezzati dopo gli altri, il dato delle antenne è stimato per difetto."`
-- **Comuni con pochi contenitori.** Sotto i `r minimo_contenitori` contenitori confrontabili il tasso di un comune dipende da uno o due bidoni. Qui i comuni in questa condizione sono `r intero(sum(!comuni$solido))` su `r intero(nrow(comuni))`.
+- **Periodo delle antenne.** Le letture con le antenne coprono `r intero(periodi$giorni_antenne)` giorni. `r if (periodi$giorni_antenne < 365) "Meno di un anno: il tasso di lettura delle antenne risente della stagione e dei mezzi attrezzati per primi." else "Se alcuni mezzi sono stati attrezzati dopo gli altri, il dato delle antenne è stimato per difetto."`
+- **Contenitori nuovi.** Un contenitore senza letture precedenti può essere stato consegnato da poco. I controlli sui contenitori già in servizio e su quelli letti con regolarità riducono questo dubbio; la data di consegna lo toglierebbe.
+- **Chi espone di rado.** Poche letture possono essere vere: un contenitore esposto poche volte l'anno. Il confronto con le antenne sugli stessi contenitori serve a questo, ma su un periodo breve una stagione può pesare.
+- **Raccolte previste di oggi.** L'anagrafica riporta le raccolte previste attuali. Il confronto le applica anche al periodo di riferimento, come se il calendario non fosse cambiato.
 - **Lettura e svuotamento.** Una lettura dice che il mezzo è passato accanto al tag. Le letture utili e l'analisi dei cluster dell'app tolgono i casi più evidenti di tag letti senza svuotamento.
+- **Codici sospetti.** Le coppie di codici sono indizi, non prove: vanno verificate sul posto.
+`r if (mostra_comuni) sprintf("- **Comuni con pochi contenitori.** Sotto i %s contenitori il tasso di un comune dipende da uno o due bidoni. Comuni in questa condizione: %s su %s.", minimo_contenitori, intero(sum(!comuni$solido)), intero(nrow(comuni)))`
 `r if (dati_di_esempio) "- **Dati di prova.** I numeri di questo documento vengono dai dataset di esempio, costruiti a tavolino. Sui dati reali le differenze possono essere più o meno nette."`
 
 ## Rifare il report sui dati reali
 
-Servono due file: le letture con le antenne, nel formato dell'app, e le letture storiche, con le colonne `RFID` e `giorno_lettura`. I codici RFID devono avere lo stesso formato nei due file. Per i conti a livello di cantiere e di comune il file delle letture deve avere le colonne `comune_da_database`, `comune_lettura` e `cantiere`. Dalla radice del progetto:
+Servono due file: le letture con le antenne, nel formato dell'app, e le letture storiche, con le colonne `RFID` e `giorno_lettura`. I codici RFID devono avere lo stesso formato nei due file. Dalla radice del progetto:
 
 ```r
 rmarkdown::render(
@@ -1191,4 +1712,10 @@ rmarkdown::render(
 )
 ```
 
-L'HTML prodotto contiene dati aziendali. La cartella `data-raw/output/` è esclusa da git: va lasciato lì.
+Lo stesso report si compila per un cantiere, per un comune o per un altro servizio, aggiungendo i parametri `cantiere`, `comune` e `servizio`. Lo script `docs/compila_report.R` compila in una volta il report dell'intero territorio, uno per cantiere e uno per comune:
+
+```sh
+Rscript docs/compila_report.R data-raw/output/letture_app.csv data-raw/output/letture_storiche.csv
+```
+
+Gli HTML prodotti contengono dati aziendali. La cartella `data-raw/output/` è esclusa da git: vanno lasciati lì.
