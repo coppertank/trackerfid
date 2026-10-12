@@ -32,20 +32,20 @@ limiti_mappa <- function() {
 #'   bolla per cantiere e l'ultimo a cui se ne vede una per comune.
 #' @noRd
 soglie_zoom <- function() {
-  list(cantiere = 11, comune = 12)
+  list(cantiere = 11, comune = 13)
 }
 
 #' Livello di aggregazione adatto a uno zoom
 #'
 #' Con la zona servita inquadrata per intero lo zoom è 10 o meno: si vedono
 #' i cantieri, e restano anche a zoom 11, quando un cantiere occupa buona
-#' parte della mappa. A zoom 12 un comune occupa un paio di centinaia di
-#' pixel: si vedono i comuni. Da 13 in su si vedono le strade, e i singoli
-#' bidoni. Le soglie stanno in `soglie_zoom()`.
+#' parte della mappa. A zoom 12 e 13 si vedono i comuni: a 12 un comune occupa
+#' un paio di centinaia di pixel, a 13 buona parte della mappa. Da 14 in su si
+#' vedono i singoli bidoni. Le soglie stanno in `soglie_zoom()`.
 #'
 #' @param zoom Zoom della mappa.
-#' @return `"cantiere"` fino a zoom 11, `"comune"` a zoom 12, poi `"griglia"`,
-#'   cioè nessun raggruppamento per territorio.
+#' @return `"cantiere"` fino a zoom 11, `"comune"` a zoom 12 e 13, poi
+#'   `"griglia"`, cioè nessun raggruppamento per territorio.
 #' @noRd
 livello_aggregazione <- function(zoom) {
   soglie <- soglie_zoom()
@@ -303,6 +303,20 @@ vista_da_rifare <- function(disegnata, nuova, riquadro, zoom) {
       !riquadro_contiene(disegnata$riquadro, riquadro),
     FALSE
   )
+}
+
+#' La vista va disegnata subito, senza attendere la fine degli spostamenti?
+#'
+#' Le bolle di cantieri e comuni sono poche e non dipendono dall'area
+#' inquadrata: quando lo zoom entra nella loro fascia si disegnano subito,
+#' altrimenti le bolle del livello precedente resterebbero sulla mappa per un
+#' terzo di secondo. Le altre viste aspettano: i singoli bidoni possono essere
+#' migliaia, e sopra il limite la vista cambia a ogni spostamento.
+#'
+#' @param tipo Tipo della vista scelta da `scegli_vista()`.
+#' @noRd
+vista_immediata <- function(tipo) {
+  tipo %in% c("cantiere", "comune")
 }
 
 #' Frase che descrive la vista della mappa, per la sua intestazione

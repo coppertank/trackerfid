@@ -433,13 +433,13 @@ test_that("i casi speciali del dataset di esempio sono riconosciuti", {
 
   stima <- caso("RFD20250915201")
   expect_identical(stima$caso, "non_censito_con_stima")
-  expect_identical(stima$stima$servizio, "SECCO PAP")
+  expect_identical(stima$stima$servizio, "SECCO")
   expect_equal(stima$stima$pct, 100)
 
   # due letture, due giri di tipologie diverse: la stima c'è ma è incerta
   incerto <- caso("RFD20250920250")
   expect_identical(incerto$caso, "non_censito_con_stima")
-  expect_setequal(incerto$stima$servizio, c("SECCO PAP", "CARTA/CARTONE PAP"))
+  expect_setequal(incerto$stima$servizio, c("SECCO", "CARTA"))
   expect_equal(incerto$stima$pct, c(50, 50))
 })
 
@@ -457,7 +457,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   con <- scrivi_csv(c(
     paste0(
       intestazione_csv,
-      ",numero_raccolte_annue_previste,VOLUME_PREVISTO,Comune_da_database,comune_lettura,CANTIERE"
+      ",numero_raccolte_annue_previste,VOLUME_PREVISTO,Comune_da_database,Comune_Giro,CANTIERE"
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,45.72,11.76,26,1100,Rosà,Bassano del Grappa,",
     "2025-09-15 09:30:00,AB123CD,VEH001,R2,Non Presente,NA,SECCO PAP,NA,45.43,11.79,NA,,,rubano,"
@@ -467,11 +467,49 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_equal(esito$dati$numero_raccolte_annue_previste, c(26, NA))
   # i nomi dei comuni tornano alla grafia della tabella dei comuni
   expect_identical(esito$dati$comune_da_database, c("ROSA'", NA))
-  expect_identical(esito$dati$comune_lettura, c("BASSANO DEL GRAPPA", "RUBANO"))
-  # il comune assegnato è quello del database, se c'è; il cantiere è il suo
+  expect_identical(esito$dati$comune_giro, c("BASSANO DEL GRAPPA", "RUBANO"))
+  # il comune di lettura viene dalla posizione: la prima lettura è a Rosà,
+  # anche se il calendario mandava il mezzo a Bassano del Grappa
+  expect_identical(esito$dati$comune_lettura, c("ROSA'", "RUBANO"))
+  # il comune assegnato è quello in cui cade il punto; il cantiere è il suo
   expect_identical(esito$dati$comune_assegnato, c("ROSA'", "RUBANO"))
   expect_identical(esito$dati$cantiere, c("BASSANO", "RUBANO"))
   expect_length(esito$avvisi, 0)
+
+  # senza la colonna del servizio del calendario vale il servizio atteso, e
+  # nessun avviso la segnala
+  expect_identical(esito$dati$servizio_atteso, c(NA, "SECCO PAP"))
+  expect_identical(esito$dati$servizio_giro, esito$dati$servizio_atteso)
+  # se c'è, resta distinta: il servizio atteso di un non censito può venire
+  # dai censiti letti dallo stesso mezzo. La provenienza è una colonna del
+  # file che l'app non usa
+  con_giro <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",Servizio_Giro,origine_servizio_atteso"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,SECCO,carta,UTZ001,45.72,11.76,carta,calendario",
+    "2025-09-15 08:35:00,AB123CD,VEH001,R2,Non Presente,NA,SECCO,NA,45.72,11.76,Carta,censiti",
+    "2025-09-15 08:40:00,AB123CD,VEH001,R3,Non Presente,NA,NA,NA,45.72,11.76,,"
+  )))
+  expect_identical(con_giro$dati$servizio_atteso, c("CARTA", "SECCO", NA))
+  expect_identical(con_giro$dati$servizio_giro, c("CARTA", "CARTA", NA))
+  expect_false("origine_servizio_atteso" %in% names(con_giro$dati))
+  expect_identical(names(con_giro$dati), colonne_dataset())
+  expect_true("servizio_giro" %in% colonne_dataset())
+
+  # se il file ha già il comune di lettura, vale comunque la posizione
+  gia_scritto <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",comune_giro,comune_lettura"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,45.72,11.76,Rubano,Bassano del Grappa",
+    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Non Presente,NA,SECCO,NA,41.9,12.5,Rubano,Rubano"
+  )))
+  expect_identical(gia_scritto$dati$comune_giro, c("RUBANO", "RUBANO"))
+  expect_identical(
+    gia_scritto$dati$comune_lettura,
+    c("ROSA'", "FUORI SERVIZIO AZIENDA")
+  )
+  # un non censito letto fuori dai comuni serviti non ha comune né cantiere
+  expect_identical(gia_scritto$dati$comune_assegnato, c("ROSA'", NA))
+  expect_identical(gia_scritto$dati$cantiere, c("BASSANO", NA))
+  expect_identical(gia_scritto$dati$fuori_giro, c(TRUE, TRUE))
 
   # i file meno recenti chiamavano `comune` il comune del database
   vecchio <- carica_dataset(scrivi_csv(c(
@@ -485,7 +523,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_identical(vecchio$dati$cantiere, "RUBANO")
   expect_match(
     vecchio$avvisi,
-    "Colonne facoltative assenti: comune_lettura, cantiere.",
+    "Colonne facoltative assenti: comune_giro, cantiere.",
     fixed = TRUE
   )
 
@@ -493,11 +531,12 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   fuori <- carica_dataset(scrivi_csv(c(
     paste0(
       intestazione_csv,
-      ",volume_previsto,numero_raccolte_annue_previste,comune_da_database,comune_lettura,cantiere"
+      ",volume_previsto,numero_raccolte_annue_previste,comune_da_database,comune_giro,cantiere"
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,45.4,11.9,1100,26,Padova,,ovest",
     "2025-09-15 09:30:00,AB123CD,VEH001,R2,Presente,CARTA,NA,UTZ002,45.4,11.9,1100,26,Vicenza,,"
   )))
+  expect_identical(fuori$dati$comune_lettura, rep(fuori_servizio(), 2))
   expect_identical(fuori$dati$comune_assegnato, c("PADOVA", "VICENZA"))
   expect_identical(fuori$dati$cantiere, c("OVEST", NA))
   expect_match(
@@ -505,6 +544,23 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
     "Comuni assenti dalla tabella dei comuni: PADOVA, VICENZA.",
     fixed = TRUE
   )
+
+  # anche un comune del giro che la tabella non contiene viene segnalato:
+  # per quella lettura il fuori giro non si può valutare
+  soppresso <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",comune_da_database,comune_giro,cantiere"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,NA,UTZ001,45.72,11.76,Rosà,Valstagna,BASSANO"
+  )))
+  expect_identical(soppresso$dati$comune_giro, "VALSTAGNA")
+  expect_identical(soppresso$dati$comune_lettura, "ROSA'")
+  expect_false(soppresso$dati$fuori_giro)
+  expect_true(any(grepl(
+    "Comuni dei giri assenti dalla tabella dei comuni: VALSTAGNA. Le letture di quei giri non possono risultare fuori giro.",
+    soppresso$avvisi,
+    fixed = TRUE
+  )))
+  # il comune assegnato è Rosà, che è in tabella: nessun altro avviso sui comuni
+  expect_false(any(grepl("^Comuni assenti", soppresso$avvisi)))
 
   senza <- carica_dataset(scrivi_csv(c(
     intestazione_csv,
@@ -514,9 +570,11 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_true(all(is.na(senza$dati$volume_previsto)))
   expect_true(all(is.na(senza$dati$comune_assegnato)))
   expect_true(all(is.na(senza$dati$cantiere)))
+  # la lettura è a Roma: fuori dai comuni serviti
+  expect_identical(senza$dati$comune_lettura, fuori_servizio())
   expect_match(
     senza$avvisi,
-    "Colonne facoltative assenti: volume_previsto, numero_raccolte_annue_previste, comune_da_database, comune_lettura, cantiere.",
+    "Colonne facoltative assenti: volume_previsto, numero_raccolte_annue_previste, comune_da_database, comune_giro, cantiere.",
     fixed = TRUE
   )
 
@@ -627,7 +685,7 @@ test_that("i contenitori censiti non usano il servizio atteso per l'icona", {
   # dataset di esempio: stima netta, stima incerta
   esempio <- aggiungi_servizio_icona(dati_esempio())
   expect_true(all(
-    esempio$servizio_icona[esempio$RFID == "RFD20250915201"] == "SECCO PAP"
+    esempio$servizio_icona[esempio$RFID == "RFD20250915201"] == "SECCO"
   ))
   expect_true(all(is.na(esempio$servizio_icona[
     esempio$RFID == "RFD20250920250"
@@ -1245,7 +1303,7 @@ test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarat
   expect_false(is.unsorted(rev(ultime$giorno_lettura)))
   expect_named(
     ultime,
-    c("giorno_lettura", "matricola_veicolo", "comune_lettura", "comune_geografico")
+    c("giorno_lettura", "matricola_veicolo", "comune_giro", "comune_geografico")
   )
 
   # un contenitore coerente non ha niente da segnalare

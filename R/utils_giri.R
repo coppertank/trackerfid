@@ -2,7 +2,7 @@
 #
 # Un giro è il lavoro di un mezzo in un giorno, per un servizio e in un
 # comune: lo dice il calendario dei mezzi, e nel file sta su ogni lettura come
-# `servizio_atteso` e `comune_lettura`. Le funzioni di questo file servono
+# `servizio_giro` e `comune_giro`. Le funzioni di questo file servono
 # alla scheda "Ricerca Giro": trovano le letture di un mezzo in un intervallo
 # di giorni e le riassumono giro per giro, con le letture fuori giro e quelle
 # fuori comune, vedi `aggiungi_geografia()`.
@@ -75,6 +75,20 @@ cerca_giri <- function(dati, mezzo = NULL, dal, al, solo = character(0)) {
   trovate
 }
 
+#' Servizio del giro di ogni lettura, secondo il calendario
+#'
+#' È `servizio_giro`. Il servizio atteso di una lettura può essere
+#' diverso: per un non censito può venire dai censiti letti dallo stesso
+#' mezzo. Senza quella colonna vale `servizio_atteso`.
+#' @noRd
+servizio_del_giro <- function(letture) {
+  as.character(
+    letture[["servizio_giro"]] %||%
+      letture[["servizio_atteso"]] %||%
+      rep(NA_character_, nrow(letture))
+  )
+}
+
 #' Colonne del riepilogo dei giri
 #' @noRd
 colonne_riepilogo_giri <- function() {
@@ -82,7 +96,7 @@ colonne_riepilogo_giri <- function() {
     "giorno",
     "matricola_veicolo",
     "targa_veicolo",
-    "servizio_atteso",
+    "servizio_giro",
     "comune_giro",
     "prima_lettura",
     "ultima_lettura",
@@ -112,7 +126,7 @@ riepilogo_giri <- function(letture) {
       giorno = as.Date(character(0)),
       matricola_veicolo = character(0),
       targa_veicolo = character(0),
-      servizio_atteso = character(0),
+      servizio_giro = character(0),
       comune_giro = character(0),
       prima_lettura = as.POSIXct(character(0), tz = "UTC"),
       ultima_lettura = as.POSIXct(character(0), tz = "UTC"),
@@ -126,12 +140,13 @@ riepilogo_giri <- function(letture) {
   letture <- letture[order(letture$giorno_lettura, method = "radix"), ]
   giorno <- letture[["giorno"]] %||% lubridate::as_date(letture$giorno_lettura)
   comune_giro <- as.character(
-    letture[["comune_lettura"]] %||% rep(NA_character_, nrow(letture))
+    letture[["comune_giro"]] %||% rep(NA_character_, nrow(letture))
   )
+  servizio_giro <- servizio_del_giro(letture)
   gruppo <- indice_gruppi(paste(
     as.integer(giorno),
     letture$matricola_veicolo,
-    letture$servizio_atteso,
+    servizio_giro,
     comune_giro,
     sep = "\r"
   ))
@@ -153,7 +168,7 @@ riepilogo_giri <- function(letture) {
     giorno = primo_per_gruppo(giorno, gruppo, n),
     matricola_veicolo = primo_per_gruppo(letture$matricola_veicolo, gruppo, n),
     targa_veicolo = primo_per_gruppo(letture$targa_veicolo, gruppo, n),
-    servizio_atteso = primo_per_gruppo(letture$servizio_atteso, gruppo, n),
+    servizio_giro = primo_per_gruppo(servizio_giro, gruppo, n),
     comune_giro = primo_per_gruppo(comune_giro, gruppo, n),
     prima_lettura = primo_per_gruppo(letture$giorno_lettura, gruppo, n),
     ultima_lettura = ultimo_per_gruppo(letture$giorno_lettura, gruppo, n),
@@ -189,12 +204,12 @@ letture_del_giro <- function(letture, giro) {
     if (is.na(valore)) is.na(valori) else valori %in% valore
   }
   comune_giro <- as.character(
-    letture[["comune_lettura"]] %||% rep(NA_character_, nrow(letture))
+    letture[["comune_giro"]] %||% rep(NA_character_, nrow(letture))
   )
   letture[
     letture$giorno == giro$giorno &
       letture$matricola_veicolo == giro$matricola_veicolo &
-      uguale(letture$servizio_atteso, giro$servizio_atteso) &
+      uguale(servizio_del_giro(letture), giro$servizio_giro) &
       uguale(comune_giro, giro$comune_giro),
     ,
     drop = FALSE
@@ -218,7 +233,7 @@ area_giri <- function(letture, massimo = 6) {
     return(NULL)
   }
   punti <- letture[, c("latitudine", "longitudine")]
-  indici <- unique(stats::na.omit(indice_comune(unique(letture[["comune_lettura"]]))))
+  indici <- unique(stats::na.omit(indice_comune(unique(letture[["comune_giro"]]))))
   if (length(indici) == 0 || length(indici) > massimo) {
     return(punti)
   }
@@ -292,7 +307,7 @@ tabella_giri_dt <- function(riepilogo) {
   tabella <- data.frame(
     Data = format(riepilogo$giorno, "%d/%m/%Y"),
     Mezzo = paste(riepilogo$matricola_veicolo, riepilogo$targa_veicolo),
-    `Giro previsto` = riepilogo$servizio_atteso,
+    `Giro previsto` = riepilogo$servizio_giro,
     `Comune del giro` = riepilogo$comune_giro,
     Orario = paste(ora(riepilogo$prima_lettura), ora(riepilogo$ultima_lettura), sep = "\u2013"),
     Letture = riepilogo$letture,

@@ -353,10 +353,10 @@ test_that("i nomi dei comuni si confrontano senza accenti e apostrofi", {
   expect_identical(cantiere_di_comune(character(0)), character(0))
 })
 
-test_that("il comune assegnato è quello del database, altrimenti quello della lettura", {
+test_that("senza posizione il comune assegnato è quello del database", {
   letture <- dplyr::tibble(
     comune_da_database = c("LIMENA", NA, NA, "PAESE IGNOTO", NA),
-    comune_lettura = c(
+    comune_giro = c(
       "CITTADELLA",
       "CITTADELLA",
       NA,
@@ -366,24 +366,28 @@ test_that("il comune assegnato è quello del database, altrimenti quello della l
     cantiere = c("BASSANO", NA, "ASIAGO", "ALTROVE", NA)
   )
   esito <- aggiungi_geografia(letture)
+  # il comune del giro non assegna un comune a nessuna lettura
   expect_identical(
     esito$comune_assegnato,
-    c("LIMENA", "CITTADELLA", NA, "PAESE IGNOTO", "PAESE IGNOTO")
+    c("LIMENA", NA, NA, "PAESE IGNOTO", NA)
   )
+  expect_true(all(is.na(esito$comune_lettura)))
   # il cantiere segue la tabella dei comuni, anche contro quello scritto nel
   # file; per un comune ignoto o mancante resta quello del file
   expect_identical(
     esito$cantiere,
-    c("RUBANO", "CAMPOSAMPIERO", "ASIAGO", "ALTROVE", NA)
+    c("RUBANO", NA, "ASIAGO", "ALTROVE", NA)
   )
 
-  # senza colonne geografiche le colonne vengono create vuote
+  # senza colonne geografiche le colonne vengono create vuote. Le letture di
+  # prova sono lontane dai comuni serviti
   senza <- aggiungi_geografia(letture_test())
   expect_true(all(
     c(colonne_geografiche(), colonne_derivate()) %in% names(senza)
   ))
   expect_true(all(is.na(senza$comune_assegnato)))
   expect_true(all(is.na(senza$cantiere)))
+  expect_identical(senza$comune_lettura, rep(fuori_servizio(), nrow(senza)))
   expect_equal(nrow(senza), nrow(letture_test()))
 })
 
@@ -402,7 +406,8 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
       NA,
       NA
     ),
-    comune_lettura = c(
+    # il comune in cui cade il punto di ogni lettura
+    comune_geografico = c(
       "CITTADELLA",
       "CITTADELLA",
       "CITTADELLA",
@@ -414,6 +419,8 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
       "ASIAGO",
       NA
     ),
+    # il calendario mandava i mezzi altrove: non conta
+    comune_giro = "ROANA",
     cantiere = c(NA, NA, NA, NA, NA, NA, NA, "ALTROVE", NA, "ASIAGO")
   )
   esito <- geografia_per_gruppo(letture, indice_gruppi(letture$RFID))
@@ -432,6 +439,24 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
     esito$cantiere,
     c("RUBANO", "ASIAGO", NA, "ALTROVE", "ASIAGO")
   )
+
+  # senza la colonna del comune geografico vale la posizione
+  comuni <- comuni_cantieri()
+  gallio <- comuni[comuni$comune == "GALLIO", ]
+  posizioni <- dplyr::tibble(
+    RFID = c("B", "B", "B", "C"),
+    comune_da_database = NA_character_,
+    comune_giro = "ROANA",
+    latitudine = c(gallio$latitudine, gallio$latitudine, 41.9, 41.9),
+    longitudine = c(gallio$longitudine, gallio$longitudine, 12.5, 12.5)
+  )
+  dalla_posizione <- geografia_per_gruppo(
+    posizioni,
+    indice_gruppi(posizioni$RFID)
+  )
+  # C è letto solo fuori dai comuni serviti: non ha un comune
+  expect_identical(dalla_posizione$comune, c("GALLIO", NA))
+  expect_identical(dalla_posizione$cantiere, c("ASIAGO", NA))
 
   vuota <- geografia_per_gruppo(dati_esempio()[0, ], integer(0), 0)
   expect_equal(nrow(vuota), 0)
@@ -454,17 +479,17 @@ test_that("sul dataset di esempio ogni contenitore censito ha il comune del data
     cantiere_di_comune(ultimo_comune[censiti])
   )
   # i non censiti e i sacchetti, che a database non hanno un comune, hanno
-  # quello del giro che li ha letti più spesso
+  # quello in cui sono letti più spesso
   expect_false(any(rfid_sacchetto(unique(dati$RFID)) & censiti))
   expect_identical(
     geografia$comune[!censiti],
-    piu_frequente_per_gruppo(dati$comune_lettura, gruppo)[!censiti]
+    piu_frequente_per_gruppo(dati$comune_geografico, gruppo)[!censiti]
   )
   expect_equal(
     as.integer(table(geografia$cantiere)[cantieri()]),
-    c(34, 67, 89, 61)
+    c(33, 66, 91, 61)
   )
-  # ogni lettura ha il comune del giro: nessun RFID resta senza cantiere
+  # nessuna lettura è fuori dai comuni serviti: nessun RFID resta senza cantiere
   expect_false(anyNA(geografia$comune))
   expect_false(anyNA(geografia$cantiere))
 })

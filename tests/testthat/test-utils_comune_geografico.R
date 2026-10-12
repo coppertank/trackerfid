@@ -176,7 +176,7 @@ test_that("la geografia di una lettura parte dalla posizione", {
       "Non Presente"
     ),
     comune_da_database = c("Bassano del Grappa", "LIMENA", NA, NA, "MILANO", NA),
-    comune_lettura = c(
+    comune_giro = c(
       "BASSANO DEL GRAPPA",
       "CITTADELLA",
       "CITTADELLA",
@@ -207,8 +207,20 @@ test_that("la geografia di una lettura parte dalla posizione", {
     esito$comune_geografico,
     c("BASSANO DEL GRAPPA", rep("CITTADELLA", 3), NA, NA)
   )
+  # il comune di lettura \u00e8 quello della posizione, qualunque fosse il giro
+  # del calendario; fuori dai comuni serviti ha una voce sua
+  expect_identical(
+    esito$comune_lettura,
+    c(
+      "BASSANO DEL GRAPPA",
+      rep("CITTADELLA", 3),
+      "FUORI SERVIZIO AZIENDA",
+      "FUORI SERVIZIO AZIENDA"
+    )
+  )
+  expect_identical(fuori_servizio(), "FUORI SERVIZIO AZIENDA")
   # il comune assegnato \u00e8 quello della posizione; fuori dai comuni serviti
-  # vale quello dichiarato
+  # vale quello del database, mai quello del giro
   expect_identical(
     esito$comune_assegnato,
     c("BASSANO DEL GRAPPA", rep("CITTADELLA", 3), "MILANO", NA)
@@ -223,27 +235,40 @@ test_that("la geografia di una lettura parte dalla posizione", {
   expect_identical(esito$fuori_comune, c(FALSE, TRUE, FALSE, FALSE, FALSE, FALSE))
   expect_identical(esito$fuori_giro, c(FALSE, FALSE, FALSE, TRUE, TRUE, FALSE))
 
-  # per la preparazione dei dati la posizione non conta
-  dichiarata <- aggiungi_geografia(letture, da_posizione = FALSE)
-  expect_true(all(is.na(dichiarata$comune_geografico)))
+  # una posizione mancante vale come una posizione fuori dai comuni serviti
+  senza_punto <- letture
+  senza_punto$latitudine[1] <- NA
   expect_identical(
-    dichiarata$comune_assegnato,
-    c("Bassano del Grappa", "LIMENA", "CITTADELLA", "ASIAGO", "MILANO", NA)
+    aggiungi_geografia(senza_punto)$comune_lettura[1],
+    fuori_servizio()
+  )
+  # senza le colonne delle coordinate nessun comune viene dalla posizione:
+  # resta quello del database
+  senza <- aggiungi_geografia(
+    letture[, setdiff(names(letture), c("latitudine", "longitudine"))]
+  )
+  expect_true(all(is.na(senza$comune_lettura)))
+  expect_true(all(is.na(senza$comune_geografico)))
+  expect_identical(
+    senza$comune_assegnato,
+    c("Bassano del Grappa", "LIMENA", NA, NA, "MILANO", NA)
   )
   expect_identical(
-    dichiarata$cantiere,
-    c("BASSANO", "RUBANO", "CAMPOSAMPIERO", "ASIAGO", "FUORI ZONA", NA)
+    senza$cantiere,
+    c("BASSANO", "RUBANO", NA, NA, "FUORI ZONA", NA)
   )
-  expect_false(any(dichiarata$fuori_comune | dichiarata$fuori_giro))
-  # senza coordinate vale la stessa regola
-  senza <- aggiungi_geografia(letture[, setdiff(names(letture), c("latitudine", "longitudine"))])
-  expect_identical(senza$comune_assegnato, dichiarata$comune_assegnato)
   expect_false(any(senza$fuori_comune | senza$fuori_giro))
-  # il comune di un RFID, per report e cluster, resta quello dichiarato
+  # il comune di un RFID, per report e cluster: quello del database per un
+  # censito, quello in cui \u00e8 letto per un non censito. D \u00e8 a Cittadella anche
+  # se il calendario mandava il mezzo ad Asiago
   per_rfid <- geografia_per_gruppo(esito, indice_gruppi(esito$RFID))
   expect_identical(
     per_rfid$comune,
-    c("Bassano del Grappa", "LIMENA", "CITTADELLA", "ASIAGO", "MILANO", NA)
+    c("Bassano del Grappa", "LIMENA", "CITTADELLA", "CITTADELLA", "MILANO", NA)
+  )
+  expect_identical(
+    per_rfid$cantiere,
+    c("BASSANO", "RUBANO", "CAMPOSAMPIERO", "CAMPOSAMPIERO", "FUORI ZONA", NA)
   )
 })
 

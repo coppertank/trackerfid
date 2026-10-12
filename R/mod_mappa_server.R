@@ -100,20 +100,28 @@ mod_mappa_server <- function(
     # Dopo uno spostamento o uno zoom la mappa si ridisegna solo se la vista
     # disegnata non va più bene per lo zoom e per l'area inquadrata.
     if (modalita == "cluster") {
-      spostamento <- debounce(
-        reactive(list(input$mappa_bounds, input$mappa_zoom)),
-        250
-      )
-      observeEvent(spostamento(), {
+      ridisegna_se_serve <- function(subito = FALSE) {
         df <- dati()
         req(pronta(), isTRUE(attiva()), !in_attesa$marker, !is.null(df))
         nuova <- scegli_vista(df, input$mappa_bounds, input$mappa_zoom)
+        if (subito && !vista_immediata(nuova$tipo)) {
+          return()
+        }
         if (
           vista_da_rifare(vista(), nuova, input$mappa_bounds, input$mappa_zoom)
         ) {
           disegna(df)
         }
-      })
+      }
+      # Le bolle di cantieri e comuni si disegnano appena lo zoom entra nella
+      # loro fascia. Le altre viste aspettano 250 millisecondi: così una serie
+      # di spostamenti, o di scatti di zoom, dà un ridisegno solo.
+      observeEvent(input$mappa_zoom, ridisegna_se_serve(subito = TRUE))
+      spostamento <- debounce(
+        reactive(list(input$mappa_bounds, input$mappa_zoom)),
+        250
+      )
+      observeEvent(spostamento(), ridisegna_se_serve())
     }
 
     # L'identificativo di un marker è il numero di riga delle letture

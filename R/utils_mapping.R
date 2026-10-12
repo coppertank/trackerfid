@@ -163,6 +163,7 @@ aggiungi_marker <- function(
       presente = df$presente_a_database,
       comune = df[["comune_da_database"]],
       comune_lettura = df[["comune_lettura"]],
+      comune_giro = df[["comune_giro"]],
       cantiere = df[["cantiere"]],
       comune_geografico = df[["comune_geografico"]],
       fuori_comune = df[["fuori_comune"]],
@@ -330,7 +331,7 @@ disegna_marker <- function(
     cluster = aggiungi_marker(map, df, cluster = TRUE),
     utenza = aggiungi_marker(map, df),
     giro = map |>
-      aggiungi_comuni_giro(riquadri[["comune_lettura"]]) |>
+      aggiungi_comuni_giro(riquadri[["comune_giro"]]) |>
       aggiungi_marker(df),
     rfid = map |>
       add_rfid_bounds(riquadri) |>

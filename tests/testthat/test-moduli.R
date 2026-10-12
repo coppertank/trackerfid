@@ -260,7 +260,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi di uno stato", {
       scelte_atteso(),
       ordina_servizi(esempio$servizio_icona[!censito])
     )
-    expect_true("SECCO PAP" %in% scelte_atteso())
+    expect_true("SECCO" %in% scelte_atteso())
     # un giro che non è la stima di nessun non censito non è tra le voci
     expect_false("SERVIZI MERCATI" %in% scelte_atteso())
     expect_true("SERVIZI MERCATI" %in% esempio$servizio_atteso)
@@ -298,10 +298,10 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi di uno stato", {
     # un solo servizio stimato, senza gli incerti
     session$setInputs(
       includi_stima_incerta = FALSE,
-      servizio_atteso_check = "SECCO PAP"
+      servizio_atteso_check = "SECCO"
     )
     expect_equal(nrow(non_censiti()), 5)
-    expect_true(all(non_censiti()$servizio_icona == "SECCO PAP"))
+    expect_true(all(non_censiti()$servizio_icona == "SECCO"))
     expect_true("RFD20250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
 
@@ -323,9 +323,9 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi di uno stato", {
     expect_gt(length(setdiff(scelte_atteso(), voci_2025)), 0)
     expect_equal(nrow(filtrati()), 0)
     # e una voce spuntata vale solo per sé
-    session$setInputs(servizio_atteso_check = "SECCO PAP")
+    session$setInputs(servizio_atteso_check = "SECCO")
     expect_gt(nrow(filtrati()), 0)
-    expect_true(all(filtrati()$servizio_icona == "SECCO PAP"))
+    expect_true(all(filtrati()$servizio_icona == "SECCO"))
 
     # il reset riporta tutto ai valori predefiniti
     session$setInputs(reset = 1)
@@ -819,7 +819,8 @@ test_that("le letture senza cantiere hanno una voce tra i cantieri", {
   # Nel dataset di esempio ogni lettura ha un cantiere: in un file può mancare.
   tutte <- dati_esempio()
   vuote <- tutte$RFID == "RFD20241001301"
-  tutte$comune_lettura[vuote] <- NA
+  tutte$comune_lettura[vuote] <- fuori_servizio()
+  tutte$comune_geografico[vuote] <- NA
   tutte$comune_assegnato[vuote] <- NA
   tutte$cantiere[vuote] <- NA
   dati <- shiny::reactiveVal(tutte)
@@ -930,15 +931,27 @@ test_that("oltre il limite la mappa principale passa alla vista aggregata", {
       expect_identical(vista()$zoom, 9)
       expect_identical(bolle(), disegnate)
 
-      # ingrandendo: una bolla per comune
+      # ingrandendo: una bolla per comune, subito, senza attendere
       session$setInputs(mappa_zoom = 12)
-      session$elapse(400)
       expect_identical(vista()$tipo, "comune")
+      expect_identical(vista()$zoom, 12)
       expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
       expect_match(output$riepilogo, "una bolla per comune")
+      # passata l'attesa non si ridisegna una seconda volta
+      disegnate <- bolle()
+      session$elapse(400)
+      expect_identical(bolle(), disegnate)
 
-      # ancora: bolle per riquadro, valide per l'area caricata
+      # a zoom 13 restano i comuni: stessa fascia, nessun ridisegno
       session$setInputs(mappa_zoom = 13)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "comune")
+      expect_identical(bolle(), disegnate)
+
+      # ancora: bolle per riquadro, valide per l'area caricata. Da vicino la
+      # mappa aspetta la fine degli spostamenti
+      session$setInputs(mappa_zoom = 14)
+      expect_identical(vista()$tipo, "comune")
       session$elapse(400)
       expect_identical(vista()$tipo, "griglia")
       expect_identical(vista()$riquadro, allarga_riquadro(tutta))
@@ -1001,15 +1014,25 @@ test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, 
       expect_identical(vista()$tipo, "cantiere")
       expect_match(output$riepilogo, "una bolla per cantiere")
 
-      # avvicinandosi ancora una bolla per comune
+      # avvicinandosi ancora una bolla per comune, senza attesa
+      session$setInputs(mappa_zoom = 12)
+      expect_identical(vista()$tipo, "comune")
+      # e di nuovo i cantieri allontanandosi, sempre senza attesa
+      session$setInputs(mappa_zoom = 11)
+      expect_identical(vista()$tipo, "cantiere")
       session$setInputs(mappa_zoom = 12)
       session$elapse(400)
       expect_identical(vista()$tipo, "comune")
       expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
       expect_match(output$riepilogo, "una bolla per comune")
+      # i comuni restano anche a zoom 13
+      session$setInputs(mappa_zoom = 13)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "comune")
 
-      # da vicino tutti i bidoni, uno per uno
+      # da vicino tutti i bidoni, uno per uno: dopo l'attesa
       session$setInputs(mappa_zoom = 14)
+      expect_identical(vista()$tipo, "comune")
       session$elapse(400)
       expect_identical(vista()$tipo, "tutti")
       expect_equal(nrow(disegnati()), nrow(ultimi))
@@ -1030,9 +1053,8 @@ test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, 
       expect_identical(vista()$tipo, "tutti")
       expect_identical(vista()$zoom, 14)
 
-      # tornando lontano tornano le bolle
+      # tornando lontano tornano le bolle, subito
       session$setInputs(mappa_zoom = 11)
-      session$elapse(400)
       expect_identical(vista()$tipo, "cantiere")
       expect_null(disegnati())
       # un click su una bolla non seleziona un bidone, con o senza l'area
@@ -1252,7 +1274,8 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     riga <- which(giri$matricola_veicolo == "VEH001" & giri$fuori_giro == 10)
     session$setInputs(tabella_rows_selected = riga)
     expect_equal(nrow(restituito$risultati()), 10)
-    expect_true(all(restituito$risultati()$comune_lettura == "LIMENA"))
+    expect_true(all(restituito$risultati()$comune_giro == "LIMENA"))
+    expect_true(all(restituito$risultati()$comune_lettura == "BORGORICCO"))
     # tolta la selezione tornano tutte
     session$setInputs(tabella_rows_selected = NULL)
     expect_equal(nrow(restituito$risultati()), nrow(settimana))

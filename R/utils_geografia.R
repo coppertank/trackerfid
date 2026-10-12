@@ -332,35 +332,44 @@ cantiere_di_comune <- function(comune) {
 
 #' Completa le colonne geografiche delle letture
 #'
-#' Il comune assegnato a una lettura è quello in cui cade il suo punto, vedi
-#' `comune_geografico()`. Se il punto è fuori da tutti i comuni serviti, o se
-#' le coordinate mancano, vale il comune dichiarato: quello del database, se
-#' c'è, altrimenti quello del giro che l'ha letta. Il cantiere è quello del
-#' comune assegnato, secondo la tabella dei comuni. Per un comune che non è in
-#' tabella resta il cantiere indicato nel file.
+#' Il comune di una lettura viene dalla sua posizione, vedi
+#' `comune_geografico()`: il calendario dei mezzi non conta, perché un mezzo
+#' può sostituirne un altro e fare un giro che non era il suo.
+#'
+#' - `comune_lettura`: il comune in cui cade il punto, oppure
+#'   `fuori_servizio()` se il punto è fuori da tutti i comuni serviti o le
+#'   coordinate mancano.
+#' - `comune_geografico`: lo stesso comune, mancante fuori dai comuni serviti.
+#' - `comune_assegnato`: il comune geografico; fuori dai comuni serviti
+#'   quello del database, per i censiti. Un non censito letto fuori dai comuni
+#'   serviti non ha un comune assegnato.
+#' - `cantiere`: quello del comune assegnato, secondo la tabella dei comuni.
+#'   Per un comune che non è in tabella resta il cantiere indicato nel file.
 #'
 #' La funzione confronta poi la posizione con i comuni dichiarati, con la
 #' tolleranza di `tolleranza_confine_m()`:
 #' - `fuori_comune`: lettura di un censito oltre la tolleranza dal comune del
 #'   database. Di solito è un bidone spostato.
-#' - `fuori_giro`: lettura oltre la tolleranza dal comune del giro. Di solito
-#'   il mezzo non stava facendo il giro del calendario.
+#' - `fuori_giro`: lettura oltre la tolleranza dal comune del giro, cioè
+#'   quello in cui il calendario mandava il mezzo. Di solito il mezzo non
+#'   stava facendo il giro del calendario.
 #'
-#' @param letture Letture con `comune_da_database`, `comune_lettura` e
-#'   `cantiere`. Le colonne assenti sono trattate come vuote.
-#' @param da_posizione Con `FALSE` la posizione non conta: il comune assegnato
-#'   è quello dichiarato e nessuna lettura è fuori comune o fuori giro. Serve
-#'   alla preparazione dei dati, che scrive il cantiere del comune dichiarato.
-#' @return Le letture con `comune_geografico`, `comune_assegnato`, `cantiere`,
-#'   `fuori_comune` e `fuori_giro` compilati.
+#' La usano la validazione dell'app e la preparazione dei dati reali: il CSV
+#' riporta così gli stessi valori che l'app ricalcola al caricamento.
+#'
+#' @param letture Letture con `latitudine`, `longitudine`,
+#'   `comune_da_database`, `comune_giro` e `cantiere`. Le colonne dei comuni e
+#'   del cantiere, se assenti, sono trattate come vuote. Senza coordinate
+#'   nessun comune viene dalla posizione.
+#' @return Le letture con `comune_lettura`, `comune_geografico`,
+#'   `comune_assegnato`, `cantiere`, `fuori_comune` e `fuori_giro` compilati.
 #' @noRd
-aggiungi_geografia <- function(letture, da_posizione = TRUE) {
+aggiungi_geografia <- function(letture) {
   for (campo in colonne_geografiche()) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_character_
   }
   n <- nrow(letture)
-  con_posizione <- da_posizione &&
-    all(c("latitudine", "longitudine") %in% names(letture))
+  con_posizione <- all(c("latitudine", "longitudine") %in% names(letture))
   geografico <- if (con_posizione) {
     indice_comune_geografico(letture$latitudine, letture$longitudine)
   } else {
@@ -369,10 +378,14 @@ aggiungi_geografia <- function(letture, da_posizione = TRUE) {
   letture$comune_geografico <- comuni_cantieri()$comune[
     replace(geografico, geografico == 0L, NA_integer_)
   ]
+  letture$comune_lettura <- if (con_posizione) {
+    dplyr::coalesce(letture$comune_geografico, fuori_servizio())
+  } else {
+    rep(NA_character_, n)
+  }
   letture$comune_assegnato <- dplyr::coalesce(
     letture$comune_geografico,
-    as.character(letture$comune_da_database),
-    as.character(letture$comune_lettura)
+    as.character(letture$comune_da_database)
   )
   letture$cantiere <- dplyr::coalesce(
     cantiere_di_comune(letture$comune_assegnato),
@@ -394,7 +407,7 @@ aggiungi_geografia <- function(letture, da_posizione = TRUE) {
     letture$fuori_giro <- oltre_il_comune(
       letture$latitudine,
       letture$longitudine,
-      letture$comune_lettura,
+      letture$comune_giro,
       geografico = geografico
     )
   } else {
@@ -407,12 +420,16 @@ aggiungi_geografia <- function(letture, da_posizione = TRUE) {
 #' Comune e cantiere di ogni RFID
 #'
 #' Un RFID può avere letture in più comuni. Il suo comune è l'ultimo indicato
-#' dal database; se il database non lo conosce, è il comune in cui è stato
-#' letto più spesso. Il cantiere è quello del comune. Per un comune che non è
-#' nella tabella dei comuni vale il cantiere scritto nel file sulle letture di
-#' quel comune; per un RFID senza comune, quello di una sua lettura qualsiasi.
+#' dal database. Il database non conosce i non censiti: per loro è il comune
+#' in cui cade il maggior numero delle letture, secondo la posizione. Un non
+#' censito letto solo fuori dai comuni serviti non ha un comune.
 #'
-#' @param letture Letture validate, in ordine di tempo dentro ogni RFID.
+#' Il cantiere è quello del comune. Per un comune che non è nella tabella dei
+#' comuni vale il cantiere scritto nel file sulle letture di quel comune; per
+#' un RFID senza comune, quello di una sua lettura qualsiasi.
+#'
+#' @param letture Letture validate, in ordine di tempo dentro ogni RFID. Se
+#'   manca `comune_geografico`, viene calcolato dalle coordinate.
 #' @param gruppo Gruppo di ogni lettura, vedi `indice_gruppi()`.
 #' @param n_gruppi Numero dei gruppi.
 #' @return Tibble con `comune` e `cantiere`, una riga per gruppo.
@@ -421,21 +438,26 @@ geografia_per_gruppo <- function(letture, gruppo, n_gruppi = max(gruppo)) {
   for (campo in colonne_geografiche()) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_character_
   }
-  # Qui conta il comune dichiarato, non quello in cui cade il punto.
-  dichiarato <- dplyr::coalesce(
-    as.character(letture$comune_da_database),
-    as.character(letture$comune_lettura)
-  )
   comune <- ultimo_valido_per_gruppo(
     letture$comune_da_database,
     gruppo,
     n_gruppi
   )
-  # Il comune di lettura serve solo agli RFID che il database non conosce.
-  di_lettura <- as.character(letture$comune_lettura)
-  di_lettura[!is.na(comune)[gruppo]] <- NA_character_
-  letto <- piu_frequente_per_gruppo(di_lettura, gruppo, n_gruppi)
-  comune <- dplyr::coalesce(comune, letto)
+  # La posizione serve solo agli RFID che il database non conosce.
+  letto_a <- if (!is.null(letture[["comune_geografico"]])) {
+    as.character(letture$comune_geografico)
+  } else if (all(c("latitudine", "longitudine") %in% names(letture))) {
+    comune_geografico(letture$latitudine, letture$longitudine)
+  } else {
+    rep(NA_character_, nrow(letture))
+  }
+  letto_a[!is.na(comune)[gruppo]] <- NA_character_
+  comune <- dplyr::coalesce(
+    comune,
+    piu_frequente_per_gruppo(letto_a, gruppo, n_gruppi)
+  )
+  # Il cantiere del file vale per le letture che dichiarano il comune dell'RFID.
+  dichiarato <- as.character(letture$comune_da_database)
   del_file <- as.character(letture$cantiere)
   altro_comune <- !is.na(comune)[gruppo] &
     (is.na(dichiarato) | dichiarato != comune[gruppo])

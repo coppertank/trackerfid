@@ -16,7 +16,7 @@ letture_giri <- function() {
     RFID = c("R1", "R2", "R1", "R3", "R4", "R1", "R5"),
     presente_a_database = "Presente",
     servizio_atteso = c(rep("SECCO PAP", 3), "CARTA/CARTONE PAP", "VETRO PAP", "SECCO PAP", NA),
-    comune_lettura = c(rep("ASIAGO", 3), "GALLIO", "ROANA", "ASIAGO", NA),
+    comune_giro = c(rep("ASIAGO", 3), "GALLIO", "ROANA", "ASIAGO", NA),
     comune_geografico = c("ASIAGO", "ASIAGO", "ROANA", "GALLIO", "ROANA", "FOZA", NA),
     fuori_comune = c(FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE),
     fuori_giro = c(FALSE, FALSE, TRUE, FALSE, FALSE, TRUE, FALSE),
@@ -77,8 +77,9 @@ test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del gir
   # in ordine di giorno, mezzo e prima lettura
   expect_identical(giri$matricola_veicolo, c("M1", "M1", "M2", "M1", "M2"))
   expect_identical(giri$targa_veicolo[1], "AA111AA")
+  # senza la colonna del servizio del calendario vale il servizio atteso
   expect_identical(
-    giri$servizio_atteso,
+    giri$servizio_giro,
     c("SECCO PAP", "CARTA/CARTONE PAP", "VETRO PAP", "SECCO PAP", NA)
   )
   expect_identical(giri$comune_giro, c("ASIAGO", "GALLIO", "ROANA", "ASIAGO", NA))
@@ -147,7 +148,7 @@ test_that("frase, limite e tabella dei giri", {
   expect_equal(nrow(area_giri(anno)), nrow(anno))
   expect_equal(nrow(area_giri(d)), nrow(d) + 2 * 3)
   senza <- d
-  senza$comune_lettura <- NA_character_
+  senza$comune_giro <- NA_character_
   senza$latitudine <- 45.8
   senza$longitudine <- 11.5
   expect_equal(nrow(area_giri(senza)), nrow(senza))
@@ -186,6 +187,32 @@ test_that("frase, limite e tabella dei giri", {
   expect_s3_class(tabella_giri_dt(riepilogo_giri(d[0, ])), "datatables")
 })
 
+test_that("un giro \u00e8 quello del calendario anche se il servizio atteso viene dai censiti", {
+  # Il calendario dava la carta; il servizio atteso di un non censito viene
+  # dai censiti letti nello stesso giro, ed \u00e8 il secco
+  d <- letture_giri()[1:3, ]
+  d$giorno <- lubridate::as_date(d$giorno_lettura)
+  d$presente_a_database <- c("Presente", "Presente", "Non Presente")
+  d$servizio_giro <- "CARTA"
+  d$servizio_atteso <- c("CARTA", "CARTA", "SECCO")
+  expect_identical(servizio_del_giro(d), rep("CARTA", 3))
+  giri <- riepilogo_giri(d)
+  # un giro solo, con il servizio previsto dal calendario
+  expect_equal(nrow(giri), 1)
+  expect_identical(giri$servizio_giro, "CARTA")
+  expect_identical(giri$letture, 3L)
+  expect_equal(nrow(letture_del_giro(d, giri[1, ])), 3)
+  expect_identical(tabella_giri_dt(giri)$x$data[["Giro previsto"]], "CARTA")
+  # senza quella colonna il giro \u00e8 quello del servizio atteso
+  senza <- d[names(d) != "servizio_giro"]
+  expect_identical(servizio_del_giro(senza), c("CARTA", "CARTA", "SECCO"))
+  expect_equal(nrow(riepilogo_giri(senza)), 2)
+  expect_identical(
+    servizio_del_giro(senza[names(senza) != "servizio_atteso"]),
+    rep(NA_character_, 3)
+  )
+})
+
 test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbagliato", {
   d <- dati_esempio()
   giri <- riepilogo_giri(cerca_giri(d, "", "2025-01-01", "2025-12-31"))
@@ -193,7 +220,7 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   per_giorno <- table(paste(giri$giorno, giri$matricola_veicolo))
   expect_lte(max(per_giorno), 2)
   expect_false(anyNA(giri$comune_giro))
-  expect_false(anyNA(giri$servizio_atteso))
+  expect_false(anyNA(giri$servizio_giro))
   expect_equal(sum(giri$letture), sum(lubridate::year(d$giorno_lettura) == 2025))
 
   # mercoled\u00ec 24 settembre 2025 il mezzo VEH001 doveva lavorare a Limena e
@@ -201,8 +228,11 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   sbagliato <- cerca_giri(d, "VEH001", "2025-09-24", "2025-09-24")
   riga <- riepilogo_giri(sbagliato)
   expect_equal(nrow(riga), 1)
-  expect_identical(riga$servizio_atteso, "SECCO PAP")
+  expect_identical(riga$servizio_giro, "SECCO")
   expect_identical(riga$comune_giro, "LIMENA")
+  # il comune di lettura viene dalla posizione, non dal calendario
+  expect_identical(unique(sbagliato$comune_lettura), "BORGORICCO")
+  expect_identical(unique(sbagliato$comune_giro), "LIMENA")
   expect_identical(riga$letture, 10L)
   expect_identical(riga$fuori_giro, 10L)
   expect_identical(riga$fuori_comune, 0L)

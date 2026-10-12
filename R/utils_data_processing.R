@@ -27,6 +27,17 @@ colonne_facoltative <- function() {
   c(colonne_quantita(), colonne_geografiche())
 }
 
+#' Campo facoltativo del CSV con il servizio del giro secondo il calendario
+#'
+#' `servizio_atteso` è il servizio stimato per la lettura: per un non
+#' censito può venire dai censiti letti dallo stesso mezzo, vedi
+#' `associa_servizio_atteso_dai_censiti()`. `servizio_giro` è invece quello
+#' che il calendario prevedeva, e serve alla ricerca dei giri. In un file che
+#' non lo riporta vale `servizio_atteso`: prima di questa distinzione le due
+#' cose coincidevano.
+#' @noRd
+colonne_calendario <- function() "servizio_giro"
+
 #' Campi facoltativi numerici del CSV
 #' @noRd
 colonne_quantita <- function() {
@@ -36,30 +47,53 @@ colonne_quantita <- function() {
 #' Campi facoltativi geografici del CSV
 #'
 #' `comune_da_database` è il comune dell'anagrafica, vuoto per i non censiti.
-#' `comune_lettura` è il comune del giro che ha fatto la lettura. `cantiere`
-#' è il cantiere del comune assegnato, vedi `colonne_derivate()`.
+#' `comune_giro` è il comune in cui il calendario mandava il mezzo che ha
+#' fatto la lettura. `cantiere` è il cantiere del comune assegnato, vedi
+#' `colonne_derivate()`.
 #' @noRd
 colonne_geografiche <- function() {
-  c("comune_da_database", "comune_lettura", "cantiere")
+  c("comune_da_database", "comune_giro", "cantiere")
 }
 
-#' Campi calcolati dalla validazione, assenti dal CSV
+#' Campi calcolati dalla validazione
 #'
-#' Li compila `aggiungi_geografia()`. `comune_geografico` è il comune in cui
-#' cade il punto della lettura. `comune_assegnato` è quello, oppure il comune
-#' dichiarato se il punto è fuori dai comuni serviti: è il comune usato da
-#' filtri, bolle e statistiche. `fuori_comune` e `fuori_giro` dicono se la
-#' lettura sta oltre la tolleranza dal comune del database e da quello del
-#' giro.
+#' Li compila `aggiungi_geografia()`, dalla posizione di ogni lettura.
+#' `comune_lettura` è il comune in cui cade il punto, oppure
+#' `fuori_servizio()` fuori dai comuni serviti: se il file ha già questa
+#' colonna, viene ricalcolata. `comune_geografico` è lo stesso comune, ma
+#' mancante fuori dai comuni serviti: lo usano i conti. `comune_assegnato` è
+#' il comune geografico oppure, fuori dai comuni serviti, quello del database:
+#' è il comune usato da filtri, bolle e statistiche. `fuori_comune` e
+#' `fuori_giro` dicono se la lettura sta oltre la tolleranza dal comune del
+#' database e da quello del giro.
 #' @noRd
 colonne_derivate <- function() {
-  c("comune_assegnato", "comune_geografico", "fuori_comune", "fuori_giro")
+  c(
+    "comune_lettura",
+    "comune_assegnato",
+    "comune_geografico",
+    "fuori_comune",
+    "fuori_giro"
+  )
 }
+
+#' Valore di `comune_lettura` per le letture fuori dai comuni serviti
+#'
+#' Lo hanno le letture il cui punto non cade in nessun comune servito: un
+#' mezzo fuori zona, oppure una posizione GPS sbagliata. Un valore solo, facile
+#' da filtrare.
+#' @noRd
+fuori_servizio <- function() "FUORI SERVIZIO AZIENDA"
 
 #' Tutte le colonne del dataset validato, nell'ordine in cui compaiono
 #' @noRd
 colonne_dataset <- function() {
-  c(colonne_obbligatorie(), colonne_facoltative(), colonne_derivate())
+  c(
+    colonne_obbligatorie(),
+    colonne_facoltative(),
+    colonne_calendario(),
+    colonne_derivate()
+  )
 }
 
 #' Valori ammessi per `presente_a_database`
@@ -439,6 +473,13 @@ validate_dataset <- function(data) {
       originale[[posizione_facoltative[i]]]
     }
   }
+  # Il servizio del calendario: nei file che non lo riportano è quello atteso.
+  posizione_giro <- match(colonne_calendario(), tolower(nomi))
+  data[[colonne_calendario()]] <- if (is.na(posizione_giro)) {
+    data$servizio_atteso
+  } else {
+    originale[[posizione_giro]]
+  }
   rm(originale)
   if (nrow(data) == 0) {
     errore_validazione("Il file non contiene righe di dati.")
@@ -589,8 +630,9 @@ validate_dataset <- function(data) {
     senza_servizio[rfid_sacchetto(data$RFID[senza_servizio])]
   ] <- servizio_sacchetti()
   data$servizio_atteso <- maiuscolo(data$servizio_atteso)
+  data$servizio_giro <- maiuscolo(data$servizio_giro)
   data$comune_da_database <- normalizza_comune(data$comune_da_database)
-  data$comune_lettura <- normalizza_comune(data$comune_lettura)
+  data$comune_giro <- normalizza_comune(data$comune_giro)
   data$cantiere <- maiuscolo(data$cantiere)
   data$latitudine <- numeri$latitudine$valori
   data$longitudine <- numeri$longitudine$valori
@@ -659,6 +701,22 @@ validate_dataset <- function(data) {
         "Comuni assenti dalla tabella dei comuni: %s%s. Il loro cantiere \u00e8 quello indicato nel file, se c'\u00e8.",
         paste(utils::head(ignoti, 5), collapse = ", "),
         if (length(ignoti) > 5) ", \u2026" else ""
+      )
+    )
+  }
+
+  # Senza il confine del comune del giro una lettura non si può confrontare.
+  dei_giri <- unique(data$comune_giro)
+  giri_ignoti <- sort(
+    dei_giri[!is.na(dei_giri) & is.na(cantiere_di_comune(dei_giri))]
+  )
+  if (length(giri_ignoti) > 0) {
+    avvisi <- c(
+      avvisi,
+      sprintf(
+        "Comuni dei giri assenti dalla tabella dei comuni: %s%s. Le letture di quei giri non possono risultare fuori giro.",
+        paste(utils::head(giri_ignoti, 5), collapse = ", "),
+        if (length(giri_ignoti) > 5) ", \u2026" else ""
       )
     )
   }
@@ -1255,7 +1313,7 @@ posizione_rfid <- function(letture) {
     }
     esito
   }
-  fuori_giro <- riepilogo(coerenza$fuori_giro, "comune_lettura")
+  fuori_giro <- riepilogo(coerenza$fuori_giro, "comune_giro")
   if (fuori_giro$n > 0) {
     ultime <- utils::tail(letture[coerenza$fuori_giro, , drop = FALSE], 5)
     fuori_giro$letture <- ultime[
@@ -1264,7 +1322,7 @@ posizione_rfid <- function(letture) {
         c(
           "giorno_lettura",
           "matricola_veicolo",
-          "comune_lettura",
+          "comune_giro",
           "comune_geografico"
         ),
         names(ultime)

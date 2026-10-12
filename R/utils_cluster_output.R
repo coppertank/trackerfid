@@ -511,11 +511,11 @@ calcola_analisi_cluster <- function(
     lon_baricentro,
     censito = per_rfid$censito[rfid_del_cluster],
     comune_database = per_rfid$comune[rfid_del_cluster],
-    comune_giro = if (is.null(dati[["comune_lettura"]])) {
+    comune_giro = if (is.null(dati[["comune_giro"]])) {
       rep(NA_character_, n_cluster)
     } else {
       piu_frequente_per_gruppo(
-        as.character(dati$comune_lettura),
+        as.character(dati$comune_giro),
         cluster,
         n_cluster
       )

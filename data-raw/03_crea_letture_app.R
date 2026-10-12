@@ -19,13 +19,29 @@ servizi_associati <- associa_servizio(
 )
 
 
-# `colonna_comune` e' il nome della colonna del calendario che riporta il
-# comune in cui lavora il giro: da li' viene `comune_lettura`. Se nel calendario
-# la colonna ha un altro nome va indicato qui; se non c'e', `comune_lettura`
-# manca e il cantiere viene dal solo comune del database.
+# Dal calendario vengono il servizio atteso e il comune del giro, `comune_giro`.
+# I nomi dei servizi del calendario sono riportati a quelli del database:
+# "CARTA/CARTONE PAP" e "CARTA CONT.STRADALI" diventano "CARTA". Il comune di
+# lettura, `comune_lettura`, viene invece dalla posizione di ogni lettura, non
+# dal calendario: fuori dai comuni serviti vale "FUORI SERVIZIO AZIENDA".
 servizio_atteso <- associa_servizio_atteso_da_calendario(
   servizi_associati,
   calendario_servizio_rifiuti
+)
+
+# Il calendario dice che cosa un mezzo doveva fare, non che cosa ha fatto: se
+# un mezzo ne sostituisce un altro, il servizio del calendario e' sbagliato.
+# Per i non censiti il servizio atteso viene quindi dai censiti letti dallo
+# stesso mezzo nei 30 minuti prima e dopo: se sono almeno 5 e almeno l'80% ha
+# lo stesso servizio vale quello, altrimenti resta il calendario.
+# `servizio_giro` conserva il servizio del calendario,
+# `origine_servizio_atteso` dice da dove viene quello atteso: "censiti" o
+# "calendario".
+servizio_atteso <- associa_servizio_atteso_dai_censiti(
+  servizio_atteso,
+  minuti = 30,
+  minimo_censiti = 5,
+  soglia = 0.8
 )
 
 

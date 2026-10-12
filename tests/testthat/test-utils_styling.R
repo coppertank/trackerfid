@@ -257,3 +257,70 @@ test_that("le bolle della vista aggregata crescono con i bidoni e si colorano co
   expect_match(icone$iconUrl, "^data:image/svg\\+xml")
   expect_match(utils::URLdecode(icone$iconUrl[1]), ">120</text>", fixed = TRUE)
 })
+
+test_that("la tabella di conversione riporta i giri ai servizi del database", {
+  tabella <- conversione_servizi()
+  expect_named(tabella, c("servizio_calendario", "servizio", "tipologia"))
+  # una riga per ogni nome noto, senza doppioni
+  expect_identical(tabella$servizio_calendario, servizi_config()$servizio)
+  expect_equal(anyDuplicated(tabella$servizio_calendario), 0)
+  # i sei servizi del database sono i nomi uniformi dei giri che raccolgono
+  # un rifiuto
+  del_database <- c(
+    "SECCO",
+    "CARTA",
+    "VETRO",
+    "UMIDO",
+    "PLASTICA E METALLI",
+    "VERDE E RAMAGLIE"
+  )
+  expect_true(all(del_database %in% tabella$servizio))
+  # ogni nome uniforme converte in se stesso
+  expect_identical(
+    tabella$servizio[match(unique(tabella$servizio), tabella$servizio_calendario)],
+    unique(tabella$servizio)
+  )
+  converte <- function(nome) tabella$servizio[tabella$servizio_calendario == nome]
+  expect_identical(converte("CARTA/CARTONE PAP"), "CARTA")
+  expect_identical(converte("CARTA CONT.STRADALI"), "CARTA")
+  expect_identical(converte("SECCO PAP"), "SECCO")
+  expect_identical(converte("VETRO PAP"), "VETRO")
+  expect_identical(converte("UMIDO CONT.STRADALI"), "UMIDO")
+  expect_identical(converte("PLAST.CONT.STRADALI"), "PLASTICA E METALLI")
+  expect_identical(converte("PLASTICA PAP"), "PLASTICA E METALLI")
+  expect_identical(converte("VERDE PAP"), "VERDE E RAMAGLIE")
+  # i giri che non raccolgono un rifiuto tengono il loro nome
+  expect_identical(converte("SERVIZI MERCATI"), "SERVIZI MERCATI")
+  expect_identical(converte("PULIZIA TERRIT."), "PULIZIA TERRIT.")
+  # la conversione non cambia la tipologia, quindi nemmeno icona e colore
+  expect_identical(
+    tipologia_servizio(tabella$servizio),
+    tipologia_servizio(tabella$servizio_calendario)
+  )
+  expect_identical(tabella$tipologia, tipologia_servizio(tabella$servizio))
+})
+
+test_that("i nomi dei servizi si uniformano senza badare a maiuscole e spazi", {
+  expect_identical(
+    uniforma_servizio(c(
+      "CARTA/CARTONE PAP",
+      " carta cont.stradali ",
+      "Secco Pap",
+      "SECCO",
+      "SERVIZI MERCATI",
+      "GIRO NUOVO",
+      NA
+    )),
+    c("CARTA", "CARTA", "SECCO", "SECCO", "SERVIZI MERCATI", "GIRO NUOVO", NA)
+  )
+  # applicata due volte dà lo stesso risultato
+  nomi <- servizi_config()$servizio
+  expect_identical(
+    uniforma_servizio(uniforma_servizio(nomi)),
+    uniforma_servizio(nomi)
+  )
+  expect_identical(uniforma_servizio(character(0)), character(0))
+  expect_identical(uniforma_servizio(NA), NA_character_)
+  # vale anche per un fattore
+  expect_identical(uniforma_servizio(factor(c("VETRO PAP", "UMIDO"))), c("VETRO", "UMIDO"))
+})

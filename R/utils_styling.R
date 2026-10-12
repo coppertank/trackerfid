@@ -198,6 +198,52 @@ tipologia_servizio <- function(servizio) {
   ifelse(is.na(indice), servizio, config$tipologia[indice])
 }
 
+#' Tabella di conversione dei nomi dei servizi
+#'
+#' Il calendario dei mezzi chiama i giri con nomi suoi, ad esempio
+#' `CARTA/CARTONE PAP` e `CARTA CONT.STRADALI`. Il database chiama il rifiuto
+#' in un modo solo: `CARTA`. La tabella riporta ogni nome a quello del
+#' database, così il servizio di un giro e quello di un contenitore si
+#' confrontano senza passaggi.
+#'
+#' Viene da `tipologie_servizio()`: il nome uniforme di una tipologia è il
+#' primo dei suoi `servizi`. Per aggiungere un nome del calendario basta
+#' aggiungerlo lì, dopo il primo. I giri che non raccolgono un rifiuto, come
+#' `SERVIZI MERCATI`, restano con il loro nome.
+#'
+#' @return Tibble con `servizio_calendario`, il nome da convertire, `servizio`,
+#'   il nome uniforme, e `tipologia`.
+#' @noRd
+conversione_servizi <- function() {
+  righe <- purrr::map(tipologie_servizio(), function(tp) {
+    dplyr::tibble(
+      servizio_calendario = tp$servizi,
+      servizio = tp$servizi[1],
+      tipologia = tp$tipologia
+    )
+  })
+  dplyr::bind_rows(righe)
+}
+
+#' Riporta i nomi dei servizi a quelli del database
+#'
+#' Maiuscole e spazi ai margini non contano. Un nome che la tabella di
+#' `conversione_servizi()` non contiene resta com'è.
+#'
+#' @param servizio Nomi di servizi o di giri.
+#' @return I nomi uniformi, uno per elemento.
+#' @noRd
+uniforma_servizio <- function(servizio) {
+  per_valori_distinti(as.character(servizio), function(nomi) {
+    tabella <- conversione_servizi()
+    riga <- match(
+      stringr::str_to_upper(stringr::str_trim(nomi)),
+      tabella$servizio_calendario
+    )
+    dplyr::coalesce(tabella$servizio[riga], nomi)
+  })
+}
+
 #' Colore del marker in base allo stato a database
 #'
 #' @param presente Vettore con i valori di `presente_a_database`.

@@ -292,17 +292,22 @@ test_that("il popup dei marker riporta comune e cantiere della lettura", {
     "addMarkers"
   )$args[[7]]
   expect_length(popup, nrow(spostato))
-  expect_true(all(grepl("<b>Comune:</b> LIMENA", popup, fixed = TRUE)))
+  expect_true(all(grepl("<b>Comune a database:</b> LIMENA", popup, fixed = TRUE)))
   # il cantiere è quello del comune in cui cade la lettura
   expect_true(any(grepl("<b>Cantiere:</b> RUBANO", popup, fixed = TRUE)))
   expect_true(any(grepl("<b>Cantiere:</b> CAMPOSAMPIERO", popup, fixed = TRUE)))
-  # dopo lo spostamento lo legge il giro di un altro comune: la lettura è
+  # dopo lo spostamento viene letto a Cittadella, dal giro di Cittadella: il
+  # comune del giro è quello di lettura e non viene ripetuto. La lettura è
   # fuori comune, e il marker porta il segnale
-  expect_true(any(grepl(
-    "<b>Comune del giro:</b> CITTADELLA",
-    popup,
-    fixed = TRUE
-  )))
+  expect_equal(
+    sum(grepl("<b>Comune di lettura:</b> CITTADELLA", popup, fixed = TRUE)),
+    8
+  )
+  expect_equal(
+    sum(grepl("<b>Comune di lettura:</b> LIMENA", popup, fixed = TRUE)),
+    1
+  )
+  expect_false(any(grepl("Comune del giro", popup, fixed = TRUE)))
   expect_equal(
     sum(grepl(
       "Fuori comune:</b> a database LIMENA, letto a CITTADELLA",
@@ -331,7 +336,7 @@ test_that("la mappa dei giri disegna le letture e mette in evidenza i comuni dei
   expect_null(marker$args[[9]])
   # il confine del comune del giro, un contorno senza riempimento
   contorni <- Filter(function(k) k$method == "addPolygons", mappa$x$calls)
-  expect_length(contorni, dplyr::n_distinct(letture$comune_lettura))
+  expect_length(contorni, dplyr::n_distinct(letture$comune_giro))
   expect_identical(contorni[[1]]$args[[3]], "comuni_giro")
   expect_false(contorni[[1]]$args[[4]]$fill)
   expect_match(contorni[[1]]$args[[7]], "Comune del giro: LIMENA", fixed = TRUE)

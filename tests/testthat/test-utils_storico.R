@@ -43,6 +43,8 @@ storico_prova <- dplyr::bind_rows(
   storiche("C", c("2021-05-10", "2024-05-10")),
   storiche("E", c("2021-02-01", "2021-06-01", "2022-04-01"))
 )
+# Il centro di Limena: lì viene letto C, il non censito.
+limena <- comuni_cantieri()[comuni_cantieri()$comune == "LIMENA", ]
 letture_prova <- dplyr::bind_rows(
   letture_rfid("A", date_anno(2025, 12, estremi = TRUE), raccolte = 10),
   letture_rfid("B", date_anno(2025, 15), raccolte = 20, utenza = "U2"),
@@ -61,7 +63,10 @@ letture_prova <- dplyr::bind_rows(
       .data$RFID %in% c("A", "D") ~ "RUBANO",
       .data$RFID == "B" ~ "CITTADELLA"
     ),
-    comune_lettura = dplyr::if_else(.data$RFID == "C", "LIMENA", NA_character_)
+    # il calendario mandava a Cittadella il mezzo che ha letto C: non conta
+    comune_giro = dplyr::if_else(.data$RFID == "C", "CITTADELLA", NA_character_),
+    latitudine = dplyr::if_else(.data$RFID == "C", limena$latitudine, .data$latitudine),
+    longitudine = dplyr::if_else(.data$RFID == "C", limena$longitudine, .data$longitudine)
   )
 unite_prova <- unisci_letture(letture_prova, storico_prova)
 anagrafica_prova <- anagrafica_rfid(letture_prova)
@@ -266,7 +271,7 @@ test_that("l'anagrafica ha una riga per RFID, con geografia e dati dei censiti",
   # un non censito letto in più comuni prende quello in cui è letto più spesso
   girovago <- dplyr::mutate(
     letture_rfid("G", date_2025(5), presente = "Non Presente"),
-    comune_lettura = c("NOVE", "MAROSTICA", "NOVE", NA, "MAROSTICA")
+    comune_geografico = c("NOVE", "MAROSTICA", "NOVE", NA, "MAROSTICA")
   )
   expect_identical(anagrafica_rfid(girovago)$comune, "MAROSTICA")
   expect_identical(anagrafica_rfid(girovago)$cantiere, "BASSANO")

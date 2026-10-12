@@ -48,27 +48,37 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     d$id_utenza,
     d$presente_a_database,
     comune = c(rep("LIMENA", 4), NA, NA),
-    comune_lettura = c("LIMENA", "CITTADELLA", NA, NA, "ASIAGO", NA),
+    comune_lettura = c("LIMENA", "LIMENA", "RUBANO", NA, fuori_servizio(), NA),
+    comune_giro = c("LIMENA", "CITTADELLA", NA, NA, "ASIAGO", NA),
     cantiere = c(rep("RUBANO", 4), "ASIAGO", NA)
   )
+  # il comune del database, quello in cui cade la lettura, e il cantiere
   expect_match(
     con_geografia[1],
-    "<b>Utenza:</b> U1<br><b>Comune:</b> LIMENA<br><b>Cantiere:</b> RUBANO<br>",
+    "<b>Utenza:</b> U1<br><b>Comune a database:</b> LIMENA<br><b>Comune di lettura:</b> LIMENA<br><b>Cantiere:</b> RUBANO<br>",
     fixed = TRUE
   )
-  # il comune di lettura compare solo se è diverso da quello del database
+  # il comune del giro compare solo se è diverso da quello di lettura
   expect_no_match(con_geografia[1], "Comune del giro", fixed = TRUE)
   expect_match(
     con_geografia[2],
-    "<b>Comune:</b> LIMENA<br><b>Comune del giro:</b> CITTADELLA<br>",
+    "<b>Comune di lettura:</b> LIMENA<br><b>Comune del giro:</b> CITTADELLA<br>",
     fixed = TRUE
   )
   expect_match(
-    con_geografia[5],
-    "<b>Comune del giro:</b> ASIAGO<br><b>Cantiere:</b> ASIAGO<br>",
+    con_geografia[3],
+    "<b>Comune a database:</b> LIMENA<br><b>Comune di lettura:</b> RUBANO<br><b>Cantiere:</b>",
     fixed = TRUE
   )
-  expect_no_match(con_geografia[5], "<b>Comune:</b>", fixed = TRUE)
+  # una lettura senza posizione nota riporta il solo comune del database
+  expect_no_match(con_geografia[4], "Comune di lettura", fixed = TRUE)
+  # un non censito letto fuori dai comuni serviti
+  expect_match(
+    con_geografia[5],
+    "<b>Comune di lettura:</b> FUORI SERVIZIO AZIENDA<br><b>Comune del giro:</b> ASIAGO<br><b>Cantiere:</b> ASIAGO<br>",
+    fixed = TRUE
+  )
+  expect_no_match(con_geografia[5], "Comune a database", fixed = TRUE)
   expect_identical(con_geografia[6], popup[6])
 
   pericoloso <- create_popup_html(
@@ -193,7 +203,10 @@ test_that("il riquadro statistiche riporta i conteggi", {
   expect_match(html, "SECCO:", fixed = TRUE)
   # i non censiti: una riga per servizio stimato, poi quelli con la stima
   # incerta, che sulla mappa hanno il punto di domanda
-  expect_match(html, "SECCO PAP:", fixed = TRUE)
+  expect_match(
+    html,
+    "Servizio Atteso:</div>\\s*<div class=\"stat-riga\">\\s*<span>[^<]*SECCO:"
+  )
   expect_match(
     html,
     sprintf("Stima incerta:</span>\\s*<b>%d</b>", stat$stima_incerta)
@@ -313,7 +326,7 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
     id_utenza = "U1",
     presente = "Presente",
     comune = c("LIMENA", "LIMENA", "LIMENA", "LIMENA"),
-    comune_lettura = c("LIMENA", "CITTADELLA", "ASIAGO", "ASIAGO"),
+    comune_giro = c("LIMENA", "CITTADELLA", "ASIAGO", "ASIAGO"),
     cantiere = "RUBANO",
     comune_geografico = c("LIMENA", "CITTADELLA", "LIMENA", NA),
     fuori_comune = c(FALSE, TRUE, FALSE, TRUE),

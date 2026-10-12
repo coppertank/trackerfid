@@ -820,17 +820,19 @@ letture$servizio_atteso <- vapply(seq_len(nrow(letture)), function(i) {
 # - comune_da_database: comune dell'anagrafica dei contenitori. Lo hanno solo
 #   i contenitori censiti e non cambia se il contenitore viene spostato. Un
 #   sacchetto non lo ha nemmeno da censito.
-# - comune_lettura: comune del giro che ha fatto la lettura, secondo il
-#   calendario dei mezzi. C'e' per ogni lettura: per un non censito e' l'unico
-#   comune noto. Di norma il contenitore sta in quel comune; una lettura fatta
-#   altrove e' fuori giro.
-# - cantiere: quello del comune del database, se c'e', altrimenti quello del
-#   comune della lettura.
+# - comune_giro: comune in cui il calendario mandava il mezzo che ha fatto la
+#   lettura. C'e' per ogni lettura. Di norma il contenitore sta in quel
+#   comune; una lettura fatta altrove e' fuori giro.
+# - comune_lettura: comune in cui cade il punto della lettura, oppure
+#   "FUORI SERVIZIO AZIENDA" fuori dai comuni serviti. Lo calcola la stessa
+#   funzione usata dall'app e dalla preparazione dei dati reali.
+# - cantiere: quello del comune in cui cade il punto; fuori dai comuni
+#   serviti, quello del comune del database.
 letture$comune_da_database <- ifelse(letture$presente, bidoni$comune[letture$chiave], NA_character_)
 turno_lettura <- vapply(seq_len(nrow(letture)), function(i) {
   indice_turno_del_mezzo(letture$matricola_veicolo[i], letture$giorno_lettura[i])
 }, numeric(1))
-letture$comune_lettura <- giri$comune[giro_di(
+letture$comune_giro <- giri$comune[giro_di(
   turno_lettura,
   giorno_settimana(as.Date(letture$giorno_lettura, tz = "UTC"))
 )]
@@ -841,7 +843,7 @@ letture$comune_lettura <- giri$comune[giro_di(
 giro_sbagliato <- list(giorno = as.Date("2025-09-24"), turno = 1, previsto = 5)
 del_giro_sbagliato <- turno_lettura == giro_sbagliato$turno &
   as.Date(letture$giorno_lettura, tz = "UTC") == giro_sbagliato$giorno
-letture$comune_lettura[del_giro_sbagliato] <- giri$comune[
+letture$comune_giro[del_giro_sbagliato] <- giri$comune[
   giro_di(giro_sbagliato$turno, giro_sbagliato$previsto)
 ]
 stopifnot(
@@ -850,10 +852,18 @@ stopifnot(
   giri$comune[giro_di(giro_sbagliato$turno, giro_sbagliato$previsto)] == "LIMENA",
   giri$comune[giro_di(giro_sbagliato$turno, 3)] != "LIMENA"
 )
-comune_assegnato <- ifelse(
-  is.na(letture$comune_da_database), letture$comune_lettura, letture$comune_da_database
-)
-letture$cantiere <- comuni$cantiere[match(comune_assegnato, comuni$comune)]
+# Comune di lettura e cantiere vengono dalla posizione scritta nel file, cioe'
+# dalle coordinate con quattro decimali.
+con_geografia <- aggiungi_geografia(data.frame(
+  latitudine = as.numeric(sprintf("%.4f", letture$latitudine)),
+  longitudine = as.numeric(sprintf("%.4f", letture$longitudine)),
+  presente_a_database = letture$presente_a_database,
+  comune_da_database = letture$comune_da_database,
+  comune_giro = letture$comune_giro,
+  stringsAsFactors = FALSE
+))
+letture$comune_lettura <- con_geografia$comune_lettura
+letture$cantiere <- con_geografia$cantiere
 
 # Codice RFID: "RFD" + data della prima lettura con le antenne + progressivo
 # del contenitore.
@@ -868,6 +878,20 @@ dei_bidoni <- !is.na(letture$chiave)
 letture$RFID[dei_bidoni] <- bidoni$RFID[letture$chiave[dei_bidoni]]
 
 letture <- letture[order(letture$giorno_lettura, letture$RFID), ]
+# Come nei dati reali, il nome del giro e' riportato a quello del database:
+# "SECCO PAP" diventa "SECCO". Poi il servizio atteso dei non censiti viene
+# dai censiti letti dallo stesso mezzo nella mezz'ora attorno, se bastano;
+# altrimenti resta quello del calendario. Nell'esempio le letture sono rade,
+# poche per mezzo e per giorno: il servizio resta quasi sempre del calendario.
+con_servizio <- associa_servizio_atteso_dai_censiti(data.frame(
+  giorno_lettura = letture$giorno_lettura,
+  matricola_veicolo = letture$matricola_veicolo,
+  RFID = letture$RFID,
+  presente_a_database = letture$presente_a_database,
+  servizio_transponder = letture$servizio_transponder,
+  servizio_atteso = uniforma_servizio(letture$servizio_atteso),
+  stringsAsFactors = FALSE
+))
 finale <- data.frame(
   giorno_lettura = format(letture$giorno_lettura, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
   targa_veicolo = letture$targa_veicolo,
@@ -875,11 +899,14 @@ finale <- data.frame(
   RFID = letture$RFID,
   presente_a_database = letture$presente_a_database,
   servizio_transponder = letture$servizio_transponder,
-  servizio_atteso = letture$servizio_atteso,
+  servizio_atteso = con_servizio$servizio_atteso,
+  servizio_giro = con_servizio$servizio_giro,
+  origine_servizio_atteso = con_servizio$origine_servizio_atteso,
   id_utenza = letture$id_utenza,
   latitudine = sprintf("%.4f", letture$latitudine),
   longitudine = sprintf("%.4f", letture$longitudine),
   comune_da_database = letture$comune_da_database,
+  comune_giro = letture$comune_giro,
   comune_lettura = letture$comune_lettura,
   cantiere = letture$cantiere,
   volume_previsto = letture$volume_previsto,
@@ -909,8 +936,9 @@ stopifnot(
   # monouso: una lettura per sacchetto
   sum(sacchetto) == nrow(sacchetti),
   !anyDuplicated(finale$RFID[sacchetto]),
-  all(finale$servizio_atteso[sacchetto] == "SECCO PAP"),
-  all(finale$comune_lettura[sacchetto] == sacchetti$comune[match(finale$RFID[sacchetto], sacchetti$RFID)]),
+  all(finale$servizio_atteso[sacchetto] == "SECCO"),
+  all(finale$comune_giro[sacchetto] == sacchetti$comune[match(finale$RFID[sacchetto], sacchetti$RFID)]),
+  all(finale$comune_lettura[sacchetto] == finale$comune_giro[sacchetto]),
   identical(
     sort(unique(finale$RFID[sacchetto & !non_presente])),
     sacchetti$RFID[!is.na(sacchetti$utenza)]
@@ -927,11 +955,11 @@ stopifnot(
   identical(substr(per_rfid$RFD20250901001$giorno_lettura[1:3], 1, 10), c("2025-09-01", "2025-09-15", "2025-09-28")),
   identical(per_rfid$RFD20250901050$id_utenza[1:4], c("UTZ001", "UTZ001", "UTZ025", "UTZ025")),
   all(per_rfid$RFD20250901050$id_utenza[-(1:2)] == "UTZ025"),
-  identical(per_rfid$RFD20250915201$servizio_atteso, rep("SECCO PAP", 4)),
+  identical(per_rfid$RFD20250915201$servizio_atteso, rep("SECCO", 4)),
   # il non censito con la stima incerta: due letture, due tipologie
-  identical(per_rfid$RFD20250920250$servizio_atteso, c("SECCO PAP", "CARTA/CARTONE PAP")),
+  identical(per_rfid$RFD20250920250$servizio_atteso, c("SECCO", "CARTA")),
   is.na(stime_2025$servizio_prevalente[stime_2025$RFID == "RFD20250920250"]),
-  identical(stime_2025$servizio_prevalente[stime_2025$RFID == "RFD20250915201"], "SECCO PAP"),
+  identical(stime_2025$servizio_prevalente[stime_2025$RFID == "RFD20250915201"], "SECCO"),
   identical(
     per_rfid$RFD20250905100$latitudine[1:2],
     sprintf("%.4f", c(spostato_da[["lat"]], spostato_a[["lat"]]))
@@ -947,10 +975,20 @@ stopifnot(
   all(is.na(finale$volume_previsto) == (non_presente | sacchetto)),
   all(is.na(finale$numero_raccolte_annue_previste) == (non_presente | sacchetto)),
   all(finale$servizio_transponder %in% c(servizi, NA)),
-  # ogni lettura ha il giro del mezzo che l'ha fatta
+  # ogni lettura ha il giro del mezzo che l'ha fatta, con il nome uniformato:
+  # i dodici giri del calendario diventano nove servizi
+  !anyNA(finale$servizio_giro),
+  length(unique(letture$servizio_atteso)) == 12,
+  identical(finale$servizio_giro, uniforma_servizio(letture$servizio_atteso)),
+  length(unique(finale$servizio_giro)) == 9,
+  all(servizi %in% finale$servizio_giro),
+  # il servizio atteso e' quello del calendario, oppure quello dei censiti
+  # letti dallo stesso mezzo: solo per i non censiti
   !anyNA(finale$servizio_atteso),
-  all(finale$servizio_atteso %in% vapply(turni, function(t) t$giro, "")),
-  length(unique(finale$servizio_atteso)) == 12,
+  all(finale$origine_servizio_atteso %in% c("censiti", "calendario")),
+  all(finale$servizio_atteso[finale$origine_servizio_atteso == "calendario"] ==
+    finale$servizio_giro[finale$origine_servizio_atteso == "calendario"]),
+  all(non_presente[finale$origine_servizio_atteso == "censiti"]),
   # tra i non censiti ci sono stime nette e stime incerte
   setequal(stime_2025$RFID, unique(finale$RFID[nel_2025 & non_presente])),
   sum(!is.na(stime_2025$servizio_prevalente)) >= 10,
@@ -959,18 +997,25 @@ stopifnot(
   all(finale$numero_raccolte_annue_previste %in% c(13, 26, NA)),
   all(vapply(per_rfid, function(x) length(unique(x$volume_previsto)) == 1, logical(1))),
   # geografia: comuni della tabella, un comune del database per contenitore
-  # censito, comune di lettura e cantiere per ogni lettura
+  # censito, comune del giro e comune di lettura per ogni lettura
   all(is.na(finale$comune_da_database) == (non_presente | sacchetto)),
-  all(stats::na.omit(c(finale$comune_da_database, finale$comune_lettura)) %in% comuni$comune),
+  all(stats::na.omit(c(finale$comune_da_database, finale$comune_giro)) %in% comuni$comune),
   all(vapply(per_rfid, function(x) length(unique(x$comune_da_database)) == 1, logical(1))),
+  !anyNA(finale$comune_giro),
+  # il comune di lettura viene dalla posizione: un comune servito, oppure la
+  # voce delle letture fuori dai comuni serviti
   !anyNA(finale$comune_lettura),
-  !anyNA(finale$cantiere),
+  all(finale$comune_lettura %in% c(comuni$comune, fuori_servizio())),
+  # senza cantiere restano solo i non censiti letti fuori dai comuni serviti
+  all(is.na(finale$cantiere) == (finale$comune_lettura == fuori_servizio() & is.na(finale$comune_da_database))),
   setequal(unique(finale$cantiere), names(quote_cantieri)),
   max(abs(prop.table(table(bidoni$cantiere))[names(quote_cantieri)] - quote_cantieri)) < 0.05,
   # il contenitore spostato e' registrato a Limena e letto a Cittadella
   all(per_rfid$RFD20250905100$comune_da_database == "LIMENA"),
   identical(per_rfid$RFD20250905100$comune_lettura[1:2], c("LIMENA", "CITTADELLA")),
-  all(per_rfid$RFD20250905100$cantiere == "RUBANO"),
+  identical(per_rfid$RFD20250905100$comune_giro[1:2], c("LIMENA", "CITTADELLA")),
+  # il cantiere segue la posizione: Limena e' di Rubano, Cittadella di Camposampiero
+  identical(per_rfid$RFD20250905100$cantiere[1:2], c("RUBANO", "CAMPOSAMPIERO")),
   # tutte le letture cadono nella zona servita
   all(letture$latitudine > riquadro_zona()$lat_min & letture$latitudine < riquadro_zona()$lat_max),
   all(letture$longitudine > riquadro_zona()$lng_min & letture$longitudine < riquadro_zona()$lng_max),

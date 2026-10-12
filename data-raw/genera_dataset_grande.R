@@ -16,7 +16,8 @@
 # servono a misurare i tempi, non a provare le funzioni.
 #
 # Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta e il
-# comune di quel giro: `servizio_atteso` e `comune_lettura` non mancano mai.
+# comune di quel giro: `servizio_atteso` e `comune_giro` non mancano mai. Il
+# comune di lettura lo calcola l'app, dalla posizione.
 
 argomenti <- commandArgs(TRUE)
 if (length(argomenti) < 1) {
@@ -92,7 +93,7 @@ letture <- data.table(
   latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),
   longitudine = round(bidoni$lon[k] + rnorm(n_letture, 0, 0.0001), 5),
   comune_da_database = fifelse(censito, bidoni$comune[k], NA_character_),
-  comune_lettura = bidoni$comune[k],
+  comune_giro = bidoni$comune[k],
   cantiere = bidoni$cantiere[k],
   volume_previsto = fifelse(censito, volumi[bidoni$i_servizio[k]], NA_real_),
   numero_raccolte_annue_previste = fifelse(censito, bidoni$raccolte[k], NA_real_)

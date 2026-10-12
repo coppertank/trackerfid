@@ -39,11 +39,11 @@ test_that("i limiti delle mappe si cambiano con le opzioni", {
 test_that("il livello di aggregazione segue lo zoom", {
   expect_identical(livello_aggregazione(NULL), "cantiere")
   expect_identical(
-    vapply(c(8, 10, 11, 12, 13, 17), livello_aggregazione, character(1)),
-    c("cantiere", "cantiere", "cantiere", "comune", "griglia", "griglia")
+    vapply(c(8, 10, 11, 12, 13, 14, 17), livello_aggregazione, character(1)),
+    c("cantiere", "cantiere", "cantiere", "comune", "comune", "griglia", "griglia")
   )
   # le soglie stanno in un posto solo
-  expect_identical(soglie_zoom(), list(cantiere = 11, comune = 12))
+  expect_identical(soglie_zoom(), list(cantiere = 11, comune = 13))
   expect_identical(livello_aggregazione(soglie_zoom()$cantiere), "cantiere")
   expect_identical(livello_aggregazione(soglie_zoom()$cantiere + 1), "comune")
   expect_identical(livello_aggregazione(soglie_zoom()$comune + 1), "griglia")
@@ -217,6 +217,10 @@ test_that("la vista dipende dallo zoom, dal numero di bidoni e dall'area", {
       scegli_vista(ultimi, tutta, 12, limite = limite),
       list(tipo = "comune")
     )
+    expect_identical(
+      scegli_vista(ultimi, tutta, 13, limite = limite),
+      list(tipo = "comune")
+    )
   }
   # le bolle del territorio non dipendono dall'area inquadrata
   expect_identical(scegli_vista(ultimi, NULL, 9), list(tipo = "cantiere"))
@@ -225,14 +229,14 @@ test_that("la vista dipende dallo zoom, dal numero di bidoni e dall'area", {
     list(tipo = "cantiere")
   )
   expect_identical(
-    scegli_vista(ultimi, piccola, 12, limite = 50),
+    scegli_vista(ultimi, piccola, 13, limite = 50),
     list(tipo = "comune")
   )
 
   # da vicino i singoli bidoni: tutti, finché stanno sotto il limite
-  expect_identical(scegli_vista(ultimi, tutta, 13), list(tipo = "tutti"))
+  expect_identical(scegli_vista(ultimi, tutta, 14), list(tipo = "tutti"))
   expect_identical(
-    scegli_vista(ultimi, tutta, 13, limite = nrow(ultimi)),
+    scegli_vista(ultimi, tutta, 14, limite = nrow(ultimi)),
     list(tipo = "tutti")
   )
   expect_identical(scegli_vista(ultimi, NULL, 17), list(tipo = "tutti"))
@@ -278,7 +282,7 @@ test_that("la vista dipende dallo zoom, dal numero di bidoni e dall'area", {
   expect_identical(livello_aggregazione(NULL), "cantiere")
   expect_identical(
     vapply(8:14, livello_aggregazione, character(1)),
-    c("cantiere", "cantiere", "cantiere", "cantiere", "comune", "griglia", "griglia")
+c("cantiere", "cantiere", "cantiere", "cantiere", "comune", "comune", "griglia")
   )
   expect_match(descrizione_vista("cantiere"), "una bolla per cantiere")
   expect_match(descrizione_vista("comune"), "una bolla per comune")
@@ -375,10 +379,31 @@ test_that("la vista si ridisegna solo quando non copre più l'area inquadrata", 
   expect_true(vista_da_rifare(singoli, list(tipo = "singoli"), fuori, 15))
 
   # la griglia cambia anche con lo zoom
-  griglia <- list(tipo = "griglia", riquadro = riquadro, zoom = 13)
-  expect_false(vista_da_rifare(griglia, list(tipo = "griglia"), dentro, 13))
-  expect_true(vista_da_rifare(griglia, list(tipo = "griglia"), dentro, 14))
-  expect_true(vista_da_rifare(griglia, list(tipo = "griglia"), fuori, 13))
+  griglia <- list(tipo = "griglia", riquadro = riquadro, zoom = 14)
+  expect_false(vista_da_rifare(griglia, list(tipo = "griglia"), dentro, 14))
+  expect_true(vista_da_rifare(griglia, list(tipo = "griglia"), dentro, 15))
+  expect_true(vista_da_rifare(griglia, list(tipo = "griglia"), fuori, 14))
+})
+
+test_that("solo le bolle di cantieri e comuni si disegnano senza attesa", {
+  expect_true(vista_immediata("cantiere"))
+  expect_true(vista_immediata("comune"))
+  expect_false(vista_immediata("tutti"))
+  expect_false(vista_immediata("singoli"))
+  expect_false(vista_immediata("griglia"))
+  # la vista scelta a ogni zoom: immediata fin dove ci sono le bolle del territorio
+  ultimi <- deduplica_ultimo_rfid(dati_esempio())
+  immediata <- vapply(
+    9:15,
+    function(zoom) vista_immediata(scegli_vista(ultimi, NULL, zoom)$tipo),
+    logical(1)
+  )
+  expect_identical(immediata, c(TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE))
+  # sopra il limite, da vicino, nessuna vista è immediata
+  expect_false(vista_immediata(scegli_vista(ultimi, NULL, 14, limite = 50)$tipo))
+  # un file senza cantieri né comuni non ha viste immediate
+  senza <- deduplica_ultimo_rfid(letture_test())
+  expect_false(vista_immediata(scegli_vista(senza, NULL, 9)$tipo))
 })
 
 test_that("ogni vista aggregata ha una frase che la descrive", {

@@ -40,8 +40,10 @@ conta <- function(n, singolare, plurale) {
 #' @param id_utenza Character
 #' @param presente Character
 #' @param comune Character, facoltativo: comune del database.
-#' @param comune_lettura Character, facoltativo: comune del giro che ha fatto
-#'   la lettura. Compare solo se è diverso dal comune del database.
+#' @param comune_lettura Character, facoltativo: comune in cui cade il punto
+#'   della lettura, oppure `fuori_servizio()`.
+#' @param comune_giro Character, facoltativo: comune in cui il calendario
+#'   mandava il mezzo. Compare solo se è diverso dal comune di lettura.
 #' @param cantiere Character, facoltativo.
 #' @return HTML string
 #' @noRd
@@ -56,6 +58,7 @@ create_popup_html <- function(
   presente,
   comune = NULL,
   comune_lettura = NULL,
+  comune_giro = NULL,
   cantiere = NULL,
   comune_geografico = NULL,
   fuori_comune = NULL,
@@ -76,11 +79,18 @@ create_popup_html <- function(
       ""
     )
   }
-  riga_comune <- riga_facoltativa("Comune", comune)
-  riga_lettura <- riga_facoltativa(
-    "Comune del giro",
-    comune_lettura,
-    if (is.null(comune)) TRUE else is.na(comune) | comune != comune_lettura
+  riga_comune <- riga_facoltativa("Comune a database", comune)
+  riga_lettura <- paste0(
+    riga_facoltativa("Comune di lettura", comune_lettura),
+    riga_facoltativa(
+      "Comune del giro",
+      comune_giro,
+      if (is.null(comune_lettura)) {
+        TRUE
+      } else {
+        is.na(comune_lettura) | comune_lettura != comune_giro
+      }
+    )
   )
   riga_cantiere <- riga_facoltativa("Cantiere", cantiere)
   # Le incongruenze tra la posizione e i comuni dichiarati hanno una riga loro,
@@ -116,7 +126,7 @@ create_popup_html <- function(
     )
   }
   dichiarato_da <- function(etichetta) {
-    valori <- if (etichetta == "Fuori comune") comune else comune_lettura
+    valori <- if (etichetta == "Fuori comune") comune else comune_giro
     if (is.null(valori)) NA_character_ else valori
   }
   riga_fuori_comune <- riga_incongruenza("Fuori comune", fuori_comune, "a database")
@@ -480,7 +490,7 @@ blocco_posizione <- function(posizione, n_letture) {
             "%s \u00b7 %s \u00b7 giro a %s, letto %s",
             formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
             righe$matricola_veicolo[i],
-            righe$comune_lettura[i],
+            righe$comune_giro[i],
             if (is.na(letto)) "fuori dai comuni serviti" else paste("a", letto)
           ))
         })
