@@ -476,6 +476,22 @@ test_that("ogni cluster riporta il comune in cui cade e le incongruenze", {
   # un non censito non \u00e8 mai fuori comune: il database non lo conosce
   expect_no_match(posizione$incongruenza_comune[3], "FUORI_COMUNE", fixed = TRUE)
 
+  # un baricentro appena fuori dai comuni serviti prende il comune pi\u00f9
+  # vicino, come le letture; la distanza dal comune dichiarato resta quella
+  # vera, misurata dal confine
+  confini <- poligoni_comuni()
+  nord <- confini[which.max(confini$latitudine), ]
+  al_margine <- posizione_cluster(
+    lat = nord$latitudine + gradi_lat(c(50, 150)),
+    lon = rep(nord$longitudine, 2),
+    censito = c(TRUE, TRUE),
+    comune_database = rep(nord$comune, 2),
+    comune_giro = rep(nord$comune, 2)
+  )
+  expect_identical(al_margine$comune_geografico, c(nord$comune, NA))
+  expect_equal(al_margine$distanza_comune_m, c(50, 150), tolerance = 0.05)
+  expect_true(all(is.na(al_margine$incongruenza_comune)))
+
   # sul dataset di esempio: il contenitore spostato, nel suo secondo luogo
   analisi <- analisi_esempio()
   spostato <- analisi[analisi$RFID == "RFD20250905100", ]

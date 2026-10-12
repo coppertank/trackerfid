@@ -211,9 +211,12 @@ posizione_cluster <- function(
     fuori_giro ~ "FUORI_GIRO",
     .default = NA_character_
   )
+  # Come per le letture: un baricentro appena fuori dai comuni serviti prende
+  # il comune più vicino.
+  con_margine <- indice_comune_con_margine(lat, lon, geografico = geografico)
   list(
     comune_geografico = comuni_cantieri()$comune[
-      replace(geografico, geografico == 0L, NA_integer_)
+      replace(con_margine, con_margine == 0L, NA_integer_)
     ],
     incongruenza_comune = incongruenza,
     distanza_comune_m = round(ifelse(censito, dal_database, dal_giro))

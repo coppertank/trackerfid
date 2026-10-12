@@ -42,7 +42,16 @@ test_that("il comune di un punto \u00e8 quello il cui confine lo contiene", {
   # tra i punti ce ne sono dentro i comuni e fuori da tutti
   expect_gt(sum(!is.na(punti$comune)), 300)
   expect_gt(sum(is.na(punti$comune)), 100)
-  expect_identical(comune_geografico(punti$lat, punti$lng), punti$comune)
+  # senza margine il comune \u00e8 quello che contiene il punto, e nient'altro
+  expect_identical(
+    comune_geografico(punti$lat, punti$lng, margine = 0),
+    punti$comune
+  )
+  indice <- indice_comune_geografico(punti$lat, punti$lng)
+  expect_identical(
+    comuni_cantieri()$comune[replace(indice, indice == 0L, NA)],
+    punti$comune
+  )
 
   # il centro abitato di ogni comune sta nel suo comune
   comuni <- comuni_cantieri()
@@ -57,6 +66,63 @@ test_that("il comune di un punto \u00e8 quello il cui confine lo contiene", {
   )
   expect_identical(comune_geografico(numeric(0), numeric(0)), character(0))
   expect_identical(indice_comune_geografico(c(41.9, NA), c(12.5, 11.7)), c(0L, 0L))
+})
+
+test_that("un punto appena fuori dai comuni serviti prende il comune pi\u00f9 vicino", {
+  expect_identical(margine_confine_m(), 100)
+  punti <- punti_di_prova()
+  comuni <- comuni_cantieri()$comune
+  # termine di paragone: la distanza di ogni punto da ogni comune, una per una
+  fuori <- which(is.na(punti$comune))
+  distanze <- vapply(
+    comuni,
+    function(comune) {
+      distanza_dal_comune_m(punti$lat[fuori], punti$lng[fuori], comune)
+    },
+    numeric(length(fuori))
+  )
+  minima <- apply(distanze, 1, min)
+  piu_vicino <- comuni[max.col(-distanze, ties.method = "first")]
+  atteso <- punti$comune
+  atteso[fuori] <- ifelse(minima <= 100, piu_vicino, NA_character_)
+  # tra i punti di prova ce ne sono entro il margine e oltre
+  expect_gt(sum(minima <= 100), 20)
+  expect_gt(sum(minima > 100), 50)
+  expect_identical(comune_geografico(punti$lat, punti$lng), atteso)
+  # chi sta dentro un comune lo tiene, qualunque sia il margine
+  dentro <- !is.na(punti$comune)
+  expect_identical(
+    comune_geografico(punti$lat, punti$lng, margine = 5000)[dentro],
+    punti$comune[dentro]
+  )
+  # un margine pi\u00f9 largo raccoglie pi\u00f9 punti
+  largo <- comune_geografico(punti$lat, punti$lng, margine = 500)
+  atteso_largo <- punti$comune
+  atteso_largo[fuori] <- ifelse(minima <= 500, piu_vicino, NA_character_)
+  expect_identical(largo, atteso_largo)
+  expect_gt(sum(!is.na(largo)), sum(!is.na(atteso)))
+
+  # il punto pi\u00f9 a nord di tutto il territorio: 50 metri oltre si \u00e8 ancora
+  # nel suo comune, 150 metri oltre no
+  confini <- poligoni_comuni()
+  nord <- confini[which.max(confini$latitudine), ]
+  lat <- nord$latitudine + gradi_lat(c(50, 150))
+  lng <- rep(nord$longitudine, 2)
+  expect_identical(indice_comune_geografico(lat, lng), c(0L, 0L))
+  expect_identical(comune_geografico(lat, lng), c(nord$comune, NA))
+  expect_identical(
+    indice_comune_vicino(lat, lng),
+    c(match(nord$comune, comuni), 0L)
+  )
+  expect_identical(comune_geografico(lat, lng, margine = 200), rep(nord$comune, 2))
+  # con il risultato della griglia gi\u00e0 calcolato il risultato \u00e8 lo stesso
+  expect_identical(
+    indice_comune_con_margine(lat, lng, geografico = c(0L, 0L)),
+    c(match(nord$comune, comuni), 0L)
+  )
+  # punti lontani, senza coordinate, o nessun punto
+  expect_identical(indice_comune_vicino(c(41.9, NA, 45.7), c(12.5, 11.7, NA)), c(0L, 0L, 0L))
+  expect_identical(indice_comune_vicino(numeric(0), numeric(0)), integer(0))
 })
 
 test_that("la griglia lascia al controllo esatto le sole celle sui confini", {
@@ -234,6 +300,40 @@ test_that("la geografia di una lettura parte dalla posizione", {
   # fuori tabella, non confrontabile; il suo giro per\u00f2 era ad Asiago.
   expect_identical(esito$fuori_comune, c(FALSE, TRUE, FALSE, FALSE, FALSE, FALSE))
   expect_identical(esito$fuori_giro, c(FALSE, FALSE, FALSE, TRUE, TRUE, FALSE))
+
+  # una lettura a 50 metri dal confine esterno del territorio non \u00e8 fuori
+  # servizio: prende il comune pi\u00f9 vicino e il suo cantiere. A 150 metri s\u00ec
+  confini <- poligoni_comuni()
+  nord <- confini[which.max(confini$latitudine), ]
+  al_margine <- dplyr::tibble(
+    RFID = c("M1", "M2", "M3"),
+    presente_a_database = c("Non Presente", "Non Presente", "Presente"),
+    comune_da_database = c(NA, NA, nord$comune),
+    comune_giro = nord$comune,
+    latitudine = nord$latitudine + gradi_lat(c(50, 150, 50)),
+    longitudine = nord$longitudine
+  )
+  esito_margine <- aggiungi_geografia(al_margine)
+  expect_identical(
+    esito_margine$comune_lettura,
+    c(nord$comune, fuori_servizio(), nord$comune)
+  )
+  expect_identical(
+    esito_margine$comune_geografico,
+    c(nord$comune, NA, nord$comune)
+  )
+  expect_identical(
+    esito_margine$comune_assegnato,
+    c(nord$comune, NA, nord$comune)
+  )
+  expect_identical(
+    esito_margine$cantiere,
+    c(cantiere_di_comune(nord$comune), NA, cantiere_di_comune(nord$comune))
+  )
+  # il confronto con i comuni dichiarati resta quello di prima: a 150 metri dal
+  # comune del giro, o del database, una lettura non \u00e8 fuori giro n\u00e9 fuori comune
+  expect_false(any(esito_margine$fuori_giro))
+  expect_false(any(esito_margine$fuori_comune))
 
   # una posizione mancante vale come una posizione fuori dai comuni serviti
   senza_punto <- letture

@@ -81,21 +81,26 @@ tipologie_servizio <- function() {
       icona = "trash-can",
       colore = "#7f8c8d",
       emoji = "\U0001F5D1\ufe0f",
-      servizi = c("SECCO", "SECCO PAP")
+      servizi = c("SECCO", "SECCO PAP", "SCARICO SECCO", "SECCO CONT.STRADALI")
     ),
     list(
       tipologia = "Carta",
       icona = "file-lines",
       colore = "#8e5b2e",
       emoji = "\U0001F4C4",
-      servizi = c("CARTA", "CARTA CONT.STRADALI", "CARTA/CARTONE PAP")
+      servizi = c(
+        "CARTA",
+        "CARTA CONT.STRADALI",
+        "CARTA/CARTONE PAP",
+        "SCARICO CARTA-CART."
+      )
     ),
     list(
       tipologia = "Vetro",
       icona = "wine-bottle",
       colore = "#2471a3",
       emoji = "\U0001F37E",
-      servizi = c("VETRO", "VETRO PAP")
+      servizi = c("VETRO", "VETRO PAP", "VETRO CONT.STRADALI")
     ),
     list(
       tipologia = "Umido",
@@ -109,14 +114,19 @@ tipologie_servizio <- function() {
       icona = "recycle",
       colore = "#0e9aa7",
       emoji = "\u267b\ufe0f",
-      servizi = c("PLASTICA E METALLI", "PLAST.CONT.STRADALI", "PLASTICA PAP")
+      servizi = c(
+        "PLASTICA E METALLI",
+        "PLAST.CONT.STRADALI",
+        "PLASTICA PAP",
+        "SCARICO PLASTICA"
+      )
     ),
     list(
       tipologia = "Verde e ramaglie",
       icona = "tree",
       colore = "#6b8e23",
       emoji = "\U0001F333",
-      servizi = c("VERDE E RAMAGLIE", "VERDE PAP")
+      servizi = c("VERDE E RAMAGLIE", "VERDE PAP", "SCARICO VERDE")
     ),
     list(
       tipologia = "Sacchetti",
@@ -453,7 +463,14 @@ get_leaflet_icon <- function(
   fuori_giro <- rep_len(fuori_giro %in% TRUE, n)
 
   # Ogni combinazione viene disegnata una sola volta.
-  chiave <- paste(servizio, presente, stile, fuori_comune, fuori_giro, sep = "|")
+  chiave <- paste(
+    servizio,
+    presente,
+    stile,
+    fuori_comune,
+    fuori_giro,
+    sep = "|"
+  )
   uniche <- !duplicated(chiave)
   uri <- purrr::pmap_chr(
     list(

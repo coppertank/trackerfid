@@ -942,22 +942,26 @@ test_that("oltre il limite la mappa principale passa alla vista aggregata", {
       session$elapse(400)
       expect_identical(bolle(), disegnate)
 
-      # a zoom 13 restano i comuni: stessa fascia, nessun ridisegno
+      # a zoom 13 e 14 restano i comuni: stessa fascia, nessun ridisegno
       session$setInputs(mappa_zoom = 13)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "comune")
+      expect_identical(bolle(), disegnate)
+      session$setInputs(mappa_zoom = 14)
       session$elapse(400)
       expect_identical(vista()$tipo, "comune")
       expect_identical(bolle(), disegnate)
 
       # ancora: bolle per riquadro, valide per l'area caricata. Da vicino la
       # mappa aspetta la fine degli spostamenti
-      session$setInputs(mappa_zoom = 14)
+      session$setInputs(mappa_zoom = 15)
       expect_identical(vista()$tipo, "comune")
       session$elapse(400)
       expect_identical(vista()$tipo, "griglia")
       expect_identical(vista()$riquadro, allarga_riquadro(tutta))
 
       # un'area con pochi bidoni: i singoli marker
-      session$setInputs(mappa_bounds = piccola, mappa_zoom = 15)
+      session$setInputs(mappa_bounds = piccola, mappa_zoom = 16)
       session$elapse(400)
       expect_identical(vista()$tipo, "singoli")
       expect_null(bolle())
@@ -1025,13 +1029,16 @@ test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, 
       expect_identical(vista()$tipo, "comune")
       expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
       expect_match(output$riepilogo, "una bolla per comune")
-      # i comuni restano anche a zoom 13
+      # i comuni restano anche a zoom 13 e 14
       session$setInputs(mappa_zoom = 13)
+      session$elapse(400)
+      expect_identical(vista()$tipo, "comune")
+      session$setInputs(mappa_zoom = 14)
       session$elapse(400)
       expect_identical(vista()$tipo, "comune")
 
       # da vicino tutti i bidoni, uno per uno: dopo l'attesa
-      session$setInputs(mappa_zoom = 14)
+      session$setInputs(mappa_zoom = 15)
       expect_identical(vista()$tipo, "comune")
       session$elapse(400)
       expect_identical(vista()$tipo, "tutti")
@@ -1046,12 +1053,12 @@ test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, 
 
       # da vicino spostamenti e zoom non ridisegnano niente
       session$setInputs(
-        mappa_zoom = 16,
+        mappa_zoom = 17,
         mappa_bounds = list(north = 45.8, south = 45.7, east = 11.8, west = 11.7)
       )
       session$elapse(400)
       expect_identical(vista()$tipo, "tutti")
-      expect_identical(vista()$zoom, 14)
+      expect_identical(vista()$zoom, 15)
 
       # tornando lontano tornano le bolle, subito
       session$setInputs(mappa_zoom = 11)

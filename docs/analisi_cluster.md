@@ -30,7 +30,7 @@ Una riga per ogni cluster di ogni RFID, 30 campi. La specifica parlava di 25 cam
 | `cluster_prima_lettura`, `cluster_ultima_lettura` | Prima e ultima lettura del cluster |
 | `presente_a_database` * | Stato dell'ultima lettura del periodo. Stabilisce quali campi sono compilati |
 | `cantiere` *, `comune` * | Comune dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello in cui cade il maggior numero delle sue letture, secondo la posizione. Il calendario dei mezzi non conta. Il cantiere è quello del comune. Sono uguali per tutti i cluster dell'RFID |
-| `comune_geografico` * | Comune servito in cui cade il baricentro del cluster, trovato dai confini dei comuni. Vuoto se il baricentro è fuori da tutti i comuni serviti |
+| `comune_geografico` * | Comune servito in cui cade il baricentro del cluster, trovato dai confini dei comuni. Un baricentro fuori da tutti i comuni serviti, ma entro 100 metri dal confine di uno di essi, prende il comune più vicino. Vuoto se è più lontano |
 | `incongruenza_comune` * | `FUORI_COMUNE` se il cluster è di un censito e il baricentro sta a più di un chilometro dal confine del comune del database: il contenitore è stato letto lontano da dove risulta. `FUORI_GIRO` se il baricentro sta a più di un chilometro dal comune del giro che ha letto il cluster più spesso. Le due voci possono comparire insieme, separate da una virgola. Vuoto se il cluster è coerente |
 | `distanza_comune_m` * | Distanza in metri del baricentro dal confine del comune dichiarato: quello del database per un censito, quello del giro prevalente per un non censito. Zero se il baricentro è dentro il comune |
 | `servizio_transponder` | Servizio dell'ultima lettura del periodo. Vuoto per i non censiti |

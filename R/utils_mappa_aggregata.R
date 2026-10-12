@@ -32,19 +32,19 @@ limiti_mappa <- function() {
 #'   bolla per cantiere e l'ultimo a cui se ne vede una per comune.
 #' @noRd
 soglie_zoom <- function() {
-  list(cantiere = 11, comune = 13)
+  list(cantiere = 11, comune = 14)
 }
 
 #' Livello di aggregazione adatto a uno zoom
 #'
 #' Con la zona servita inquadrata per intero lo zoom è 10 o meno: si vedono
 #' i cantieri, e restano anche a zoom 11, quando un cantiere occupa buona
-#' parte della mappa. A zoom 12 e 13 si vedono i comuni: a 12 un comune occupa
-#' un paio di centinaia di pixel, a 13 buona parte della mappa. Da 14 in su si
+#' parte della mappa. Da zoom 12 a zoom 14 si vedono i comuni: a 12 un comune
+#' occupa un paio di centinaia di pixel, a 14 più della mappa. Da 15 in su si
 #' vedono i singoli bidoni. Le soglie stanno in `soglie_zoom()`.
 #'
 #' @param zoom Zoom della mappa.
-#' @return `"cantiere"` fino a zoom 11, `"comune"` a zoom 12 e 13, poi
+#' @return `"cantiere"` fino a zoom 11, `"comune"` da zoom 12 a zoom 14, poi
 #'   `"griglia"`, cioè nessun raggruppamento per territorio.
 #' @noRd
 livello_aggregazione <- function(zoom) {

@@ -10,9 +10,9 @@
 
 devtools::load_all()
 
-file_origine <- "data-raw/origine/letture_storiche.csv"
-colonna_rfid <- "RFID"
-colonna_data <- "giorno_lettura"
+file_origine <- "data-raw/origine/dv_cnt_letture.csv"
+colonna_rfid <- "codice_transponder"
+colonna_data <- "data_lettura"
 
 
 origine <- read_csv_auto(file_origine)

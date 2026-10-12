@@ -336,9 +336,10 @@ cantiere_di_comune <- function(comune) {
 #' `comune_geografico()`: il calendario dei mezzi non conta, perché un mezzo
 #' può sostituirne un altro e fare un giro che non era il suo.
 #'
-#' - `comune_lettura`: il comune in cui cade il punto, oppure
-#'   `fuori_servizio()` se il punto è fuori da tutti i comuni serviti o le
-#'   coordinate mancano.
+#' - `comune_lettura`: il comune in cui cade il punto. Un punto fuori da tutti
+#'   i comuni serviti, ma entro `margine_confine_m()` dal confine di uno di
+#'   essi, prende il comune più vicino. Oltre il margine, o senza coordinate,
+#'   vale `fuori_servizio()`.
 #' - `comune_geografico`: lo stesso comune, mancante fuori dai comuni serviti.
 #' - `comune_assegnato`: il comune geografico; fuori dai comuni serviti
 #'   quello del database, per i censiti. Un non censito letto fuori dai comuni
@@ -375,8 +376,19 @@ aggiungi_geografia <- function(letture) {
   } else {
     integer(n)
   }
+  # Un punto appena fuori dai comuni serviti prende il comune più vicino. Il
+  # confronto con i comuni dichiarati resta sul confine vero, più sotto.
+  con_margine <- if (con_posizione) {
+    indice_comune_con_margine(
+      letture$latitudine,
+      letture$longitudine,
+      geografico = geografico
+    )
+  } else {
+    geografico
+  }
   letture$comune_geografico <- comuni_cantieri()$comune[
-    replace(geografico, geografico == 0L, NA_integer_)
+    replace(con_margine, con_margine == 0L, NA_integer_)
   ]
   letture$comune_lettura <- if (con_posizione) {
     dplyr::coalesce(letture$comune_geografico, fuori_servizio())

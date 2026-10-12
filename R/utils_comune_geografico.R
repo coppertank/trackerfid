@@ -2,9 +2,11 @@
 #
 # Ogni lettura ha una posizione GPS e fino a due comuni dichiarati: quello del
 # database, per i censiti, e quello del giro del mezzo. Il comune geografico è
-# quello il cui confine contiene il punto. Una lettura è "fuori comune" se sta
-# oltre la tolleranza dal comune del database, "fuori giro" se sta oltre la
-# tolleranza dal comune del giro.
+# quello il cui confine contiene il punto; un punto appena fuori dai comuni
+# serviti, entro il margine di `margine_confine_m()`, prende il comune servito
+# più vicino. Una lettura è "fuori comune" se sta oltre la tolleranza dal
+# comune del database, "fuori giro" se sta oltre la tolleranza dal comune del
+# giro.
 #
 # Con milioni di letture un controllo punto per punto contro ogni confine
 # costerebbe decine di secondi. Le funzioni di questo file usano una griglia
@@ -20,6 +22,18 @@
 #' @return Metri.
 #' @noRd
 tolleranza_confine_m <- function() 1000
+
+#' Distanza dal confine entro cui un punto esterno prende il comune più vicino
+#'
+#' Scelta dal proprietario del progetto: cento metri. Una lettura fatta poco
+#' fuori da tutti i comuni serviti, per l'errore del GPS o su una strada di
+#' confine, non è una lettura fuori servizio: prende il comune servito più
+#' vicino. Non va confusa con `tolleranza_confine_m()`, che serve a dire se
+#' una lettura è lontana dal comune dichiarato.
+#'
+#' @return Metri.
+#' @noRd
+margine_confine_m <- function() 100
 
 #' Metri per grado nella zona servita
 #'
@@ -275,16 +289,126 @@ indice_comune_geografico <- function(lat, lng) {
   esito
 }
 
-#' Comune in cui cade ogni punto
+#' Comune di ogni punto
+#'
+#' È il comune servito il cui confine contiene il punto. Un punto fuori da
+#' tutti i comuni serviti, ma entro il margine dal confine di uno di essi,
+#' prende il comune più vicino: vedi `indice_comune_con_margine()`.
 #'
 #' @param lat,lng Coordinate dei punti.
-#' @return Il nome del comune servito il cui confine contiene il punto, `NA`
-#'   per un punto fuori da tutti i comuni serviti.
+#' @param margine Distanza in metri, vedi `margine_confine_m()`.
+#' @return Nomi dei comuni, nella grafia della tabella dei comuni. Mancante
+#'   per un punto oltre il margine da ogni comune servito, o senza coordinate.
 #' @noRd
-comune_geografico <- function(lat, lng) {
-  indice <- indice_comune_geografico(lat, lng)
+comune_geografico <- function(lat, lng, margine = margine_confine_m()) {
+  indice <- indice_comune_con_margine(lat, lng, margine)
   indice[indice == 0L] <- NA_integer_
   comuni_cantieri()$comune[indice]
+}
+
+#' Riga della tabella dei comuni del comune di ogni punto, con il margine
+#'
+#' Parte dal comune che contiene il punto, vedi `indice_comune_geografico()`.
+#' Ai soli punti fuori da tutti i comuni serviti dà il comune più vicino,
+#' se il suo confine è entro il margine.
+#'
+#' @param lat,lng Coordinate dei punti.
+#' @param margine Distanza in metri, vedi `margine_confine_m()`.
+#' @param geografico Riga della tabella dei comuni del comune che contiene
+#'   ogni punto, se è già stata calcolata.
+#' @return Vettore di interi: zero per un punto oltre il margine da ogni
+#'   comune servito, o senza coordinate.
+#' @noRd
+indice_comune_con_margine <- function(
+  lat,
+  lng,
+  margine = margine_confine_m(),
+  geografico = indice_comune_geografico(lat, lng)
+) {
+  fuori <- which(geografico == 0L)
+  if (length(fuori) > 0) {
+    geografico[fuori] <- indice_comune_vicino(lat[fuori], lng[fuori], margine)
+  }
+  geografico
+}
+
+#' Comune servito più vicino a ogni punto, entro un margine
+#'
+#' Serve ai punti che nessun confine contiene. Di ogni comune guarda i soli
+#' punti che stanno entro il margine dal suo riquadro: per gli altri il comune
+#' è di sicuro troppo lontano.
+#'
+#' @param lat,lng Coordinate dei punti.
+#' @param margine Distanza massima dal confine, in metri.
+#' @return Riga della tabella dei comuni del comune con il confine più
+#'   vicino. Zero se nessun confine è entro il margine, o se il punto non
+#'   ha coordinate.
+#' @noRd
+indice_comune_vicino <- function(lat, lng, margine = margine_confine_m()) {
+  esito <- integer(length(lat))
+  validi <- which(!is.na(lat) & !is.na(lng))
+  if (length(validi) == 0 || margine <= 0) {
+    return(esito)
+  }
+  scala <- metri_per_grado()
+  px <- lng[validi] * scala[["lng"]]
+  py <- lat[validi] * scala[["lat"]]
+  minima <- rep(Inf, length(validi))
+  quale <- integer(length(validi))
+  lati <- lati_comuni()
+  for (k in seq_along(lati)) {
+    confine <- lati[[k]]
+    if (is.null(confine)) {
+      next
+    }
+    vicini <- which(
+      px >= confine$x_min * scala[["lng"]] - margine &
+        px <= confine$x_max * scala[["lng"]] + margine &
+        py >= confine$y_min * scala[["lat"]] - margine &
+        py <= confine$y_max * scala[["lat"]] + margine
+    )
+    if (length(vicini) == 0) {
+      next
+    }
+    distanza <- distanza_dai_lati_m(px[vicini], py[vicini], confine, scala)
+    migliori <- distanza < minima[vicini]
+    minima[vicini[migliori]] <- distanza[migliori]
+    quale[vicini[migliori]] <- k
+  }
+  entro <- minima <= margine
+  esito[validi[entro]] <- quale[entro]
+  esito
+}
+
+#' Distanza di ogni punto dal lato più vicino del confine di un comune
+#'
+#' @param qx,qy Coordinate dei punti, in metri: gradi per `metri_per_grado()`.
+#' @param confine Un elemento di `lati_comuni()`.
+#' @param scala Risultato di `metri_per_grado()`.
+#' @return Metri. Non dice se il punto è dentro o fuori dal confine.
+#' @noRd
+distanza_dai_lati_m <- function(qx, qy, confine, scala = metri_per_grado()) {
+  ax <- confine$xp * scala[["lng"]]
+  ay <- confine$yp * scala[["lat"]]
+  bx <- confine$x * scala[["lng"]]
+  by <- confine$y * scala[["lat"]]
+  minima <- rep(Inf, length(qx))
+  for (i in seq_along(ax)) {
+    dx <- bx[i] - ax[i]
+    dy <- by[i] - ay[i]
+    lunghezza <- dx^2 + dy^2
+    lungo_il_lato <- if (lunghezza > 0) {
+      pmin(pmax(((qx - ax[i]) * dx + (qy - ay[i]) * dy) / lunghezza, 0), 1)
+    } else {
+      0
+    }
+    minima <- pmin(
+      minima,
+      (qx - ax[i] - lungo_il_lato * dx)^2 +
+        (qy - ay[i] - lungo_il_lato * dy)^2
+    )
+  }
+  sqrt(minima)
 }
 
 #' Riga della tabella dei comuni di ogni nome
@@ -359,29 +483,12 @@ distanza_dal_comune_m <- function(
       next
     }
     # Distanza dal lato più vicino del confine.
-    ax <- confine$xp * scala[["lng"]]
-    ay <- confine$yp * scala[["lat"]]
-    bx <- confine$x * scala[["lng"]]
-    by <- confine$y * scala[["lat"]]
-    qx <- px[vicini]
-    qy <- py[vicini]
-    minima <- rep(Inf, length(vicini))
-    for (i in seq_along(ax)) {
-      dx <- bx[i] - ax[i]
-      dy <- by[i] - ay[i]
-      lunghezza <- dx^2 + dy^2
-      lungo_il_lato <- if (lunghezza > 0) {
-        pmin(pmax(((qx - ax[i]) * dx + (qy - ay[i]) * dy) / lunghezza, 0), 1)
-      } else {
-        0
-      }
-      minima <- pmin(
-        minima,
-        (qx - ax[i] - lungo_il_lato * dx)^2 +
-          (qy - ay[i] - lungo_il_lato * dy)^2
-      )
-    }
-    esito[punti[vicini]] <- sqrt(minima)
+    esito[punti[vicini]] <- distanza_dai_lati_m(
+      px[vicini],
+      py[vicini],
+      confine,
+      scala
+    )
   }
   esito
 }
