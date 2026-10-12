@@ -7,9 +7,11 @@
 #' L'elenco dei comuni permette più scelte. Il foglio di stile gli dà lo
 #' stesso aspetto dell'elenco dell'anno di analisi: vedi `elenco-comuni`.
 #'
-#' I servizi stanno in due elenchi, uno per stato a database: il servizio
-#' transponder per i bidoni "Presente", il servizio stimato dai giri per i
-#' bidoni "Non Presente". Ogni elenco ha le scelte rapide "Tutti" e "Nessuno".
+#' I servizi stanno in due elenchi, che valgono per i bidoni di tutti e due
+#' gli stati a database: il servizio atteso, cioè quello che il mezzo
+#' raccoglieva, e il giro del calendario, con il suo nome. Ogni elenco ha le
+#' scelte rapide "Tutti" e "Nessuno". Un terzo filtro riguarda la coerenza
+#' tra i servizi di una lettura. Lo stato a database si sceglie a parte.
 #'
 #' @param id Identificativo del modulo.
 #' @noRd
@@ -78,24 +80,9 @@ mod_filtri_ui <- function(id) {
           class = "gruppo-servizi",
           intestazione_filtro(
             ns,
-            "transponder",
-            "Filtro Servizio Transponder",
-            "Bidoni \u00abPresente\u00bb a database"
-          ),
-          checkboxGroupInput(
-            ns("servizio_transponder_check"),
-            NULL,
-            choices = character(0),
-            inline = FALSE
-          )
-        ),
-        div(
-          class = "gruppo-servizi",
-          intestazione_filtro(
-            ns,
             "atteso",
             "Filtro Servizio Atteso",
-            "Bidoni \u00abNon Presente\u00bb: servizio stimato dai giri"
+            "Servizio che il mezzo raccoglieva. Non censiti: servizio stimato"
           ),
           checkboxGroupInput(
             ns("servizio_atteso_check"),
@@ -109,6 +96,35 @@ mod_filtri_ui <- function(id) {
             "Includi Non Censiti con stima incerta (?)",
             value = TRUE
           )
+        ),
+        div(
+          class = "gruppo-servizi",
+          intestazione_filtro(
+            ns,
+            "giro",
+            "Filtro Servizio Giro",
+            "Giro del calendario dei mezzi, con il suo nome"
+          ),
+          checkboxGroupInput(
+            ns("servizio_giro_check"),
+            NULL,
+            choices = character(0),
+            inline = FALSE
+          )
+        ),
+        # Servizio del contenitore, servizio atteso e giro a confronto.
+        checkboxGroupInput(
+          ns("servizio_coerenza_check"),
+          "Filtro Coerenza Servizio",
+          choiceNames = unname(stati_coerenza_servizio()),
+          choiceValues = names(stati_coerenza_servizio()),
+          selected = names(stati_coerenza_servizio()),
+          inline = FALSE
+        ),
+        p(
+          class = "nota-filtro",
+          "Non coerente: contenitore, servizio atteso e giro non sono dello",
+          "stesso rifiuto."
         ),
         actionButton(
           ns("reset"),
@@ -128,14 +144,14 @@ mod_filtri_ui <- function(id) {
 #' Titolo di un elenco di servizi, con le scelte rapide
 #'
 #' A destra del titolo stanno "Tutti" e "Nessuno", per spuntare o togliere in
-#' un colpo tutte le voci dell'elenco. Sotto, una riga dice a quali bidoni si
-#' applica l'elenco.
+#' un colpo tutte le voci dell'elenco. Sotto, una riga dice che cosa riporta
+#' l'elenco.
 #'
 #' @param ns Funzione dello spazio dei nomi del modulo.
 #' @param gruppo Prefisso degli identificativi delle due scelte rapide:
 #'   `<gruppo>_tutti` e `<gruppo>_nessuno`.
 #' @param titolo Titolo dell'elenco.
-#' @param nota Bidoni a cui l'elenco si applica.
+#' @param nota Che cosa riporta l'elenco.
 #' @noRd
 intestazione_filtro <- function(ns, gruppo, titolo, nota) {
   div(

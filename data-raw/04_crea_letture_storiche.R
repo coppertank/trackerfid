@@ -2,8 +2,8 @@
 # dell'installazione delle antenne sui mezzi.
 #
 # Legge data-raw/origine/letture_storiche.csv e scrive
-# data-raw/output/letture_storiche.csv, con le due colonne che l'app e il
-# report docs/beneficio_antenne.Rmd si aspettano: RFID e giorno_lettura.
+# data-raw/output/letture_storiche.csv, con le due colonne che l'app si
+# aspetta: RFID e giorno_lettura.
 # Eseguire dalla radice del progetto.
 #
 # Da adattare al file di origine: il nome del file e i nomi delle due colonne.

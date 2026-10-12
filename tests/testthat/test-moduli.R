@@ -192,9 +192,10 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
 })
 
 test_that("i filtri partono senza esclusioni e reagiscono agli input", {
-  ultimi <- deduplica_ultimo_rfid(dati_esempio())
+  esempio <- aggiungi_servizio_icona(dati_esempio())
+  ultimi <- deduplica_ultimo_rfid(esempio)
   n_presenti <- sum(ultimi$presente_a_database == "Presente")
-  dati <- shiny::reactiveVal(dati_esempio())
+  dati <- shiny::reactiveVal(esempio)
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
@@ -209,37 +210,118 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
       fixed = TRUE
     )
 
-    # i servizi transponder riguardano i censiti: i non censiti restano tutti
+    # il servizio atteso vale per i censiti e per i non censiti: per i primi
+    # quello della lettura, per i secondi quello stimato
     session$setInputs(presente_filter = c("Presente", "Non Presente"))
-    session$setInputs(servizio_transponder_check = c("SECCO", "CARTA"))
+    session$setInputs(servizio_atteso_check = c("SECCO", "CARTA"))
+    expect_setequal(stato$atteso_esclusi, setdiff(scelte_atteso(), c("SECCO", "CARTA")))
+    censiti <- filtrati()$presente_a_database == "Presente"
     expect_setequal(
-      unique(filtrati()$servizio_transponder),
-      c("SECCO", "CARTA", NA)
-    )
-    expect_equal(
-      sum(filtrati()$presente_a_database == "Non Presente"),
-      nrow(ultimi) - n_presenti
-    )
-    # per toglierli basta lo stato a database
-    session$setInputs(presente_filter = "Presente")
-    expect_setequal(
-      unique(filtrati()$servizio_transponder),
+      unique(filtrati()$servizio_atteso[censiti]),
       c("SECCO", "CARTA")
     )
+    # tra i non censiti restano quelli stimati secco o carta e gli incerti
+    expect_setequal(
+      unique(filtrati()$servizio_icona[!censiti]),
+      c("SECCO", "CARTA", NA)
+    )
+    # lo stato a database si sceglie a parte
+    session$setInputs(presente_filter = "Presente")
+    expect_true(all(filtrati()$presente_a_database == "Presente"))
+    expect_setequal(unique(filtrati()$servizio_atteso), c("SECCO", "CARTA"))
 
     session$setInputs(reset = 1)
     expect_equal(nrow(filtrati()), nrow(ultimi))
+    expect_length(stato$atteso_esclusi, 0)
   })
 })
 
-test_that("le scelte rapide spuntano o tolgono tutti i servizi di uno stato", {
+test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa", {
+  esempio <- aggiungi_servizio_icona(dati_esempio())
+  n_rfid <- dplyr::n_distinct(esempio$RFID)
+  dati <- shiny::reactiveVal(esempio)
+  shiny::testServer(mod_filtri_server, args = list(dati = dati), {
+    filtrati <- function() session$getReturned()$dati_filtrati()
+    session$flushReact()
+    # i giri hanno il nome del calendario
+    expect_identical(scelte_giro(), ordina_servizi(esempio$servizio_giro))
+    expect_length(scelte_giro(), 12)
+    expect_true(all(
+      c("SECCO PAP", "CARTA CONT.STRADALI", "CARTA/CARTONE PAP") %in%
+        scelte_giro()
+    ))
+    expect_false("SECCO" %in% scelte_giro())
+
+    # il solo secco porta a porta: censiti e non censiti
+    session$setInputs(servizio_giro_check = "SECCO PAP")
+    expect_setequal(stato$giri_esclusi, setdiff(scelte_giro(), "SECCO PAP"))
+    expect_equal(nrow(filtrati()), 115)
+    expect_true(all(filtrati()$servizio_giro == "SECCO PAP"))
+    expect_setequal(
+      unique(filtrati()$presente_a_database),
+      c("Presente", "Non Presente")
+    )
+    expect_match(
+      as.character(output$stat_box$html),
+      "SECCO PAP:</span>\\s*<b>115</b>"
+    )
+    # con lo stato a database: i soli censiti letti da quel giro
+    session$setInputs(presente_filter = "Presente")
+    expect_true(all(filtrati()$presente_a_database == "Presente"))
+    expect_lt(nrow(filtrati()), 115)
+    session$setInputs(presente_filter = c("Presente", "Non Presente"))
+
+    # le scelte rapide
+    session$setInputs(giro_nessuno = 1)
+    expect_true(all(scelte_giro() %in% stato$giri_esclusi))
+    expect_equal(nrow(filtrati()), 0)
+    session$setInputs(giro_tutti = 1)
+    expect_length(stato$giri_esclusi, 0)
+    expect_equal(nrow(filtrati()), n_rfid)
+
+    # le sole letture non coerenti: quattro censiti letti in un giro di un
+    # altro rifiuto. Per due è anche l'ultima lettura
+    session$setInputs(servizio_coerenza_check = "non_coerente")
+    expect_identical(stato$servizio_escluse, "coerente")
+    expect_setequal(
+      filtrati()$RFID,
+      c("RFD20241007190", "RFD20241011121", "RFD20250901001", "RFD20250905100")
+    )
+    expect_true(all(filtrati()$coerenza == "Non coerente"))
+    expect_match(
+      as.character(output$stat_box$html),
+      "Non coerenti:</span>\\s*<b>4</b>"
+    )
+    # le sole coerenti: restano tutti gli RFID, ognuno con la sua ultima
+    # lettura coerente
+    session$setInputs(servizio_coerenza_check = "coerente")
+    expect_identical(stato$servizio_escluse, "non_coerente")
+    expect_equal(nrow(filtrati()), n_rfid)
+    expect_false(any(filtrati()$coerenza %in% "Non coerente"))
+    # nessuna voce: nessuna lettura
+    session$setInputs(servizio_coerenza_check = character(0))
+    expect_equal(nrow(filtrati()), 0)
+
+    # il reset riporta tutto ai valori predefiniti
+    session$setInputs(servizio_giro_check = "VETRO PAP")
+    expect_length(stato$giri_esclusi, 11)
+    session$setInputs(reset = 1)
+    expect_length(stato$giri_esclusi, 0)
+    expect_length(stato$servizio_escluse, 0)
+    expect_equal(nrow(filtrati()), n_rfid)
+    expect_match(
+      as.character(output$stat_box$html),
+      "Non coerenti:</span>\\s*<b>2</b>"
+    )
+  })
+})
+
+test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
   # Come nell'app: le letture del periodo, con il servizio dell'icona.
   esempio <- aggiungi_servizio_icona(
     filtra_periodo(dati_esempio(), periodo_anno(2025))
   )
   ultimi <- deduplica_ultimo_rfid(esempio)
-  censito <- esempio$presente_a_database == "Presente"
-  n_censiti <- sum(ultimi$presente_a_database == "Presente")
   # Il periodo cambia senza che cambi il dataset: i filtri non si azzerano.
   origine <- shiny::reactiveVal(1)
   dati <- shiny::reactiveVal(esempio)
@@ -250,71 +332,72 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi di uno stato", {
     }
     session$flushReact()
 
-    # un elenco per stato: i servizi del database per i censiti, i servizi
-    # stimati dai giri per i non censiti
+    # un elenco solo: il servizio atteso delle letture dei censiti e il
+    # servizio stimato dei non censiti
     expect_identical(
-      scelte_transponder(),
-      ordina_servizi(esempio$servizio_transponder[censito])
+      scelte_atteso(),
+      ordina_servizi(servizio_dei_filtri(esempio))
     )
     expect_identical(
       scelte_atteso(),
-      ordina_servizi(esempio$servizio_icona[!censito])
+      c(
+        "SECCO",
+        "CARTA",
+        "VETRO",
+        "UMIDO",
+        "PLASTICA E METALLI",
+        "VERDE E RAMAGLIE",
+        servizio_sacchetti()
+      )
     )
-    expect_true("SECCO" %in% scelte_atteso())
-    # un giro che non è la stima di nessun non censito non è tra le voci
+    # un giro che non è né il servizio atteso di un censito né la stima di un
+    # non censito non è tra le voci
     expect_false("SERVIZI MERCATI" %in% scelte_atteso())
     expect_true("SERVIZI MERCATI" %in% esempio$servizio_atteso)
 
-    # "Nessuno" sui servizi transponder: restano i soli non censiti
-    session$setInputs(transponder_nessuno = 1)
-    expect_true(all(scelte_transponder() %in% stato$transponder_esclusi))
-    expect_equal(nrow(filtrati()), nrow(ultimi) - n_censiti)
-    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
-    # poi una voce sola
-    session$setInputs(servizio_transponder_check = "CARTA")
-    expect_setequal(unique(filtrati()$servizio_transponder), c("CARTA", NA))
-    # "Tutti": di nuovo tutti i censiti
-    session$setInputs(transponder_tutti = 1)
-    expect_length(stato$transponder_esclusi, 0)
-    expect_equal(nrow(filtrati()), nrow(ultimi))
-
-    # "Nessuno" sui non censiti toglie anche quelli con la stima incerta
+    # "Nessuno" toglie tutte le voci e anche i non censiti con la stima incerta
     session$setInputs(atteso_nessuno = 1)
     expect_true(all(scelte_atteso() %in% stato$atteso_esclusi))
     expect_false(stato$includi_stima_incerta)
-    expect_equal(nrow(filtrati()), n_censiti)
-    expect_true(all(filtrati()$presente_a_database == "Presente"))
+    expect_equal(nrow(filtrati()), 0)
 
     # la sola stima incerta: i marker con il punto di domanda
     session$setInputs(includi_stima_incerta = TRUE)
-    expect_equal(nrow(non_censiti()), 19)
-    expect_true(all(is.na(non_censiti()$servizio_icona)))
-    expect_true("RFD20250920250" %in% non_censiti()$RFID)
+    expect_equal(nrow(filtrati()), 19)
+    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+    expect_true(all(is.na(filtrati()$servizio_icona)))
+    expect_true("RFD20250920250" %in% filtrati()$RFID)
     expect_match(
       as.character(output$stat_box$html),
       "Stima incerta:</span>\\s*<b>19</b>"
     )
 
-    # un solo servizio stimato, senza gli incerti
+    # un solo servizio, senza gli incerti: i censiti letti nei giri del secco
+    # e i non censiti stimati secco
     session$setInputs(
       includi_stima_incerta = FALSE,
       servizio_atteso_check = "SECCO"
     )
+    expect_equal(nrow(filtrati()), 88)
     expect_equal(nrow(non_censiti()), 5)
-    expect_true(all(non_censiti()$servizio_icona == "SECCO"))
+    expect_true(all(servizio_dei_filtri(filtrati()) == "SECCO"))
     expect_true("RFD20250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
+    # con lo stato a database: i soli non censiti
+    session$setInputs(presente_filter = "Non Presente")
+    expect_equal(nrow(filtrati()), 5)
+    session$setInputs(presente_filter = c("Presente", "Non Presente"))
 
-    # "Tutti": di nuovo tutti i non censiti, incerti compresi
+    # "Tutti": di nuovo tutti, incerti compresi
     session$setInputs(atteso_tutti = 1)
     expect_length(stato$atteso_esclusi, 0)
     expect_true(stato$includi_stima_incerta)
     expect_equal(nrow(filtrati()), nrow(ultimi))
 
     # "Nessuno" resta tale anche in un periodo con un elenco diverso: nel
-    # 2024 tra i servizi stimati c'è un giro che nel 2025 non compare
+    # 2024 tra i servizi attesi c'è un giro che nel 2025 non compare
     voci_2025 <- scelte_atteso()
-    session$setInputs(transponder_nessuno = 2, atteso_nessuno = 2)
+    session$setInputs(atteso_nessuno = 2)
     expect_equal(nrow(filtrati()), 0)
     dati(aggiungi_servizio_icona(
       filtra_periodo(dati_esempio(), periodo_anno(2024))
@@ -325,12 +408,11 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi di uno stato", {
     # e una voce spuntata vale solo per sé
     session$setInputs(servizio_atteso_check = "SECCO")
     expect_gt(nrow(filtrati()), 0)
-    expect_true(all(filtrati()$servizio_icona == "SECCO"))
+    expect_true(all(servizio_dei_filtri(filtrati()) == "SECCO"))
 
     # il reset riporta tutto ai valori predefiniti
     session$setInputs(reset = 1)
     expect_true(stato$includi_stima_incerta)
-    expect_length(stato$transponder_esclusi, 0)
     expect_length(stato$atteso_esclusi, 0)
     expect_equal(
       nrow(filtrati()),
@@ -585,15 +667,18 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
     "Seleziona Anno di Analisi",
     "Periodo personalizzato",
     "Filtro Stato Database",
-    "Filtro Servizio Transponder",
     "Filtro Servizio Atteso",
+    "Filtro Servizio Giro",
+    "Filtro Coerenza Servizio",
     "Includi Non Censiti con stima incerta (?)",
     "Tutti",
     "Nessuno",
-    "filtri-transponder_tutti",
-    "filtri-transponder_nessuno",
     "filtri-atteso_tutti",
     "filtri-atteso_nessuno",
+    "filtri-giro_tutti",
+    "filtri-giro_nessuno",
+    "filtri-servizio_giro_check",
+    "filtri-servizio_coerenza_check",
     "Reset Filtri",
     "Pulisci Ricerca",
     "Cerca RFID",
@@ -606,6 +691,9 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
   )) {
     expect_match(html, testo, fixed = TRUE)
   }
+  # il servizio del contenitore a database non è più un filtro
+  expect_no_match(html, "Filtro Servizio Transponder", fixed = TRUE)
+  expect_no_match(html, "transponder_tutti", fixed = TRUE)
   # lo stato a database fa già da filtro per i non censiti
   expect_no_match(html, "includi_non_censiti", fixed = TRUE)
   expect_no_match(html, "senza stima", fixed = TRUE)
@@ -1130,7 +1218,7 @@ test_that("l'interfaccia ha i filtri geografici e le sole quattro schede previst
   )
 })
 
-test_that("i sacchetti stanno tra i servizi del loro stato e seguono le scelte rapide", {
+test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapide", {
   sacchetto <- function(n) sprintf("00BD%020d", n)
   grezzi <- dplyr::bind_rows(
     # censito senza servizio a database: lo assegna la validazione
@@ -1165,8 +1253,12 @@ test_that("i sacchetti stanno tra i servizi del loro stato e seguono le scelte r
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
-    expect_identical(scelte_transponder(), c("CARTA", servizio_sacchetti()))
-    expect_identical(scelte_atteso(), c("SECCO PAP", servizio_sacchetti()))
+    # il sacchetto censito è letto da un giro del secco, ma la sua voce è
+    # quella dei sacchetti
+    expect_identical(
+      scelte_atteso(),
+      c("SECCO PAP", "CARTA/CARTONE PAP", servizio_sacchetti())
+    )
     expect_equal(nrow(filtrati()), 4)
     statistiche <- as.character(output$stat_box$html)
     expect_equal(
@@ -1174,21 +1266,23 @@ test_that("i sacchetti stanno tra i servizi del loro stato e seguono le scelte r
       2
     )
 
-    # tolta la voce dei sacchetti censiti, quello non censito resta
-    session$setInputs(servizio_transponder_check = "CARTA")
-    expect_setequal(
-      filtrati()$RFID,
-      c(sacchetto(2), "0000ABC123", "0000ABC124")
+    # tolta la voce dei sacchetti escono tutti e due, censito e non censito
+    session$setInputs(
+      servizio_atteso_check = c("SECCO PAP", "CARTA/CARTONE PAP")
     )
-    # "Nessuno" sui non censiti toglie anche il loro sacchetto
-    session$setInputs(transponder_tutti = 1, atteso_nessuno = 1)
-    expect_setequal(filtrati()$RFID, c(sacchetto(1), "0000ABC123"))
-    # la sola voce dei sacchetti non censiti
+    expect_setequal(filtrati()$RFID, c("0000ABC123", "0000ABC124"))
+    # la sola voce dei sacchetti
     session$setInputs(servizio_atteso_check = servizio_sacchetti())
-    expect_setequal(
-      filtrati()$RFID,
-      c(sacchetto(1), sacchetto(2), "0000ABC123")
-    )
+    expect_setequal(filtrati()$RFID, c(sacchetto(1), sacchetto(2)))
+    # con lo stato a database: il solo sacchetto non censito
+    session$setInputs(presente_filter = "Non Presente")
+    expect_identical(filtrati()$RFID, sacchetto(2))
+    session$setInputs(presente_filter = c("Presente", "Non Presente"))
+    # "Nessuno" toglie anche i sacchetti, "Tutti" li rimette
+    session$setInputs(atteso_nessuno = 1)
+    expect_equal(nrow(filtrati()), 0)
+    session$setInputs(atteso_tutti = 1)
+    expect_equal(nrow(filtrati()), 4)
   })
 })
 

@@ -60,24 +60,27 @@ ultime <- misura(
   "Filtri: ultima lettura per RFID",
   deduplica_ultimo_rfid(nel_periodo, maschera)
 )
-servizio <- ordina_servizi(nel_periodo$servizio_transponder)[1]
+giro <- ordina_servizi(nel_periodo$servizio_giro)[1]
 misura(
   "Cambio di un filtro, in tutto",
   deduplica_ultimo_rfid(
     nel_periodo,
-    maschera_filtri(nel_periodo, transponder_esclusi = servizio)
+    maschera_filtri(
+      nel_periodo,
+      giri_esclusi = giro,
+      servizio_escluse = "coerente"
+    )
   )
 )
-# I non censiti si filtrano con il servizio stimato dai giri: le voci
-# dell'elenco, poi un servizio in meno e senza quelli con la stima incerta.
+# Il servizio atteso: per i censiti quello della lettura, per i non censiti
+# quello stimato dai giri. Prima le voci dell'elenco, poi un servizio in meno
+# e senza i non censiti con la stima incerta.
 stimati <- misura(
-  "Elenco dei servizi stimati dei non censiti",
-  ordina_servizi(nel_periodo$servizio_icona[
-    nel_periodo$presente_a_database == "Non Presente"
-  ])
+  "Elenco dei servizi attesi",
+  ordina_servizi(servizio_dei_filtri(nel_periodo))
 )
 misura(
-  "Cambio del filtro sui non censiti, in tutto",
+  "Cambio del filtro sul servizio atteso, in tutto",
   deduplica_ultimo_rfid(
     nel_periodo,
     maschera_filtri(
@@ -161,55 +164,14 @@ analisi <- misura(
 )
 message(sprintf("  %s cluster", formatta_numero(nrow(analisi))))
 
-# ---- Letture storiche e confronto del report sul beneficio delle antenne ------------
+# ---- Letture storiche ---------------------------------------------------------
 if (length(argomenti) >= 2) {
   storico <- misura("Letture storiche: lettura e validazione", {
     carica_storico(argomenti[2])$dati
   })
   message(sprintf("  %s letture storiche", formatta_numero(nrow(storico))))
-  contenitori <- senza_sacchetti(letture)
-  unite <- misura("Una lettura al giorno per contenitore", {
-    una_lettura_al_giorno(
-      unisci_letture(contenitori, senza_sacchetti(storico))
-    )
-  })
-  confronto <- misura("Confronto tra i due sistemi", {
-    confronto_sistemi(unite, anagrafica_rfid(contenitori))
-  })
-  misura("Riepilogo per territorio, servizio, cantiere e comune", {
-    riepilogo_confronto(confronto)
-    riepilogo_confronto(confronto, "tipologia")
-    riepilogo_confronto(confronto, "cantiere")
-    riepilogo_confronto(confronto, "comune")
-  })
-  coorte <- coorte_dei_due_sistemi(confronto)
-  message(sprintf(
-    "  %s contenitori letti dalle antenne, %s letti da tutti e due i sistemi",
-    formatta_numero(nrow(confronto)),
-    formatta_numero(nrow(coorte))
-  ))
-  coppie <- misura("Codici a un carattere di distanza", {
-    codici_gemelli(unique(unite$RFID), tra = confronto$RFID)
-  })
-  gemelli <- misura("Coppie con un solo codice censito", {
-    gemelli_sospetti(coppie, unite, contenitori)
-  })
-  tra_sistemi <- misura("Gemelli letti solo dal sistema precedente", {
-    riepilogo_gemelli(
-      gemelli_tra_sistemi(coppie, unite),
-      setdiff(confronto$RFID, coorte$RFID),
-      coorte$RFID
-    )
-  })
-  message(sprintf(
-    "  %s coppie con almeno un codice letto dalle antenne, %s con un solo codice censito",
-    formatta_numero(nrow(coppie)),
-    formatta_numero(nrow(gemelli))
-  ))
-  misura("Contenitori fuori comune, settimane e mesi", {
-    rfid_fuori_comune(contenitori)
-    copertura_settimanale(contenitori)
-    letture_mensili(unite, confronto$RFID)
+  misura("Istogramma per anno di un bidone, con le letture storiche", {
+    andamento_rfid(rfid, letture, storico)
   })
 }
 

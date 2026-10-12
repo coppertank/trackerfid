@@ -167,7 +167,9 @@ aggiungi_marker <- function(
       cantiere = df[["cantiere"]],
       comune_geografico = df[["comune_geografico"]],
       fuori_comune = df[["fuori_comune"]],
-      fuori_giro = df[["fuori_giro"]]
+      fuori_giro = df[["fuori_giro"]],
+      servizio_giro = df[["servizio_giro"]],
+      coerenza = df[["coerenza"]]
     ),
     label = df$RFID,
     options = leaflet::markerOptions(

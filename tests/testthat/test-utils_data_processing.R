@@ -149,6 +149,9 @@ test_that("il filtro per periodo include gli estremi", {
   expect_equal(nrow(filtra_periodo(letture_test(), NULL)), 6)
 })
 
+# Codice di un sacchetto: 24 caratteri con il prefisso 00BD.
+codice_sacchetto <- function(n) sprintf("00BD%020d", n)
+
 # Letture che superano i filtri.
 filtrate <- function(d, ...) d[maschera_filtri(d, ...), , drop = FALSE]
 
@@ -159,49 +162,61 @@ test_that("i filtri per stato e servizio si combinano correttamente", {
   expect_setequal(filtrate(d, stato_db = "Presente")$RFID, c("A", "B"))
   expect_equal(nrow(filtrate(d, stato_db = character(0))), 0)
 
-  # servizio transponder: per esclusione, e riguarda i soli censiti
-  senza_carta <- filtrate(d, transponder_esclusi = "CARTA")
-  expect_false("CARTA" %in% senza_carta$servizio_transponder)
-  expect_equal(sum(senza_carta$RFID == "C"), 2)
-  # un servizio mancante non è mai tra quelli deselezionati
-  expect_true("C" %in% filtrate(d, transponder_esclusi = c("CARTA", NA))$RFID)
-  # senza nessun servizio transponder restano i non censiti: il non censito C
-  # è stimato SECCO, ma il SECCO dei censiti non lo riguarda
-  nessuno <- filtrate(d, transponder_esclusi = c("CARTA", "SECCO", "VETRO"))
-  expect_identical(unique(nessuno$RFID), "C")
-  expect_identical(
-    maschera_filtri(d, transponder_esclusi = c("CARTA", "SECCO", "VETRO")),
-    maschera_filtri(d, stato_db = "Non Presente")
-  )
-
-  # servizio atteso: riguarda i soli non censiti, e vale il servizio stimato
-  # dell'RFID. C ha una lettura con il giro del secco e una senza giro: la
-  # sua stima è SECCO, e togliendo SECCO escono tutte e due le letture.
+  # servizio atteso, per esclusione. Per un non censito vale il servizio
+  # stimato dell'RFID: C ha una lettura con il giro del secco e una senza
+  # giro, la sua stima è SECCO, e togliendo SECCO escono tutte e due.
   senza_secco <- filtrate(d, atteso_esclusi = "SECCO")
   expect_false("C" %in% senza_secco$RFID)
+  # qui i censiti non hanno un servizio atteso: un servizio mancante non è
+  # mai tra quelli deselezionati
   expect_equal(sum(senza_secco$presente_a_database == "Presente"), 4)
+  expect_equal(nrow(filtrate(d, atteso_esclusi = c("SECCO", NA))), 4)
+  # il servizio del contenitore a database non entra nei filtri
+  expect_equal(nrow(filtrate(d, atteso_esclusi = c("CARTA", "VETRO"))), 6)
   # la stima di C è netta: la casella della stima incerta non lo tocca
   expect_equal(nrow(filtrate(d, includi_stima_incerta = FALSE)), 6)
 
+  # per un censito vale il servizio atteso di ogni lettura
+  con_atteso <- d
+  con_atteso$servizio_atteso[1:4] <- c("CARTA", "SECCO", "CARTA", "VETRO")
+  expect_identical(
+    filtrate(con_atteso, atteso_esclusi = "CARTA")$RFID,
+    c("A", "B", "C", "C")
+  )
+  # il secco toglie una lettura del censito e tutte quelle del non censito
+  expect_identical(
+    filtrate(con_atteso, atteso_esclusi = "SECCO")$RFID,
+    c("A", "A", "B")
+  )
+  # lo stato a database si sceglie a parte
+  expect_identical(
+    filtrate(con_atteso, stato_db = "Presente", atteso_esclusi = "VETRO")$RFID,
+    c("A", "A", "A")
+  )
+
   # sul dataset di esempio: la stessa regola scritta lettura per lettura
   esempio <- aggiungi_servizio_icona(dati_esempio())
-  non_censita <- esempio$presente_a_database == "Non Presente"
+  stimata <- esempio$presente_a_database == "Non Presente" |
+    rfid_sacchetto(esempio$RFID)
   expect_identical(
     maschera_filtri(
       esempio,
-      transponder_esclusi = "CARTA",
-      atteso_esclusi = "SECCO PAP",
+      atteso_esclusi = "SECCO",
       includi_stima_incerta = FALSE
     ),
     ifelse(
-      non_censita,
-      !is.na(esempio$servizio_icona) & esempio$servizio_icona != "SECCO PAP",
-      esempio$servizio_transponder != "CARTA"
+      stimata,
+      !is.na(esempio$servizio_icona) & esempio$servizio_icona != "SECCO",
+      esempio$servizio_atteso != "SECCO"
     )
+  )
+  expect_identical(
+    servizio_dei_filtri(esempio),
+    ifelse(stimata, esempio$servizio_icona, esempio$servizio_atteso)
   )
 })
 
-test_that("con il giro su ogni lettura i filtri dei servizi seguono lo stato a database", {
+test_that("il servizio atteso filtra i censiti per lettura e i non censiti per stima", {
   # Come nei dati reali: anche le letture dei censiti hanno il servizio atteso.
   d <- dplyr::bind_rows(
     letture_rfid(
@@ -228,33 +243,36 @@ test_that("con il giro su ogni lettura i filtri dei servizi seguono lo stato a d
   rimasti <- function(...) unique(filtrate(d, ...)$RFID)
   expect_setequal(rimasti(), tutti)
 
-  # togliere il giro del secco non tocca il censito letto da quel giro, e
-  # toglie tutte le letture del non censito stimato secco
+  # togliere il secco toglie il censito letto in quel giro, anche se a
+  # database è un contenitore della carta, e tutte le letture del non censito
+  # stimato secco
   expect_setequal(
     rimasti(atteso_esclusi = "SECCO PAP"),
-    c("CENSITO", "INCERTO", "MUTO")
+    c("INCERTO", "MUTO")
   )
-  expect_equal(nrow(filtrate(d, atteso_esclusi = "SECCO PAP")), 4 + 4 + 2)
-  # un giro che non è la stima di nessun RFID non toglie niente
+  expect_equal(nrow(filtrate(d, atteso_esclusi = "SECCO PAP")), 4 + 2)
+  # il servizio del contenitore non conta
+  expect_setequal(rimasti(atteso_esclusi = "CARTA"), tutti)
+  # un servizio che non è la stima di nessun RFID non toglie niente
   expect_setequal(rimasti(atteso_esclusi = "VETRO PAP"), tutti)
   # stima incerta: nessuna tipologia all'80%, oppure nessun giro
   expect_setequal(
     rimasti(includi_stima_incerta = FALSE),
     c("CENSITO", "NETTO")
   )
-  # tolte tutte le voci dei non censiti resta lo stato "Presente"
-  expect_identical(
-    maschera_filtri(
-      d,
-      atteso_esclusi = "SECCO PAP",
-      includi_stima_incerta = FALSE
-    ),
-    maschera_filtri(d, stato_db = "Presente")
-  )
-  # il servizio transponder non tocca i non censiti
+  # tolta ogni voce non resta niente; lo stato a database si sceglie a parte
+  expect_false(any(maschera_filtri(
+    d,
+    atteso_esclusi = "SECCO PAP",
+    includi_stima_incerta = FALSE
+  )))
   expect_setequal(
-    rimasti(transponder_esclusi = "CARTA"),
-    c("NETTO", "INCERTO", "MUTO")
+    rimasti(stato_db = "Non Presente", atteso_esclusi = "SECCO PAP"),
+    c("INCERTO", "MUTO")
+  )
+  expect_setequal(
+    rimasti(stato_db = "Presente", atteso_esclusi = "VETRO PAP"),
+    "CENSITO"
   )
 
   # con la colonna `servizio_icona` già calcolata il risultato è lo stesso
@@ -270,7 +288,7 @@ test_that("con il giro su ogni lettura i filtri dei servizi seguono lo stato a d
   stat <- calcola_statistiche(deduplica_ultimo_rfid(con_icona))
   expect_equal(stat$presente, 1)
   expect_equal(stat$non_presente, 3)
-  expect_identical(stat$transponder, c(CARTA = 1L))
+  expect_identical(stat$atteso_censiti, c("SECCO PAP" = 1L))
   expect_identical(stat$atteso, c("SECCO PAP" = 1L))
   expect_equal(stat$stima_incerta, 2)
 
@@ -289,14 +307,195 @@ test_that("con il giro su ogni lettura i filtri dei servizi seguono lo stato a d
   expect_equal(stima$pct, 100)
 })
 
+test_that("i filtri sul giro e sulla coerenza dei servizi valgono per ogni stato", {
+  d <- dplyr::bind_rows(
+    letture_rfid("SECCO1", date_2025(2), servizio = "SECCO", atteso = "SECCO"),
+    letture_rfid("CARTA1", date_2025(2), servizio = "CARTA", atteso = "SECCO"),
+    letture_rfid("NON1", date_2025(2), presente = "Non Presente", atteso = "SECCO"),
+    letture_rfid("NON2", date_2025(2), presente = "Non Presente", atteso = "CARTA")
+  )
+  d$servizio_giro <- c(
+    "SECCO PAP",
+    "SECCO CONT.STRADALI",
+    "SECCO PAP",
+    "SECCO PAP",
+    "SECCO PAP",
+    NA,
+    "SECCO PAP",
+    "SECCO PAP"
+  )
+  d$coerenza <- coerenza_servizio(d)
+  expect_identical(
+    d$coerenza,
+    c(
+      "Coerente",
+      "Coerente",
+      "Non coerente",
+      "Non coerente",
+      "Coerente",
+      NA,
+      "Non coerente",
+      "Non coerente"
+    )
+  )
+  tutti <- unique(d$RFID)
+  rimasti <- function(...) unique(filtrate(d, ...)$RFID)
+
+  # il giro ha il nome del calendario: il secco porta a porta è una voce sua
+  expect_setequal(rimasti(giri_esclusi = "SECCO PAP"), c("SECCO1", "NON1"))
+  expect_equal(nrow(filtrate(d, giri_esclusi = "SECCO PAP")), 2)
+  expect_setequal(rimasti(giri_esclusi = "SECCO"), tutti)
+  # una lettura senza giro non è mai tra quelle deselezionate
+  expect_identical(
+    maschera_filtri(d, giri_esclusi = c("SECCO PAP", NA)),
+    maschera_filtri(d, giri_esclusi = "SECCO PAP")
+  )
+  # vale per censiti e non censiti: lo stato si sceglie a parte
+  expect_setequal(
+    rimasti(stato_db = "Presente", giri_esclusi = "SECCO CONT.STRADALI"),
+    c("SECCO1", "CARTA1")
+  )
+  expect_equal(
+    nrow(filtrate(d, stato_db = "Presente", giri_esclusi = "SECCO CONT.STRADALI")),
+    3
+  )
+  expect_setequal(
+    rimasti(stato_db = "Non Presente", giri_esclusi = "SECCO PAP"),
+    "NON1"
+  )
+
+  # coerenza dei servizi: le letture di cui non si può dire stanno con quelle
+  # coerenti
+  expect_setequal(rimasti(servizio_escluse = "coerente"), c("CARTA1", "NON2"))
+  expect_equal(nrow(filtrate(d, servizio_escluse = "coerente")), 4)
+  expect_setequal(rimasti(servizio_escluse = "non_coerente"), c("SECCO1", "NON1"))
+  expect_equal(nrow(filtrate(d, servizio_escluse = "non_coerente")), 4)
+  expect_equal(
+    nrow(filtrate(d, servizio_escluse = c("coerente", "non_coerente"))),
+    0
+  )
+  expect_setequal(rimasti(servizio_escluse = "altro"), tutti)
+  # i filtri si combinano
+  expect_setequal(
+    rimasti(giri_esclusi = "SECCO CONT.STRADALI", servizio_escluse = "coerente"),
+    c("CARTA1", "NON2")
+  )
+
+  # senza le due colonne i filtri non tolgono niente, e nessuna lettura
+  # risulta non coerente
+  semplici <- letture_test()
+  expect_equal(
+    nrow(filtrate(
+      semplici,
+      giri_esclusi = "SECCO PAP",
+      servizio_escluse = "non_coerente"
+    )),
+    6
+  )
+  expect_equal(nrow(filtrate(semplici, servizio_escluse = "coerente")), 0)
+
+  # le statistiche contano i giri e i bidoni non coerenti, per ultima lettura
+  stat <- calcola_statistiche(deduplica_ultimo_rfid(d))
+  expect_identical(
+    stat$giri,
+    c("SECCO PAP" = 2L, "SECCO CONT.STRADALI" = 1L)
+  )
+  expect_equal(stat$non_coerenti, 2)
+  expect_identical(stat$atteso_censiti, c(SECCO = 2L))
+  expect_identical(stat$atteso, c(SECCO = 1L, CARTA = 1L))
+})
+
+test_that("la coerenza confronta le tipologie dei servizi di una lettura", {
+  expect_identical(
+    stati_coerenza_servizio(),
+    c(coerente = "Coerente", non_coerente = "Non coerente")
+  )
+  casi <- dplyr::tribble(
+    ~RFID, ~servizio_transponder, ~servizio_atteso, ~servizio_giro, ~attesa,
+    # il secco porta a porta è secco
+    "A", "SECCO", "SECCO", "SECCO PAP", "Coerente",
+    # un contenitore della carta letto in mezzo a quelli del secco
+    "B", "CARTA", "SECCO", "SECCO PAP", "Non coerente",
+    # non censito: servizio atteso e giro concordano
+    "C", NA, "SECCO", "SECCO CONT.STRADALI", "Coerente",
+    # non censito: il mezzo raccoglieva la carta, il calendario dava il secco
+    "D", NA, "CARTA", "SECCO PAP", "Non coerente",
+    # con un servizio solo non si può dire
+    "E", "SECCO", NA, NA, NA,
+    "F", NA, "SECCO", NA, NA,
+    "G", NA, NA, NA, NA,
+    # un nome che la tabella non conosce fa tipologia a sé
+    "H", "SECCO", "SPAZZAMENTO NEVE", "SPAZZAMENTO NEVE", "Non coerente",
+    "I", NA, "SPAZZAMENTO NEVE", "SPAZZAMENTO NEVE", "Coerente",
+    # maiuscole e spazi ai margini non contano
+    "L", "carta ", "CARTA", " carta/cartone pap", "Coerente",
+    # un giro che non raccoglie quel rifiuto
+    "M", "SECCO", "PULIZIA TERRIT.", "PULIZIA TERRIT.", "Non coerente",
+    # un testo vuoto vale come mancante
+    "N", "", "SECCO", "SECCO PAP", "Coerente"
+  )
+  expect_identical(coerenza_servizio(casi), casi$attesa)
+
+  # un sacchetto non ha una tipologia di rifiuto: conta il solo confronto tra
+  # servizio atteso e giro
+  sacchetti <- dplyr::tibble(
+    RFID = c(codice_sacchetto(1), codice_sacchetto(2), codice_sacchetto(3)),
+    servizio_transponder = c(servizio_sacchetti(), NA, servizio_sacchetti()),
+    servizio_atteso = c("SECCO", "SECCO", "SECCO"),
+    servizio_giro = c("SECCO PAP", "VETRO PAP", NA)
+  )
+  expect_identical(
+    coerenza_servizio(sacchetti),
+    c("Coerente", "Non coerente", NA)
+  )
+
+  # una colonna che manca vale come vuota
+  expect_identical(
+    coerenza_servizio(casi[c("RFID", "servizio_transponder", "servizio_atteso")]),
+    c(
+      "Coerente", "Non coerente", NA, NA, NA, NA, NA, "Non coerente", NA,
+      "Coerente", "Non coerente", NA
+    )
+  )
+  expect_true(all(is.na(coerenza_servizio(casi["RFID"]))))
+  expect_identical(coerenza_servizio(casi[0, ]), character(0))
+
+  # nel dettaglio: le letture non coerenti di un RFID, dalla più recente
+  storia <- letture_rfid("X", date_2025(7), servizio = "CARTA", atteso = "SECCO")
+  storia$servizio_giro <- "SECCO PAP"
+  storia$servizio_atteso[1] <- "CARTA"
+  storia$servizio_giro[1] <- "CARTA/CARTONE PAP"
+  storia$coerenza <- coerenza_servizio(storia)
+  riepilogo <- coerenza_rfid(storia)
+  expect_equal(riepilogo$n, 6)
+  expect_equal(nrow(riepilogo$letture), 5)
+  expect_identical(riepilogo$letture$giorno_lettura, rev(storia$giorno_lettura)[1:5])
+  expect_identical(
+    names(riepilogo$letture),
+    c(
+      "giorno_lettura",
+      "matricola_veicolo",
+      "servizio_transponder",
+      "servizio_atteso",
+      "servizio_giro"
+    )
+  )
+  expect_equal(analizza_rfid(storia)$coerenza$n, 6)
+  # senza la colonna, o con tutte le letture coerenti, non c'è niente
+  expect_identical(coerenza_rfid(letture_test()), list(n = 0L))
+  expect_identical(coerenza_rfid(storia[1, ]), list(n = 0L))
+})
+
 test_that("i filtri si applicano prima della deduplica", {
   # Escludendo CARTA, del bidone A resta visibile l'ultima lettura SECCO.
+  letture <- letture_test()
+  letture$servizio_atteso[1:3] <- c("CARTA", "SECCO", "CARTA")
   ultimi <- deduplica_ultimo_rfid(
-    letture_test(),
-    maschera_filtri(letture_test(), transponder_esclusi = "CARTA")
+    letture,
+    maschera_filtri(letture, atteso_esclusi = "CARTA")
   )
   riga <- ultimi[ultimi$RFID == "A", ]
-  expect_identical(riga$servizio_transponder, "SECCO")
+  expect_identical(riga$servizio_atteso, "SECCO")
   expect_equal(
     riga$giorno_lettura,
     as.POSIXct("2025-09-10 08:00:00", tz = "UTC")
@@ -309,10 +508,14 @@ test_that("le statistiche contano una riga per RFID", {
   expect_equal(stat$totale, 3)
   expect_equal(stat$presente, 2)
   expect_equal(stat$non_presente, 1)
-  expect_identical(stat$transponder, c(CARTA = 1L, VETRO = 1L))
+  # i censiti di prova non hanno un servizio atteso
+  expect_length(stat$atteso_censiti, 0)
   # il non censito conta sotto il servizio stimato dai giri
   expect_identical(stat$atteso, c(SECCO = 1L))
   expect_equal(stat$stima_incerta, 0)
+  # senza le colonne del giro e della coerenza
+  expect_length(stat$giri, 0)
+  expect_equal(stat$non_coerenti, 0)
 })
 
 test_that("i servizi seguono l'ordine canonico", {
@@ -492,6 +695,19 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_identical(con_giro$dati$servizio_atteso, c("CARTA", "SECCO", NA))
   expect_identical(con_giro$dati$servizio_giro, c("CARTA", "CARTA", NA))
   expect_false("origine_servizio_atteso" %in% names(con_giro$dati))
+  # la coerenza la calcola la validazione, dai tre servizi: un contenitore
+  # del secco in un giro della carta, un non censito con il servizio dei
+  # censiti diverso dal giro, una lettura senza servizi
+  expect_identical(con_giro$dati$coerenza, c("Non coerente", "Non coerente", NA))
+  # se il file la contiene già viene ricalcolata
+  con_coerenza <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",servizio_giro,coerenza"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,SECCO,SECCO,UTZ001,45.72,11.76,SECCO PAP,Non coerente",
+    "2025-09-15 08:35:00,AB123CD,VEH001,R2,Presente,CARTA,SECCO,UTZ002,45.72,11.76,SECCO PAP,Coerente"
+  )))
+  expect_identical(con_coerenza$dati$servizio_giro, c("SECCO PAP", "SECCO PAP"))
+  expect_identical(con_coerenza$dati$coerenza, c("Coerente", "Non coerente"))
+  expect_true("coerenza" %in% colonne_derivate())
   expect_identical(names(con_giro$dati), colonne_dataset())
   expect_true("servizio_giro" %in% colonne_dataset())
 
@@ -874,7 +1090,7 @@ test_that("la deduplica può scegliere tra le sole letture indicate", {
   maschera <- maschera_filtri(
     dati,
     stato_db = "Presente",
-    transponder_esclusi = "SECCO"
+    atteso_esclusi = "SECCO"
   )
   expect_identical(
     deduplica_ultimo_rfid(dati, maschera),
@@ -1053,8 +1269,6 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
 })
 
 # Codice RFID di un sacchetto: 24 caratteri, con il prefisso 00BD.
-codice_sacchetto <- function(n) sprintf("00BD%020d", n)
-
 test_that("i sacchetti si riconoscono dal codice RFID", {
   expect_identical(servizio_sacchetti(), "SACCHETTI")
   expect_identical(
@@ -1185,22 +1399,32 @@ test_that("i sacchetti stanno sotto la loro tipologia, censiti o no", {
     con_icona$servizio_icona
   )
 
-  # ogni sacchetto sta tra i servizi del suo stato a database
+  # i sacchetti stanno sotto la loro voce, censiti o no: lo stato a database
+  # si sceglie a parte
   rimasti <- function(...) unique(filtrate(con_icona, ...)$RFID)
   tutti <- unique(d$RFID)
   expect_setequal(
-    rimasti(transponder_esclusi = servizio_sacchetti()),
-    setdiff(tutti, codice_sacchetto(1))
+    rimasti(atteso_esclusi = servizio_sacchetti()),
+    c("0000ABC123", "0000ABC124")
   )
   expect_setequal(
-    rimasti(atteso_esclusi = servizio_sacchetti()),
-    setdiff(tutti, codice_sacchetto(2))
+    rimasti(stato_db = "Presente", atteso_esclusi = servizio_sacchetti()),
+    "0000ABC123"
+  )
+  # il sacchetto censito è letto dai giri del secco, ma non è un contenitore
+  # del secco: togliere il secco non lo toglie
+  expect_setequal(
+    rimasti(atteso_esclusi = "SECCO PAP"),
+    setdiff(tutti, "0000ABC124")
   )
   # la casella della stima incerta non li riguarda
   expect_setequal(rimasti(includi_stima_incerta = FALSE), tutti)
 
   stat <- calcola_statistiche(deduplica_ultimo_rfid(con_icona))
-  expect_identical(stat$transponder, c(CARTA = 1L, SACCHETTI = 1L))
+  expect_identical(
+    stat$atteso_censiti,
+    c("CARTA/CARTONE PAP" = 1L, SACCHETTI = 1L)
+  )
   expect_identical(stat$atteso, c("SECCO PAP" = 1L, SACCHETTI = 1L))
   expect_equal(stat$stima_incerta, 0)
 

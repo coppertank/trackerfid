@@ -228,7 +228,8 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   sbagliato <- cerca_giri(d, "VEH001", "2025-09-24", "2025-09-24")
   riga <- riepilogo_giri(sbagliato)
   expect_equal(nrow(riga), 1)
-  expect_identical(riga$servizio_giro, "SECCO")
+  # il giro ha il nome del calendario
+  expect_identical(riga$servizio_giro, "SECCO PAP")
   expect_identical(riga$comune_giro, "LIMENA")
   # il comune di lettura viene dalla posizione, non dal calendario
   expect_identical(unique(sbagliato$comune_lettura), "BORGORICCO")

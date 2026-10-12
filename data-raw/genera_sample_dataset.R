@@ -878,11 +878,12 @@ dei_bidoni <- !is.na(letture$chiave)
 letture$RFID[dei_bidoni] <- bidoni$RFID[letture$chiave[dei_bidoni]]
 
 letture <- letture[order(letture$giorno_lettura, letture$RFID), ]
-# Come nei dati reali, il nome del giro e' riportato a quello del database:
-# "SECCO PAP" diventa "SECCO". Poi il servizio atteso dei non censiti viene
-# dai censiti letti dallo stesso mezzo nella mezz'ora attorno, se bastano;
-# altrimenti resta quello del calendario. Nell'esempio le letture sono rade,
-# poche per mezzo e per giorno: il servizio resta quasi sempre del calendario.
+# Come nei dati reali, il giro resta scritto come nel calendario: "SECCO PAP".
+# Il servizio atteso ne e' la versione con il nome del database, "SECCO"; per
+# i non censiti viene dai censiti letti dallo stesso mezzo nella mezz'ora
+# attorno, se bastano. Nell'esempio le letture sono rade, poche per mezzo e
+# per giorno: il servizio resta quasi sempre quello del calendario. La
+# coerenza dice se i servizi di ogni lettura concordano.
 con_servizio <- associa_servizio_atteso_dai_censiti(data.frame(
   giorno_lettura = letture$giorno_lettura,
   matricola_veicolo = letture$matricola_veicolo,
@@ -890,6 +891,7 @@ con_servizio <- associa_servizio_atteso_dai_censiti(data.frame(
   presente_a_database = letture$presente_a_database,
   servizio_transponder = letture$servizio_transponder,
   servizio_atteso = uniforma_servizio(letture$servizio_atteso),
+  servizio_giro = letture$servizio_atteso,
   stringsAsFactors = FALSE
 ))
 finale <- data.frame(
@@ -901,7 +903,7 @@ finale <- data.frame(
   servizio_transponder = letture$servizio_transponder,
   servizio_atteso = con_servizio$servizio_atteso,
   servizio_giro = con_servizio$servizio_giro,
-  origine_servizio_atteso = con_servizio$origine_servizio_atteso,
+  coerenza = con_servizio$coerenza,
   id_utenza = letture$id_utenza,
   latitudine = sprintf("%.4f", letture$latitudine),
   longitudine = sprintf("%.4f", letture$longitudine),
@@ -975,20 +977,22 @@ stopifnot(
   all(is.na(finale$volume_previsto) == (non_presente | sacchetto)),
   all(is.na(finale$numero_raccolte_annue_previste) == (non_presente | sacchetto)),
   all(finale$servizio_transponder %in% c(servizi, NA)),
-  # ogni lettura ha il giro del mezzo che l'ha fatta, con il nome uniformato:
-  # i dodici giri del calendario diventano nove servizi
+  # ogni lettura ha il giro del mezzo che l'ha fatta, con il nome del
+  # calendario: i giri sono dodici
   !anyNA(finale$servizio_giro),
-  length(unique(letture$servizio_atteso)) == 12,
-  identical(finale$servizio_giro, uniforma_servizio(letture$servizio_atteso)),
-  length(unique(finale$servizio_giro)) == 9,
-  all(servizi %in% finale$servizio_giro),
-  # il servizio atteso e' quello del calendario, oppure quello dei censiti
-  # letti dallo stesso mezzo: solo per i non censiti
+  identical(finale$servizio_giro, letture$servizio_atteso),
+  length(unique(finale$servizio_giro)) == 12,
+  # il servizio atteso ha i nomi del database: i dodici giri diventano nove
+  # servizi. E' quello del calendario oppure, solo per i non censiti, quello
+  # dei censiti letti dallo stesso mezzo
   !anyNA(finale$servizio_atteso),
-  all(finale$origine_servizio_atteso %in% c("censiti", "calendario")),
-  all(finale$servizio_atteso[finale$origine_servizio_atteso == "calendario"] ==
-    finale$servizio_giro[finale$origine_servizio_atteso == "calendario"]),
-  all(non_presente[finale$origine_servizio_atteso == "censiti"]),
+  length(unique(finale$servizio_atteso)) == 9,
+  all(servizi %in% finale$servizio_atteso),
+  all((finale$servizio_atteso == uniforma_servizio(finale$servizio_giro)) |
+    non_presente),
+  # la coerenza e' quella che l'app ricalcola al caricamento
+  all(finale$coerenza %in% c("Coerente", "Non coerente")),
+  identical(finale$coerenza, coerenza_servizio(finale)),
   # tra i non censiti ci sono stime nette e stime incerte
   setequal(stime_2025$RFID, unique(finale$RFID[nel_2025 & non_presente])),
   sum(!is.na(stime_2025$servizio_prevalente)) >= 10,
@@ -1173,8 +1177,7 @@ solo_storico <- lapply(seq_len(n_solo_storico), function(i) {
 
 # Contenitore con il codice letto male dal sistema precedente: circa meta'
 # delle sue letture storiche portano un codice che differisce da quello giusto
-# per un bit di una cifra. Con quel codice il database non lo riconosce: e' il
-# caso che il report sul beneficio delle antenne cerca tra i codici gemelli.
+# per un bit di una cifra. Con quel codice il database non lo riconosce.
 # E' il contenitore del secco con piu' letture storiche tra quelli senza altri
 # casi particolari. La scelta delle letture alterate ha un seme proprio.
 candidati_gemello <- which(

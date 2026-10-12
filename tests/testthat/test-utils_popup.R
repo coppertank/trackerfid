@@ -201,19 +201,37 @@ test_that("il riquadro statistiche riporta i conteggi", {
   expect_equal(stat$totale, 251)
   expect_equal(stat$presente + stat$non_presente, stat$totale)
   expect_match(html, "SECCO:", fixed = TRUE)
-  # i non censiti: una riga per servizio stimato, poi quelli con la stima
-  # incerta, che sulla mappa hanno il punto di domanda
+  # i censiti per servizio atteso; i non censiti per servizio stimato, poi
+  # quelli con la stima incerta, che sulla mappa hanno il punto di domanda
   expect_match(
     html,
-    "Servizio Atteso:</div>\\s*<div class=\"stat-riga\">\\s*<span>[^<]*SECCO:"
+    "Servizio Atteso, censiti:</div>\\s*<div class=\"stat-riga\">\\s*<span>[^<]*SECCO:"
   )
+  expect_match(
+    html,
+    "Servizio Atteso, non censiti:</div>\\s*<div class=\"stat-riga\">\\s*<span>[^<]*SECCO:"
+  )
+  expect_false(grepl("Servizio Transponder", html, fixed = TRUE))
   expect_match(
     html,
     sprintf("Stima incerta:</span>\\s*<b>%d</b>", stat$stima_incerta)
   )
   expect_gt(stat$stima_incerta, 5)
   expect_equal(sum(stat$atteso) + stat$stima_incerta, stat$non_presente)
-  expect_equal(sum(stat$transponder), stat$presente)
+  expect_equal(sum(stat$atteso_censiti), stat$presente)
+  # i giri hanno il nome del calendario: il secco porta a porta ha la sua riga
+  expect_match(
+    html,
+    "Giro del calendario:</div>\\s*<div class=\"stat-riga\">\\s*<span>[^<]*SECCO PAP:"
+  )
+  expect_equal(sum(stat$giri), stat$totale)
+  expect_identical(names(stat$giri)[1], "SECCO PAP")
+  # i bidoni con i servizi che non concordano
+  expect_match(
+    html,
+    sprintf("Non coerenti:</span>\\s*<b>%d</b>", stat$non_coerenti)
+  )
+  expect_equal(stat$non_coerenti, 2)
 
   # con le letture filtrate compaiono RFID e letture di ogni cantiere
   expect_match(html, "RFID per Cantiere:", fixed = TRUE)
@@ -376,4 +394,113 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
   expect_match(html, "Posizione e comuni dichiarati:", fixed = TRUE)
   expect_match(html, sprintf("Fuori comune:</span>\\s*<b>%d</b>", stat$fuori_comune))
   expect_match(html, sprintf("Fuori giro:</span>\\s*<b>%d</b>", stat$fuori_giro))
+})
+
+test_that("popup e dettaglio riportano il giro e i servizi che non concordano", {
+  # senza le due colonne il popup non ne parla
+  semplice <- create_popup_html(
+    rfid = "R1",
+    servizio = "CARTA",
+    servizio_atteso = "SECCO",
+    targa = "AB123CD",
+    matricola = "VEH001",
+    giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
+    id_utenza = "UTZ042",
+    presente = "Presente"
+  )
+  expect_no_match(semplice, "Servizio Giro", fixed = TRUE)
+  expect_no_match(semplice, "non coerenti", fixed = TRUE)
+
+  popup <- create_popup_html(
+    rfid = c("R1", "R2", "R3", "R4"),
+    servizio = c("CARTA", "SECCO", NA, NA),
+    servizio_atteso = c("SECCO", "SECCO", "CARTA", "SECCO"),
+    targa = "AB123CD",
+    matricola = "VEH001",
+    giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
+    id_utenza = c("UTZ001", "UTZ002", NA, NA),
+    presente = c("Presente", "Presente", "Non Presente", "Non Presente"),
+    servizio_giro = c("SECCO PAP", "SECCO PAP", "SECCO <PAP>", NA),
+    coerenza = c("Non coerente", "Coerente", "Non coerente", NA)
+  )
+  expect_length(popup, 4)
+  # il giro ha il nome del calendario, e sta dopo il servizio atteso
+  expect_match(
+    popup[1],
+    "<b>Servizio Atteso:</b> SECCO<br><b>Servizio Giro:</b> SECCO PAP<br>",
+    fixed = TRUE
+  )
+  expect_no_match(popup[4], "Servizio Giro", fixed = TRUE)
+  # una lettura non coerente riporta i servizi che conosce
+  expect_match(
+    popup[1],
+    "Servizi non coerenti:</b> contenitore CARTA, atteso SECCO, giro SECCO PAP<br>",
+    fixed = TRUE
+  )
+  expect_match(popup[1], "popup-incongruenza", fixed = TRUE)
+  expect_match(
+    popup[3],
+    "Servizi non coerenti:</b> atteso CARTA, giro SECCO &lt;PAP&gt;<br>",
+    fixed = TRUE
+  )
+  expect_no_match(popup[2], "non coerenti", fixed = TRUE)
+  expect_no_match(popup[4], "non coerenti", fixed = TRUE)
+
+  # l'elenco dei servizi salta quelli che mancano
+  expect_identical(
+    descrivi_servizi(
+      c("CARTA", NA, NA, "SECCO"),
+      c("SECCO", "CARTA", NA, NA),
+      c("SECCO PAP", NA, NA, "VETRO PAP")
+    ),
+    c(
+      "contenitore CARTA, atteso SECCO, giro SECCO PAP",
+      "atteso CARTA",
+      "",
+      "contenitore SECCO, giro VETRO PAP"
+    )
+  )
+  expect_identical(descrivi_servizi("CARTA", "SECCO", NULL), "contenitore CARTA, atteso SECCO")
+
+  # nel dettaglio: un blocco con le letture non coerenti più recenti
+  storia <- letture_rfid("X", date_2025(7), servizio = "CARTA", atteso = "SECCO")
+  storia$servizio_giro <- "SECCO PAP"
+  storia$servizio_atteso[1] <- "CARTA"
+  storia$servizio_giro[1] <- "CARTA/CARTONE PAP"
+  storia$coerenza <- coerenza_servizio(storia)
+  pannello <- as.character(crea_info_panel(analizza_rfid(storia)))
+  expect_match(pannello, "SERVIZI NON COERENTI", fixed = TRUE)
+  expect_match(pannello, "6 letture su 7", fixed = TRUE)
+  expect_match(
+    pannello,
+    "VEH001 · contenitore CARTA, atteso SECCO, giro SECCO PAP",
+    fixed = TRUE
+  )
+  expect_equal(
+    lengths(regmatches(pannello, gregexpr("giro SECCO PAP", pannello))),
+    5
+  )
+  expect_match(pannello, "letto in un giro di un altro rifiuto", fixed = TRUE)
+  # per un non censito la spiegazione riguarda il mezzo
+  blocco <- as.character(blocco_coerenza(
+    coerenza_rfid(storia),
+    n_letture = 7,
+    censito = FALSE
+  ))
+  expect_match(blocco, "diverso da quello del calendario", fixed = TRUE)
+  # una lettura sola, al singolare
+  una <- storia[1:2, ]
+  expect_match(
+    as.character(crea_info_panel(analizza_rfid(una))),
+    "1 lettura su 2",
+    fixed = TRUE
+  )
+  # senza letture non coerenti il blocco non c'è
+  expect_null(blocco_coerenza(coerenza_rfid(storia[1, ]), 1))
+  expect_null(blocco_coerenza(NULL, 1))
+  expect_no_match(
+    as.character(crea_info_panel(analizza_rfid(letture_test()[1:3, ]))),
+    "NON COERENTI",
+    fixed = TRUE
+  )
 })

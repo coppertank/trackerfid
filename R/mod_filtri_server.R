@@ -9,12 +9,14 @@
 #' I comuni si scelgono tra quelli dei cantieri selezionati: uno, più di uno,
 #' anche di cantieri diversi. Nessuna scelta vale per tutti i comuni.
 #'
-#' I servizi stanno in due elenchi, uno per stato a database. Quello dei
-#' bidoni "Presente" riporta i servizi transponder. Quello dei bidoni "Non
-#' Presente" riporta i servizi stimati dai giri, gli stessi che danno l'icona
-#' ai marker: i non censiti con la stima incerta, che sulla mappa hanno il
-#' punto di domanda, hanno una casella a parte. "Tutti" e "Nessuno" spuntano
-#' o tolgono in un colpo tutte le voci di un elenco.
+#' I servizi stanno in due elenchi, che valgono per i bidoni di tutti e due
+#' gli stati a database. Il primo riporta i servizi attesi: per un censito il
+#' servizio atteso della lettura, per un non censito il servizio stimato, lo
+#' stesso che dà l'icona al marker. I non censiti con la stima incerta, che
+#' sulla mappa hanno il punto di domanda, hanno una casella a parte. Il
+#' secondo riporta i giri del calendario, con il loro nome. "Tutti" e
+#' "Nessuno" spuntano o tolgono in un colpo tutte le voci di un elenco. Un
+#' terzo filtro riguarda la coerenza tra i servizi di una lettura.
 #'
 #' @param id Identificativo del modulo.
 #' @param dati Reactive con le letture del periodo di analisi (o `NULL`).
@@ -28,9 +30,10 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
   moduleServer(id, function(input, output, session) {
     stato <- reactiveValues(
       stato_db = stati_database(),
-      transponder_esclusi = character(0),
       atteso_esclusi = character(0),
       includi_stima_incerta = TRUE,
+      giri_esclusi = character(0),
+      servizio_escluse = character(0),
       cantieri_esclusi = character(0),
       comuni = character(0),
       coerenza_escluse = character(0),
@@ -43,9 +46,10 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     # --- Valori predefiniti: nuovo dataset o pulsante "Reset Filtri" -----------
     reimposta <- function() {
       stato$stato_db <- stati_database()
-      stato$transponder_esclusi <- character(0)
       stato$atteso_esclusi <- character(0)
       stato$includi_stima_incerta <- TRUE
+      stato$giri_esclusi <- character(0)
+      stato$servizio_escluse <- character(0)
       stato$cantieri_esclusi <- character(0)
       stato$comuni <- character(0)
       stato$coerenza_escluse <- character(0)
@@ -60,29 +64,28 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
         "coerenza_check",
         selected = names(stati_coerenza())
       )
+      updateCheckboxGroupInput(
+        session,
+        "servizio_coerenza_check",
+        selected = names(stati_coerenza_servizio())
+      )
       updateCheckboxInput(session, "includi_stima_incerta", value = TRUE)
     }
     observeEvent(azzera(), reimposta(), ignoreNULL = FALSE, priority = 100)
     observeEvent(input$reset, reimposta(), priority = 100)
 
     # --- Scelte dinamiche dei servizi: valori presenti nel periodo -------------
-    # Per i censiti i servizi del database. Per i non censiti i servizi
-    # stimati dai giri: quelli che danno l'icona ai marker.
-    scelte_transponder <- reactive({
-      d <- dati()
-      ordina_servizi(d$servizio_transponder[
-        d$presente_a_database == "Presente"
-      ])
-    })
+    # Il servizio atteso: per i censiti quello della lettura, per i non
+    # censiti quello stimato, che dà l'icona ai marker. Il giro: quello del
+    # calendario, con il suo nome.
     scelte_atteso <- reactive({
       d <- dati()
       if (is.null(d)) {
         return(character(0))
       }
-      ordina_servizi(servizio_mostrato(d)[
-        d$presente_a_database == "Non Presente"
-      ])
+      ordina_servizi(servizio_dei_filtri(d))
     })
+    scelte_giro <- reactive(ordina_servizi(dati()[["servizio_giro"]]))
 
     aggiorna_gruppo <- function(id_input, scelte, esclusi) {
       etichette <- paste(info_servizio(scelte)$emoji, scelte)
@@ -96,17 +99,17 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     observe({
       stato$reimpostazioni
       aggiorna_gruppo(
-        "servizio_transponder_check",
-        scelte_transponder(),
-        isolate(stato$transponder_esclusi)
+        "servizio_atteso_check",
+        scelte_atteso(),
+        isolate(stato$atteso_esclusi)
       )
     })
     observe({
       stato$reimpostazioni
       aggiorna_gruppo(
-        "servizio_atteso_check",
-        scelte_atteso(),
-        isolate(stato$atteso_esclusi)
+        "servizio_giro_check",
+        scelte_giro(),
+        isolate(stato$giri_esclusi)
       )
     })
 
@@ -192,12 +195,23 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ))
     }
     observeEvent(
-      input$servizio_transponder_check,
+      input$servizio_giro_check,
       {
-        stato$transponder_esclusi <- aggiorna_esclusi(
-          stato$transponder_esclusi,
-          scelte_transponder(),
-          input$servizio_transponder_check
+        stato$giri_esclusi <- aggiorna_esclusi(
+          stato$giri_esclusi,
+          scelte_giro(),
+          input$servizio_giro_check
+        )
+      },
+      ignoreNULL = FALSE,
+      ignoreInit = TRUE
+    )
+    observeEvent(
+      input$servizio_coerenza_check,
+      {
+        stato$servizio_escluse <- setdiff(
+          names(stati_coerenza_servizio()),
+          input$servizio_coerenza_check %||% character(0)
         )
       },
       ignoreNULL = FALSE,
@@ -232,8 +246,8 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
         selected = if (tutti) scelte else character(0)
       )
     }
-    # L'elenco dei non censiti comprende la casella della stima incerta.
-    spunta_non_censiti <- function(tutti) {
+    # L'elenco dei servizi attesi comprende la casella della stima incerta.
+    spunta_attesi <- function(tutti) {
       spunta_elenco(
         "atteso_esclusi",
         "servizio_atteso_check",
@@ -243,24 +257,14 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       stato$includi_stima_incerta <- tutti
       updateCheckboxInput(session, "includi_stima_incerta", value = tutti)
     }
-    observeEvent(input$transponder_tutti, {
-      spunta_elenco(
-        "transponder_esclusi",
-        "servizio_transponder_check",
-        scelte_transponder(),
-        TRUE
-      )
+    observeEvent(input$atteso_tutti, spunta_attesi(TRUE))
+    observeEvent(input$atteso_nessuno, spunta_attesi(FALSE))
+    observeEvent(input$giro_tutti, {
+      spunta_elenco("giri_esclusi", "servizio_giro_check", scelte_giro(), TRUE)
     })
-    observeEvent(input$transponder_nessuno, {
-      spunta_elenco(
-        "transponder_esclusi",
-        "servizio_transponder_check",
-        scelte_transponder(),
-        FALSE
-      )
+    observeEvent(input$giro_nessuno, {
+      spunta_elenco("giri_esclusi", "servizio_giro_check", scelte_giro(), FALSE)
     })
-    observeEvent(input$atteso_tutti, spunta_non_censiti(TRUE))
-    observeEvent(input$atteso_nessuno, spunta_non_censiti(FALSE))
 
     observeEvent(
       input$cantiere_check,
@@ -306,9 +310,10 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       maschera_filtri(
         d,
         stato_db = stato$stato_db,
-        transponder_esclusi = stato$transponder_esclusi,
         atteso_esclusi = stato$atteso_esclusi,
         includi_stima_incerta = stato$includi_stima_incerta,
+        giri_esclusi = stato$giri_esclusi,
+        servizio_escluse = stato$servizio_escluse,
         cantieri_esclusi = stato$cantieri_esclusi,
         comuni = stato$comuni,
         coerenza_escluse = stato$coerenza_escluse

@@ -16,8 +16,9 @@
 # servono a misurare i tempi, non a provare le funzioni.
 #
 # Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta e il
-# comune di quel giro: `servizio_atteso` e `comune_giro` non mancano mai. Il
-# comune di lettura lo calcola l'app, dalla posizione.
+# comune di quel giro: `servizio_giro`, `servizio_atteso` e `comune_giro` non
+# mancano mai. Il giro ha il nome del calendario, il servizio atteso quello del
+# database. Il comune di lettura e la coerenza dei servizi li calcola l'app.
 
 argomenti <- commandArgs(TRUE)
 if (length(argomenti) < 1) {
@@ -88,7 +89,9 @@ letture <- data.table(
   RFID = bidoni$RFID[k],
   presente_a_database = fifelse(censito, "Presente", "Non Presente"),
   servizio_transponder = fifelse(censito, servizi[bidoni$i_servizio[k]], NA_character_),
-  servizio_atteso = giri[i_giro],
+  # i giri sono nello stesso ordine dei servizi del database
+  servizio_atteso = servizi[i_giro],
+  servizio_giro = giri[i_giro],
   id_utenza = fifelse(censito, bidoni$utenza[k], NA_character_),
   latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),
   longitudine = round(bidoni$lon[k] + rnorm(n_letture, 0, 0.0001), 5),

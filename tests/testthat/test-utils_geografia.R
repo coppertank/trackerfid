@@ -382,8 +382,11 @@ test_that("senza posizione il comune assegnato è quello del database", {
   # senza colonne geografiche le colonne vengono create vuote. Le letture di
   # prova sono lontane dai comuni serviti
   senza <- aggiungi_geografia(letture_test())
+  # tra le colonne calcolate dalla validazione la coerenza dei servizi non è
+  # geografia: la compila `coerenza_servizio()`
   expect_true(all(
-    c(colonne_geografiche(), colonne_derivate()) %in% names(senza)
+    c(colonne_geografiche(), setdiff(colonne_derivate(), "coerenza")) %in%
+      names(senza)
   ))
   expect_true(all(is.na(senza$comune_assegnato)))
   expect_true(all(is.na(senza$cantiere)))

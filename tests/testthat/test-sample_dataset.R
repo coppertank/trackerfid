@@ -195,33 +195,55 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   )
   expect_setequal(unique(stats::na.omit(d$servizio_atteso)), attesi)
   expect_identical(uniforma_servizio(d$servizio_atteso), d$servizio_atteso)
-  # il servizio del calendario sta in una colonna sua. Nell'esempio le
-  # letture sono rade: i censiti letti dallo stesso mezzo nella mezz'ora
-  # attorno non bastano quasi mai, e il servizio atteso resta del calendario
-  expect_setequal(unique(d$servizio_giro), attesi)
-  expect_identical(d$servizio_atteso, d$servizio_giro)
+  # il giro sta in una colonna sua, con il nome del calendario: i giri sono
+  # dodici, e il secco porta a porta è il più letto
+  expect_equal(dplyr::n_distinct(d$servizio_giro), 12)
+  expect_false(anyNA(d$servizio_giro))
+  expect_equal(sum(d$servizio_giro == "SECCO PAP"), 2798)
+  expect_true(all(
+    c("CARTA CONT.STRADALI", "CARTA/CARTONE PAP", "UMIDO PAP", "VETRO PAP") %in%
+      d$servizio_giro
+  ))
+  # Nell'esempio le letture sono rade: i censiti letti dallo stesso mezzo
+  # nella mezz'ora attorno non bastano quasi mai, e il servizio atteso resta
+  # il giro del calendario, con il nome del database
+  expect_identical(d$servizio_atteso, uniforma_servizio(d$servizio_giro))
   grezzo <- utils::read.csv(
     percorso_dataset_esempio(),
     colClasses = "character",
     na.strings = "NA"
   )
   expect_true(all(
-    c("servizio_giro", "origine_servizio_atteso", "comune_giro", "comune_lettura") %in%
+    c("servizio_giro", "coerenza", "comune_giro", "comune_lettura") %in%
       names(grezzo)
   ))
+  expect_false("origine_servizio_atteso" %in% names(grezzo))
+  # la coerenza del file è quella che l'app ricalcola al caricamento
+  expect_identical(grezzo$coerenza, d$coerenza)
   expect_equal(
-    as.integer(table(grezzo$origine_servizio_atteso)[c("calendario", "censiti")]),
-    c(6473, 2)
+    as.integer(table(d$coerenza)[c("Coerente", "Non coerente")]),
+    c(6452, 23)
   )
-  # i due servizi presi dai censiti sono di contenitori non censiti
-  expect_true(all(
-    grezzo$presente_a_database[grezzo$origine_servizio_atteso == "censiti"] ==
-      "Non Presente"
-  ))
+  # le letture non coerenti sono di quattro censiti, letti in un giro del
+  # secco: due lo sono in ogni lettura, il contenitore che ha cambiato
+  # servizio e quello spostato in una sola
+  non_coerenti <- d[d$coerenza == "Non coerente", ]
+  expect_true(all(non_coerenti$presente_a_database == "Presente"))
+  expect_true(all(non_coerenti$servizio_giro == "SECCO PAP"))
+  expect_identical(
+    as.integer(table(non_coerenti$RFID)[c(
+      "RFD20241007190",
+      "RFD20241011121",
+      "RFD20250901001",
+      "RFD20250905100"
+    )]),
+    c(10L, 11L, 1L, 1L)
+  )
   # il file è quello che esce dalla regola del pacchetto
-  rifatto <- associa_servizio_atteso_dai_censiti(d[names(d) != "servizio_giro"])
+  rifatto <- associa_servizio_atteso_dai_censiti(d)
   expect_identical(rifatto$servizio_atteso, d$servizio_atteso)
-  expect_identical(rifatto$origine_servizio_atteso, grezzo$origine_servizio_atteso)
+  expect_identical(rifatto$servizio_giro, d$servizio_giro)
+  expect_identical(rifatto$coerenza, d$coerenza)
   # servizio atteso e servizio del database si confrontano senza conversioni
   expect_true(all(
     stats::na.omit(d$servizio_transponder) %in%
@@ -329,7 +351,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
       servizio_sacchetti()
   ))
   stat <- calcola_statistiche(deduplica_ultimo_rfid(nel_2025))
-  expect_equal(stat$transponder[[servizio_sacchetti()]], 7)
+  expect_equal(stat$atteso_censiti[[servizio_sacchetti()]], 7)
   expect_equal(stat$atteso[[servizio_sacchetti()]], 3)
   # i contenitori non censiti restano 18 con la stima e 19 con la stima incerta
   expect_equal(sum(stat$atteso) - 3, 18)
@@ -407,7 +429,11 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   expect_false(anyNA(d$cantiere))
 
   # quote dei cantieri tra i contenitori: 12%, 26%, 37% e 25%
-  anagrafica <- anagrafica_rfid(d)
+  # comune e cantiere di ogni RFID: quelli del database per i censiti, il
+  # comune in cui cade il maggior numero di letture per gli altri
+  in_ordine <- d[order(d$giorno_lettura), ]
+  rfid <- indice_gruppi(in_ordine$RFID)
+  anagrafica <- geografia_per_gruppo(in_ordine, rfid, max(rfid))
   quote <- prop.table(table(anagrafica$cantiere))
   expect_equal(
     as.numeric(quote[c("ASIAGO", "BASSANO", "CAMPOSAMPIERO", "RUBANO")]),
@@ -506,12 +532,11 @@ test_that("le letture storiche contengono anni interi senza letture", {
   andamento <- andamento_rfid("RFD20241004003", dati_esempio(), storico)
   expect_identical(andamento$anno, 2020:2025)
   expect_equal(andamento$storico + andamento$antenne, c(13, 0, 16, 0, 12, 25))
-  anagrafica <- anagrafica_rfid(dati_esempio())
-  expect_equal(nrow(anagrafica), 251)
-  esempio <- anagrafica[anagrafica$RFID == "RFD20241004003", ]
-  expect_identical(esempio$comune, "LIMENA")
-  expect_identical(esempio$cantiere, "RUBANO")
-  expect_equal(esempio$numero_raccolte_annue_previste, 26)
+  esempio <- dati_esempio()
+  esempio <- esempio[esempio$RFID == "RFD20241004003", ]
+  expect_identical(unique(esempio$comune_da_database), "LIMENA")
+  expect_identical(unique(esempio$cantiere), "RUBANO")
+  expect_equal(unique(esempio$numero_raccolte_annue_previste), 26)
 })
 
 test_that("un contenitore di esempio ha metà delle letture storiche sotto un codice letto male", {

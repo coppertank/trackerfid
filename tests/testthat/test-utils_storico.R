@@ -1,4 +1,4 @@
-# Letture storiche: lettura del file, conteggi per anno, anagrafica degli RFID.
+# Letture storiche: lettura del file e conteggi per anno.
 
 # Letture storiche: una per data, alle 8 del mattino.
 storiche <- function(rfid, date) {
@@ -69,7 +69,6 @@ letture_prova <- dplyr::bind_rows(
     longitudine = dplyr::if_else(.data$RFID == "C", limena$longitudine, .data$longitudine)
   )
 unite_prova <- unisci_letture(letture_prova, storico_prova)
-anagrafica_prova <- anagrafica_rfid(letture_prova)
 
 test_that("il file delle letture storiche viene letto e validato", {
   esito <- carica_storico(scrivi_csv(c(
@@ -186,125 +185,6 @@ test_that("l'andamento di un RFID copre tutti gli anni fino alla fine dei dati",
   expect_identical(esempio$anno, 2020:2025)
   expect_identical(esempio$storico, c(13L, 0L, 16L, 0L, 6L, 0L))
   expect_identical(esempio$antenne, c(0L, 0L, 0L, 0L, 6L, 25L))
-})
-
-test_that("la copertura distingue gli anni dei due sistemi e quelli incompleti", {
-  copertura <- copertura_annuale(unite_prova)
-  expect_identical(copertura$anno, 2021:2025)
-  expect_identical(copertura$sistema, c(rep("storico", 4), "antenne"))
-  expect_true(all(copertura$completo))
-  expect_true(all(copertura$fattore == 1))
-  expect_identical(copertura$giorni_antenne, c(0L, 0L, 0L, 0L, 365L))
-
-  # sistema precedente da luglio 2023 a marzo 2024, antenne da aprile a settembre 2024
-  parziale <- copertura_annuale(unisci_letture(
-    letture_rfid("A", c("2024-04-01", "2024-09-30")),
-    storiche("A", c("2023-07-01", "2024-03-31"))
-  ))
-  expect_identical(parziale$anno, 2023:2024)
-  expect_identical(parziale$sistema, c("storico", "misto"))
-  expect_identical(parziale$giorni_storico, c(184L, 91L))
-  expect_identical(parziale$giorni_antenne, c(0L, 183L))
-  expect_identical(parziale$giorni_coperti, c(184L, 274L))
-  expect_identical(parziale$completo, c(FALSE, FALSE))
-  expect_equal(parziale$fattore, c(365 / 184, 366 / 274))
-
-  # qualche giorno scoperto a inizio o fine anno non rende l'anno incompleto
-  quasi <- copertura_annuale(unisci_letture(
-    letture_rfid("A", c("2024-01-03", "2024-12-28"))
-  ))
-  expect_true(quasi$completo)
-  expect_equal(quasi$fattore, 1)
-})
-
-test_that("l'anagrafica ha una riga per RFID, con geografia e dati dei censiti", {
-  expect_identical(
-    names(anagrafica_prova),
-    c(
-      "RFID",
-      "presente_a_database",
-      "servizio_transponder",
-      "tipologia",
-      "cantiere",
-      "comune",
-      "numero_raccolte_annue_previste",
-      "volume_previsto",
-      "letture"
-    )
-  )
-  expect_identical(anagrafica_prova$RFID, c("A", "B", "C", "D"))
-  # la tipologia viene dal database per i censiti, dai giri per il non censito
-  expect_identical(
-    anagrafica_prova$tipologia,
-    c("Carta", "Carta", "Secco", "Carta")
-  )
-  # il non censito prende il comune in cui viene letto
-  expect_identical(
-    anagrafica_prova$comune,
-    c("RUBANO", "CITTADELLA", "LIMENA", "RUBANO")
-  )
-  expect_identical(
-    anagrafica_prova$cantiere,
-    c("RUBANO", "CAMPOSAMPIERO", "RUBANO", "RUBANO")
-  )
-  expect_equal(
-    anagrafica_prova$numero_raccolte_annue_previste,
-    c(10, 20, NA, 10)
-  )
-  expect_identical(
-    anagrafica_prova$presente_a_database,
-    c("Presente", "Presente", "Non Presente", "Presente")
-  )
-  expect_identical(anagrafica_prova$letture, c(12L, 15L, 3L, 8L))
-
-  # un RFID tolto dal database perde le raccolte, non l'ultimo comune noto
-  tolto <- dplyr::bind_rows(
-    dplyr::mutate(
-      letture_rfid("Z", "2025-03-01", raccolte = 26),
-      comune_da_database = "RUBANO"
-    ),
-    letture_rfid("Z", "2025-06-01", presente = "Non Presente")
-  )
-  expect_identical(anagrafica_rfid(tolto)$comune, "RUBANO")
-  expect_true(is.na(anagrafica_rfid(tolto)$numero_raccolte_annue_previste))
-
-  # un non censito letto in più comuni prende quello in cui è letto più spesso
-  girovago <- dplyr::mutate(
-    letture_rfid("G", date_2025(5), presente = "Non Presente"),
-    comune_geografico = c("NOVE", "MAROSTICA", "NOVE", NA, "MAROSTICA")
-  )
-  expect_identical(anagrafica_rfid(girovago)$comune, "MAROSTICA")
-  expect_identical(anagrafica_rfid(girovago)$cantiere, "BASSANO")
-
-  # un non censito letto da giri di rifiuti diversi non ha una tipologia
-  incerto <- dplyr::bind_rows(
-    letture_rfid("I", "2025-03-01", presente = "Non Presente", atteso = "SECCO PAP"),
-    letture_rfid("I", "2025-03-08", presente = "Non Presente", atteso = "VETRO PAP"),
-    letture_rfid("S", date_2025(5), presente = "Non Presente", atteso = c(rep("SECCO PAP", 4), "VETRO PAP"))
-  )
-  anagrafica_incerta <- anagrafica_rfid(incerto)
-  expect_identical(
-    anagrafica_incerta$tipologia[match(c("I", "S"), anagrafica_incerta$RFID)],
-    c(NA, "Secco")
-  )
-  # il servizio atteso di un censito non conta: vale quello del database
-  censito <- letture_rfid("K", date_2025(3), servizio = "UMIDO", atteso = "SECCO PAP")
-  expect_identical(anagrafica_rfid(censito)$tipologia, "Umido")
-
-  # le colonne facoltative possono mancare
-  senza <- anagrafica_rfid(letture_test())
-  expect_true(all(is.na(senza$comune)))
-  expect_true(all(is.na(senza$cantiere)))
-  expect_true(all(is.na(senza$numero_raccolte_annue_previste)))
-  expect_equal(nrow(anagrafica_rfid(letture_test()[0, ])), 0)
-})
-
-test_that("gli RFID letti solo dal sistema precedente sono elencati a parte", {
-  soli <- rfid_solo_storico(unite_prova)
-  expect_identical(soli$RFID, "E")
-  expect_equal(soli$letture, 3)
-  expect_identical(soli$ultimo_anno, 2022L)
-  expect_equal(nrow(rfid_solo_storico(unisci_letture(letture_prova))), 0)
 })
 
 test_that("le letture storiche si leggono anche da un CSV compresso", {

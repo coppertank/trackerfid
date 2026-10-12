@@ -34,9 +34,9 @@ servizio_atteso <- associa_servizio_atteso_da_calendario(
 # Per i non censiti il servizio atteso viene quindi dai censiti letti dallo
 # stesso mezzo nei 30 minuti prima e dopo: se sono almeno 5 e almeno l'80% ha
 # lo stesso servizio vale quello, altrimenti resta il calendario.
-# `servizio_giro` conserva il servizio del calendario,
-# `origine_servizio_atteso` dice da dove viene quello atteso: "censiti" o
-# "calendario".
+# `servizio_giro` resta il giro del calendario, con il suo nome: "SECCO PAP",
+# non "SECCO". `coerenza` dice se i servizi della lettura concordano:
+# "Coerente" o "Non coerente".
 servizio_atteso <- associa_servizio_atteso_dai_censiti(
   servizio_atteso,
   minuti = 30,
