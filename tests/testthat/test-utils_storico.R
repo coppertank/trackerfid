@@ -183,7 +183,7 @@ test_that("l'andamento di un RFID copre tutti gli anni fino alla fine dei dati",
   # sul dataset di esempio: due anni interi senza letture, poi le antenne
   esempio <- andamento_rfid("RFD20241004003", dati_esempio(), storico_esempio())
   expect_identical(esempio$anno, 2020:2025)
-  expect_identical(esempio$storico, c(13L, 0L, 16L, 0L, 6L, 0L))
+  expect_identical(esempio$storico, c(11L, 0L, 15L, 0L, 6L, 0L))
   expect_identical(esempio$antenne, c(0L, 0L, 0L, 0L, 6L, 25L))
 })
 

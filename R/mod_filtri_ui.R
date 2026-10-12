@@ -8,10 +8,13 @@
 #' stesso aspetto dell'elenco dell'anno di analisi: vedi `elenco-comuni`.
 #'
 #' I servizi stanno in due elenchi, che valgono per i bidoni di tutti e due
-#' gli stati a database: il servizio atteso, cioè quello che il mezzo
-#' raccoglieva, e il giro del calendario, con il suo nome. Ogni elenco ha le
-#' scelte rapide "Tutti" e "Nessuno". Un terzo filtro riguarda la coerenza
-#' tra i servizi di una lettura. Lo stato a database si sceglie a parte.
+#' gli stati a database: il servizio atteso, cioè quello del contenitore, e
+#' il giro del calendario, con il suo nome. Ogni elenco ha le scelte rapide
+#' "Tutti" e "Nessuno". Un terzo filtro riguarda la coerenza tra servizio
+#' atteso e giro. Lo stato a database si sceglie a parte.
+#'
+#' Il filtro sulla posizione, con le voci di `stati_posizione()`, è un'altra
+#' cosa: riguarda le letture fuori comune e fuori giro.
 #'
 #' @param id Identificativo del modulo.
 #' @noRd
@@ -56,11 +59,11 @@ mod_filtri_ui <- function(id) {
           ),
           # Posizione delle letture a confronto con i comuni dichiarati.
           checkboxGroupInput(
-            ns("coerenza_check"),
+            ns("posizione_check"),
             "Filtro Posizione",
-            choiceNames = unname(stati_coerenza()),
-            choiceValues = names(stati_coerenza()),
-            selected = names(stati_coerenza()),
+            choiceNames = unname(stati_posizione()),
+            choiceValues = names(stati_posizione()),
+            selected = names(stati_posizione()),
             inline = FALSE
           ),
           p(
@@ -82,7 +85,7 @@ mod_filtri_ui <- function(id) {
             ns,
             "atteso",
             "Filtro Servizio Atteso",
-            "Servizio che il mezzo raccoglieva. Non censiti: servizio stimato"
+            "Censiti: servizio a database. Non censiti: servizio stimato"
           ),
           checkboxGroupInput(
             ns("servizio_atteso_check"),
@@ -112,19 +115,19 @@ mod_filtri_ui <- function(id) {
             inline = FALSE
           )
         ),
-        # Servizio del contenitore, servizio atteso e giro a confronto.
+        # Servizio atteso e giro a confronto.
         checkboxGroupInput(
-          ns("servizio_coerenza_check"),
+          ns("coerenza_check"),
           "Filtro Coerenza Servizio",
-          choiceNames = unname(stati_coerenza_servizio()),
-          choiceValues = names(stati_coerenza_servizio()),
-          selected = names(stati_coerenza_servizio()),
+          choiceNames = unname(stati_coerenza()),
+          choiceValues = names(stati_coerenza()),
+          selected = names(stati_coerenza()),
           inline = FALSE
         ),
         p(
           class = "nota-filtro",
-          "Non coerente: contenitore, servizio atteso e giro non sono dello",
-          "stesso rifiuto."
+          "Non coerente: il servizio atteso e il giro non sono dello stesso",
+          "rifiuto."
         ),
         actionButton(
           ns("reset"),

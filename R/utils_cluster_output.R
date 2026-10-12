@@ -47,7 +47,7 @@ colonne_analisi_cluster <- function() {
 #'   massima di un contenitore reale), `compatto_m` (dispersione massima di un
 #'   cluster compatto), `disperso_m` e `rumore_m` (dispersione oltre la quale
 #'   il tag viaggia o le letture sono sparse), `cluster_max` (numero massimo
-#'   di cluster di un contenitore spostato), `coerenza_atteso` (quota minima
+#'   di cluster di un contenitore spostato), `prevalenza_atteso` (quota minima
 #'   del servizio atteso prevalente).
 #' @noRd
 soglie_indicatore <- function() {
@@ -58,7 +58,7 @@ soglie_indicatore <- function() {
     disperso_m = 500,
     rumore_m = 1000,
     cluster_max = 3,
-    coerenza_atteso = 0.8
+    prevalenza_atteso = 0.8
   )
 }
 
@@ -69,7 +69,7 @@ pesi_fiducia <- function() {
     censimento = 0.15,
     letture = 0.25,
     compattezza = 0.25,
-    coerenza = 0.15,
+    stabilita = 0.15,
     raccolte = 0.10,
     unicita = 0.10
   )
@@ -229,7 +229,8 @@ posizione_cluster <- function(
 #' - censimento: 1 se il contenitore è a database;
 #' - letture: cresce con le letture del cluster, piena da 10 in su;
 #' - compattezza: 1 fino a 50 m di dispersione, 0 da 500 m, scala logaritmica;
-#' - coerenza: per i censiti 1 se il servizio non è cambiato (0,5 altrimenti),
+#' - stabilità del servizio: per i censiti 1 se il servizio non è cambiato
+#'   (0,5 altrimenti),
 #'   per i non censiti cresce con la quota del servizio atteso prevalente
 #'   (0 fino al 50%, 1 dall'80%);
 #' - raccolte: accordo tra raccolte presunte e previste (0,5 se le previste
@@ -264,11 +265,11 @@ indice_fiducia <- function(
       (log(pmax(dispersione_m, 1)) - log(soglie$compatto_m)) /
         (log(soglie$disperso_m) - log(soglie$compatto_m))
     )
-  p_coerenza <- ifelse(
+  p_stabilita <- ifelse(
     censito,
     ifelse(servizio_stabile, 1, 0.5),
     tra_zero_e_uno(
-      (dplyr::coalesce(quota_atteso, 0) - 0.5) / (soglie$coerenza_atteso - 0.5)
+      (dplyr::coalesce(quota_atteso, 0) - 0.5) / (soglie$prevalenza_atteso - 0.5)
     )
   )
   rapporto <- presunte / previste
@@ -284,7 +285,7 @@ indice_fiducia <- function(
       p_censimento +
       pesi[["letture"]] * p_letture +
       pesi[["compattezza"]] * p_compattezza +
-      pesi[["coerenza"]] * p_coerenza +
+      pesi[["stabilita"]] * p_stabilita +
       pesi[["raccolte"]] * p_raccolte +
       pesi[["unicita"]] * p_unicita,
     2
@@ -613,7 +614,7 @@ calcola_analisi_cluster <- function(
     dplyr::mutate(
       servizio_atteso = dplyr::if_else(
         !.data$censito &
-          dplyr::coalesce(.data$quota_atteso, 0) >= soglie$coerenza_atteso,
+          dplyr::coalesce(.data$quota_atteso, 0) >= soglie$prevalenza_atteso,
         .data$atteso_prevalente,
         NA_character_
       ),

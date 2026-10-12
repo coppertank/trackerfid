@@ -77,7 +77,7 @@ test_that("l'indice di fiducia è tra 0 e 1 e premia i cluster affidabili", {
   expect_equal(fiducia(dispersione = 500), fiducia(dispersione = 5000))
   expect_gt(fiducia(dispersione = 100), fiducia(dispersione = 300))
 
-  # coerenza del servizio atteso per i non censiti: nulla fino al 50%, piena dall'80%
+  # stabilità del servizio atteso per i non censiti: nulla fino al 50%, piena dall'80%
   non_censito <- function(quota) {
     fiducia(censito = FALSE, previste = NA, quota = quota)
   }

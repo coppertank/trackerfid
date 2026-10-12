@@ -31,7 +31,7 @@ Una riga per ogni cluster di ogni RFID, 30 campi. La specifica parlava di 25 cam
 | `presente_a_database` * | Stato dell'ultima lettura del periodo. Stabilisce quali campi sono compilati |
 | `cantiere` *, `comune` * | Comune dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello in cui cade il maggior numero delle sue letture, secondo la posizione. Il calendario dei mezzi non conta. Il cantiere è quello del comune. Sono uguali per tutti i cluster dell'RFID |
 | `comune_geografico` * | Comune servito in cui cade il baricentro del cluster, trovato dai confini dei comuni. Un baricentro fuori da tutti i comuni serviti, ma entro 100 metri dal confine di uno di essi, prende il comune più vicino. Vuoto se è più lontano |
-| `incongruenza_comune` * | `FUORI_COMUNE` se il cluster è di un censito e il baricentro sta a più di un chilometro dal confine del comune del database: il contenitore è stato letto lontano da dove risulta. `FUORI_GIRO` se il baricentro sta a più di un chilometro dal comune del giro che ha letto il cluster più spesso. Le due voci possono comparire insieme, separate da una virgola. Vuoto se il cluster è coerente |
+| `incongruenza_comune` * | `FUORI_COMUNE` se il cluster è di un censito e il baricentro sta a più di un chilometro dal confine del comune del database: il contenitore è stato letto lontano da dove risulta. `FUORI_GIRO` se il baricentro sta a più di un chilometro dal comune del giro che ha letto il cluster più spesso. Le due voci possono comparire insieme, separate da una virgola. Vuoto se la posizione del cluster è regolare |
 | `distanza_comune_m` * | Distanza in metri del baricentro dal confine del comune dichiarato: quello del database per un censito, quello del giro prevalente per un non censito. Zero se il baricentro è dentro il comune |
 | `servizio_transponder` | Servizio dell'ultima lettura del periodo. Vuoto per i non censiti |
 | `servizio_transponder_cronologia` * | Sequenza dei servizi quando è cambiato, ad esempio `CARTA > SECCO > CARTA`. Vuoto se non è cambiato |
@@ -89,7 +89,7 @@ Somma pesata di sei componenti, ognuna tra 0 e 1. Il report [indice_fiducia.Rmd]
 | Censimento | 0,15 | Il contenitore è a database | Non è censito |
 | Letture | 0,25 | Il cluster ha almeno 10 letture | Cresce in proporzione da 0 a 10 |
 | Compattezza | 0,25 | Dispersione fino a 50 m | Dispersione da 500 m in su, scala logaritmica |
-| Coerenza | 0,15 | Censito con servizio mai cambiato, oppure non censito con giro prevalente dall'80% | Non censito con giro prevalente fino al 50%. Vale 0,5 per un censito che ha cambiato servizio |
+| Stabilità del servizio | 0,15 | Censito con servizio mai cambiato, oppure non censito con giro prevalente dall'80% | Non censito con giro prevalente fino al 50%. Vale 0,5 per un censito che ha cambiato servizio |
 | Raccolte | 0,10 | Presunte uguali alle previste | Presunte lontanissime dalle previste. Vale 0,5 se le previste non sono note |
 | Unicità | 0,10 | Tutte le letture dell'RFID sono nel cluster | Il cluster contiene una quota minima delle letture |
 

@@ -170,11 +170,15 @@ associa_servizio <- function(
 #' inizia e il successivo. Così una lettura fatta dopo mezzanotte ritrova il
 #' turno iniziato la sera prima.
 #'
-#' Dal turno vengono due colonne. `servizio_giro` è il giro così come lo
-#' scrive il calendario, senza conversioni: `SECCO PAP` resta `SECCO PAP`,
-#' perché il secco porta a porta va distinto dagli altri giri del secco.
-#' `servizio_atteso` è lo stesso servizio con il nome del database, vedi
-#' `servizio_da_giro()`: ha così gli stessi valori di `servizio_transponder`.
+#' Dal turno viene `servizio_giro`: il giro così come lo scrive il
+#' calendario, senza conversioni. `SECCO PAP` resta `SECCO PAP`, perché il
+#' secco porta a porta va distinto dagli altri giri del secco.
+#'
+#' `servizio_atteso` è il servizio del contenitore. Per un censito è quello
+#' del database. Per un non censito, e per un censito che a database non ha
+#' un servizio, come un sacchetto, è il giro con il nome del database, vedi
+#' `servizio_da_giro()`: `associa_servizio_atteso_dai_censiti()` lo affina poi
+#' con i censiti letti dallo stesso mezzo.
 #'
 #' Restituisce le colonne con i nomi che l'app si aspetta, comprese quelle
 #' geografiche:
@@ -286,9 +290,14 @@ associa_servizio_atteso_da_calendario <- function(
       numero_raccolte_annue_previste = "numero_raccolte_annue",
       comune_giro = "comune"
     ) |>
-    # Il giro resta com'è nel calendario; il servizio atteso ne è la versione
-    # con i nomi del database.
-    dplyr::mutate(servizio_atteso = servizio_da_giro(.data$servizio_giro)) |>
+    # Il giro resta com'è nel calendario. Il servizio atteso è quello del
+    # contenitore a database; dove manca, il giro con il nome del database.
+    dplyr::mutate(
+      servizio_atteso = dplyr::coalesce(
+        as.character(.data$servizio_transponder),
+        servizio_da_giro(.data$servizio_giro)
+      )
+    ) |>
     completa_geografia() |>
     # Solo le colonne del CSV dell'app
     dplyr::select(
@@ -333,12 +342,13 @@ associa_servizio_atteso_da_calendario <- function(
 #' Gli orari del calendario non servono a delimitare il giro: nei casi in cui
 #' il mezzo sostituisce un altro sono proprio quelli a essere sbagliati.
 #'
-#' Il servizio atteso delle letture dei censiti resta quello del calendario.
+#' Il servizio atteso di un censito è quello del suo contenitore a database:
+#' il voto non lo tocca. Un censito senza servizio a database, come un
+#' sacchetto, tiene quello del calendario.
 #'
 #' `servizio_giro` non cambia mai: è il giro del calendario, con il suo nome.
-#' La colonna `coerenza` dice se i servizi di ogni lettura concordano, vedi
-#' `coerenza_servizio()`: per un censito il servizio del contenitore e il
-#' giro, per un non censito il servizio atteso e il giro.
+#' La colonna `coerenza` dice se servizio atteso e giro sono dello stesso
+#' rifiuto, vedi `coerenza_servizio()`.
 #'
 #' @param df_letture Letture prodotte da
 #'   `associa_servizio_atteso_da_calendario()`.
@@ -410,7 +420,15 @@ associa_servizio_atteso_dai_censiti <- function(
     stimato[da_stimare[valido]] <- servizi[primo[valido]]
   }
 
-  df_letture$servizio_atteso <- dplyr::coalesce(stimato, calendario)
+  # Per un censito vale il servizio del contenitore a database; per un non
+  # censito il voto dei censiti; in mancanza, il giro del calendario.
+  del_contenitore <- as.character(df_letture$servizio_transponder)
+  del_contenitore[!censita] <- NA_character_
+  df_letture$servizio_atteso <- dplyr::coalesce(
+    del_contenitore,
+    stimato,
+    calendario
+  )
   df_letture$coerenza <- coerenza_servizio(df_letture)
   dplyr::relocate(
     df_letture,

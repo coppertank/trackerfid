@@ -1,8 +1,7 @@
 test_that("il popup riporta tutti i campi della lettura", {
   popup <- create_popup_html(
     rfid = "RFD20250915001",
-    servizio = "CARTA",
-    servizio_atteso = NA,
+    servizio_atteso = "CARTA",
     targa = "AB123CD",
     matricola = "VEH001",
     giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
@@ -10,8 +9,10 @@ test_that("il popup riporta tutti i campi della lettura", {
     presente = "Presente"
   )
   expect_match(popup, "<b>RFID:</b> RFD20250915001", fixed = TRUE)
-  expect_match(popup, "<b>Servizio:</b> CARTA", fixed = TRUE)
-  expect_match(popup, "<b>Servizio Atteso:</b> N/A", fixed = TRUE)
+  expect_match(popup, "<b>Servizio Atteso:</b> CARTA", fixed = TRUE)
+  # il servizio del database non ha più una riga sua: per un censito è il
+  # servizio atteso
+  expect_no_match(popup, "<b>Servizio:</b>", fixed = TRUE)
   expect_match(popup, "<b>Targa:</b> AB123CD", fixed = TRUE)
   expect_match(popup, "<b>Matricola:</b> VEH001", fixed = TRUE)
   expect_match(popup, "<b>Lettura:</b> 15/09/2025 08:30:00", fixed = TRUE)
@@ -23,7 +24,6 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
   d <- letture_test()
   popup <- create_popup_html(
     d$RFID,
-    d$servizio_transponder,
     d$servizio_atteso,
     d$targa_veicolo,
     d$matricola_veicolo,
@@ -32,7 +32,8 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     d$presente_a_database
   )
   expect_length(popup, nrow(d))
-  expect_match(popup[5], "<b>Servizio:</b> N/A", fixed = TRUE)
+  expect_match(popup[5], "<b>Servizio Atteso:</b> SECCO", fixed = TRUE)
+  expect_match(popup[6], "<b>Servizio Atteso:</b> N/A", fixed = TRUE)
   expect_match(popup[5], "<b>Utenza:</b> Non Censito", fixed = TRUE)
 
   # le righe geografiche compaiono solo nelle letture che hanno il dato
@@ -40,7 +41,6 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
   expect_no_match(popup[1], "Cantiere", fixed = TRUE)
   con_geografia <- create_popup_html(
     d$RFID,
-    d$servizio_transponder,
     d$servizio_atteso,
     d$targa_veicolo,
     d$matricola_veicolo,
@@ -83,7 +83,6 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
 
   pericoloso <- create_popup_html(
     "<script>alert(1)</script>",
-    "CARTA",
     NA,
     "T",
     "M",
@@ -123,11 +122,14 @@ test_that("il pannello di dettaglio sceglie il messaggio giusto", {
 
   con_stima <- pannello(d[d$RFID == "C", ])
   expect_match(con_stima, "NON CENSITO NEL DATABASE", fixed = TRUE)
+  expect_match(con_stima, "Stima Predittiva del servizio:", fixed = TRUE)
+  # la stima non viene dal solo calendario: lo dice la nota
   expect_match(
     con_stima,
-    "Stima Predittiva (da Calendario Mezzi)",
+    "dai contenitori censiti letti dallo stesso mezzo e, dove sono pochi, dal calendario dei mezzi",
     fixed = TRUE
   )
+  expect_no_match(con_stima, "da Calendario Mezzi", fixed = TRUE)
   expect_match(con_stima, "100%", fixed = TRUE)
 
   senza_stima <- pannello(d[d$RFID == "C" & is.na(d$servizio_atteso), ])
@@ -315,7 +317,8 @@ test_that("il pannello di dettaglio ha un blocco per i sacchetti", {
     atteso = c("SECCO PAP", "SECCO PAP", "VETRO PAP")
   ))
   expect_match(non_censito, "SACCHETTO NON CENSITO NEL DATABASE", fixed = TRUE)
-  expect_match(non_censito, "Giri che lo hanno letto", fixed = TRUE)
+  expect_match(non_censito, "Servizio dei giri che lo hanno letto:", fixed = TRUE)
+  expect_no_match(non_censito, "Calendario Mezzi", fixed = TRUE)
   expect_match(non_censito, "SECCO PAP:", fixed = TRUE)
   expect_no_match(non_censito, "Stima Predittiva", fixed = TRUE)
   # senza giri nel file resta il solo riconoscimento
@@ -336,8 +339,7 @@ test_that("il pannello di dettaglio ha un blocco per i sacchetti", {
 test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fuori giro", {
   popup <- create_popup_html(
     rfid = c("A", "B", "C", "D"),
-    servizio = "CARTA",
-    servizio_atteso = "SECCO PAP",
+    servizio_atteso = "CARTA",
     targa = "AB123CD",
     matricola = "VEH001",
     giorno_lettura = as.POSIXct("2025-03-01 08:00:00", tz = "UTC"),
@@ -367,7 +369,7 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
   )
   expect_match(popup[4], "Fuori giro:</b> giro a ASIAGO, letto fuori dai comuni serviti", fixed = TRUE)
   # senza le colonne della posizione il popup resta quello di sempre
-  semplice <- create_popup_html("A", "CARTA", NA, "AB123CD", "VEH001", Sys.time(), "U1", "Presente")
+  semplice <- create_popup_html("A", "CARTA", "AB123CD", "VEH001", Sys.time(), "U1", "Presente")
   expect_no_match(semplice, "Fuori", fixed = TRUE)
 
   # dettaglio: un blocco per il fuori comune, uno per il fuori giro
@@ -400,8 +402,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
   # senza le due colonne il popup non ne parla
   semplice <- create_popup_html(
     rfid = "R1",
-    servizio = "CARTA",
-    servizio_atteso = "SECCO",
+    servizio_atteso = "CARTA",
     targa = "AB123CD",
     matricola = "VEH001",
     giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
@@ -413,8 +414,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
 
   popup <- create_popup_html(
     rfid = c("R1", "R2", "R3", "R4"),
-    servizio = c("CARTA", "SECCO", NA, NA),
-    servizio_atteso = c("SECCO", "SECCO", "CARTA", "SECCO"),
+    servizio_atteso = c("CARTA", "SECCO", "CARTA", "SECCO"),
     targa = "AB123CD",
     matricola = "VEH001",
     giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
@@ -427,14 +427,14 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
   # il giro ha il nome del calendario, e sta dopo il servizio atteso
   expect_match(
     popup[1],
-    "<b>Servizio Atteso:</b> SECCO<br><b>Servizio Giro:</b> SECCO PAP<br>",
+    "<b>Servizio Atteso:</b> CARTA<br><b>Servizio Giro:</b> SECCO PAP<br>",
     fixed = TRUE
   )
   expect_no_match(popup[4], "Servizio Giro", fixed = TRUE)
-  # una lettura non coerente riporta i servizi che conosce
+  # una lettura non coerente riporta servizio atteso e giro
   expect_match(
     popup[1],
-    "Servizi non coerenti:</b> contenitore CARTA, atteso SECCO, giro SECCO PAP<br>",
+    "Servizi non coerenti:</b> atteso CARTA, giro SECCO PAP<br>",
     fixed = TRUE
   )
   expect_match(popup[1], "popup-incongruenza", fixed = TRUE)
@@ -446,26 +446,19 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
   expect_no_match(popup[2], "non coerenti", fixed = TRUE)
   expect_no_match(popup[4], "non coerenti", fixed = TRUE)
 
-  # l'elenco dei servizi salta quelli che mancano
+  # l'elenco dei servizi salta quello che manca
   expect_identical(
     descrivi_servizi(
-      c("CARTA", NA, NA, "SECCO"),
-      c("SECCO", "CARTA", NA, NA),
-      c("SECCO PAP", NA, NA, "VETRO PAP")
+      c("CARTA", "CARTA", NA, NA),
+      c("SECCO PAP", NA, "VETRO PAP", NA)
     ),
-    c(
-      "contenitore CARTA, atteso SECCO, giro SECCO PAP",
-      "atteso CARTA",
-      "",
-      "contenitore SECCO, giro VETRO PAP"
-    )
+    c("atteso CARTA, giro SECCO PAP", "atteso CARTA", "giro VETRO PAP", "")
   )
-  expect_identical(descrivi_servizi("CARTA", "SECCO", NULL), "contenitore CARTA, atteso SECCO")
+  expect_identical(descrivi_servizi("CARTA", NULL), "atteso CARTA")
 
   # nel dettaglio: un blocco con le letture non coerenti più recenti
-  storia <- letture_rfid("X", date_2025(7), servizio = "CARTA", atteso = "SECCO")
+  storia <- letture_rfid("X", date_2025(7), servizio = "CARTA", atteso = "CARTA")
   storia$servizio_giro <- "SECCO PAP"
-  storia$servizio_atteso[1] <- "CARTA"
   storia$servizio_giro[1] <- "CARTA/CARTONE PAP"
   storia$coerenza <- coerenza_servizio(storia)
   pannello <- as.character(crea_info_panel(analizza_rfid(storia)))
@@ -473,7 +466,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
   expect_match(pannello, "6 letture su 7", fixed = TRUE)
   expect_match(
     pannello,
-    "VEH001 · contenitore CARTA, atteso SECCO, giro SECCO PAP",
+    "VEH001 \u00b7 atteso CARTA, giro SECCO PAP",
     fixed = TRUE
   )
   expect_equal(

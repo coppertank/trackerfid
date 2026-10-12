@@ -879,11 +879,12 @@ letture$RFID[dei_bidoni] <- bidoni$RFID[letture$chiave[dei_bidoni]]
 
 letture <- letture[order(letture$giorno_lettura, letture$RFID), ]
 # Come nei dati reali, il giro resta scritto come nel calendario: "SECCO PAP".
-# Il servizio atteso ne e' la versione con il nome del database, "SECCO"; per
-# i non censiti viene dai censiti letti dallo stesso mezzo nella mezz'ora
-# attorno, se bastano. Nell'esempio le letture sono rade, poche per mezzo e
-# per giorno: il servizio resta quasi sempre quello del calendario. La
-# coerenza dice se i servizi di ogni lettura concordano.
+# Il servizio atteso di un censito e' quello del suo contenitore a database.
+# Quello di un non censito e' il giro con il nome del database, "SECCO",
+# oppure il servizio dei censiti letti dallo stesso mezzo nella mezz'ora
+# attorno, se bastano: nell'esempio le letture sono rade, poche per mezzo e
+# per giorno, e resta quasi sempre il giro. La coerenza dice se servizio
+# atteso e giro sono dello stesso rifiuto.
 con_servizio <- associa_servizio_atteso_dai_censiti(data.frame(
   giorno_lettura = letture$giorno_lettura,
   matricola_veicolo = letture$matricola_veicolo,
@@ -982,14 +983,17 @@ stopifnot(
   !anyNA(finale$servizio_giro),
   identical(finale$servizio_giro, letture$servizio_atteso),
   length(unique(finale$servizio_giro)) == 12,
-  # il servizio atteso ha i nomi del database: i dodici giri diventano nove
-  # servizi. E' quello del calendario oppure, solo per i non censiti, quello
-  # dei censiti letti dallo stesso mezzo
+  # il servizio atteso ha i nomi del database. Per un censito e' quello del
+  # suo contenitore; per un sacchetto censito, che a database non ha servizio,
+  # e' il giro; per un non censito il giro oppure il servizio dei censiti letti
+  # dallo stesso mezzo
   !anyNA(finale$servizio_atteso),
-  length(unique(finale$servizio_atteso)) == 9,
   all(servizi %in% finale$servizio_atteso),
-  all((finale$servizio_atteso == uniforma_servizio(finale$servizio_giro)) |
-    non_presente),
+  all(finale$servizio_atteso[!is.na(finale$servizio_transponder)] ==
+    finale$servizio_transponder[!is.na(finale$servizio_transponder)]),
+  all((finale$servizio_atteso == uniforma_servizio(finale$servizio_giro))[
+    sacchetto & !non_presente
+  ]),
   # la coerenza e' quella che l'app ricalcola al caricamento
   all(finale$coerenza %in% c("Coerente", "Non coerente")),
   identical(finale$coerenza, coerenza_servizio(finale)),
@@ -1054,10 +1058,11 @@ message(sprintf(
 # ---- Letture storiche: il sistema precedente alle antenne --------------------
 #
 # Prima delle antenne una lettura registrava solo il codice e l'istante. Il
-# sistema perdeva molti passaggi, in misura diversa da cantiere a cantiere, da
-# comune a comune e da un anno all'altro, e capitava che un contenitore
-# restasse un anno intero senza letture. Questa parte usa numeri casuali: va
-# lasciata in coda allo script.
+# sistema perdeva molti passaggi, in misura diversa da cantiere a cantiere e
+# da un anno all'altro, e capitava che un contenitore restasse un anno intero
+# senza letture. Nell'app queste letture servono all'istogramma per anno del
+# dettaglio di un bidone. Questa parte usa numeri casuali: va lasciata in coda
+# allo script.
 
 inizio_storico <- as.Date("2020-01-01")
 fine_storico <- inizio_dati - 1
@@ -1072,10 +1077,6 @@ cattura <- rbind(
   ASIAGO = c(0.28, 0.45, 0.22, 0.30, 0.26)
 )
 colnames(cattura) <- anni_storico
-# Dentro un cantiere ogni comune registra un po' piu' o un po' meno della media.
-# L'estrazione ha un seme proprio, come il resto della geografia: aggiungere
-# un comune alla tabella non cambia le altre estrazioni di questa parte.
-comuni$fattore_cattura <- con_seme(2030, stats::runif(nrow(comuni), 0.7, 1.3))
 # Probabilita' che un contenitore resti un anno intero senza letture.
 quota_anni_vuoti <- c(BASSANO = 0.06, CAMPOSAMPIERO = 0.14, RUBANO = 0.22, ASIAGO = 0.30)
 
@@ -1083,7 +1084,7 @@ quota_anni_vuoti <- c(BASSANO = 0.06, CAMPOSAMPIERO = 0.14, RUBANO = 0.22, ASIAG
 # stessa cadenza usata con le antenne, ma ne viene registrata solo una parte.
 # `vuoti` elenca gli anni senza letture; se manca vengono estratti a sorte.
 letture_storiche_bidone <- function(giorno, cadenza, sfasamento, ora, esposizione, cantiere,
-                                    dal, al = fine_storico, vuoti = NULL, fattore = 1) {
+                                    dal, al = fine_storico, vuoti = NULL) {
   passaggi <- giorni_storico[
     giorni_storico >= dal & giorni_storico <= al & giorno_settimana(giorni_storico) == giorno
   ]
@@ -1095,7 +1096,7 @@ letture_storiche_bidone <- function(giorno, cadenza, sfasamento, ora, esposizion
   if (is.null(vuoti)) {
     vuoti <- anni_storico[stats::runif(length(anni_storico)) < quota_anni_vuoti[[cantiere]]]
   }
-  quota <- pmin(esposizione * fattore * cattura[cantiere, as.character(anno)], 0.95)
+  quota <- pmin(esposizione * cattura[cantiere, as.character(anno)], 0.95)
   registrata <- stats::runif(length(passaggi)) < quota
   registrata <- registrata & !anno %in% vuoti
   if (!any(registrata)) {
@@ -1134,8 +1135,7 @@ storiche <- lapply(con_storia, function(k) {
   esposizione <- if (k %in% np_sporadici) 0.08 else b$esposizione
   quando <- letture_storiche_bidone(
     b$giorno, b$cadenza, b$sfasamento, b$ora_tipica, esposizione, b$cantiere,
-    dal = b$consegna, vuoti = if (k == k_vetrina) c(2021, 2023),
-    fattore = comuni$fattore_cattura[match(b$comune, comuni$comune)]
+    dal = b$consegna, vuoti = if (k == k_vetrina) c(2021, 2023)
   )
   if (is.null(quando)) {
     return(NULL)
@@ -1175,50 +1175,6 @@ solo_storico <- lapply(seq_len(n_solo_storico), function(i) {
   )
 })
 
-# Contenitore con il codice letto male dal sistema precedente: circa meta'
-# delle sue letture storiche portano un codice che differisce da quello giusto
-# per un bit di una cifra. Con quel codice il database non lo riconosce.
-# E' il contenitore del secco con piu' letture storiche tra quelli senza altri
-# casi particolari. La scelta delle letture alterate ha un seme proprio.
-candidati_gemello <- which(
-  bidoni$presente & bidoni$servizio == "SECCO" & bidoni$raccolte == 26L &
-    bidoni$chiave %in% con_storia &
-    !bidoni$chiave %in% c(speciali, tardivi, k_rari, k_recenti, k_utenza, k_servizio, k_mossi, k_vetrina)
-)
-letture_candidati <- vapply(
-  candidati_gemello,
-  function(k) NROW(storiche[[match(k, con_storia)]]),
-  numeric(1)
-)
-k_gemello <- candidati_gemello[which.max(letture_candidati)]
-# Il codice alterato: la prima cifra, dal fondo, che cambiando un bit resta
-# una cifra e da' un codice che nessun contenitore usa.
-codice_alterato <- function(rfid, usati) {
-  for (posizione in rev(seq_len(nchar(rfid)))) {
-    cifra <- suppressWarnings(as.integer(substr(rfid, posizione, posizione)))
-    if (is.na(cifra)) {
-      next
-    }
-    for (bit in c(2L, 4L, 1L, 8L)) {
-      nuova <- bitwXor(cifra, bit)
-      codice <- rfid
-      substr(codice, posizione, posizione) <- as.character(nuova)
-      if (nuova <= 9L && !codice %in% usati) {
-        return(codice)
-      }
-    }
-  }
-  stop("Nessun codice alterato disponibile per ", rfid)
-}
-rfid_gemello <- codice_alterato(
-  bidoni$RFID[k_gemello],
-  c(bidoni$RFID, unlist(lapply(solo_storico, function(x) x$RFID[1])))
-)
-i_gemello <- match(k_gemello, con_storia)
-alterate <- con_seme(2031, stats::runif(nrow(storiche[[i_gemello]])) < 0.5)
-storiche[[i_gemello]]$RFID[alterate] <- rfid_gemello
-stopifnot(sum(alterate) >= 10, sum(!alterate) >= 10)
-
 storico <- do.call(rbind, c(storiche, solo_storico))
 storico <- storico[order(storico$giorno_lettura, storico$RFID), ]
 storico_finale <- data.frame(
@@ -1242,10 +1198,7 @@ stopifnot(
   length(intersect(rfid_storico, rfid_antenne)) >= 150,
   length(setdiff(rfid_antenne, rfid_storico)) >= 30,
   length(setdiff(rfid_storico, rfid_antenne)) >= 30,
-  setequal(anni_vetrina, c("2020", "2022", "2024")),
-  # il codice alterato compare solo nelle letture storiche
-  rfid_gemello %in% rfid_storico, !rfid_gemello %in% rfid_antenne,
-  bidoni$RFID[k_gemello] %in% rfid_antenne
+  setequal(anni_vetrina, c("2020", "2022", "2024"))
 )
 
 utils::write.csv(
@@ -1262,8 +1215,4 @@ message(sprintf(
   "RFID in comune %d, solo antenne %d, solo storico %d. Esempio con anni vuoti: %s",
   length(intersect(rfid_storico, rfid_antenne)), length(setdiff(rfid_antenne, rfid_storico)),
   length(setdiff(rfid_storico, rfid_antenne)), bidoni$RFID[k_vetrina]
-))
-message(sprintf(
-  "Codice letto male: %s compare anche come %s, in %d letture storiche su %d",
-  bidoni$RFID[k_gemello], rfid_gemello, sum(alterate), length(alterate)
 ))

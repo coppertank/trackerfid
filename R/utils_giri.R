@@ -62,8 +62,8 @@ cerca_giri <- function(dati, mezzo = NULL, dal, al, solo = character(0)) {
   }
   solo <- intersect(solo, c("fuori_giro", "fuori_comune"))
   if (length(solo) > 0) {
-    coerenza <- coerenza_letture(dati)
-    tieni <- tieni & Reduce(`|`, coerenza[solo])
+    posizione <- posizione_letture(dati)
+    tieni <- tieni & Reduce(`|`, posizione[solo])
   }
   trovate <- dati[which(tieni), , drop = FALSE]
   trovate <- trovate[
@@ -151,7 +151,7 @@ riepilogo_giri <- function(letture) {
     sep = "\r"
   ))
   n <- max(gruppo)
-  coerenza <- coerenza_letture(letture)
+  posizione <- posizione_letture(letture)
   geografico <- as.character(
     letture[["comune_geografico"]] %||% rep(NA_character_, nrow(letture))
   )
@@ -176,9 +176,9 @@ riepilogo_giri <- function(letture) {
     # le letture.
     bidoni = bidoni,
     letture = tabulate(gruppo, n),
-    fuori_giro = as.integer(somma_per_gruppo(coerenza$fuori_giro, gruppo, n)),
+    fuori_giro = as.integer(somma_per_gruppo(posizione$fuori_giro, gruppo, n)),
     fuori_comune = as.integer(
-      somma_per_gruppo(coerenza$fuori_comune, gruppo, n)
+      somma_per_gruppo(posizione$fuori_comune, gruppo, n)
     ),
     letto_in = letto_in
   )
@@ -263,7 +263,7 @@ limita_letture_giro <- function(df, massimo = limiti_mappa()$letture_ricerca) {
   totale <- nrow(df)
   if (totale > massimo) {
     ordine <- order(
-      coerenza_letture(df)$coerente,
+      posizione_letture(df)$regolare,
       -as.numeric(df$giorno_lettura),
       method = "radix"
     )
@@ -281,15 +281,15 @@ descrizione_giri <- function(letture) {
   if (is.null(letture) || nrow(letture) == 0) {
     return("")
   }
-  coerenza <- coerenza_letture(letture)
+  posizione <- posizione_letture(letture)
   paste0(
     conta(nrow(letture), "lettura", "letture"),
     " di ",
     conta(dplyr::n_distinct(letture$RFID), "bidone", "bidoni"),
     " \u00b7 ",
-    formatta_numero(sum(coerenza$fuori_giro)),
+    formatta_numero(sum(posizione$fuori_giro)),
     " fuori giro \u00b7 ",
-    formatta_numero(sum(coerenza$fuori_comune)),
+    formatta_numero(sum(posizione$fuori_comune)),
     " fuori comune"
   )
 }

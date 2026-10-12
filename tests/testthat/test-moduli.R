@@ -281,8 +281,8 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
 
     # le sole letture non coerenti: quattro censiti letti in un giro di un
     # altro rifiuto. Per due è anche l'ultima lettura
-    session$setInputs(servizio_coerenza_check = "non_coerente")
-    expect_identical(stato$servizio_escluse, "coerente")
+    session$setInputs(coerenza_check = "non_coerente")
+    expect_identical(stato$coerenza_escluse, "coerente")
     expect_setequal(
       filtrati()$RFID,
       c("RFD20241007190", "RFD20241011121", "RFD20250901001", "RFD20250905100")
@@ -294,12 +294,12 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
     )
     # le sole coerenti: restano tutti gli RFID, ognuno con la sua ultima
     # lettura coerente
-    session$setInputs(servizio_coerenza_check = "coerente")
-    expect_identical(stato$servizio_escluse, "non_coerente")
+    session$setInputs(coerenza_check = "coerente")
+    expect_identical(stato$coerenza_escluse, "non_coerente")
     expect_equal(nrow(filtrati()), n_rfid)
     expect_false(any(filtrati()$coerenza %in% "Non coerente"))
     # nessuna voce: nessuna lettura
-    session$setInputs(servizio_coerenza_check = character(0))
+    session$setInputs(coerenza_check = character(0))
     expect_equal(nrow(filtrati()), 0)
 
     # il reset riporta tutto ai valori predefiniti
@@ -307,7 +307,7 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
     expect_length(stato$giri_esclusi, 11)
     session$setInputs(reset = 1)
     expect_length(stato$giri_esclusi, 0)
-    expect_length(stato$servizio_escluse, 0)
+    expect_length(stato$coerenza_escluse, 0)
     expect_equal(nrow(filtrati()), n_rfid)
     expect_match(
       as.character(output$stat_box$html),
@@ -372,14 +372,21 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
       "Stima incerta:</span>\\s*<b>19</b>"
     )
 
-    # un solo servizio, senza gli incerti: i censiti letti nei giri del secco
-    # e i non censiti stimati secco
+    # un solo servizio, senza gli incerti: i censiti del secco e i non censiti
+    # stimati secco
     session$setInputs(
       includi_stima_incerta = FALSE,
       servizio_atteso_check = "SECCO"
     )
-    expect_equal(nrow(filtrati()), 88)
+    expect_equal(nrow(filtrati()), 87)
     expect_equal(nrow(non_censiti()), 5)
+    # per i censiti è il servizio del contenitore a database
+    expect_true(all(
+      filtrati()$servizio_transponder[
+        filtrati()$presente_a_database == "Presente"
+      ] ==
+        "SECCO"
+    ))
     expect_true(all(servizio_dei_filtri(filtrati()) == "SECCO"))
     expect_true("RFD20250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
@@ -678,7 +685,7 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
     "filtri-giro_tutti",
     "filtri-giro_nessuno",
     "filtri-servizio_giro_check",
-    "filtri-servizio_coerenza_check",
+    "filtri-coerenza_check",
     "Reset Filtri",
     "Pulisci Ricerca",
     "Cerca RFID",
@@ -1254,10 +1261,11 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
     # il sacchetto censito è letto da un giro del secco, ma la sua voce è
-    # quella dei sacchetti
+    # quella dei sacchetti. Il censito della carta sta sotto il servizio del
+    # suo contenitore, non sotto il giro che lo ha letto
     expect_identical(
       scelte_atteso(),
-      c("SECCO PAP", "CARTA/CARTONE PAP", servizio_sacchetti())
+      c("SECCO PAP", "CARTA", servizio_sacchetti())
     )
     expect_equal(nrow(filtrati()), 4)
     statistiche <- as.character(output$stat_box$html)
@@ -1268,7 +1276,7 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
 
     # tolta la voce dei sacchetti escono tutti e due, censito e non censito
     session$setInputs(
-      servizio_atteso_check = c("SECCO PAP", "CARTA/CARTONE PAP")
+      servizio_atteso_check = c("SECCO PAP", "CARTA")
     )
     expect_setequal(filtrati()$RFID, c("0000ABC123", "0000ABC124"))
     # la sola voce dei sacchetti
@@ -1297,7 +1305,7 @@ test_that("il filtro sulla posizione restringe la mappa alle letture fuori comun
     expect_equal(tutti, 248)
 
     # solo le letture fuori comune: il contenitore spostato e il tag sul mezzo
-    session$setInputs(coerenza_check = "fuori_comune")
+    session$setInputs(posizione_check = "fuori_comune")
     expect_setequal(filtrati()$RFID, c("RFD20250905100", "RFD20250203302"))
     expect_true(all(filtrati()$fuori_comune))
     expect_match(
@@ -1306,7 +1314,7 @@ test_that("il filtro sulla posizione restringe la mappa alle letture fuori comun
     )
 
     # solo fuori giro: la mappa mostra l'ultima lettura fuori giro di ogni RFID
-    session$setInputs(coerenza_check = "fuori_giro")
+    session$setInputs(posizione_check = "fuori_giro")
     expect_true(all(filtrati()$fuori_giro))
     expect_equal(
       nrow(filtrati()),
@@ -1316,10 +1324,10 @@ test_that("il filtro sulla posizione restringe la mappa alle letture fuori comun
     expect_true(all(c("RFD20241001301", "RFD20250203302") %in% filtrati()$RFID))
 
     # solo le letture coerenti
-    session$setInputs(coerenza_check = "coerente")
+    session$setInputs(posizione_check = "regolare")
     expect_false(any(filtrati()$fuori_comune | filtrati()$fuori_giro))
     # nessuna voce: nessun bidone
-    session$setInputs(coerenza_check = NULL)
+    session$setInputs(posizione_check = NULL)
     expect_equal(nrow(filtrati()), 0)
     # il reset rimette tutte le voci
     session$setInputs(reset = 1)
@@ -1479,11 +1487,11 @@ test_that("l'interfaccia ha la scheda dei giri, il suo pannello e il filtro sull
     regexpr('data-value="utenza"', html, fixed = TRUE)
   )
   # il filtro sulla posizione, con le tre voci spuntate
-  expect_match(html, 'id="filtri-coerenza_check"', fixed = TRUE)
-  for (voce in names(stati_coerenza())) {
+  expect_match(html, 'id="filtri-posizione_check"', fixed = TRUE)
+  for (voce in names(stati_posizione())) {
     expect_match(
       html,
-      sprintf('name="filtri-coerenza_check" value="%s" checked', voce),
+      sprintf('name="filtri-posizione_check" value="%s" checked', voce),
       fixed = TRUE
     )
   }

@@ -154,7 +154,6 @@ aggiungi_marker <- function(
     ),
     popup = create_popup_html(
       rfid = df$RFID,
-      servizio = df$servizio_transponder,
       servizio_atteso = df$servizio_atteso,
       targa = df$targa_veicolo,
       matricola = df$matricola_veicolo,

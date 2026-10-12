@@ -49,7 +49,6 @@ conta <- function(n, singolare, plurale) {
 #' @noRd
 create_popup_html <- function(
   rfid,
-  servizio,
   servizio_atteso,
   targa,
   matricola,
@@ -139,12 +138,10 @@ create_popup_html <- function(
     ""
   } else {
     ifelse(
-      coerenza %in% stati_coerenza_servizio()[["non_coerente"]],
+      coerenza %in% stati_coerenza()[["non_coerente"]],
       paste0(
         "<b class='popup-incongruenza'>\u26a0 Servizi non coerenti:</b> ",
-        htmltools::htmlEscape(
-          descrivi_servizi(servizio, servizio_atteso, servizio_giro)
-        ),
+        htmltools::htmlEscape(descrivi_servizi(servizio_atteso, servizio_giro)),
         "<br>"
       ),
       ""
@@ -155,9 +152,6 @@ create_popup_html <- function(
     "<div style='font-family: Arial; font-size: 12px;'>",
     "<b>RFID:</b> ",
     testo(rfid),
-    "<br>",
-    "<b>Servizio:</b> ",
-    testo(servizio),
     "<br>",
     "<b>Servizio Atteso:</b> ",
     testo(servizio_atteso),
@@ -188,33 +182,25 @@ create_popup_html <- function(
   )
 }
 
-#' Elenco dei servizi di una lettura, per popup e dettaglio
+#' Servizio atteso e giro di una lettura, per popup e dettaglio
 #'
-#' @param contenitore,atteso,giro Servizio del contenitore a database,
-#'   servizio atteso e giro del calendario. Uno che manca non viene scritto.
-#' @return Un testo per lettura, ad esempio
-#'   `"contenitore CARTA, atteso SECCO, giro SECCO PAP"`.
+#' @param atteso,giro Servizio atteso e giro del calendario. Uno che manca non
+#'   viene scritto.
+#' @return Un testo per lettura, ad esempio `"atteso CARTA, giro SECCO PAP"`.
 #' @noRd
-descrivi_servizi <- function(contenitore, atteso, giro) {
-  n <- max(length(contenitore), length(atteso), length(giro))
+descrivi_servizi <- function(atteso, giro) {
+  n <- max(length(atteso), length(giro))
   parte <- function(etichetta, valori) {
     valori <- rep_len(as.character(valori %||% NA_character_), n)
     ifelse(is.na(valori), NA_character_, paste(etichetta, valori))
   }
-  parti <- list(
-    parte("contenitore", contenitore),
-    parte("atteso", atteso),
-    parte("giro", giro)
+  del_atteso <- parte("atteso", atteso)
+  del_giro <- parte("giro", giro)
+  ifelse(
+    is.na(del_atteso),
+    dplyr::coalesce(del_giro, ""),
+    ifelse(is.na(del_giro), del_atteso, paste0(del_atteso, ", ", del_giro))
   )
-  testo <- rep("", n)
-  for (aggiunta in parti) {
-    testo <- ifelse(
-      is.na(aggiunta),
-      testo,
-      ifelse(nzchar(testo), paste0(testo, ", ", aggiunta), aggiunta)
-    )
-  }
-  testo
 }
 
 #' Blocco del pannello di dettaglio
@@ -342,7 +328,7 @@ blocco_bidone <- function(analisi) {
   tags <- htmltools::tags
   switch(
     analisi$caso,
-    censito_coerente = blocco_info(
+    censito_stabile = blocco_info(
       "ok",
       "\u2713 TRANSPONDER CENSITO",
       tags$p(
@@ -370,11 +356,11 @@ blocco_bidone <- function(analisi) {
     non_censito_con_stima = blocco_info(
       "errore",
       "\u274c NON CENSITO NEL DATABASE",
-      tags$p(tags$b("Stima Predittiva (da Calendario Mezzi):")),
+      tags$p(tags$b("Stima Predittiva del servizio:")),
       barre_stima(analisi$stima),
       tags$p(
         class = "info-avvertenza",
-        "Nota: questa \u00e8 una stima basata sul calendario dei mezzi e potrebbe non corrispondere alla realt\u00e0."
+        "Nota: la stima viene dai contenitori censiti letti dallo stesso mezzo e, dove sono pochi, dal calendario dei mezzi. Potrebbe non corrispondere alla realt\u00e0."
       )
     ),
     non_censito_senza_stima = blocco_info(
@@ -414,7 +400,7 @@ blocco_sacchetto <- function(analisi) {
     "\u274c SACCHETTO NON CENSITO NEL DATABASE",
     if (nrow(analisi$stima) > 0) {
       htmltools::tagList(
-        tags$p(tags$b("Giri che lo hanno letto (da Calendario Mezzi):")),
+        tags$p(tags$b("Servizio dei giri che lo hanno letto:")),
         barre_stima(analisi$stima)
       )
     },
@@ -577,7 +563,7 @@ blocco_coerenza <- function(coerenza, n_letture, censito = TRUE) {
         conta(coerenza$n, "lettura", "letture"),
         formatta_numero(n_letture)
       ),
-      " con servizi di rifiuti diversi. Le pi\u00f9 recenti:"
+      " con il servizio atteso diverso dal giro. Le pi\u00f9 recenti:"
     ),
     tags$ul(
       class = "info-cronologia",
@@ -587,7 +573,6 @@ blocco_coerenza <- function(coerenza, n_letture, censito = TRUE) {
           formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
           righe$matricola_veicolo[i],
           descrivi_servizi(
-            righe[["servizio_transponder"]][i],
             righe[["servizio_atteso"]][i],
             righe[["servizio_giro"]][i]
           )

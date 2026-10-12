@@ -112,7 +112,7 @@ verifiche <- data.frame(
     "letture",
     "compattezza",
     "censimento",
-    "coerenza",
+    "stabilita",
     "raccolte",
     "unicita"
   ),
@@ -120,7 +120,7 @@ verifiche <- data.frame(
     "Letture",
     "Compattezza",
     "Censimento",
-    "Coerenza",
+    "Stabilità",
     "Raccolte",
     "Unicità"
   ),
@@ -143,7 +143,7 @@ verifiche <- data.frame(
     "1 se presente, 0 se non presente",
     sprintf(
       "Censito: 1 se il servizio non è mai cambiato, 0,5 se è cambiato. Non censito: 0 se il giro prevalente copre fino al 50%% delle letture, 1 dall'%s%%, proporzionale in mezzo",
-      100 * soglie$coerenza_atteso
+      100 * soglie$prevalenza_atteso
     ),
     "Il valore minore diviso per il maggiore, tra raccolte presunte e previste. 0,5 se le previste non sono note",
     "Quota delle letture del contenitore che cadono in questo cluster"
@@ -338,8 +338,8 @@ verifica_testo(
 )
 verifica_testo(
   punteggi_esempio("non_censito")[["censimento"]] == 0 &&
-    punteggi_esempio("non_censito")[["coerenza"]] < 0.2,
-  "l'esempio non censito non perde più censimento e coerenza."
+    punteggi_esempio("non_censito")[["stabilita"]] < 0.2,
+  "l'esempio non censito non perde più censimento e stabilità del servizio."
 )
 verifica_testo(
   all(punteggi_esempio("isolata")[c("compattezza", "censimento")] == 1),
@@ -465,7 +465,7 @@ ggplot(barre) +
   tema_grafico
 ```
 
-Il contenitore regolare perde `r num(1 - esempi["regolare", "indice"])` perché ha `r dati_esempio("regolare")$numero_raccolte_annue_presunte` raccolte presunte contro `r dati_esempio("regolare")$numero_raccolte_annue_previste` previste. Il non censito perde tutto il censimento e quasi tutta la coerenza, perché i giri che lo leggono sono misti. La lettura isolata conserva compattezza e censimento, ma è `r conta(dati_esempio("isolata")$cluster_numero_letture, "sola lettura", "letture")` sulle `r dati_esempio("isolata")$globale_numero_letture` del suo contenitore.
+Il contenitore regolare perde `r num(1 - esempi["regolare", "indice"])` perché ha `r dati_esempio("regolare")$numero_raccolte_annue_presunte` raccolte presunte contro `r dati_esempio("regolare")$numero_raccolte_annue_previste` previste. Il non censito perde tutto il censimento e quasi tutta la stabilità del servizio, perché i giri che lo leggono sono misti. La lettura isolata conserva compattezza e censimento, ma è `r conta(dati_esempio("isolata")$cluster_numero_letture, "sola lettura", "letture")` sulle `r dati_esempio("isolata")$globale_numero_letture` del suo contenitore.
 
 ## Perché è semplice da capire
 
@@ -487,7 +487,7 @@ conto_regolare <- paste(
 - **Sei domande concrete.** Ogni verifica è una domanda che un operatore si farebbe davanti al bidone: quante volte è stato letto, sempre nello stesso punto, è a database.
 - **Un conto che sta in una riga.** Per il contenitore regolare dell'esempio: `r conto_regolare` = `r num(esempi["regolare", "indice"])`. In un foglio di calcolo è una formula sola.
 - **Ogni punto perso ha un nome.** I contributi si sommano, quindi la distanza da 1 si divide esattamente tra le verifiche. Il tag rimasto sul mezzo perde `r num(persi_mezzo[["compattezza"]])` per la compattezza e `r num(persi_mezzo[["raccolte"]])` per le raccolte: basta questo a spiegare il suo `r num(esempi["mezzo", "indice"])`.
-- **Le stesse soglie della classificazione.** `r soglie$compatto_m` m, `r soglie$disperso_m` m e `r 100 * soglie$coerenza_atteso`% sono le soglie già usate dagli indicatori. Non c'è un secondo insieme di regole da imparare.
+- **Le stesse soglie della classificazione.** `r soglie$compatto_m` m, `r soglie$disperso_m` m e `r 100 * soglie$prevalenza_atteso`% sono le soglie già usate dagli indicatori. Non c'è un secondo insieme di regole da imparare.
 - **Scala fissa.** L'indice va sempre da 0 a 1, qualunque siano il numero di letture e la lunghezza del periodo. Due analisi diverse restano confrontabili.
 - **Nessun modello da addestrare.** Pesi e soglie sono pochi numeri scritti in chiaro. Chi non condivide un peso lo cambia e vede subito l'effetto.
 
@@ -701,11 +701,11 @@ rango_pesi_uguali <- stats::cor(
 )
 ```
 
-- **Dice qualcosa in più dell'indicatore.** I `r nrow(regolari_bassi)` cluster regolari sotto `r num(soglia_esempio)` sono tutti contenitori non censiti. L'indicatore li dà al loro posto. L'indice segnala che manca l'anagrafica e li ordina da `r num(min(regolari_bassi$cluster_indice_fiducia))` a `r num(max(regolari_bassi$cluster_indice_fiducia))`, secondo la coerenza dei giri che li leggono.
+- **Dice qualcosa in più dell'indicatore.** I `r nrow(regolari_bassi)` cluster regolari sotto `r num(soglia_esempio)` sono tutti contenitori non censiti. L'indicatore li dà al loro posto. L'indice segnala che manca l'anagrafica e li ordina da `r num(min(regolari_bassi$cluster_indice_fiducia))` a `r num(max(regolari_bassi$cluster_indice_fiducia))`, secondo quanto concordano i giri che li leggono.
 - **Ordina dentro la stessa categoria.** Per il bidone spostato di circa `r round(km_spostamento)` km, il luogo con `r conta(debole$cluster_numero_letture, "lettura", "letture")` vale `r num(debole$cluster_indice_fiducia)` e quello con `r conta(solido$cluster_numero_letture, "lettura", "letture")` vale `r num(solido$cluster_indice_fiducia)`. L'indice dice quale delle due posizioni è solida.
 - **Regge al variare dei pesi.** In `r formatta_numero(prove)` prove ogni peso è stato cambiato a caso, tra la metà e una volta e mezza il suo valore. L'ordine dei cluster è rimasto quasi identico: correlazione di rango `r num(stats::median(rango), 3)` in mediana, mai sotto `r num(floor(min(rango) * 100) / 100)`. Con sei pesi uguali è `r num(rango_pesi_uguali)`.
 - **Nessuna verifica decide da sola.** Il peso massimo è `r num(max(pesi))`. Un solo dato sbagliato non affossa un cluster e un solo dato buono non lo salva.
-- **Ogni verifica premia in una sola direzione.** Un cluster più compatto, più coerente o più vicino alle raccolte previste ha sempre un indice uguale o più alto. Non ci sono inversioni da spiegare.
+- **Ogni verifica premia in una sola direzione.** Un cluster più compatto, con il servizio più stabile o più vicino alle raccolte previste ha sempre un indice uguale o più alto. Non ci sono inversioni da spiegare.
 - **Si appoggia a ciò che i mezzi misurano.** Letture, compattezza e unicità valgono il `r round(100 * sum(pesi[c("letture", "compattezza", "unicita")]))`% dell'indice e vengono dai lettori e dal GPS. Il resto dipende dall'anagrafica.
 - **Indica cosa fare.** La verifica con il punteggio più basso suggerisce l'azione: censire il contenitore, controllare la posizione, rivedere il calendario di raccolta.
 
@@ -730,6 +730,6 @@ valore_o_intervallo <- function(x) {
 - **Va letto insieme all'indicatore.** L'indice misura quanto è solido il dato, l'indicatore dice che cosa è successo. Un tag fermo in deposito o rimasto sul mezzo ha molte letture e resta `r valore_o_intervallo(fermi_o_sul_mezzo)`: non è un contenitore regolare, e a dirlo è l'indicatore.
 - **Dati di prova.** I numeri di questo documento vengono dal dataset di esempio dell'app, costruito a tavolino con casi noti. Sui dati reali le distribuzioni saranno meno nette.
 - **Verifica sul campo.** Il passo che manca è controllare di persona un campione di cluster con indice alto e uno con indice basso, e contare quante volte l'indice aveva ragione.
-- **Parentela con l'indicatore.** Indice e indicatore usano entrambi letture e dispersione, quindi una parte del loro accordo è attesa. L'informazione in più viene da censimento, coerenza del servizio e raccolte.
+- **Parentela con l'indicatore.** Indice e indicatore usano entrambi letture e dispersione, quindi una parte del loro accordo è attesa. L'informazione in più viene da censimento, stabilità del servizio e raccolte.
 - **Pesi scelti a giudizio.** I pesi riflettono una valutazione, non una stima sui dati. La prova di stabilità mostra che il risultato non dipende dal loro valore esatto.
 - **Non è una probabilità.** Un indice di `r num(soglia_esempio)` non significa `r round(100 * soglia_esempio)`% di probabilità che il bidone sia al suo posto. Serve a ordinare i cluster e a capire cosa manca a ciascuno.

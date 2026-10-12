@@ -68,7 +68,7 @@ misura(
     maschera_filtri(
       nel_periodo,
       giri_esclusi = giro,
-      servizio_escluse = "coerente"
+      coerenza_escluse = "coerente"
     )
   )
 )
