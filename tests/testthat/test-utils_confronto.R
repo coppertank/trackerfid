@@ -1,5 +1,5 @@
-# Confronto tra il sistema precedente e le antenne sui contenitori letti dalle
-# antenne, per il report sul beneficio delle antenne.
+# Confronto tra il sistema precedente e le antenne sui contenitori letti da
+# tutti e due i sistemi, per il report sul beneficio delle antenne.
 
 # Letture storiche: una per data, alle 8 del mattino.
 storiche_il <- function(rfid, date) {
@@ -182,6 +182,8 @@ test_that("il confronto misura ogni sistema sui giorni in cui è stato osservato
   expect_equal(confronto_coorte$letture_annue_storico, c(4, 0, 1, 10))
   expect_identical(confronto_coorte$letture_prima, c(2L, 0L, 0L, 0L))
   expect_identical(confronto_coorte$letture_sovrapposte, c(1L, 0L, 0L, 0L))
+  # tutte le letture del sistema precedente: prima, dentro e dopo
+  expect_identical(confronto_coorte$letture_storico, c(7L, 0L, 1L, 10L))
   expect_identical(
     confronto_coorte$prima_lettura_storico,
     as.Date(c("2024-02-01", NA, "2025-01-15", "2024-07-01"))
@@ -308,6 +310,55 @@ test_that("il riepilogo dà contenitori mai letti, ritmo e tasso di lettura", {
   expect_equal(senza$n_con_raccolte, 3)
   expect_equal(senza$una_o_meno, 2)
   expect_equal(senza$tasso_storico, 14 / 65)
+})
+
+test_that("la coorte è fatta dei contenitori letti da tutti e due i sistemi", {
+  # B è letto solo dalle antenne: resta fuori
+  coorte <- coorte_dei_due_sistemi(confronto_coorte)
+  expect_identical(coorte$RFID, c("A", "C", "D"))
+  expect_identical(names(coorte), names(confronto_coorte))
+  expect_equal(nrow(coorte_dei_due_sistemi(confronto_coorte[0, ])), 0)
+  r <- riepilogo_confronto(coorte)
+  expect_equal(r$n_rfid, 3)
+  expect_equal(r$mai_letti, 0)
+  expect_equal(r$una_o_meno, 1)
+  expect_equal(r$solo_dopo, 0)
+  expect_equal(r$tasso_storico, 15 / 65)
+  # A ha una lettura precedente dopo l'arrivo delle antenne, ma non solo quella
+  expect_equal(riepilogo_confronto(confronto_coorte)$solo_dopo, 0)
+
+  # F: le antenne lo leggono da agosto 2025, il sistema precedente solo dopo.
+  # Entra nella coorte, e nel periodo di riferimento risulta senza letture.
+  letture_f <- dplyr::bind_rows(
+    letture_coorte,
+    letture_rfid("F", c("2025-08-05", "2025-08-19"), servizio = "SECCO")
+  )
+  storico_f <- dplyr::bind_rows(
+    storico_coorte,
+    storiche_il("F", c("2025-09-02", "2025-09-16"))
+  )
+  unite_f <- unisci_letture(letture_f, storico_f)
+  expect_identical(
+    periodi_confronto(unite_f)$riferimento,
+    periodi_confronto(unite_coorte)$riferimento
+  )
+  confronto_f <- confronto_sistemi(unite_f, anagrafica_rfid(letture_f))
+  f <- confronto_f[confronto_f$RFID == "F", ]
+  expect_identical(f$letture_storico, 2L)
+  expect_identical(f$letture_sovrapposte, 2L)
+  expect_identical(f$letture_riferimento, 0L)
+  expect_identical(f$letture_prima, 0L)
+  coorte_f <- coorte_dei_due_sistemi(confronto_f)
+  expect_setequal(coorte_f$RFID, c("A", "C", "D", "F"))
+  r_f <- riepilogo_confronto(coorte_f)
+  expect_equal(r_f$solo_dopo, 1)
+  expect_equal(r_f$mai_letti, 1)
+  expect_equal(r_f$gia_in_servizio, 1)
+  expect_equal(r_f$mai_letti_in_servizio, 0)
+  # per gruppo: F è del secco
+  per_servizio <- riepilogo_confronto(coorte_f, "tipologia")
+  expect_identical(per_servizio$tipologia, c("Carta", "Secco"))
+  expect_equal(per_servizio$solo_dopo, c(0, 1))
 })
 
 test_that("l'intervallo jackknife di una media è quello della t di Student", {
@@ -448,6 +499,24 @@ test_that("i codici gemelli differiscono per un solo carattere", {
   )
   expect_false(anyNA(trovate$un_bit))
 
+  # con i codici di interesse restano le sole coppie che ne contengono uno
+  scelti <- casuali[seq(1, length(casuali), by = 7)]
+  ristrette <- codici_gemelli(casuali, tra = scelti)
+  attese_ristrette <- trovate[
+    trovate$codice_a %in% scelti | trovate$codice_b %in% scelti,
+  ]
+  expect_gt(nrow(ristrette), 10)
+  expect_lt(nrow(ristrette), nrow(trovate))
+  expect_identical(ristrette, attese_ristrette)
+  expect_true(all(ristrette$codice_a < ristrette$codice_b))
+  expect_identical(codici_gemelli(casuali, tra = casuali), trovate)
+  expect_equal(nrow(codici_gemelli(casuali, tra = "ZZZZ")), 0)
+  solo_a3 <- codici_gemelli(codici, tra = "00A3")
+  expect_setequal(
+    paste(solo_a3$codice_a, solo_a3$codice_b),
+    c("00A1 00A3", "00A3 00A7")
+  )
+
   # niente coppie: tabella vuota con le stesse colonne
   expect_equal(nrow(codici_gemelli(c("0001", "0102"))), 0)
   expect_identical(names(codici_gemelli("0001")), names(coppie))
@@ -566,6 +635,138 @@ test_that("un gemello è sospetto se non compare mai insieme al codice giusto", 
   expect_identical(names(nessuna), names(gemelli))
 })
 
+test_that("un escluso può avere le letture precedenti sotto un codice gemello", {
+  # Le antenne leggono di lunedì, dal 7 luglio 2025. Il sistema precedente
+  # leggeva di lunedì fino a giugno, e continua anche dopo.
+  lunedi_prima <- format(as.Date("2025-01-06") + 7 * 0:9)
+  lunedi_antenne <- format(as.Date("2025-07-07") + 14 * 0:3)
+  lunedi_sfalsati <- format(as.Date("2025-07-14") + 14 * 0:3)
+  storico <- dplyr::bind_rows(
+    # A: letto solo dalle antenne, con un gemello a un bit di distanza
+    storiche_il("00000A1A03", lunedi_prima),
+    # B: gemello a due bit di distanza
+    storiche_il("00000B2B07", lunedi_prima),
+    # C: gemello letto di giovedì, da un altro giro
+    storiche_il("00000C3C03", format(as.Date(lunedi_prima) + 3)),
+    # D: gemello letto negli stessi giorni delle antenne, quindi un altro
+    # contenitore dello stesso giro
+    storiche_il("00000D4D03", c(lunedi_prima, lunedi_antenne)),
+    # E: letto da tutti e due i sistemi, con un vicino dal codice quasi uguale
+    # che le antenne non hanno ancora letto
+    storiche_il("00000E5E01", lunedi_prima),
+    storiche_il("00000E5E03", c(lunedi_prima, lunedi_sfalsati)),
+    # F: letto da tutti e due i sistemi, senza gemelli
+    storiche_il("00000F6F01", lunedi_prima)
+  )
+  antenne <- c(
+    "00000A1A01",
+    "00000B2B01",
+    "00000C3C01",
+    "00000D4D01",
+    "00000E5E01",
+    "00000F6F01",
+    # senza gemelli
+    "0000017101",
+    # due codici quasi uguali letti tutti e due dalle antenne
+    "00000A9901",
+    "00000A9903"
+  )
+  letture <- dplyr::bind_rows(lapply(antenne, function(codice) {
+    letture_rfid(codice, lunedi_antenne, servizio = "SECCO")
+  }))
+  unite <- una_lettura_al_giorno(unisci_letture(letture, storico))
+  coppie <- codici_gemelli(unique(unite$RFID), tra = antenne)
+  gemelli <- gemelli_tra_sistemi(coppie, unite)
+
+  # un codice delle antenne e uno del solo sistema precedente
+  expect_setequal(
+    paste(gemelli$codice, gemelli$gemello),
+    c(
+      "00000A1A01 00000A1A03",
+      "00000B2B01 00000B2B07",
+      "00000C3C01 00000C3C03",
+      "00000D4D01 00000D4D03",
+      "00000E5E01 00000E5E03"
+    )
+  )
+  riga <- function(codice) gemelli[gemelli$codice == codice, ]
+  a <- riga("00000A1A01")
+  expect_false(a$codice_in_storico)
+  expect_equal(a$letture_codice, 4)
+  expect_equal(a$letture_gemello, 10)
+  expect_equal(a$giorni_in_comune, 0)
+  expect_equal(a$quota_stessi_giorni, 1)
+  expect_true(a$compatibile)
+  expect_true(a$sospetto)
+  # due bit: compatibile con i giorni, ma non sospetto
+  expect_true(riga("00000B2B01")$compatibile)
+  expect_false(riga("00000B2B01")$sospetto)
+  # un altro giorno della settimana
+  expect_equal(riga("00000C3C01")$quota_stessi_giorni, 0)
+  expect_false(riga("00000C3C01")$compatibile)
+  # letti negli stessi giorni dai due sistemi: due contenitori
+  expect_equal(riga("00000D4D01")$giorni_in_comune, 4)
+  expect_false(riga("00000D4D01")$compatibile)
+  # per il codice contano i soli giorni delle antenne, anche se ha letture
+  # precedenti sue: i lunedì di prima, in comune con il gemello, non pesano
+  e <- riga("00000E5E01")
+  expect_true(e$codice_in_storico)
+  expect_equal(e$letture_codice, 4)
+  expect_equal(e$letture_gemello, 14)
+  expect_equal(e$giorni_in_comune, 0)
+  expect_true(e$sospetto)
+  # prima le coppie sospette, poi le compatibili
+  expect_true(all(gemelli$sospetto[1:2]))
+  expect_identical(gemelli$codice[3], "00000B2B01")
+
+  # la soglia sui giorni della settimana si può cambiare
+  misto <- dplyr::bind_rows(
+    storico,
+    storiche_il("00000A1A03", format(as.Date(lunedi_prima[1:5]) + 2))
+  )
+  unite_miste <- una_lettura_al_giorno(unisci_letture(letture, misto))
+  expect_false(
+    gemelli_tra_sistemi(coppie, unite_miste)$compatibile[
+      gemelli_tra_sistemi(coppie, unite_miste)$codice == "00000A1A01"
+    ]
+  )
+  larga <- gemelli_tra_sistemi(coppie, unite_miste, quota_giorni = 0.6)
+  expect_true(larga$compatibile[larga$codice == "00000A1A01"])
+
+  # a confronto con la coorte: 5 esclusi, 2 contenitori letti dai due sistemi
+  esclusi <- antenne[c(1:4, 7)]
+  coorte <- antenne[5:6]
+  riepilogo <- riepilogo_gemelli(gemelli, esclusi, coorte)
+  expect_identical(riepilogo$indizio, c("gemello", "compatibile", "sospetto"))
+  expect_equal(riepilogo$esclusi, c(4, 2, 1))
+  expect_equal(riepilogo$quota_esclusi, c(0.8, 0.4, 0.2))
+  expect_equal(riepilogo$coorte, c(1, 1, 1))
+  expect_equal(riepilogo$quota_coorte, c(0.5, 0.5, 0.5))
+  expect_equal(riepilogo$per_caso, c(2.5, 2.5, 2.5))
+  # solo la parte oltre la quota della coorte, e mai meno di zero: con metà
+  # della coorte che ha un gemello, l'80% degli esclusi vuol dire che il 60%
+  # ha le letture precedenti sotto il gemello
+  expect_equal(riepilogo$in_piu, c(3, 0, 0))
+  # un codice con più gemelli conta una volta
+  doppio <- dplyr::bind_rows(gemelli, gemelli[gemelli$codice == "00000A1A01", ])
+  expect_identical(riepilogo_gemelli(doppio, esclusi, coorte), riepilogo)
+  # senza gemelli nella coorte tutti gli esclusi con un gemello sono in più
+  senza <- riepilogo_gemelli(gemelli, esclusi, "00000F6F01")
+  expect_equal(senza$in_piu, c(4, 2, 1))
+  # se ogni contenitore della coorte ha un gemello la stima non si può fare
+  tutti <- riepilogo_gemelli(gemelli, esclusi, "00000E5E01")
+  expect_equal(tutti$quota_coorte, c(1, 1, 1))
+  expect_true(all(is.na(tutti$in_piu)))
+  # senza esclusi non c'è niente da stimare
+  expect_true(all(is.na(riepilogo_gemelli(gemelli, character(0), coorte)$in_piu)))
+
+  # nessuna coppia tra i due sistemi
+  nessuna <- gemelli_tra_sistemi(coppie[0, ], unite)
+  expect_equal(nrow(nessuna), 0)
+  expect_identical(names(nessuna), names(gemelli))
+  expect_equal(riepilogo_gemelli(nessuna, esclusi, coorte)$esclusi, c(0, 0, 0))
+})
+
 test_that("i contenitori fuori comune sono quelli censiti letti lontano dal loro comune", {
   quando <- function(date) as.POSIXct(paste(date, "08:00:00"), tz = "UTC")
   letture <- dplyr::tibble(
@@ -653,6 +854,27 @@ test_that("sul dataset di esempio il sistema precedente leggeva una parte dei co
   expect_gt(punti[["inferiore"]], 0.5)
   expect_lt(punti[["superiore"]], 0.7)
 
+  # la coorte: i contenitori letti da tutti e due i sistemi
+  coorte <- coorte_dei_due_sistemi(confronto)
+  expect_equal(nrow(coorte), 184)
+  expect_equal(sum(coorte$presente_a_database == "Presente"), 170)
+  secco_coorte <- coorte[coorte$tipologia %in% "Secco", ]
+  r_coorte <- riepilogo_confronto(secco_coorte)
+  expect_equal(r_coorte$n_rfid, 65)
+  expect_equal(r_coorte$censiti, 64)
+  expect_equal(r_coorte$mai_letti, 2)
+  expect_equal(r_coorte$una_o_meno, 7)
+  # nell'esempio i due sistemi non lavorano mai insieme
+  expect_equal(r_coorte$gia_in_servizio, 65)
+  expect_equal(r_coorte$solo_dopo, 0)
+  expect_equal(r_coorte$tasso_storico, 0.30, tolerance = 0.03)
+  expect_equal(r_coorte$tasso_antenne, 0.82, tolerance = 0.03)
+  per_cantiere_coorte <- riepilogo_confronto(secco_coorte, "cantiere")
+  expect_equal(per_cantiere_coorte$n_rfid, c(7, 7, 42, 9))
+  expect_true(all(
+    per_cantiere_coorte$tasso_antenne > per_cantiere_coorte$tasso_storico
+  ))
+
   # le antenne leggono di più in ogni servizio e in ogni cantiere
   per_servizio <- riepilogo_confronto(
     confronto[!is.na(confronto$tipologia), ],
@@ -665,7 +887,7 @@ test_that("sul dataset di esempio il sistema precedente leggeva una parte dei co
   expect_true(all(per_cantiere$tasso_antenne > per_cantiere$tasso_storico))
 
   # il codice letto male: metà delle letture storiche sotto un altro codice
-  coppie <- codici_gemelli(unique(unite$RFID))
+  coppie <- codici_gemelli(unique(unite$RFID), tra = confronto$RFID)
   gemelli <- gemelli_sospetti(coppie, unite, letture)
   sospetti <- gemelli[gemelli$sospetto, ]
   expect_identical(sospetti$codice, "RFD20241003061")
@@ -674,6 +896,15 @@ test_that("sul dataset di esempio il sistema precedente leggeva una parte dei co
   expect_equal(sospetti$letture_gemello, 37)
   expect_equal(sospetti$quota_gemello_storico, 0.49, tolerance = 0.02)
   expect_equal(sospetti$giorni_in_comune, 0)
+  # nessuno dei 55 esclusi ha un gemello tra i codici del sistema precedente
+  tra_sistemi <- gemelli_tra_sistemi(coppie, unite)
+  expect_identical(tra_sistemi$codice, "RFD20241003061")
+  esclusi <- setdiff(confronto$RFID, coorte$RFID)
+  expect_length(esclusi, 55)
+  per_indizio <- riepilogo_gemelli(tra_sistemi, esclusi, coorte$RFID)
+  expect_equal(per_indizio$esclusi, c(0, 0, 0))
+  expect_equal(per_indizio$coorte, c(1, 1, 1))
+  expect_equal(per_indizio$in_piu, c(0, 0, 0))
 
   # i due contenitori letti lontano dal comune del database
   fuori <- rfid_fuori_comune(letture)

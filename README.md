@@ -267,13 +267,14 @@ Senza date si analizza l'anno più recente del file. Lo script si può anche car
 
 ## Report sul beneficio delle antenne
 
-[docs/beneficio_antenne.Rmd](docs/beneficio_antenne.Rmd) misura che cosa è cambiato con le antenne. I due sistemi coprono periodi diversi e le antenne leggono solo i contenitori serviti dai mezzi su cui sono montate, quindi i totali non si confrontano. Il report parte dalla **coorte**: i contenitori che le antenne hanno letto. Di ognuno guarda che cosa ne sapeva il sistema precedente. Funziona anche quando le antenne sono in funzione da poche settimane e i due sistemi lavorano insieme.
+[docs/beneficio_antenne.Rmd](docs/beneficio_antenne.Rmd) misura che cosa è cambiato con le antenne. I due sistemi coprono periodi diversi e le antenne leggono solo i contenitori serviti dai mezzi su cui sono montate, quindi i totali non si confrontano. Il report confronta i due sistemi sulla **coorte**: i contenitori letti da tutti e due. I contenitori letti dalle antenne e mai dal sistema precedente restano fuori dal confronto, perché possono essere nuovi, mai letti prima o registrati con un altro codice, e i dati non lo dicono: il report dice subito quanti sono. Funziona anche quando le antenne sono in funzione da poche settimane e i due sistemi lavorano insieme.
 
 Il confronto si fa su un servizio, il secco se non si indica altro, e a un livello: l'intero territorio, un cantiere o un comune. I sacchetti, se i file ne contengono, sono tolti prima di ogni conto.
 
 | Sezione | Che cosa contiene |
 |---|---|
-| Quanto leggeva il sistema precedente | Le letture di ogni contenitore della coorte nei dodici mesi prima delle antenne: quanti mai letti, quanti letti una volta sola. Il controllo sui contenitori che erano di sicuro già in servizio. Le letture anno per anno e mese per mese, e la tabella dei contenitori |
+| I contenitori esclusi dal confronto | Quanti contenitori letti dalle antenne non hanno letture del sistema precedente, per servizio e per stato a database. La stima di quanti hanno le letture precedenti sotto un codice diverso per un carattere: la quota di esclusi con un codice «gemello» si confronta con la stessa quota tra i contenitori della coorte, perché con molti codici vicini un gemello capita anche per caso |
+| Quanto leggeva il sistema precedente | Le letture di ogni contenitore della coorte nei dodici mesi prima delle antenne: quanti mai letti, quanti letti una volta sola. Il controllo sui contenitori che erano di sicuro già in servizio, e il conto senza quelli che il sistema precedente ha letto solo dopo l'arrivo delle antenne. Le letture anno per anno e mese per mese, e la tabella dei contenitori |
 | A parità di tempo | Il tasso di lettura dei due sistemi, cioè la quota delle raccolte previste che risulta letta nei giorni in cui ogni sistema è stato osservato, con un intervallo di confidenza |
 | Perché così poche letture | Le ipotesi sulle cause, ognuna con il modo per verificarla, e che cosa comportano oggi e con una tariffa a conferimento |
 | Che cosa vedono solo le antenne | I contenitori censiti letti fuori dal comune del database. I contenitori non a database, con il servizio stimato. I codici letti male, il «bit flip»: le coppie di codici che differiscono per un carattere e che sembrano lo stesso contenitore. I giri diversi dal calendario |
@@ -315,7 +316,7 @@ Gli HTML vanno in `data-raw/output/report/`, oppure nella cartella indicata come
 
 Gli HTML compilati sui dati reali contengono dati aziendali: vanno scritti in una cartella esclusa da git. Con 2 milioni di letture e 2,5 milioni di letture storiche la compilazione di un report richiede circa mezzo minuto. Le tabelle per RFID riportano al massimo 2.000 righe.
 
-**Come sono fatti i conti.** Conta una lettura al giorno per contenitore. Il sistema precedente si misura nel periodo di riferimento, i dodici mesi che precedono la prima lettura con le antenne. Le antenne si misurano dal giorno dopo la prima lettura di ogni contenitore: quella lettura fa entrare il contenitore nella coorte, e contarla gonfierebbe il risultato. Le letture utili di un contenitore non superano le raccolte previste nei giorni osservati, così un tag fermo in deposito non gonfia il tasso. Le regole sono funzioni del pacchetto, in `R/utils_confronto.R`, e hanno i loro test.
+**Come sono fatti i conti.** La coorte è fatta dei contenitori con almeno una lettura di ognuno dei due sistemi. Conta una lettura al giorno per contenitore. Il sistema precedente si misura nel periodo di riferimento, i dodici mesi che precedono la prima lettura con le antenne. Le antenne si misurano dal giorno dopo la prima lettura di ogni contenitore: quella lettura fa entrare il contenitore nella coorte, e contarla gonfierebbe il risultato. Le letture utili di un contenitore non superano le raccolte previste nei giorni osservati, così un tag fermo in deposito non gonfia il tasso. Le regole sono funzioni del pacchetto, in `R/utils_confronto.R`, e hanno i loro test.
 
 ### Confini dei comuni
 

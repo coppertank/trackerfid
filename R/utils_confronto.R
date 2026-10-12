@@ -1,8 +1,10 @@
 # Confronto tra il sistema precedente e le antenne.
 #
 # Serve al report `docs/beneficio_antenne.Rmd`: l'app non richiama queste
-# funzioni. Il confronto riguarda la coorte, cioè i contenitori che le antenne
-# hanno letto, e conta una lettura al giorno per contenitore.
+# funzioni. Il confronto riguarda la coorte, cioè i contenitori letti da tutti
+# e due i sistemi, e conta una lettura al giorno per contenitore. I contenitori
+# letti solo dalle antenne restano fuori dal confronto: vedi
+# `coorte_dei_due_sistemi()`.
 #
 # Il sistema precedente si misura nel periodo di riferimento: i dodici mesi
 # che precedono la prima lettura con le antenne, o la parte di quei mesi
@@ -123,7 +125,8 @@ raccolte_di_riferimento <- function(anagrafica) {
 #' Confronto tra i due sistemi sui contenitori letti dalle antenne
 #'
 #' Una riga per ogni RFID dell'anagrafica, anche se il sistema precedente non
-#' lo ha mai letto: quei contenitori sono il primo risultato del confronto.
+#' lo ha mai letto: quei contenitori non entrano nella coorte, ma il report li
+#' conta a parte. Vedi `coorte_dei_due_sistemi()`.
 #'
 #' Per il sistema precedente contano le letture del periodo di riferimento,
 #' riportate a un anno. Per le antenne contano le letture successive al
@@ -141,8 +144,9 @@ raccolte_di_riferimento <- function(anagrafica) {
 #'   `raccolte_di_riferimento()`, `volume_previsto`; per il
 #'   sistema precedente `letture_riferimento`, `letture_annue_storico`,
 #'   `letture_prima` (prima del periodo di riferimento),
-#'   `letture_sovrapposte` (dopo l'arrivo delle antenne) e
-#'   `prima_lettura_storico`; per le antenne `letture_antenne`,
+#'   `letture_sovrapposte` (dopo l'arrivo delle antenne), `letture_storico`
+#'   (tutte, cioè la somma delle tre) e `prima_lettura_storico`; per le
+#'   antenne `letture_antenne`,
 #'   `prima_lettura_antenne`, `giorni_dopo`, `letture_dopo` e
 #'   `letture_annue_antenne`; per i contenitori con le raccolte previste
 #'   `previste_storico`, `utili_storico`, `previste_antenne`,
@@ -198,6 +202,7 @@ confronto_sistemi <- function(
     letture_annue_storico = letture_riferimento * 365 / giorni_riferimento,
     letture_prima = conta(storico & giorno < riferimento[1]),
     letture_sovrapposte = conta(storico & giorno >= inizio_antenne),
+    letture_storico = conta(storico),
     prima_lettura_storico = lubridate::as_date(primo_giorno(storico)),
     letture_antenne = conta(!storico),
     prima_lettura_antenne = lubridate::as_date(prima_antenne),
@@ -214,6 +219,26 @@ confronto_sistemi <- function(
     utili_antenne = pmin(letture_dopo, previste_antenne)
   )
   structure(confronto, periodi = periodi)
+}
+
+#' Contenitori letti da tutti e due i sistemi
+#'
+#' La coorte del confronto, per scelta del proprietario del progetto: le
+#' antenne coprono poche settimane e una parte dei mezzi, quindi si confrontano
+#' i soli contenitori che compaiono in tutti e due i file. Un contenitore letto
+#' dalle antenne e mai dal sistema precedente può essere nuovo, oppure avere le
+#' letture precedenti sotto un altro codice: non si può dire, e resta fuori.
+#'
+#' Entra anche il contenitore che il sistema precedente ha letto solo dopo
+#' l'arrivo delle antenne: nel periodo di riferimento risulta senza letture.
+#' `riepilogo_confronto()` li conta in `solo_dopo`.
+#'
+#' @param confronto Risultato di `confronto_sistemi()`.
+#' @return Le righe con almeno una lettura del sistema precedente, con le
+#'   stesse colonne.
+#' @noRd
+coorte_dei_due_sistemi <- function(confronto) {
+  confronto[confronto$letture_storico > 0, , drop = FALSE]
 }
 
 #' Riepilogo del confronto tra i due sistemi
@@ -233,6 +258,8 @@ confronto_sistemi <- function(
 #'   lettura nel periodo di riferimento, e le loro quote; `gia_in_servizio`, i
 #'   contenitori che il sistema precedente aveva letto prima del periodo di
 #'   riferimento, con `mai_letti_in_servizio` e `una_o_meno_in_servizio`;
+#'   `solo_dopo`, i contenitori che il sistema precedente ha letto solo dopo
+#'   l'arrivo delle antenne;
 #'   `media_storico`, `mediana_storico`, `media_antenne`, `rapporto`;
 #'   `n_con_raccolte`, `raccolte_previste`, `tasso_storico`, `tasso_antenne`,
 #'   `letture_recuperate` in un anno.
@@ -241,7 +268,10 @@ riepilogo_confronto <- function(confronto, per = NULL) {
   confronto |>
     dplyr::mutate(
       con_raccolte = !is.na(.data$raccolte_previste),
-      in_servizio = .data$letture_prima > 0
+      in_servizio = .data$letture_prima > 0,
+      dopo = .data$letture_sovrapposte > 0 &
+        .data$letture_prima == 0 &
+        .data$letture_riferimento == 0
     ) |>
     dplyr::summarise(
       n_rfid = dplyr::n(),
@@ -255,6 +285,7 @@ riepilogo_confronto <- function(confronto, per = NULL) {
       una_o_meno_in_servizio = sum(
         .data$in_servizio & .data$letture_riferimento <= 1
       ),
+      solo_dopo = sum(.data$dopo),
       media_storico = mean(.data$letture_annue_storico),
       mediana_storico = stats::median(.data$letture_annue_storico),
       letture_dopo = sum(.data$letture_dopo),
@@ -410,13 +441,18 @@ copertura_settimanale <- function(letture) {
 #' quella posizione: due codici nello stesso gruppo differiscono solo lì.
 #'
 #' @param codici Codici RFID. I doppioni e i mancanti sono ignorati.
+#' @param tra Codici di cui interessano i gemelli: restano le sole coppie con
+#'   almeno un codice tra questi. Senza, restano tutte. Con centinaia di
+#'   migliaia di codici vicini tra loro le coppie sono milioni: indicare i soli
+#'   codici letti dalle antenne le riduce a quelle che servono.
 #' @return Tibble con `codice_a` e `codice_b`, in ordine alfabetico,
 #'   `posizione` del carattere diverso, `carattere_a`, `carattere_b` e
 #'   `un_bit`: vero se i due caratteri, letti come cifre esadecimali,
 #'   differiscono per un bit solo; mancante se non sono cifre esadecimali.
 #' @noRd
-codici_gemelli <- function(codici) {
+codici_gemelli <- function(codici, tra = NULL) {
   codici <- unique(as.character(codici[!is.na(codici)]))
+  scelto <- if (is.null(tra)) rep(TRUE, length(codici)) else codici %in% tra
   vuoto <- dplyr::tibble(
     codice_a = character(0),
     codice_b = character(0),
@@ -437,22 +473,34 @@ codici_gemelli <- function(codici) {
       "\r",
       substr(testo, posizione + 1, lunghezza[scelti])
     )
-    ripetute <- chiave %in% chiave[duplicated(chiave)]
+    ripetute <- chiave %in% chiave[duplicated(chiave)] &
+      chiave %in% chiave[scelto[scelti]]
     if (!any(ripetute)) {
       return(NULL)
     }
-    gruppo <- dplyr::tibble(chiave = chiave[ripetute], codice = testo[ripetute])
+    gruppo <- dplyr::tibble(
+      chiave = chiave[ripetute],
+      codice = testo[ripetute],
+      scelto = scelto[scelti][ripetute]
+    )
+    # A sinistra i soli codici scelti: una coppia di due codici scelti esce due
+    # volte, e si tiene quella in ordine alfabetico.
     unite <- dplyr::inner_join(
-      gruppo,
+      gruppo[gruppo$scelto, , drop = FALSE],
       gruppo,
       by = "chiave",
       suffix = c("_a", "_b"),
       relationship = "many-to-many"
     )
-    unite <- unite[unite$codice_a < unite$codice_b, , drop = FALSE]
+    unite <- unite[
+      unite$codice_a != unite$codice_b &
+        (unite$codice_a < unite$codice_b | !unite$scelto_b),
+      ,
+      drop = FALSE
+    ]
     dplyr::tibble(
-      codice_a = unite$codice_a,
-      codice_b = unite$codice_b,
+      codice_a = pmin(unite$codice_a, unite$codice_b),
+      codice_b = pmax(unite$codice_a, unite$codice_b),
       posizione = posizione
     )
   })
@@ -542,56 +590,21 @@ gemelli_sospetti <- function(
     posizione = coppie$posizione[tenute],
     un_bit = coppie$un_bit[tenute]
   )
-  n <- nrow(esito)
 
-  # Giorni di lettura di ogni codice coinvolto, senza distinguere il sistema.
-  # Il codice e il giorno stanno in un numero solo: così i giorni in comune si
-  # trovano con un confronto tra vettori, senza unire tabelle. Con centinaia
-  # di migliaia di coppie un'unione riga per riga non starebbe in memoria.
-  coinvolti <- unique(c(esito$codice, esito$gemello))
-  proprie <- unite[unite$RFID %in% coinvolti, , drop = FALSE]
-  di_chi <- match(proprie$RFID, coinvolti)
-  giorno <- as.integer(lubridate::as_date(proprie$giorno_lettura))
-  origine <- if (length(giorno) > 0) min(giorno) else 0L
-  chiave <- sort(unique(di_chi * 1e5 + (giorno - origine)))
-  codice_del_giorno <- as.integer(chiave %/% 1e5)
-  giorno_letto <- as.integer(chiave %% 1e5) + origine
-  n_giorni <- tabulate(codice_del_giorno, length(coinvolti))
-  inizio <- cumsum(n_giorni) - n_giorni + 1L
-  # Giorni della settimana in cui ogni codice viene letto, un bit per giorno.
-  # Il primo gennaio 1970 era un giovedì.
-  bit_del_giorno <- function(g) bitwShiftL(1L, (g + 3L) %% 7L)
-  settimana <- unique(codice_del_giorno * 128L + bit_del_giorno(giorno_letto))
-  giorni_settimana <- as.integer(somma_per_gruppo(
-    settimana %% 128L,
-    settimana %/% 128L,
-    length(coinvolti)
-  ))
-
-  riga_codice <- match(esito$codice, coinvolti)
-  riga_gemello <- match(esito$gemello, coinvolti)
-  letture_codice <- n_giorni[riga_codice]
-  letture_gemello <- n_giorni[riga_gemello]
-  # Una riga per ogni giorno di lettura del gemello di ogni coppia.
-  coppia <- rep.int(seq_len(n), letture_gemello)
-  giorno_gemello <- giorno_letto[
-    sequence(letture_gemello, from = inizio[riga_gemello])
-  ]
-  in_comune <- (riga_codice[coppia] * 1e5 + (giorno_gemello - origine)) %in%
-    chiave
-  stesso_giorno <- bitwAnd(
-    giorni_settimana[riga_codice[coppia]],
-    bit_del_giorno(giorno_gemello)
-  ) >
-    0L
+  # Giorni di lettura di ogni codice, senza distinguere il sistema.
+  indizi <- indizi_giorni(esito$codice, esito$gemello, unite)
+  letture_codice <- indizi$letture_codice
+  letture_gemello <- indizi$letture_gemello
 
   # Letture del sistema precedente, per codice.
+  coinvolti <- unique(c(esito$codice, esito$gemello))
+  proprie <- unite[unite$RFID %in% coinvolti, , drop = FALSE]
   storiche <- tabulate(
-    di_chi[proprie$fonte == "storico"],
+    match(proprie$RFID[proprie$fonte == "storico"], coinvolti),
     length(coinvolti)
   )
-  codice_storico <- storiche[riga_codice]
-  gemello_storico <- storiche[riga_gemello]
+  codice_storico <- storiche[match(esito$codice, coinvolti)]
+  gemello_storico <- storiche[match(esito$gemello, coinvolti)]
   da_antenne <- esito$gemello %in% proprie$RFID[proprie$fonte == "antenne"]
   da_storico <- gemello_storico > 0
   posizione_codice <- match(esito$codice, ultime$RFID)
@@ -609,9 +622,8 @@ gemelli_sospetti <- function(
   esito$letture_gemello_storico <- gemello_storico
   esito$quota_gemello_storico <- gemello_storico /
     (codice_storico + gemello_storico)
-  esito$giorni_in_comune <- tabulate(coppia[in_comune], n)
-  esito$quota_stessi_giorni <- tabulate(coppia[stesso_giorno], n) /
-    letture_gemello
+  esito$giorni_in_comune <- indizi$giorni_in_comune
+  esito$quota_stessi_giorni <- indizi$quota_stessi_giorni
   esito$distanza_m <- distanza_haversine_m(
     ultime$latitudine[posizione_codice],
     ultime$longitudine[posizione_codice],
@@ -631,6 +643,213 @@ gemelli_sospetti <- function(
       method = "radix"
     ),
   ]
+}
+
+#' Giorni di lettura di due codici a confronto
+#'
+#' Per ogni coppia conta i giorni in cui compaiono tutti e due i codici e la
+#' quota delle letture del gemello che cade nei giorni della settimana del
+#' codice. Il codice e il giorno stanno in un numero solo: così i giorni in
+#' comune si trovano con un confronto tra vettori, senza unire tabelle. Con
+#' centinaia di migliaia di coppie un'unione riga per riga non starebbe in
+#' memoria.
+#'
+#' @param codice,gemello I due codici di ogni coppia.
+#' @param del_codice Letture da cui prendere i giorni del codice: servono
+#'   `RFID` e `giorno_lettura`.
+#' @param del_gemello Letture da cui prendere i giorni del gemello. Le stesse,
+#'   se manca.
+#' @return Lista con `letture_codice` e `letture_gemello`, i giorni diversi di
+#'   lettura, `giorni_in_comune` e `quota_stessi_giorni`: un valore per coppia.
+#' @noRd
+indizi_giorni <- function(codice, gemello, del_codice, del_gemello = del_codice) {
+  n <- length(codice)
+  coinvolti <- unique(c(codice, gemello))
+  giorni_di <- function(letture) {
+    di_chi <- match(letture$RFID, coinvolti)
+    tenute <- which(!is.na(di_chi))
+    list(
+      di_chi = di_chi[tenute],
+      giorno = as.integer(lubridate::as_date(letture$giorno_lettura[tenute]))
+    )
+  }
+  lato_codice <- giorni_di(del_codice)
+  lato_gemello <- giorni_di(del_gemello)
+  tutti <- c(lato_codice$giorno, lato_gemello$giorno)
+  origine <- if (length(tutti) > 0) min(tutti) else 0L
+  chiavi <- function(lato) {
+    sort(unique(lato$di_chi * 1e5 + (lato$giorno - origine)))
+  }
+  chiave_codice <- chiavi(lato_codice)
+  chiave_gemello <- chiavi(lato_gemello)
+  di_chi <- function(chiave) as.integer(chiave %/% 1e5)
+  giorno_di <- function(chiave) as.integer(chiave %% 1e5) + origine
+  giorni_codice <- tabulate(di_chi(chiave_codice), length(coinvolti))
+  giorni_gemello <- tabulate(di_chi(chiave_gemello), length(coinvolti))
+  inizio <- cumsum(giorni_gemello) - giorni_gemello + 1L
+  # Giorni della settimana in cui ogni codice viene letto, un bit per giorno.
+  # Il primo gennaio 1970 era un giovedì.
+  bit_del_giorno <- function(g) bitwShiftL(1L, (g + 3L) %% 7L)
+  settimana <- unique(
+    di_chi(chiave_codice) * 128L + bit_del_giorno(giorno_di(chiave_codice))
+  )
+  giorni_settimana <- as.integer(somma_per_gruppo(
+    settimana %% 128L,
+    settimana %/% 128L,
+    length(coinvolti)
+  ))
+
+  riga_codice <- match(codice, coinvolti)
+  riga_gemello <- match(gemello, coinvolti)
+  letture_gemello <- giorni_gemello[riga_gemello]
+  # Una riga per ogni giorno di lettura del gemello di ogni coppia.
+  coppia <- rep.int(seq_len(n), letture_gemello)
+  giorno_gemello <- giorno_di(chiave_gemello)[
+    sequence(letture_gemello, from = inizio[riga_gemello])
+  ]
+  in_comune <- (riga_codice[coppia] * 1e5 + (giorno_gemello - origine)) %in%
+    chiave_codice
+  stesso_giorno <- bitwAnd(
+    giorni_settimana[riga_codice[coppia]],
+    bit_del_giorno(giorno_gemello)
+  ) >
+    0L
+  list(
+    letture_codice = giorni_codice[riga_codice],
+    letture_gemello = letture_gemello,
+    giorni_in_comune = tabulate(coppia[in_comune], n),
+    quota_stessi_giorni = tabulate(coppia[stesso_giorno], n) / letture_gemello
+  )
+}
+
+#' Codici letti dalle antenne con un gemello noto solo al sistema precedente
+#'
+#' Un contenitore letto dalle antenne e mai dal sistema precedente può avere
+#' le letture precedenti sotto un altro codice, diverso per un carattere: uno
+#' dei due sistemi lo registra male. Qui si tengono le coppie di
+#' `codici_gemelli()` con un codice letto dalle antenne e l'altro letto solo
+#' dal sistema precedente.
+#'
+#' Gli indizi si calcolano tra i giorni delle antenne del codice e i giorni
+#' del sistema precedente del gemello, anche quando il codice ha letture
+#' precedenti sue. Così la regola è la stessa per i codici esclusi dalla
+#' coorte e per quelli della coorte, che fanno da termine di paragone: vedi
+#' `riepilogo_gemelli()`.
+#'
+#' @param coppie Risultato di `codici_gemelli()`.
+#' @param unite Risultato di `unisci_letture()`.
+#' @param quota_giorni Quota minima delle letture del gemello nei giorni
+#'   della settimana in cui le antenne leggono il codice.
+#' @return Tibble con `codice`, letto dalle antenne, e `gemello`, letto solo
+#'   dal sistema precedente; `posizione`, `un_bit`; `codice_in_storico`, vero
+#'   se anche il codice ha letture del sistema precedente; `letture_codice`, i
+#'   giorni di lettura con le antenne, e `letture_gemello`, quelli del sistema
+#'   precedente; `giorni_in_comune`, `quota_stessi_giorni`; `compatibile`,
+#'   vero se i due codici non compaiono mai nello stesso giorno e il gemello
+#'   è letto negli stessi giorni della settimana; `sospetto`, vero se in più
+#'   la differenza, quando si può dire, è di un bit solo. Prima le coppie
+#'   sospette, poi per letture del gemello.
+#' @noRd
+gemelli_tra_sistemi <- function(coppie, unite, quota_giorni = 0.8) {
+  di_antenne <- unite$fonte == "antenne"
+  con_antenne <- unique(unite$RFID[di_antenne])
+  letto_a <- coppie$codice_a %in% con_antenne
+  letto_b <- coppie$codice_b %in% con_antenne
+  tenute <- which(letto_a != letto_b)
+  esito <- dplyr::tibble(
+    codice = ifelse(letto_a, coppie$codice_a, coppie$codice_b)[tenute],
+    gemello = ifelse(letto_a, coppie$codice_b, coppie$codice_a)[tenute],
+    posizione = coppie$posizione[tenute],
+    un_bit = coppie$un_bit[tenute]
+  )
+  indizi <- indizi_giorni(
+    esito$codice,
+    esito$gemello,
+    unite[di_antenne, , drop = FALSE],
+    unite[!di_antenne, , drop = FALSE]
+  )
+  esito$codice_in_storico <- esito$codice %in% unite$RFID[!di_antenne]
+  esito$letture_codice <- indizi$letture_codice
+  esito$letture_gemello <- indizi$letture_gemello
+  esito$giorni_in_comune <- indizi$giorni_in_comune
+  esito$quota_stessi_giorni <- indizi$quota_stessi_giorni
+  esito$compatibile <- esito$letture_gemello > 0 &
+    esito$giorni_in_comune == 0 &
+    esito$quota_stessi_giorni >= quota_giorni
+  esito$sospetto <- esito$compatibile & !esito$un_bit %in% FALSE
+  esito[
+    order(
+      !esito$sospetto,
+      !esito$compatibile,
+      -esito$letture_gemello,
+      esito$codice,
+      method = "radix"
+    ),
+  ]
+}
+
+#' Quanti contenitori esclusi hanno un gemello, a confronto con la coorte
+#'
+#' Con molti codici vicini tra loro quasi ogni codice ha un gemello per caso:
+#' il numero degli esclusi con un gemello, da solo, non dice niente. Il
+#' termine di paragone sono i contenitori della coorte, che le loro letture
+#' precedenti le hanno sotto il proprio codice: tra loro un gemello è quasi
+#' sempre un altro contenitore. Solo la parte degli esclusi che supera la
+#' quota della coorte si può attribuire a codici registrati male.
+#'
+#' Se una quota `f` degli esclusi ha le letture precedenti sotto un gemello, e
+#' gli altri hanno un gemello per caso quanto la coorte, con quota `c`, la
+#' quota osservata tra gli esclusi è `e = f + (1 - f) * c`: da qui
+#' `f = (e - c) / (1 - c)`. La stima è prudente: non tutti i codici registrati
+#' male superano i controlli, e anche tra i contenitori della coorte qualche
+#' gemello è un codice letto male. Vale se i codici degli esclusi sono fitti
+#' quanto quelli della coorte.
+#'
+#' @param gemelli Risultato di `gemelli_tra_sistemi()`.
+#' @param esclusi Codici letti dalle antenne e mai dal sistema precedente.
+#' @param coorte Codici letti da tutti e due i sistemi.
+#' @return Tibble con una riga per indizio, dal più debole al più forte:
+#'   `"gemello"`, `"compatibile"`, `"sospetto"`. Per ognuno `esclusi` e
+#'   `coorte`, i codici con almeno una coppia di quel tipo, le quote
+#'   `quota_esclusi` e `quota_coorte`, `per_caso`, gli esclusi attesi con la
+#'   quota della coorte, e `in_piu`, la stima degli esclusi con le letture
+#'   precedenti sotto un gemello: mai meno di zero, mancante se tutti i
+#'   contenitori della coorte hanno un gemello.
+#' @noRd
+riepilogo_gemelli <- function(gemelli, esclusi, coorte) {
+  esclusi <- unique(esclusi)
+  coorte <- unique(coorte)
+  indizi <- list(
+    gemello = rep(TRUE, nrow(gemelli)),
+    compatibile = gemelli$compatibile,
+    sospetto = gemelli$sospetto
+  )
+  conta <- function(codici) {
+    vapply(
+      indizi,
+      function(quali) sum(codici %in% gemelli$codice[quali]),
+      numeric(1)
+    )
+  }
+  n_esclusi <- unname(conta(esclusi))
+  n_coorte <- unname(conta(coorte))
+  # Le quote si calcolano prima: dentro `tibble()` le colonne `esclusi` e
+  # `coorte` nasconderebbero i due vettori di codici.
+  quota_esclusi <- n_esclusi / length(esclusi)
+  quota_coorte <- n_coorte / length(coorte)
+  per_caso <- length(esclusi) * quota_coorte
+  in_piu <- length(esclusi) *
+    pmax(0, (quota_esclusi - quota_coorte) / (1 - quota_coorte))
+  in_piu[!is.finite(in_piu) | quota_coorte >= 1] <- NA_real_
+  dplyr::tibble(
+    indizio = names(indizi),
+    esclusi = n_esclusi,
+    quota_esclusi = quota_esclusi,
+    coorte = n_coorte,
+    quota_coorte = quota_coorte,
+    per_caso = per_caso,
+    in_piu = in_piu
+  )
 }
 
 # ---- Contenitori lontani dal comune del database -----------------------------

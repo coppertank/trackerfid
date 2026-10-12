@@ -298,7 +298,8 @@ if (periodi$giorni_riferimento < minimo_giorni_riferimento) {
   )
 }
 
-# Il confronto riguarda la coorte: i contenitori letti dalle antenne.
+# `confronto` ha una riga per ogni contenitore letto dalle antenne. La coorte,
+# più sotto, tiene quelli letti anche dal sistema precedente.
 anagrafica <- anagrafica_rfid(letture)
 confronto <- confronto_sistemi(unite, anagrafica, periodi)
 
@@ -326,9 +327,10 @@ if (!any(nell_ambito)) {
     ". Controlla il nome: deve essere scritto come nella tabella dei comuni."
   )
 }
-contenitori <- confronto[nell_ambito, ]
+# Tutti i contenitori letti dalle antenne nell'ambito, di ogni servizio.
+letti <- confronto[nell_ambito, ]
 if (ambito == "comune") {
-  comune_scelto <- contenitori$comune[1]
+  comune_scelto <- letti$comune[1]
 }
 nome_ambito <- switch(
   ambito,
@@ -342,7 +344,20 @@ nell_ambito_di <- switch(
   cantiere = paste("nel cantiere di", cantiere_scelto),
   comune = paste("nel comune di", comune_scelto)
 )
-letture_ambito <- letture[letture$RFID %in% contenitori$RFID, ]
+letture_ambito <- letture[letture$RFID %in% letti$RFID, ]
+# La coorte del confronto: i contenitori letti da tutti e due i sistemi.
+contenitori <- coorte_dei_due_sistemi(letti)
+if (nrow(contenitori) == 0) {
+  ferma(
+    "Nessun contenitore letto dalle antenne ",
+    nell_ambito_di,
+    " compare nelle letture del sistema precedente: qui il confronto non si ",
+    "può fare.",
+    if (ambito == "territorio") {
+      " Controlla che i codici RFID abbiano lo stesso formato nei due file."
+    }
+  )
+}
 
 # ---- Servizio --------------------------------------------------------------
 tipologie <- vapply(
@@ -364,11 +379,17 @@ if (!tutti_i_servizi && is.na(servizio_scelto)) {
     "."
   )
 }
-coorte <- if (tutti_i_servizi) {
-  contenitori
-} else {
-  contenitori[contenitori$tipologia %in% servizio_scelto, ]
+del_servizio_scelto <- function(tabella) {
+  if (tutti_i_servizi) {
+    tabella
+  } else {
+    tabella[tabella$tipologia %in% servizio_scelto, ]
+  }
 }
+letti_servizio <- del_servizio_scelto(letti)
+coorte <- del_servizio_scelto(contenitori)
+# Letti dalle antenne e mai dal sistema precedente: fuori dal confronto.
+esclusi <- letti_servizio[letti_servizio$letture_storico == 0, ]
 nome_servizio <- if (tutti_i_servizi) {
   "tutti i servizi"
 } else {
@@ -382,13 +403,23 @@ del_servizio <- if (tutti_i_servizi) {
 } else {
   paste0(" del ", nome_servizio)
 }
-if (nrow(coorte) == 0) {
+if (nrow(letti_servizio) == 0) {
   ferma(
     "Le antenne non hanno letto nessun contenitore",
     del_servizio,
     " ",
     nell_ambito_di,
     "."
+  )
+}
+if (nrow(coorte) == 0) {
+  ferma(
+    "Nessun contenitore",
+    del_servizio,
+    " letto dalle antenne ",
+    nell_ambito_di,
+    " compare nelle letture del sistema precedente: il confronto non si può ",
+    "fare."
   )
 }
 riepilogo <- riepilogo_confronto(coorte)
@@ -407,6 +438,8 @@ if (riepilogo$giorni_dopo == 0) {
 
 # ---- Numeri usati in più punti ---------------------------------------------
 n_coorte <- nrow(coorte)
+n_letti <- nrow(letti_servizio)
+n_esclusi <- nrow(esclusi)
 rfid_antenne <- anagrafica$RFID
 rfid_storico <- unique(storico$RFID)
 giorni_rif <- periodi$giorni_riferimento
@@ -477,6 +510,14 @@ senza_storia_prima <- if (periodi$giorni_prima == 0) {
 in_servizio <- coorte[coorte$letture_prima > 0, ]
 quota_in_servizio <- riepilogo$una_o_meno_in_servizio /
   riepilogo$gia_in_servizio
+# Contenitori che il sistema precedente ha letto solo dopo l'arrivo delle
+# antenne: restano nella coorte, e nel periodo di riferimento risultano senza
+# letture. Accanto ai conti il report riporta quelli fatti senza di loro.
+solo_dopo <- riepilogo$solo_dopo
+comparso_dopo <- coorte$letture_prima == 0 & coorte$letture_riferimento == 0
+senza_dopo <- if (solo_dopo > 0 && solo_dopo < n_coorte) {
+  riepilogo_confronto(coorte[!comparso_dopo, ])
+}
 # Contenitori che le antenne leggono con regolarità.
 soglia_regolari <- 3
 regolari <- coorte[coorte$letture_antenne >= soglia_regolari, ]
@@ -491,19 +532,31 @@ con_attesi <- length(conferimenti_attesi) == 1 &&
 # Tutti i servizi dell'ambito: un contenitore spostato o un codice letto male
 # sono un problema qualunque sia il rifiuto.
 fuori_comune <- rfid_fuori_comune(letture_ambito)
-fuori_comune$tipologia <- contenitori$tipologia[match(
+fuori_comune$tipologia <- letti$tipologia[match(
   fuori_comune$RFID,
-  contenitori$RFID
+  letti$RFID
 )]
-non_censiti <- contenitori[contenitori$presente_a_database == "Non Presente", ]
-non_censiti$letture_storico <- non_censiti$letture_prima +
-  non_censiti$letture_riferimento +
-  non_censiti$letture_sovrapposte
+non_censiti <- letti[letti$presente_a_database == "Non Presente", ]
 
-coppie <- codici_gemelli(unique(unite$RFID))
+# Coppie di codici a un carattere di distanza, con almeno un codice letto
+# dalle antenne: le altre non servono, e con molti codici sono milioni.
+coppie <- codici_gemelli(unique(unite$RFID), tra = rfid_antenne)
 gemelli <- gemelli_sospetti(coppie, unite, letture)
-gemelli <- gemelli[gemelli$codice %in% contenitori$RFID, ]
+gemelli <- gemelli[gemelli$codice %in% letti$RFID, ]
 sospetti <- gemelli[gemelli$sospetto, ]
+# Letture del sistema precedente finite sotto il codice sconosciuto, per i
+# contenitori della coorte: nel confronto non contano.
+sospetti_coorte <- sospetti[sospetti$codice %in% coorte$RFID, ]
+
+# Esclusi che possono avere le letture precedenti sotto un altro codice. Il
+# termine di paragone sono i contenitori della coorte.
+tra_sistemi <- gemelli_tra_sistemi(coppie, unite)
+indizi_esclusi <- riepilogo_gemelli(tra_sistemi, esclusi$RFID, coorte$RFID)
+stima_gemelli <- indizi_esclusi$in_piu[indizi_esclusi$indizio == "sospetto"]
+stima_larga <- indizi_esclusi$in_piu[indizi_esclusi$indizio == "compatibile"]
+# La stima si può scrivere se esiste e non è nulla, una volta arrotondata.
+stima_nota <- n_esclusi > 0 && !is.na(stima_gemelli)
+stima_positiva <- stima_nota && round(stima_gemelli) > 0
 
 # Giri dell'ambito: quelli previsti dal calendario nei suoi comuni.
 giri <- riepilogo_giri(letture)
@@ -578,21 +631,23 @@ proporzione_zona <- (zona$lat_max - zona$lat_min) /
 
 Con il sistema precedente l'operatore leggeva a mano il tag di ogni contenitore, e la lettura registrava solo il codice e l'istante. Con le antenne la lettura è automatica e porta con sé il mezzo e la posizione.
 
-I due sistemi hanno lavorato in periodi diversi, e le antenne leggono solo i contenitori serviti dai mezzi su cui sono montate: confrontare i totali non avrebbe senso. Questo report parte invece dai **contenitori`r del_servizio` che le antenne hanno letto finora**: `r nell_ambito_di` sono `r intero(n_coorte)`. Di ognuno guarda che cosa ne sapeva il sistema precedente.
+I due sistemi hanno lavorato in periodi diversi, e le antenne leggono solo i contenitori serviti dai mezzi su cui sono montate: confrontare i totali non avrebbe senso. Questo report confronta i due sistemi **sugli stessi contenitori**: quelli`r del_servizio` che compaiono nelle letture di tutti e due.
+
+**Chi entra nel confronto.** `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` le antenne hanno letto `r conta(n_letti, "contenitore", "contenitori")``r del_servizio`. Compaiono anche nelle letture del sistema precedente: `r intero(n_coorte)`. Sono la coorte di questo report. `r if (n_esclusi == 0) "Nessun contenitore resta escluso." else sprintf("Esclusi: %s, %s. Di un contenitore escluso il sistema precedente non ha nessuna lettura: può essere nuovo, può non essere mai stato letto, oppure uno dei due sistemi lo registra con un altro codice. I dati non distinguono i tre casi, e contare ogni escluso come una lettura mancata darebbe alle antenne un merito non dimostrato. %s La sezione [I contenitori esclusi dal confronto](#i-contenitori-esclusi-dal-confronto) li descrive.", intero(n_esclusi), con_articolo(n_esclusi / n_letti), if (stima_positiva) sprintf("La ricerca dei codici diversi per un solo carattere ne spiega una parte: la stima, prudente, è di circa %s.", conta(round(stima_gemelli), "contenitore", "contenitori")) else if (stima_nota) "La ricerca dei codici diversi per un solo carattere non ne spiega una parte misurabile." else "")`
 
 <div class="numeri">
-<div class="numero"><b>`r pct(riepilogo$quota_una_o_meno)`</b><span>di questi contenitori ha al più una lettura del sistema precedente `r nel_riferimento`</span></div>
+<div class="numero"><b>`r intero(n_coorte)` su `r intero(n_letti)`</b><span>contenitori`r del_servizio` letti dalle antenne che compaiono anche nelle letture del sistema precedente: la coorte</span></div>
+<div class="numero"><b>`r pct(riepilogo$quota_una_o_meno)`</b><span>dei contenitori della coorte ha al più una lettura del sistema precedente `r nel_riferimento`</span></div>
 <div class="numero"><b>`r pct(riepilogo$tasso_storico)` → `r pct(riepilogo$tasso_antenne)`</b><span>delle raccolte previste che risultano lette, a parità di giorni osservati</span></div>
 <div class="numero"><b>`r intero(nrow(fuori_comune))`</b><span>`r if (nrow(fuori_comune) == 1) "contenitore censito letto" else "contenitori censiti letti"` lontano dal comune del database</span></div>
-<div class="numero"><b>`r intero(nrow(non_censiti))`</b><span>`r if (nrow(non_censiti) == 1) "contenitore" else "contenitori"` non a database di cui ora si conosce la posizione</span></div>
 </div>
 
-- **Poche letture, prima.** `r sub("^(.)", "\\U\\1", nel_riferimento, perl = TRUE)` il sistema precedente non ha letto nemmeno una volta `r intero(riepilogo$mai_letti)` di questi contenitori, `r con_articolo(riepilogo$quota_mai_letti)`. Letti una volta sola: `r intero(riepilogo$una_o_meno - riepilogo$mai_letti)`. Il contenitore tipico ha `r num(riepilogo$mediana_storico, 0)` letture in un anno, contro `r num(raccolte_medie, 0)` raccolte previste`r se(con_attesi, sprintf(" e circa %s svuotamenti che un'utenza chiede di norma", num(conferimenti_attesi, 0)))`.
+- **Poche letture, prima.** `r sub("^(.)", "\\U\\1", nel_riferimento, perl = TRUE)` `r if (riepilogo$mai_letti == 0) "il sistema precedente ha letto almeno una volta tutti i contenitori della coorte." else sprintf("il sistema precedente non ha letto nemmeno una volta %s della coorte, %s.", conta(riepilogo$mai_letti, "contenitore", "contenitori"), con_articolo(riepilogo$quota_mai_letti))` Letti una volta sola: `r intero(riepilogo$una_o_meno - riepilogo$mai_letti)`. Il contenitore tipico ha `r num(riepilogo$mediana_storico, 0)` letture in un anno, contro `r num(raccolte_medie, 0)` raccolte previste`r se(con_attesi, sprintf(" e circa %s svuotamenti che un'utenza chiede di norma", num(conferimenti_attesi, 0)))`. `r if (solo_dopo > 0) sprintf("Tra i contenitori senza letture, quelli che il sistema precedente ha letto solo dopo l'arrivo delle antenne sono %s: possono essere stati consegnati nel frattempo.", intero(solo_dopo))`
 - **Contenitori nuovi o letture mancate?** `r if (c_e_storia_prima) sprintf("%s di questi contenitori erano già stati letti dal sistema precedente prima del periodo di riferimento, quindi erano in servizio: tra loro quelli con al più una lettura sono %s.", intero(riepilogo$gia_in_servizio), con_articolo(quota_in_servizio)) else senza_storia_prima`
 - **A parità di tempo.** Il tasso di lettura è la quota delle raccolte previste che risulta letta. `r if (antenne_di_piu) sprintf("Passa %s %s: %s punti in più", con_articolo(riepilogo$tasso_storico, "dal"), con_articolo(riepilogo$tasso_antenne, "al"), in_punti(punti)) else sprintf("Con il sistema precedente era %s, con le antenne è %s: le antenne non leggono di più", con_articolo(riepilogo$tasso_storico), con_articolo(riepilogo$tasso_antenne))``r tra_e`. `r if (!intervallo_noto) senza_intervallo else if (!guadagno_netto && antenne_di_piu) "L'intervallo comprende lo zero: con i dati di oggi la differenza non è ancora certa."`
-- **Che cosa prima non si vedeva.** Contenitori censiti letti fuori dal comune del database: `r intero(nrow(fuori_comune))`. Contenitori non a database a cui ora si può dare un servizio probabile: `r intero(sum(!is.na(non_censiti$tipologia)))` su `r intero(nrow(non_censiti))`. Coppie di codici che sembrano lo stesso contenitore letto male: `r intero(nrow(sospetti))`. Senza il mezzo e la posizione di ogni lettura nessuno di questi conti si può fare.
+- **Che cosa prima non si vedeva.** Qui contano tutti i contenitori letti dalle antenne, anche fuori dalla coorte. Contenitori censiti letti fuori dal comune del database: `r intero(nrow(fuori_comune))`. Contenitori non a database a cui ora si può dare un servizio probabile: `r intero(sum(!is.na(non_censiti$tipologia)))` su `r intero(nrow(non_censiti))`. Coppie di codici che sembrano lo stesso contenitore letto male: `r intero(nrow(sospetti))`. Senza il mezzo e la posizione di ogni lettura nessuno di questi conti si può fare.
 - **In prospettiva.** Una lettura automatica, con il mezzo e la posizione, è la condizione per far pagare ogni utenza secondo i suoi conferimenti. Le sezioni [Che cosa comporta](#che-cosa-comporta) e [Quanto resta da coprire](#quanto-resta-da-coprire) dicono che cosa manca.
-- **I limiti.** Le letture con le antenne coprono `r intero(periodi$giorni_antenne)` giorni e vengono da `r conta(mezzi_antenne, "mezzo", "mezzi")`. I numeri delle antenne vanno aggiornati man mano che coprono più mesi e più mezzi.
+- **I limiti.** Le letture con le antenne coprono `r intero(periodi$giorni_antenne)` giorni e vengono da `r conta(mezzi_antenne, "mezzo", "mezzi")`. Il confronto riguarda i soli contenitori letti da tutti e due i sistemi: `r intero(n_coorte)` su `r intero(n_letti)`. I numeri vanno aggiornati man mano che le antenne coprono più mesi e più mezzi.
 
 ## I dati
 
@@ -628,13 +683,15 @@ La tabella riguarda tutto il territorio. `r if (n_sacchetti_esclusi > 0) sprintf
 
 **Il periodo di riferimento.** Il sistema precedente si misura sui `r intero(giorni_rif)` giorni che precedono la prima lettura con le antenne, dal `r giorno(periodi$riferimento[1])` al `r giorno(periodi$riferimento[2])`: lì lavorava da solo. `r if (!riferimento_intero) "Le letture storiche non coprono dodici mesi prima delle antenne: i conteggi sono riportati a un anno."` `r if (periodi$sovrapposti) "Il sistema precedente ha continuato a leggere anche dopo l'arrivo delle antenne. Quelle letture non entrano nel confronto: da allora i due sistemi lavorano insieme, e non si può sapere quali contenitori toccassero all'uno e quali all'altro."`
 
-**La coorte.** `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` le antenne hanno letto `r intero(nrow(contenitori))` contenitori. Il servizio di un contenitore censito è quello del database. Per un contenitore non censito è il servizio atteso delle sue letture, se almeno l'80% porta lo stesso rifiuto: altrimenti la stima è incerta. Il servizio atteso di una lettura lo scrive la preparazione dei dati: viene dai contenitori censiti letti dallo stesso mezzo nella mezz'ora attorno e, se sono pochi, dal calendario dei mezzi. `r if (!tutti_i_servizi) sprintf("Il confronto riguarda %s contenitori%s; gli altri servizi hanno una [sezione](#gli-altri-servizi) a parte.", intero(n_coorte), del_servizio)`
+**La coorte.** `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` le antenne hanno letto `r conta(nrow(letti), "contenitore", "contenitori")`, di tutti i servizi. Entrano nel confronto i soli contenitori che hanno almeno una lettura anche del sistema precedente, in qualsiasi momento: `r intero(nrow(contenitori))`. Su questi i due sistemi si possono misurare uno accanto all'altro. Gli altri sono descritti [più sotto](#i-contenitori-esclusi-dal-confronto).
+
+**Il servizio.** Il servizio di un contenitore censito è quello del database. Per un contenitore non censito è il servizio atteso delle sue letture, se almeno l'80% porta lo stesso rifiuto: altrimenti la stima è incerta. Il servizio atteso di una lettura lo scrive la preparazione dei dati: viene dai contenitori censiti letti dallo stesso mezzo nella mezz'ora attorno e, se sono pochi, dal calendario dei mezzi. `r if (!tutti_i_servizi) sprintf("Il confronto riguarda i contenitori%s della coorte, che sono %s; gli altri servizi hanno una [sezione](#gli-altri-servizi) a parte.", del_servizio, intero(n_coorte))`
 
 ```{r tabella-coorte}
-per_stato <- contenitori |>
+per_stato <- letti |>
   dplyr::mutate(
     tipologia = dplyr::coalesce(tipologia, "Stima incerta"),
-    letto_prima = letture_prima + letture_riferimento + letture_sovrapposte > 0
+    letto_prima = letture_storico > 0
   ) |>
   dplyr::summarise(
     contenitori = dplyr::n(),
@@ -659,25 +716,115 @@ knitr::kable(
     censiti = intero(per_stato$censiti),
     non_censiti = intero(per_stato$non_censiti),
     gia_letti = intero(per_stato$gia_letti),
-    mai = intero(per_stato$contenitori - per_stato$gia_letti)
+    mai = intero(per_stato$contenitori - per_stato$gia_letti),
+    quota = pct(1 - per_stato$gia_letti / per_stato$contenitori)
   ),
   col.names = c(
     "Servizio",
     "Letti dalle antenne",
     "Censiti",
     "Non censiti",
-    "Già letti dal sistema precedente",
-    "Mai letti dal sistema precedente"
+    "Letti anche dal sistema precedente: la coorte",
+    "Esclusi",
+    "Quota di esclusi"
+  ),
+  align = "lrrrrrr"
+)
+```
+
+La coorte guarda tutte le letture del sistema precedente, dal `r giorno(periodi$storico[1])` al `r giorno(periodi$storico[2])`, non solo il periodo di riferimento.
+
+### I contenitori esclusi dal confronto
+
+`r if (n_esclusi == 0) sprintf("Tutti i contenitori%s letti dalle antenne %s compaiono anche nelle letture del sistema precedente: nessuno resta escluso.", del_servizio, nell_ambito_di) else sprintf("I contenitori%s letti dalle antenne e mai dal sistema precedente sono %s, %s di quelli letti dalle antenne. Restano fuori da tutti i conti delle sezioni che seguono.", del_servizio, intero(n_esclusi), con_articolo(n_esclusi / n_letti))`
+
+```{r tabella-esclusi, eval=n_esclusi > 0}
+per_esclusione <- letti_servizio |>
+  dplyr::mutate(
+    stato = ifelse(presente_a_database == "Presente", "Censiti", "Non censiti")
+  ) |>
+  dplyr::summarise(
+    letti = dplyr::n(),
+    coorte = sum(letture_storico > 0),
+    .by = "stato"
+  ) |>
+  dplyr::arrange(stato)
+per_esclusione <- rbind(
+  as.data.frame(per_esclusione),
+  data.frame(
+    stato = "Totale",
+    letti = sum(per_esclusione$letti),
+    coorte = sum(per_esclusione$coorte)
+  )
+)
+knitr::kable(
+  data.frame(
+    stato = per_esclusione$stato,
+    letti = intero(per_esclusione$letti),
+    coorte = intero(per_esclusione$coorte),
+    esclusi = intero(per_esclusione$letti - per_esclusione$coorte),
+    quota = pct(1 - per_esclusione$coorte / per_esclusione$letti)
+  ),
+  col.names = c(
+    "Stato a database",
+    "Letti dalle antenne",
+    "Nella coorte",
+    "Esclusi",
+    "Quota di esclusi"
+  ),
+  align = "lrrrr"
+)
+```
+
+`r if (n_esclusi > 0) "**Perché restano fuori.** Un contenitore senza nessuna lettura precedente può essere tre cose, e i dati non le distinguono:"`
+
+`r if (n_esclusi > 0) "- un contenitore consegnato da poco, o che prima era servito in un altro modo;\n- un contenitore in servizio che il sistema precedente non ha mai letto;\n- un contenitore che uno dei due sistemi registra con un codice diverso: le sue letture precedenti esistono, ma sotto un altro codice."`
+
+`r if (n_esclusi > 0) "Solo il secondo caso è una lettura mancata. Contare tutti gli esclusi come contenitori mai letti attribuirebbe alle antenne anche gli altri due: per questo il confronto non li usa. Il tasso di lettura del sistema precedente, calcolato sulla coorte, è quindi uguale o più alto di quello che risulterebbe contando anche loro."`
+
+`r if (n_esclusi > 0) "**Quanti possono avere le letture precedenti sotto un altro codice.** Il sistema precedente registrava a volte un contenitore con un codice diverso per un solo carattere: vedi [Codici letti male](#codici-letti-male-il-bit-flip). Se a un contenitore succede sempre, o se succede alle antenne, le sue letture precedenti stanno sotto un codice e quelle delle antenne sotto un altro: il contenitore finisce tra gli esclusi pur avendo una storia. Per ogni contenitore letto dalle antenne si è cercato un *gemello*: un codice diverso per un solo carattere, letto solo dal sistema precedente."`
+
+`r if (n_esclusi > 0) "Un gemello da solo non prova niente. I codici dei tag sono spesso numeri di serie vicini: due contenitori diversi possono avere codici che differiscono per un carattere, e quando i codici sono molti succede a quasi tutti. Serve un termine di paragone, e sono i contenitori della coorte: le loro letture precedenti le hanno già, sotto il proprio codice, quindi tra loro un gemello è quasi sempre un altro contenitore. Solo la parte degli esclusi che supera la quota della coorte si può attribuire a un codice registrato male."`
+
+```{r tabella-indizi, eval=n_esclusi > 0}
+knitr::kable(
+  data.frame(
+    indizio = c(
+      "Ha un gemello tra i codici letti solo dal sistema precedente",
+      "Il gemello non compare mai nello stesso giorno, ed è letto negli stessi giorni della settimana",
+      "In più la differenza tra i due codici è di un bit solo"
+    ),
+    esclusi = intero(indizi_esclusi$esclusi),
+    quota_esclusi = pct(indizi_esclusi$quota_esclusi, 1),
+    coorte = intero(indizi_esclusi$coorte),
+    quota_coorte = pct(indizi_esclusi$quota_coorte, 1),
+    in_piu = ifelse(
+      is.na(indizi_esclusi$in_piu),
+      "-",
+      intero(indizi_esclusi$in_piu)
+    )
+  ),
+  col.names = c(
+    "Indizio",
+    "Esclusi",
+    "Quota",
+    "Coorte",
+    "Quota",
+    "Esclusi spiegati, stima"
   ),
   align = "lrrrrr"
 )
 ```
 
-Le ultime due colonne guardano tutte le letture del sistema precedente, dal `r giorno(periodi$storico[1])` in poi, non solo il periodo di riferimento.
+`r if (n_esclusi > 0) "Ogni riga aggiunge un controllo alla precedente. Per i giorni si confrontano le letture delle antenne del contenitore con le letture precedenti del gemello, allo stesso modo per gli esclusi e per la coorte. L'ultima colonna è la stima dei contenitori esclusi che hanno le letture precedenti sotto il gemello: se la quota della coorte è *c* e quella degli esclusi è *e*, sono almeno (*e* − *c*) ÷ (1 − *c*) degli esclusi."`
+
+`r if (n_esclusi == 0) "" else if (!stima_nota) "Con l'ultimo controllo tutti i contenitori della coorte hanno un gemello: i codici sono troppo fitti perché la stima si possa fare." else if (stima_positiva) sprintf("**La stima.** Con tutti e tre i controlli gli esclusi che hanno le letture precedenti sotto un altro codice sono circa %s, %s degli esclusi. %s È una stima prudente, e dà un ordine di grandezza: vale se i codici degli esclusi sono fitti quanto quelli della coorte, e una coppia va comunque verificata sul posto.", intero(stima_gemelli), con_articolo(stima_gemelli / n_esclusi), if (!is.na(stima_larga)) sprintf("Senza chiedere che la differenza sia di un bit solo la stima è %s.", intero(stima_larga)) else "") else sprintf("**La stima.** Con tutti e tre i controlli gli esclusi non hanno un gemello più spesso dei contenitori della coorte: i codici registrati male non spiegano una parte misurabile delle esclusioni. %s", if (!is.na(stima_larga) && round(stima_larga) > 0) sprintf("Senza chiedere che la differenza sia di un bit solo la stima è %s.", conta(round(stima_larga), "contenitore", "contenitori")) else "")`
+
+`r if (n_esclusi > 0) "Per sapere quanti degli altri esclusi sono contenitori nuovi serve la data di consegna, che i due file non riportano."`
 
 ## Quanto leggeva il sistema precedente
 
-I contenitori di questa sezione sono in servizio oggi: le antenne li hanno letti. La domanda è quante volte li aveva letti il sistema precedente.
+I contenitori di questa sezione sono in servizio oggi, perché le antenne li hanno letti, e il sistema precedente li conosceva: ne ha almeno una lettura. La domanda è quante volte li ha letti quando lavorava da solo.
 
 ### Le letture nel periodo di riferimento
 
@@ -728,7 +875,7 @@ ggplot(distribuzione, aes(letture, contenitori)) +
       intero(n_coorte)
     ),
     subtitle = sprintf(
-      "Contenitori%s letti dalle antenne, per numero di letture del sistema precedente\ndal %s al %s. In arancione zero letture o una.",
+      "Contenitori%s della coorte, per numero di letture del sistema precedente\ndal %s al %s. In arancione zero letture o una.",
       del_servizio,
       giorno(periodi$riferimento[1]),
       giorno(periodi$riferimento[2])
@@ -776,10 +923,11 @@ Un contenitore`r del_servizio` della coorte ha in media `r num(riepilogo$media_s
 
 ### Contenitori nuovi o letture mancate
 
-Un contenitore senza letture può essere stato consegnato da poco: il sistema precedente non lo ha letto perché non c'era. Due controlli separano questo caso da una lettura mancata. Sono le due coppie di colonne a destra della tabella.
+Ogni contenitore della coorte ha almeno una lettura del sistema precedente, ma non per forza nel periodo di riferimento. Un contenitore senza letture in quel periodo può essere stato consegnato dopo: il sistema precedente non lo ha letto perché non c'era. Tre controlli separano questo caso da una lettura mancata. I primi due sono le coppie di colonne a destra della tabella.
 
 - **Già in servizio.** `r if (c_e_storia_prima) sprintf("%s contenitori hanno almeno una lettura del sistema precedente prima del %s: all'inizio del periodo di riferimento esistevano già. Tra loro, senza letture nel periodo di riferimento: %s; con una lettura sola: %s. Insieme sono %s.", intero(nrow(in_servizio)), giorno(periodi$riferimento[1]), intero(riepilogo$mai_letti_in_servizio), intero(riepilogo$una_o_meno_in_servizio - riepilogo$mai_letti_in_servizio), con_articolo(riepilogo$una_o_meno_in_servizio / riepilogo$gia_in_servizio)) else senza_storia_prima`
 - **Letti con regolarità dalle antenne.** `r if (nrow(regolari) > 0) sprintf("%s contenitori hanno almeno %s letture con le antenne in giorni diversi: sono esposti con regolarità. Tra loro quelli con al più una lettura del sistema precedente nel periodo di riferimento sono %s, %s.", intero(nrow(regolari)), soglia_regolari, intero(sum(regolari$letture_riferimento <= 1)), con_articolo(mean(regolari$letture_riferimento <= 1))) else sprintf("Nessun contenitore ha ancora %s letture con le antenne in giorni diversi: il controllo si potrà fare con qualche settimana di dati in più.", soglia_regolari)`
+- **Comparsi dopo l'arrivo delle antenne.** `r if (solo_dopo > 0) sprintf("Contenitori con la prima lettura del sistema precedente dal %s in poi, quando le antenne lavoravano già: %s. Nel periodo di riferimento risultano senza letture, ma possono essere stati consegnati nel frattempo. Restano nella coorte e nel conto dei contenitori senza letture, a sfavore del sistema precedente. %s", giorno(periodi$antenne[1]), intero(solo_dopo), if (!is.null(senza_dopo)) sprintf("Senza di loro i contenitori con al più una lettura sarebbero %s su %s, %s, contro %s di tutta la coorte.", intero(senza_dopo$una_o_meno), intero(senza_dopo$n_rfid), con_articolo(senza_dopo$quota_una_o_meno), con_articolo(riepilogo$quota_una_o_meno)) else "") else "Nessun contenitore della coorte ha la prima lettura del sistema precedente dopo l'arrivo delle antenne."`
 
 `r if (c_e_storia_prima) sprintf("Tra tutti i contenitori della coorte quelli con al più una lettura sono %s, tra quelli già in servizio %s: %s", con_articolo(riepilogo$quota_una_o_meno), con_articolo(quota_in_servizio), if (quota_in_servizio >= riepilogo$quota_una_o_meno / 2) "le poche letture restano anche togliendo ogni dubbio sui contenitori nuovi." else "una parte importante dei contenitori senza letture può essere fatta di contenitori consegnati da poco. Il dato più solido è quello dei contenitori già in servizio.")`
 
@@ -1061,7 +1209,9 @@ knitr::kable(
 
 `r if (antenne_di_piu) sprintf("Su questi %s contenitori le raccolte previste in un anno sono %s. Al ritmo osservato, le antenne ne registrano circa %s in più del sistema precedente: sono svuotamenti che prima non risultavano e che ora si possono attribuire a un'utenza.", intero(riepilogo$n_con_raccolte), intero(riepilogo$raccolte_previste), intero(riepilogo$letture_recuperate))`
 
-`r if (any(con_raccolte$raccolte_stimate)) sprintf("**Raccolte previste dei non censiti.** %s non hanno le raccolte previste, perché non sono a database. Il numero di passaggi dipende dal giro, non dal contenitore: per loro valgono le raccolte previste più frequenti tra i censiti dello stesso servizio nello stesso comune.", sub("^(.)", "\\U\\1", conta(sum(con_raccolte$raccolte_stimate), "contenitore", "contenitori"), perl = TRUE))`
+`r if (!is.null(senza_dopo) && senza_dopo$n_con_raccolte > 0 && senza_dopo$giorni_dopo > 0) sprintf("**Senza i contenitori comparsi dopo.** I contenitori che il sistema precedente ha letto solo dopo l'arrivo delle antenne sono %s: nel periodo di riferimento non hanno letture, e abbassano il suo tasso. Togliendoli, il tasso del sistema precedente è %s e quello delle antenne %s: la differenza è di %s punti, contro %s con tutti i contenitori.", intero(solo_dopo), con_articolo(senza_dopo$tasso_storico), con_articolo(senza_dopo$tasso_antenne), in_punti(senza_dopo$tasso_antenne - senza_dopo$tasso_storico), in_punti(punti))`
+
+`r if (any(con_raccolte$raccolte_stimate)) sprintf("**Raccolte previste dei non censiti.** Contenitori senza le raccolte previste, perché non sono a database: %s. Il numero di passaggi dipende dal giro, non dal contenitore: per questi valgono le raccolte previste più frequenti tra i censiti dello stesso servizio nello stesso comune.", intero(sum(con_raccolte$raccolte_stimate)))`
 
 **Perché il dato delle antenne è prudente.** Finché non tutti i mezzi hanno le antenne, un contenitore può essere servito una volta da un mezzo attrezzato e la volta dopo da uno che non lo è: il secondo svuotamento alle antenne manca. Il loro tasso di lettura, misurato oggi, è quindi stimato per difetto.
 
@@ -1104,7 +1254,7 @@ I dati dicono quanto leggeva il sistema precedente, non perché: una sua lettura
 
 ## Che cosa vedono solo le antenne
 
-Il sistema precedente registrava un codice e un istante. Le antenne aggiungono il mezzo e la posizione, e dal mezzo si ricava il giro. Le quattro analisi di questa sezione ne dipendono: con le letture precedenti non si potevano fare. Riguardano tutti i servizi, non solo `r if (tutti_i_servizi) "uno" else paste0("il ", nome_servizio)`.
+Il sistema precedente registrava un codice e un istante. Le antenne aggiungono il mezzo e la posizione, e dal mezzo si ricava il giro. Le quattro analisi di questa sezione ne dipendono: con le letture precedenti non si potevano fare. Non sono un confronto: riguardano tutti i contenitori letti dalle antenne `r nell_ambito_di`, anche quelli esclusi dalla coorte, e tutti i servizi, non solo `r if (tutti_i_servizi) "uno" else paste0("il ", nome_servizio)`.
 
 ### Contenitori lontani dal comune del database
 
@@ -1225,7 +1375,7 @@ knitr::kable(
 letture_perse <- sum(sospetti$letture_gemello)
 ```
 
-Le coppie di codici a un carattere di distanza sono `r intero(nrow(coppie))` in tutto il territorio. `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` quelle con un solo codice censito sono `r intero(nrow(gemelli))`, e `r if (nrow(sospetti) == 0) "nessuna supera tutti i controlli." else sprintf("%s: %s finite sotto un codice che il database non conosce.", conta(nrow(sospetti), "supera tutti i controlli", "superano tutti i controlli"), conta(letture_perse, "lettura", "letture"))`
+Le coppie di codici a un carattere di distanza, con almeno un codice letto dalle antenne, sono `r intero(nrow(coppie))` in tutto il territorio. `r sub("^(.)", "\\U\\1", nell_ambito_di, perl = TRUE)` quelle con un solo codice censito sono `r intero(nrow(gemelli))`, e `r if (nrow(sospetti) == 0) "nessuna supera tutti i controlli." else sprintf("%s: %s finite sotto un codice che il database non conosce.", conta(nrow(sospetti), "supera tutti i controlli", "superano tutti i controlli"), conta(letture_perse, "lettura", "letture"))`
 
 ```{r tabella-gemelli, eval=nrow(gemelli) > 0}
 elenco_gemelli <- utils::head(gemelli, massimo_righe_tabella)
@@ -1254,6 +1404,10 @@ tabella_dt(
 ```
 
 `r if (nrow(sospetti) > 0) "Una coppia sospetta va verificata sul posto, leggendo il tag più volte: se il contenitore è uno solo, basta associare all'utenza anche il secondo codice e sostituire il tag."`
+
+`r if (nrow(sospetti_coorte) > 0) sprintf("**L'effetto sul confronto.** Contenitori%s della coorte con un gemello sospetto: %s. Nel confronto le loro letture precedenti sono le sole registrate con il codice giusto. Letture del sistema precedente finite sotto il codice sconosciuto, e quindi non contate: %s. Per questi contenitori il tasso del sistema precedente è stimato per difetto.", del_servizio, intero(dplyr::n_distinct(sospetti_coorte$codice)), intero(sum(sospetti_coorte$letture_gemello_storico)))`
+
+Questa ricerca parte dai codici censiti. Quella sui contenitori esclusi dalla coorte, che parte dai codici letti solo dalle antenne, è nella sezione [I contenitori esclusi dal confronto](#i-contenitori-esclusi-dal-confronto).
 
 **Il limite di questo controllo.** Lo stato a database si conosce solo per i codici letti dalle antenne. Un contenitore con il codice instabile che le antenne non hanno ancora letto non compare tra i sospetti. Con l'elenco completo dei codici a database il controllo si può estendere a tutte le letture precedenti.
 
@@ -1288,7 +1442,7 @@ Con il sistema precedente il calendario e il lavoro svolto non si potevano confr
 
 ## Gli altri servizi
 
-Gli stessi conti, per ogni servizio, `r nell_ambito_di`. `r if (!tutti_i_servizi) sprintf("La riga in grassetto è il servizio di questo report.")`
+Gli stessi conti, per ogni servizio, sui contenitori letti da tutti e due i sistemi `r nell_ambito_di`. `r if (!tutti_i_servizi) sprintf("La riga in grassetto è il servizio di questo report.")`
 
 ```{r tabella-servizi}
 righe_servizi <- per_servizio |>
@@ -1317,7 +1471,7 @@ knitr::kable(
   tabella_servizi,
   col.names = c(
     "Servizio",
-    "Contenitori",
+    "Contenitori della coorte",
     "Mai letti nel periodo di riferimento",
     "Al più una lettura",
     "Letture l'anno del contenitore tipico",
@@ -1333,7 +1487,7 @@ knitr::kable(
 
 `r if (mostra_cantieri) "## Cantiere per cantiere"`
 
-`r if (mostra_cantieri) sprintf("Gli stessi conti sui contenitori%s, per ogni cantiere. Un contenitore appartiene al cantiere del suo comune. L'ultima riga riporta l'intero territorio.", del_servizio)`
+`r if (mostra_cantieri) sprintf("Gli stessi conti sui contenitori%s della coorte, per ogni cantiere. Un contenitore appartiene al cantiere del suo comune. L'ultima riga riporta l'intero territorio.", del_servizio)`
 
 ```{r tabella-cantieri, eval=mostra_cantieri}
 righe_cantieri <- dplyr::bind_rows(
@@ -1663,8 +1817,8 @@ knitr::kable(
 Queste analisi non sono in questo report, perché servono dati che il file delle letture non contiene. Sono in ordine di utilità.
 
 1. **Quanti errori di codice corregge già la preparazione dei dati.** La regola che riporta a zero i caratteri iniziali del codice si applica a un numero di letture che si può contare, sistema per sistema. Se gli errori cadono a caso lungo il codice, per ogni 14 corretti nei caratteri iniziali ce ne sono circa 10 nelle cifre che identificano il contenitore, non corretti. È una stima dell'ampiezza del problema del [bit flip](#codici-letti-male-il-bit-flip) che non dipende dalle coppie di codici.
-2. **La data di consegna dei contenitori.** Con la data di attivazione dall'anagrafica, un contenitore mai letto si divide con certezza tra consegnato da poco e mai registrato.
-3. **L'elenco completo dei codici a database.** Estende la ricerca dei codici letti male a tutti i contenitori, anche a quelli che le antenne non hanno ancora letto.
+2. **La data di consegna dei contenitori.** Con la data di attivazione dall'anagrafica, i contenitori esclusi dalla coorte si dividono con certezza tra consegnati da poco e mai letti dal sistema precedente. I secondi potrebbero allora entrare nel confronto.
+3. **L'elenco completo dei codici a database.** Dice quale dei due codici di una coppia è quello giusto, ed estende la ricerca dei codici letti male a tutti i contenitori, anche a quelli che le antenne non hanno ancora letto.
 4. **I mezzi con e senza antenne, giro per giro.** Con l'elenco dei mezzi attrezzati e la data di installazione, il tasso di lettura delle antenne si può calcolare sui soli giri fatti da un mezzo attrezzato: smette di essere una stima per difetto.
 5. **Le letture doppie.** Nei giorni in cui un mezzo con le antenne ha fatto anche la lettura a mano, le due letture dello stesso contenitore si possono confrontare una per una: è la misura diretta di quanto ogni sistema perde.
 6. **Gli svuotamenti per utenza.** Raggruppando i contenitori per utenza si ottiene il numero di conferimenti di ogni utenza: è la base di una simulazione della tariffa a conferimento, da fare quando le antenne avranno coperto un anno.
@@ -1672,7 +1826,7 @@ Queste analisi non sono in questo report, perché servono dati che il file delle
 
 ## Come sono fatti i conti
 
-1. **Coorte.** I contenitori letti almeno una volta dalle antenne, `r nell_ambito_di``r if (!tutti_i_servizi) paste0(", con il servizio", del_servizio)`. Entrano anche quelli che il sistema precedente non ha mai letto.
+1. **Coorte.** I contenitori letti almeno una volta da tutti e due i sistemi, `r nell_ambito_di``r if (!tutti_i_servizi) paste0(", con il servizio", del_servizio)`. Per il sistema precedente vale una lettura in qualsiasi momento, anche dopo l'arrivo delle antenne. I contenitori letti solo dalle antenne restano fuori dal confronto e sono contati a parte.
 2. **Sacchetti.** I sacchetti, riconosciuti dal codice RFID, sono monouso e vengono letti una volta sola. Sono tolti dai due file prima di ogni conto.
 3. **Una lettura al giorno.** Per ogni contenitore e per ogni sistema conta la prima lettura di ogni giorno.
 4. **Servizio.** Per un censito è quello del database. Per un non censito è il servizio atteso delle sue letture, se una tipologia raggiunge l'80%. Il servizio atteso di una lettura lo scrive la preparazione dei dati. Un giro raccoglie un rifiuto solo: se nei 30 minuti prima e dopo la lettura lo stesso mezzo ha letto almeno 5 contenitori censiti, e almeno l'80% ha lo stesso servizio, vale quello. Altrimenti vale il servizio che il calendario dava al mezzo. Il calendario da solo non basta: un mezzo può sostituirne un altro e fare un giro che non era il suo.
@@ -1683,13 +1837,17 @@ Queste analisi non sono in questo report, perché servono dati che il file delle
 9. **Intervallo di confidenza.** Calcolato con il metodo jackknife: la statistica viene ricalcolata togliendo un contenitore alla volta.
 10. **Territorio, cantiere, comune.** Il comune di un contenitore è l'ultimo indicato dal database; per un non censito è il comune in cui viene letto più spesso, secondo la posizione delle letture. Il calendario dei mezzi non conta: un mezzo può sostituirne un altro. Il cantiere è quello del comune, secondo la tabella dei comuni del pacchetto.
 11. **Fuori comune e fuori giro.** Una lettura è incongruente oltre `r intero(tolleranza_confine_m())` metri dal confine del comune dichiarato.
+12. **Esclusi e codici gemelli.** Per ogni contenitore letto dalle antenne si cercano i codici diversi per un solo carattere letti solo dal sistema precedente. Una coppia è compatibile con un solo contenitore se le letture delle antenne dell'uno e le letture precedenti dell'altro non cadono mai nello stesso giorno, e almeno l'80% delle seconde cade nei giorni della settimana delle prime. La quota di esclusi con un gemello si confronta con la stessa quota tra i contenitori della coorte: se sono *e* e *c*, la stima degli esclusi con le letture precedenti sotto un altro codice è (*e* − *c*) ÷ (1 − *c*), mai meno di zero.
 
-Le funzioni sono in `R/utils_confronto.R` e hanno i loro test: `una_lettura_al_giorno()`, `periodi_confronto()`, `confronto_sistemi()`, `riepilogo_confronto()`, `intervallo_jackknife()`, `codici_gemelli()`, `gemelli_sospetti()`, `rfid_fuori_comune()`. L'anagrafica dei contenitori viene da `anagrafica_rfid()`, in `R/utils_storico.R`.
+Le funzioni sono in `R/utils_confronto.R` e hanno i loro test: `una_lettura_al_giorno()`, `periodi_confronto()`, `confronto_sistemi()`, `riepilogo_confronto()`, `intervallo_jackknife()`, `coorte_dei_due_sistemi()`, `codici_gemelli()`, `gemelli_sospetti()`, `gemelli_tra_sistemi()`, `riepilogo_gemelli()`, `rfid_fuori_comune()`. L'anagrafica dei contenitori viene da `anagrafica_rfid()`, in `R/utils_storico.R`.
 
 ## Cosa resta da verificare
 
 - **Periodo delle antenne.** Le letture con le antenne coprono `r intero(periodi$giorni_antenne)` giorni. `r if (periodi$giorni_antenne < 365) "Meno di un anno: il tasso di lettura delle antenne risente della stagione e dei mezzi attrezzati per primi." else "Se alcuni mezzi sono stati attrezzati dopo gli altri, il dato delle antenne è stimato per difetto."`
-- **Contenitori nuovi.** Un contenitore senza letture precedenti può essere stato consegnato da poco. I controlli sui contenitori già in servizio e su quelli letti con regolarità riducono questo dubbio; la data di consegna lo toglierebbe.
+- **Formato dei codici.** La coorte si forma confrontando i codici dei due file, carattere per carattere. Se i due sistemi scrivono lo stesso codice in modo diverso, la coorte risulta più piccola del vero: una quota alta di esclusi va controllata prima di tutto su questo.
+- **Contenitori esclusi.** `r if (n_esclusi > 0) sprintf("I contenitori%s letti solo dalle antenne sono %s di quelli letti dalle antenne. Il confronto non dice niente su di loro: non si può concludere né che il sistema precedente non li leggesse, né che fossero nuovi.", del_servizio, con_articolo(n_esclusi / n_letti)) else "In questo ambito nessun contenitore è escluso."`
+- **Codici vicini per caso.** La stima degli esclusi con le letture precedenti sotto un altro codice dipende dal termine di paragone: vale se i codici degli esclusi sono fitti quanto quelli della coorte.
+- **Contenitori nuovi.** Un contenitore della coorte senza letture nel periodo di riferimento può essere stato consegnato dopo. I controlli sui contenitori già in servizio, su quelli letti con regolarità e su quelli comparsi dopo l'arrivo delle antenne riducono questo dubbio; la data di consegna lo toglierebbe.
 - **Chi espone di rado.** Poche letture possono essere vere: un contenitore esposto poche volte l'anno. Il confronto con le antenne sugli stessi contenitori serve a questo, ma su un periodo breve una stagione può pesare.
 - **Raccolte previste di oggi.** L'anagrafica riporta le raccolte previste attuali. Il confronto le applica anche al periodo di riferimento, come se il calendario non fosse cambiato.
 - **Lettura e svuotamento.** Una lettura dice che il mezzo è passato accanto al tag. Le letture utili e l'analisi dei cluster dell'app tolgono i casi più evidenti di tag letti senza svuotamento.

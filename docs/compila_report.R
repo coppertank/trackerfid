@@ -87,8 +87,10 @@ options(
   )
 )
 
-# Cantieri e comuni con contenitori del servizio letti dalle antenne.
+# Cantieri e comuni con contenitori del servizio nella coorte: quelli letti da
+# tutti e due i sistemi.
 anagrafica <- anagrafica_rfid(senza_sacchetti(letture))
+anagrafica <- anagrafica[anagrafica$RFID %in% storico$RFID, , drop = FALSE]
 if (nzchar(servizio)) {
   anagrafica <- anagrafica[
     tolower(anagrafica$tipologia) %in% tolower(servizio),
@@ -98,7 +100,8 @@ if (nzchar(servizio)) {
 }
 if (nrow(anagrafica) == 0) {
   stop(
-    "Le antenne non hanno letto nessun contenitore del servizio indicato.",
+    "Nessun contenitore del servizio indicato è stato letto da tutti e due ",
+    "i sistemi.",
     call. = FALSE
   )
 }

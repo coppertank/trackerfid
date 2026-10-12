@@ -182,11 +182,28 @@ if (length(argomenti) >= 2) {
     riepilogo_confronto(confronto, "cantiere")
     riepilogo_confronto(confronto, "comune")
   })
-  gemelli <- misura("Codici a un carattere di distanza", {
-    gemelli_sospetti(codici_gemelli(unique(unite$RFID)), unite, contenitori)
+  coorte <- coorte_dei_due_sistemi(confronto)
+  message(sprintf(
+    "  %s contenitori letti dalle antenne, %s letti da tutti e due i sistemi",
+    formatta_numero(nrow(confronto)),
+    formatta_numero(nrow(coorte))
+  ))
+  coppie <- misura("Codici a un carattere di distanza", {
+    codici_gemelli(unique(unite$RFID), tra = confronto$RFID)
+  })
+  gemelli <- misura("Coppie con un solo codice censito", {
+    gemelli_sospetti(coppie, unite, contenitori)
+  })
+  tra_sistemi <- misura("Gemelli letti solo dal sistema precedente", {
+    riepilogo_gemelli(
+      gemelli_tra_sistemi(coppie, unite),
+      setdiff(confronto$RFID, coorte$RFID),
+      coorte$RFID
+    )
   })
   message(sprintf(
-    "  %s coppie con un solo codice censito",
+    "  %s coppie con almeno un codice letto dalle antenne, %s con un solo codice censito",
+    formatta_numero(nrow(coppie)),
     formatta_numero(nrow(gemelli))
   ))
   misura("Contenitori fuori comune, settimane e mesi", {
