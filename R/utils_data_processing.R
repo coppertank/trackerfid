@@ -25,17 +25,75 @@ colonne_facoltative <- function() {
   c(colonne_quantita(), colonne_geografiche())
 }
 
-#' Campo facoltativo del CSV con il servizio del contenitore a database
+#' Campo facoltativo del CSV con l'origine del servizio atteso
 #'
-#' `servizio_atteso` è il servizio del contenitore: per un censito quello del
-#' database, per un non censito quello stimato, vedi
-#' `associa_servizio_atteso_dai_censiti()`. `servizio_transponder` è il solo
-#' servizio del database, vuoto per i non censiti: per un censito le due
-#' colonne coincidono, quindi il file può non riportarla. L'app la tiene
-#' comunque, ricavata dal servizio atteso, perché serve all'icona, alla
-#' cronologia del servizio e all'analisi dei cluster.
+#' `servizio_atteso` è il servizio del contenitore, una colonna sola per
+#' censiti e non censiti. `origine_servizio` dice da dove viene, con i valori
+#' di `origini_servizio()`. Il servizio del database non ha più una colonna
+#' sua: è il servizio atteso delle letture con origine `Database`, vedi
+#' `servizio_a_database()`.
 #' @noRd
-colonne_contenitore <- function() "servizio_transponder"
+colonne_origine <- function() "origine_servizio"
+
+#' Valori della colonna `origine_servizio`
+#'
+#' - `Database`: il servizio è quello del contenitore nel database aziendale.
+#' - `Censiti`: il servizio viene dai contenitori censiti letti dallo stesso
+#'   mezzo nei minuti attorno, vedi `associa_servizio_atteso_dai_censiti()`.
+#' - `Calendario`: il servizio è il giro che il calendario dava al mezzo, con
+#'   il nome del database.
+#'
+#' L'origine manca dove manca il servizio atteso, e nei file che non la
+#' riportano per le letture il cui servizio non viene dal database.
+#'
+#' @return Vettore con le etichette: i nomi sono quelli usati nel codice.
+#' @noRd
+origini_servizio <- function() {
+  c(database = "Database", censiti = "Censiti", calendario = "Calendario")
+}
+
+#' Origine del servizio atteso in un file che non la riporta
+#'
+#' Si può dire solo quali servizi vengono dal database: quelli dei censiti,
+#' esclusi i sacchetti, che a database non hanno un servizio. Per le altre
+#' letture l'origine resta mancante: dal file non si distingue il servizio
+#' preso dai censiti da quello del calendario.
+#'
+#' @param data Letture con `RFID`, `presente_a_database` e `servizio_atteso`.
+#' @return Vettore di testo, un valore per lettura.
+#' @noRd
+origine_dedotta <- function(data) {
+  origine <- rep(NA_character_, nrow(data))
+  servizio <- data[["servizio_atteso"]]
+  if (is.null(servizio)) {
+    return(origine)
+  }
+  dal_database <- data$presente_a_database %in%
+    "Presente" &
+    !is.na(servizio) &
+    !per_valori_distinti(as.character(data$RFID), rfid_sacchetto)
+  origine[dal_database] <- origini_servizio()[["database"]]
+  origine
+}
+
+#' Servizio del contenitore secondo il database, per ogni lettura
+#'
+#' È il servizio atteso delle letture con origine `Database`, mancante per le
+#' altre: serve dove conta solo quello che dice l'anagrafica, come la
+#' cronologia dei cambi di servizio di un contenitore. Se le letture non hanno
+#' la colonna `origine_servizio` vale `origine_dedotta()`.
+#'
+#' @param data Letture.
+#' @return Vettore di testo, un valore per lettura.
+#' @noRd
+servizio_a_database <- function(data) {
+  servizio <- as.character(
+    data[["servizio_atteso"]] %||% rep(NA_character_, nrow(data))
+  )
+  origine <- data[["origine_servizio"]] %||% origine_dedotta(data)
+  servizio[!origine %in% origini_servizio()[["database"]]] <- NA_character_
+  servizio
+}
 
 #' Campo facoltativo del CSV con il servizio del giro secondo il calendario
 #'
@@ -102,7 +160,7 @@ fuori_servizio <- function() "FUORI SERVIZIO AZIENDA"
 colonne_dataset <- function() {
   c(
     colonne_obbligatorie(),
-    colonne_contenitore(),
+    colonne_origine(),
     colonne_facoltative(),
     colonne_calendario(),
     colonne_derivate()
@@ -502,7 +560,7 @@ elenco_righe <- function(indici, massimo = 5) {
 
 #' Valida il dataset e converte i campi nei tipi corretti
 #'
-#' Controlla la presenza dei 10 campi obbligatori, converte `giorno_lettura` in
+#' Controlla la presenza dei campi obbligatori, converte `giorno_lettura` in
 #' POSIXct e le coordinate in numerico, normalizza i valori testuali.
 #' I valori non interpretabili generano un errore esplicito; le righe con campi
 #' essenziali vuoti vengono scartate e segnalate tra gli avvisi.
@@ -548,14 +606,23 @@ validate_dataset <- function(data) {
       originale[[posizione_facoltative[i]]]
     }
   }
-  # Il servizio del contenitore a database: se il file non lo riporta viene
-  # ricavato più sotto dal servizio atteso dei censiti.
-  posizione_contenitore <- match(colonne_contenitore(), tolower(nomi))
-  con_contenitore <- !is.na(posizione_contenitore)
-  data[[colonne_contenitore()]] <- if (con_contenitore) {
-    originale[[posizione_contenitore]]
+  # L'origine del servizio atteso: se il file non la riporta viene dedotta
+  # più sotto.
+  posizione_origine <- match(colonne_origine(), tolower(nomi))
+  con_origine <- !is.na(posizione_origine)
+  data[[colonne_origine()]] <- if (con_origine) {
+    originale[[posizione_origine]]
   } else {
     rep(NA_character_, nrow(data))
+  }
+  # Nei file preparati prima della fusione dei due servizi il servizio del
+  # database stava in una colonna sua, `servizio_transponder`. Resta in una
+  # colonna di passaggio, che il risultato non riporta.
+  precedente <- "servizio_transponder"
+  posizione_precedente <- match(precedente, tolower(nomi))
+  con_precedente <- !is.na(posizione_precedente)
+  if (con_precedente) {
+    data[[precedente]] <- originale[[posizione_precedente]]
   }
   # Il servizio del calendario: nei file che non lo riportano è quello atteso.
   posizione_giro <- match(colonne_calendario(), tolower(nomi))
@@ -659,6 +726,26 @@ validate_dataset <- function(data) {
     )
   }
 
+  origini <- origini_servizio()
+  origine <- per_valori_distinti(data$origine_servizio, function(valori) {
+    unname(origini)[match(tolower(valori), tolower(origini))]
+  })
+  non_validi <- which(!is.na(data$origine_servizio) & is.na(origine))
+  if (length(non_validi) > 0) {
+    errori <- c(
+      errori,
+      sprintf(
+        "origine_servizio: valori non ammessi (%s). Sono accettati solo %s. Righe del file: %s.",
+        paste(
+          utils::head(unique(data$origine_servizio[non_validi]), 3),
+          collapse = ", "
+        ),
+        paste0('"', origini, '"', collapse = ", "),
+        elenco_righe(non_validi)
+      )
+    )
+  }
+
   quantita <- purrr::map(
     stats::setNames(colonne_quantita(), colonne_quantita()),
     function(campo) {
@@ -704,36 +791,37 @@ validate_dataset <- function(data) {
   data$numero_raccolte_annue_previste <- quantita$numero_raccolte_annue_previste$valori
   data$giorno_lettura <- giorno
   data$presente_a_database <- stato
-  data$servizio_transponder <- maiuscolo(data$servizio_transponder)
   data$servizio_atteso <- maiuscolo(data$servizio_atteso)
   data$servizio_giro <- maiuscolo(data$servizio_giro)
-  # Per un censito il servizio atteso è quello del contenitore a database: le
-  # due colonne coincidono. Se il file ha il servizio del database, vale
-  # quello, anche in un file preparato quando il servizio atteso dei censiti
-  # veniva dal calendario. Se non lo ha, lo si ricava dal servizio atteso. Un
-  # sacchetto non ha un servizio a database: il suo servizio atteso resta
-  # quello del giro.
+  # Il servizio atteso di un censito è quello del contenitore a database, e
+  # la sua origine è `Database`. Un sacchetto non ha un servizio a database:
+  # il suo servizio atteso resta quello del giro.
   censito <- stato %in% "Presente"
   sacchetto <- per_valori_distinti(data$RFID, rfid_sacchetto)
-  if (con_contenitore) {
-    dal_database <- which(
-      censito &
-        !sacchetto &
-        !is.na(data$servizio_transponder) &
-        data$servizio_transponder != servizio_sacchetti()
-    )
-    data$servizio_atteso[dal_database] <- data$servizio_transponder[
-      dal_database
-    ]
-  } else {
-    dei_censiti <- which(censito & !sacchetto)
-    data$servizio_transponder[dei_censiti] <- data$servizio_atteso[dei_censiti]
+  # Dal file, quando non è passato dalla regola di oggi, risulta solo se un
+  # contenitore censito ha il servizio del database.
+  del_database <- rep(FALSE, nrow(data))
+  if (con_precedente) {
+    # File con le due colonne: per i censiti vale il servizio del database,
+    # anche se il servizio atteso veniva dal calendario.
+    del_contenitore <- maiuscolo(data[[precedente]])
+    del_database <- censito &
+      !sacchetto &
+      !is.na(del_contenitore) &
+      del_contenitore != servizio_sacchetti()
+    data$servizio_atteso[del_database] <- del_contenitore[del_database]
+  } else if (!con_origine) {
+    del_database <- censito & !sacchetto & !is.na(data$servizio_atteso)
   }
-  # Un sacchetto censito si riconosce dal codice e riceve il servizio dei
-  # sacchetti, che dà icona e voce dei filtri.
-  data$servizio_transponder[
-    censito & sacchetto & is.na(data$servizio_transponder)
-  ] <- servizio_sacchetti()
+  # Un non censito con il servizio del database: lo segnala un avviso.
+  senza_stato <- !censito & origine %in% origini[["database"]]
+  if (con_precedente) {
+    senza_stato <- senza_stato | (!censito & !is.na(data[[precedente]]))
+  }
+  origine[del_database] <- origini[["database"]]
+  # Un'origine senza servizio non dice niente.
+  origine[is.na(data$servizio_atteso)] <- NA_character_
+  data$origine_servizio <- origine
   data$coerenza <- coerenza_servizio(data)
   data$comune_da_database <- normalizza_comune(data$comune_da_database)
   data$comune_giro <- normalizza_comune(data$comune_giro)
@@ -759,6 +847,7 @@ validate_dataset <- function(data) {
   }
   if (n_scartate > 0) {
     data <- data[complete, , drop = FALSE]
+    senza_stato <- senza_stato[complete]
     avvisi <- c(
       avvisi,
       sprintf(
@@ -772,13 +861,13 @@ validate_dataset <- function(data) {
   # --- Controlli di coerenza (non bloccanti) ----------------------------------
   incoerenti <- sum(
     data$presente_a_database == "Non Presente" &
-      (!is.na(data$servizio_transponder) | !is.na(data$id_utenza))
+      (senza_stato | !is.na(data$id_utenza))
   )
   if (incoerenti > 0) {
     avvisi <- c(
       avvisi,
       sprintf(
-        "%d letture \"Non Presente\" riportano comunque servizio_transponder o id_utenza.",
+        "%d letture \"Non Presente\" riportano comunque il servizio del database o id_utenza.",
         incoerenti
       )
     )
@@ -1011,14 +1100,17 @@ servizio_prevalente_non_censiti <- function(data, soglia = 0.8) {
 
 #' Aggiunge alle letture il servizio da rappresentare con l'icona
 #'
-#' La colonna `servizio_icona` vale `servizio_transponder` per le letture
-#' censite. Per quelle non censite vale il servizio stimato dell'RFID, cioè il
-#' suo servizio atteso prevalente: manca se nessuna tipologia raggiunge la
-#' soglia, e in quel caso il marker mostra il punto di domanda. La stessa
-#' colonna serve ai filtri e alle statistiche dei non censiti.
+#' La colonna `servizio_icona` vale `servizio_atteso` per le letture censite:
+#' è il servizio del contenitore a database. Per quelle non censite vale il
+#' servizio stimato dell'RFID, cioè il suo servizio atteso prevalente: manca se
+#' nessuna tipologia raggiunge la soglia, e in quel caso il marker mostra il
+#' punto di domanda. Un non censito sta così sotto una voce sola.
 #'
-#' Un sacchetto si riconosce dal codice e non ha un servizio da stimare: ha
-#' sempre il servizio dei sacchetti, anche quando non è censito.
+#' Un sacchetto si riconosce dal codice e non ha una tipologia di rifiuto: ha
+#' sempre il servizio dei sacchetti, censito o no.
+#'
+#' La stessa colonna dà la voce con cui una lettura compare nel filtro sul
+#' servizio atteso e nelle statistiche: icone, filtri e conteggi coincidono.
 #'
 #' @param letture Letture da completare.
 #' @param riferimento Letture su cui calcolare il servizio prevalente.
@@ -1037,23 +1129,23 @@ aggiungi_servizio_icona <- function(
   censita <- letture$presente_a_database == "Presente"
   letture$servizio_icona <- ifelse(
     censita,
-    letture$servizio_transponder,
+    as.character(letture$servizio_atteso),
     stimato
   )
-  # I sacchetti: tra le letture non censite, e tra quelle censite rimaste
-  # senza servizio perché il file non è passato dalla validazione.
-  da_vedere <- which(!censita | is.na(letture$servizio_icona))
   letture$servizio_icona[
-    da_vedere[rfid_sacchetto(letture$RFID[da_vedere])]
+    per_valori_distinti(as.character(letture$RFID), rfid_sacchetto)
   ] <- servizio_sacchetti()
   letture
 }
 
-#' Servizio mostrato dal marker di ogni lettura
+#' Servizio con cui una lettura compare su marker, filtri e statistiche
 #'
-#' È la colonna `servizio_icona`. Se manca viene calcolata sulle letture
-#' ricevute: chi passa solo una parte delle letture, ad esempio una riga per
-#' RFID, deve quindi averla aggiunta prima, su tutte le letture del periodo.
+#' È la colonna `servizio_icona`, vedi `aggiungi_servizio_icona()`: per un
+#' censito il servizio atteso della lettura, per un non censito il servizio
+#' stimato dell'RFID, per un sacchetto il servizio dei sacchetti. Se la colonna
+#' manca viene calcolata sulle letture ricevute: chi passa solo una parte
+#' delle letture, ad esempio una riga per RFID, deve quindi averla aggiunta
+#' prima, su tutte le letture del periodo.
 #'
 #' @param data Letture.
 #' @return Vettore con un servizio per lettura, mancante dove il marker mostra
@@ -1064,31 +1156,6 @@ servizio_mostrato <- function(data) {
     data <- aggiungi_servizio_icona(data)
   }
   data$servizio_icona
-}
-
-#' Servizio atteso con cui una lettura compare nei filtri e nelle statistiche
-#'
-#' Per una lettura censita è il suo `servizio_atteso`, cioè il servizio del
-#' contenitore a database. Per una lettura non censita è il servizio stimato
-#' dell'RFID, vedi `aggiungi_servizio_icona()`: un non censito sta così sotto
-#' una voce sola, e manca se la stima è incerta. Un sacchetto ha sempre il
-#' servizio dei sacchetti: non ha una tipologia di rifiuto. È lo stesso
-#' servizio che dà l'icona al marker.
-#'
-#' @param data Letture, con la colonna `servizio_icona`: vedi
-#'   `servizio_mostrato()`.
-#' @return Vettore con un servizio per lettura.
-#' @noRd
-servizio_dei_filtri <- function(data) {
-  servizio <- servizio_mostrato(data)
-  # Un sacchetto censito ha già il servizio dei sacchetti, dato dalla
-  # validazione o da `aggiungi_servizio_icona()`: non serve riguardare i codici.
-  censite <- which(
-    data$presente_a_database == "Presente" &
-      !servizio %in% servizio_sacchetti()
-  )
-  servizio[censite] <- as.character(data$servizio_atteso[censite])
-  servizio
 }
 
 #' Voce che nei filtri e nelle statistiche indica le letture senza cantiere
@@ -1117,7 +1184,7 @@ ordina_cantieri <- function(valori) {
 #' I servizi si filtrano per esclusione. Una lettura passa se il suo servizio
 #' atteso non è tra quelli deselezionati: per un censito è il servizio del
 #' contenitore a database, per un non censito il servizio stimato dell'RFID,
-#' vedi `servizio_dei_filtri()`. Gli RFID non censiti con la stima incerta, quelli
+#' vedi `servizio_mostrato()`. Gli RFID non censiti con la stima incerta, quelli
 #' che sulla mappa hanno il punto di domanda, passano solo con
 #' `includi_stima_incerta`. Lo stato a database si sceglie a parte, e vale
 #' per tutti gli elenchi.
@@ -1169,7 +1236,7 @@ maschera_filtri <- function(
   tieni <- data$presente_a_database %in% stato_db
   senza_incerti <- !isTRUE(includi_stima_incerta)
   if (length(atteso_esclusi) > 0 || senza_incerti) {
-    atteso <- servizio_dei_filtri(data)
+    atteso <- servizio_mostrato(data)
     if (length(atteso_esclusi) > 0) {
       tieni <- tieni & !(atteso %in% atteso_esclusi)
     }
@@ -1252,7 +1319,7 @@ conta_cantieri <- function(valori) {
 #' Statistiche del dataset filtrato (una riga per RFID)
 #'
 #' I servizi seguono gli stessi criteri dei filtri, vedi
-#' `servizio_dei_filtri()`: per i censiti il servizio del contenitore a
+#' `servizio_mostrato()`: per i censiti il servizio del contenitore a
 #' database, per i non censiti il servizio stimato. I non censiti senza un
 #' servizio stimato sono contati a parte.
 #'
@@ -1269,7 +1336,7 @@ conta_cantieri <- function(valori) {
 #' @noRd
 calcola_statistiche <- function(data, cantieri_letture = NULL) {
   censiti <- data$presente_a_database == "Presente"
-  atteso <- servizio_dei_filtri(data)
+  atteso <- servizio_mostrato(data)
   posizione <- posizione_letture(data)
   list(
     totale = nrow(data),
@@ -1366,7 +1433,7 @@ calcola_bbox <- function(data) {
 #' per ogni cambio, con la data della prima lettura in cui il valore compare.
 #'
 #' @param letture Letture di un solo RFID.
-#' @param campo Nome del campo (`"servizio_transponder"` o `"id_utenza"`).
+#' @param campo Nome del campo, ad esempio `"id_utenza"`.
 #' @return Tibble con `giorno_lettura`, `valore`, `attuale`.
 #' @noRd
 cronologia_transizioni <- function(letture, campo) {
@@ -1415,7 +1482,15 @@ analizza_rfid <- function(letture) {
   ultima <- letture[nrow(letture), ]
   censito <- identical(ultima$presente_a_database, "Presente")
 
-  servizi <- cronologia_transizioni(letture, "servizio_transponder")
+  # I cambi di servizio sono quelli dell'anagrafica: contano le sole letture
+  # con il servizio del database.
+  servizi <- cronologia_transizioni(
+    dplyr::tibble(
+      giorno_lettura = letture$giorno_lettura,
+      servizio = servizio_a_database(letture)
+    ),
+    "servizio"
+  )
   utenze <- cronologia_transizioni(letture, "id_utenza")
   stima <- stima_servizio_atteso(letture)
 

@@ -152,11 +152,13 @@ test_that("la tabella ha 30 colonne e una riga per cluster", {
   expect_true(all(analisi$analisi_al == as.Date("2025-12-31")))
   expect_identical(analisi$volume_atteso, analisi$volume_previsto)
 
-  # servizio, volume e raccolte previste: transponder per i censiti, atteso per gli altri
+  # il servizio è una colonna sola, con la sua origine: per un censito quello
+  # del database, per gli altri il prevalente tra le letture del cluster
   ignoto <- analisi[analisi$RFID == "IGNOTO", ]
   expect_identical(ignoto$presente_a_database, "Non Presente")
-  expect_true(is.na(ignoto$servizio_transponder))
   expect_identical(ignoto$servizio_atteso, "SECCO PAP")
+  expect_identical(ignoto$origine_servizio, "Calendario")
+  expect_true(is.na(ignoto$servizio_atteso_cronologia))
   expect_identical(
     ignoto$servizio_atteso_dettaglio,
     "SECCO PAP (90%); VETRO PAP (10%)"
@@ -164,9 +166,39 @@ test_that("la tabella ha 30 colonne e una riga per cluster", {
   expect_true(is.na(ignoto$volume_previsto))
   expect_true(is.na(ignoto$numero_raccolte_annue_previste))
   censiti <- analisi[analisi$RFID != "IGNOTO", ]
-  expect_true(all(censiti$servizio_transponder == "CARTA"))
-  expect_true(all(is.na(censiti$servizio_atteso)))
+  expect_true(all(censiti$servizio_atteso == "CARTA"))
+  expect_true(all(censiti$origine_servizio == "Database"))
   expect_true(all(is.na(censiti$servizio_atteso_dettaglio)))
+
+  # l'origine di un servizio stimato è la più frequente tra le letture del
+  # cluster che lo riportano
+  votato <- letture_rfid(
+    "VOTATO",
+    date_2025(10),
+    presente = "Non Presente",
+    atteso = c(rep("SECCO", 9), "VETRO")
+  )
+  votato$origine_servizio <- c(rep("Censiti", 6), rep("Calendario", 4))
+  expect_identical(
+    calcola_analisi_cluster(votato, "2025-01-01", "2025-12-31")$origine_servizio,
+    "Censiti"
+  )
+  # senza la colonna dell'origine si sa solo quali servizi vengono dal
+  # database: il resto della tabella non cambia
+  senza_origine <- calcola_analisi_cluster(
+    letture[setdiff(names(letture), "origine_servizio")],
+    "2025-01-01",
+    "2025-12-31"
+  )
+  expect_identical(
+    senza_origine$origine_servizio,
+    ifelse(analisi$RFID == "IGNOTO", NA, "Database")
+  )
+  quali <- setdiff(names(analisi), "origine_servizio")
+  expect_identical(
+    as.data.frame(senza_origine[quali]),
+    as.data.frame(analisi[quali])
+  )
   expect_true(all(censiti$volume_previsto == 240))
   expect_true(all(censiti$numero_raccolte_annue_previste == 26))
 
@@ -188,6 +220,8 @@ test_that("il servizio atteso sotto l'80% resta vuoto ma la composizione è ripo
   )
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
   expect_true(is.na(analisi$servizio_atteso))
+  # senza servizio non c'è un'origine
+  expect_true(is.na(analisi$origine_servizio))
   expect_identical(
     analisi$servizio_atteso_dettaglio,
     "CARTA CONT.STRADALI (40%); SECCO PAP (35%); UMIDO PAP (25%)"
@@ -206,9 +240,10 @@ test_that("il cambio di servizio riporta il servizio attuale e la cronologia", {
     servizio = c(rep("CARTA", 3), rep("SECCO", 3), rep("CARTA", 3))
   )
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
-  expect_identical(analisi$servizio_transponder, "CARTA")
+  expect_identical(analisi$servizio_atteso, "CARTA")
+  expect_identical(analisi$origine_servizio, "Database")
   expect_identical(
-    analisi$servizio_transponder_cronologia,
+    analisi$servizio_atteso_cronologia,
     "CARTA > SECCO > CARTA"
   )
 
@@ -217,17 +252,48 @@ test_that("il cambio di servizio riporta il servizio attuale e la cronologia", {
     "2025-01-01",
     "2025-12-31"
   )
-  expect_true(is.na(stabile$servizio_transponder_cronologia))
+  expect_true(is.na(stabile$servizio_atteso_cronologia))
   # il cambio di servizio abbassa la fiducia
   expect_lt(analisi$cluster_indice_fiducia, stabile$cluster_indice_fiducia)
+
+  # un contenitore censito a metà periodo: il servizio di quando non era
+  # censito veniva dal calendario, e non conta tra i cambi di servizio
+  date <- date_2025(9)
+  censito_dopo <- calcola_analisi_cluster(
+    dplyr::bind_rows(
+      letture_rfid(
+        "NUOVO",
+        date[1:4],
+        presente = "Non Presente",
+        atteso = "SECCO"
+      ),
+      letture_rfid("NUOVO", date[5:9])
+    ),
+    "2025-01-01",
+    "2025-12-31"
+  )
+  expect_identical(censito_dopo$servizio_atteso, "CARTA")
+  expect_identical(censito_dopo$origine_servizio, "Database")
+  expect_true(is.na(censito_dopo$servizio_atteso_cronologia))
+  expect_identical(
+    censito_dopo$cluster_indice_fiducia,
+    stabile$cluster_indice_fiducia
+  )
 
   esempio <- analisi_esempio()
   speciale <- esempio[esempio$RFID == "RFD20250901001", ]
   expect_identical(
-    speciale$servizio_transponder_cronologia,
+    speciale$servizio_atteso_cronologia,
     "CARTA > SECCO > CARTA"
   )
-  expect_identical(speciale$servizio_transponder, "CARTA")
+  expect_identical(speciale$servizio_atteso, "CARTA")
+  # nell'esempio il servizio viene dal database, per i censiti, o dal
+  # calendario; i non censiti con la stima incerta non ne hanno
+  expect_identical(
+    as.integer(table(esempio$origine_servizio, useNA = "ifany")),
+    c(18L, 226L, 19L)
+  )
+  expect_identical(is.na(esempio$servizio_atteso), is.na(esempio$origine_servizio))
 })
 
 test_that("le raccolte annue presunte seguono la formula e non divergono", {
@@ -322,7 +388,7 @@ test_that("i sacchetti restano fuori dall'analisi", {
     letture_rfid(
       sprintf("00BD%020d", 1),
       "2025-01-02",
-      servizio = servizio_sacchetti(),
+      servizio = "SECCO",
       volume = NA,
       raccolte = NA
     ),
@@ -370,11 +436,13 @@ test_that("l'analisi funziona senza le colonne facoltative e con contenitori inc
   letture$volume_previsto <- NULL
   letture$numero_raccolte_annue_previste <- NULL
   # censito ma senza servizio a database
-  letture$servizio_transponder <- NA_character_
+  letture$servizio_atteso <- NA_character_
+  letture$origine_servizio <- NA_character_
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
   expect_true(is.na(analisi$volume_previsto))
   expect_true(is.na(analisi$numero_raccolte_annue_previste))
-  expect_true(is.na(analisi$servizio_transponder))
+  expect_true(is.na(analisi$servizio_atteso))
+  expect_true(is.na(analisi$origine_servizio))
   expect_false(is.na(analisi$cluster_indice_fiducia))
   expect_identical(analisi$indicatore_cluster, "VALID_TARGET")
 })

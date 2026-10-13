@@ -28,10 +28,26 @@ test_that("dimensioni, periodo e mezzi", {
 test_that("coerenza tra stato a database, servizio, utenza, volume e raccolte", {
   d <- dati_esempio()
   non_presente <- d$presente_a_database == "Non Presente"
-  for (campo in c("servizio_transponder", "id_utenza")) {
-    expect_true(all(is.na(d[[campo]][non_presente])), info = campo)
-    expect_false(anyNA(d[[campo]][!non_presente]), info = campo)
-  }
+  expect_true(all(is.na(d$id_utenza[non_presente])))
+  expect_false(anyNA(d$id_utenza[!non_presente]))
+  # il servizio c'è su ogni lettura, e l'origine dice da dove viene: dal
+  # database per i contenitori censiti, dal calendario o dai censiti letti
+  # dallo stesso mezzo per gli altri
+  expect_false(anyNA(d$servizio_atteso))
+  expect_false(anyNA(d$origine_servizio))
+  con_contenitore <- !non_presente & !rfid_sacchetto(d$RFID)
+  expect_true(all(d$origine_servizio[con_contenitore] == "Database"))
+  expect_true(all(
+    d$origine_servizio[!con_contenitore] %in% c("Censiti", "Calendario")
+  ))
+  expect_identical(
+    as.integer(table(d$origine_servizio)[c("Database", "Censiti", "Calendario")]),
+    c(5399L, 2L, 1074L)
+  )
+  expect_identical(
+    is.na(servizio_a_database(d)),
+    !con_contenitore
+  )
   # volume e raccolte sono dati del contenitore: un sacchetto non li ha
   # nemmeno da censito
   senza_contenitore <- non_presente | rfid_sacchetto(d$RFID)
@@ -63,30 +79,30 @@ test_that("volume e raccolte previste sono realistici e univoci per RFID", {
   # i contenitori che hanno cambiato servizio conservano volume e raccolte iniziali
   stabili <- dplyr::filter(
     censiti,
-    dplyr::n_distinct(servizio_transponder) == 1,
+    dplyr::n_distinct(servizio_atteso) == 1,
     .by = "RFID"
   )
   ultimi <- deduplica_ultimo_rfid(stabili)
   expect_true(all(
     ultimi$volume_previsto[
-      ultimi$servizio_transponder == "PLASTICA E METALLI"
+      ultimi$servizio_atteso == "PLASTICA E METALLI"
     ] ==
       770
   ))
   expect_true(all(
     ultimi$numero_raccolte_annue_previste[
-      ultimi$servizio_transponder != "VETRO"
+      ultimi$servizio_atteso != "VETRO"
     ] ==
       26
   ))
   expect_setequal(
     unique(ultimi$numero_raccolte_annue_previste[
-      ultimi$servizio_transponder == "VETRO"
+      ultimi$servizio_atteso == "VETRO"
     ]),
     c(13, 26)
   )
   quota_secco_1100 <- mean(
-    ultimi$volume_previsto[ultimi$servizio_transponder == "SECCO"] == 1100
+    ultimi$volume_previsto[ultimi$servizio_atteso == "SECCO"] == 1100
   )
   expect_equal(quota_secco_1100, 0.8, tolerance = 0.15)
 })
@@ -103,7 +119,8 @@ test_that("distribuzioni vicine a quelle richieste", {
     tolerance = 0.02
   )
 
-  quote <- prop.table(table(ultimi$servizio_transponder))
+  # le quote sono quelle dei servizi del database, cioè dei censiti
+  quote <- prop.table(table(servizio_a_database(ultimi)))
   attese <- c(
     SECCO = 0.40,
     CARTA = 0.27,
@@ -158,7 +175,7 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   # per i censiti il giro è quasi sempre quello del loro servizio
   censita <- d$presente_a_database == "Presente"
   coerenti <- tipologia_servizio(d$servizio_atteso[censita]) ==
-    tipologia_servizio(d$servizio_transponder[censita])
+    tipologia_servizio(d$servizio_giro[censita])
   expect_gt(mean(coerenti), 0.95)
   expect_lt(mean(coerenti), 1)
 
@@ -204,11 +221,17 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
     c("CARTA CONT.STRADALI", "CARTA/CARTONE PAP", "UMIDO PAP", "VETRO PAP") %in%
       d$servizio_giro
   ))
-  # per un censito il servizio atteso è quello del contenitore a database
+  # per un censito il servizio atteso è quello del contenitore a database:
+  # lo dice l'origine, e ha sempre uno dei sei nomi del database
   con_servizio <- d$presente_a_database == "Presente" & !rfid_sacchetto(d$RFID)
+  expect_true(all(d$origine_servizio[con_servizio] == "Database"))
   expect_identical(
-    d$servizio_atteso[con_servizio],
-    d$servizio_transponder[con_servizio]
+    servizio_a_database(d)[con_servizio],
+    d$servizio_atteso[con_servizio]
+  )
+  expect_setequal(
+    unique(d$servizio_atteso[con_servizio]),
+    c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA E METALLI", "VERDE E RAMAGLIE")
   )
   # Per gli altri è il giro, con il nome del database. Nell'esempio le
   # letture sono rade: i censiti letti dallo stesso mezzo nella mezz'ora
@@ -223,10 +246,19 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
     na.strings = "NA"
   )
   expect_true(all(
-    c("servizio_giro", "coerenza", "comune_giro", "comune_lettura") %in%
+    c(
+      "origine_servizio",
+      "servizio_giro",
+      "coerenza",
+      "comune_giro",
+      "comune_lettura"
+    ) %in%
       names(grezzo)
   ))
+  # il servizio del database non ha più una colonna sua
+  expect_false("servizio_transponder" %in% names(grezzo))
   expect_false("origine_servizio_atteso" %in% names(grezzo))
+  expect_identical(grezzo$origine_servizio, d$origine_servizio)
   # la coerenza del file è quella che l'app ricalcola al caricamento
   expect_identical(grezzo$coerenza, d$coerenza)
   expect_equal(
@@ -248,25 +280,24 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
     )]),
     c(10L, 11L, 1L, 1L)
   )
-  # il file è quello che esce dalla regola del pacchetto
-  # a database un sacchetto non ha servizio: quello dei sacchetti lo assegna
-  # l'app, al caricamento
-  come_dal_passo_3 <- d
-  come_dal_passo_3$servizio_transponder[rfid_sacchetto(d$RFID)] <- NA
-  rifatto <- associa_servizio_atteso_dai_censiti(come_dal_passo_3)
+  # il file è quello che esce dalla regola del pacchetto: applicarla di nuovo
+  # non cambia niente
+  rifatto <- associa_servizio_atteso_dai_censiti(d)
   expect_identical(rifatto$servizio_atteso, d$servizio_atteso)
+  expect_identical(rifatto$origine_servizio, d$origine_servizio)
   expect_identical(rifatto$servizio_giro, d$servizio_giro)
   expect_identical(rifatto$coerenza, d$coerenza)
-  # servizio atteso e servizio del database si confrontano senza conversioni
+  # le due letture con il servizio preso dai censiti sono di non censiti, e
+  # il servizio coincide con quello del calendario
+  dai_censiti <- d[d$origine_servizio == "Censiti", ]
+  expect_true(all(dai_censiti$presente_a_database == "Non Presente"))
+  expect_identical(
+    dai_censiti$servizio_atteso,
+    uniforma_servizio(dai_censiti$servizio_giro)
+  )
   expect_true(all(
-    stats::na.omit(d$servizio_transponder) %in%
-      c(d$servizio_atteso, servizio_sacchetti())
+    unique(d$servizio_atteso) %in% servizi_config()$servizio
   ))
-  presenti <- unique(stats::na.omit(c(
-    d$servizio_transponder,
-    d$servizio_atteso
-  )))
-  expect_true(all(presenti %in% servizi_config()$servizio))
 })
 
 test_that("casi speciali presenti", {
@@ -289,14 +320,14 @@ test_that("casi speciali presenti", {
 
   cambio_servizio <- letture("RFD20250901001")
   expect_identical(
-    cambio_servizio$servizio_transponder[1:3],
+    cambio_servizio$servizio_atteso[1:3],
     c("CARTA", "SECCO", "CARTA")
   )
   expect_identical(
     format(cambio_servizio$giorno_lettura[1:3], "%d/%m"),
     c("01/09", "15/09", "28/09")
   )
-  expect_true(all(cambio_servizio$servizio_transponder[-2] == "CARTA"))
+  expect_true(all(cambio_servizio$servizio_atteso[-2] == "CARTA"))
 
   cambio_utenza <- letture("RFD20250901050")
   expect_identical(cambio_utenza$id_utenza[1], "UTZ001")
@@ -337,11 +368,13 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   expect_true(all(nchar(s$RFID) == 24 & startsWith(s$RFID, "00BD")))
   expect_false(any(startsWith(d$RFID[!sacchetto], "00BD")))
 
-  # a database un sacchetto ha solo l'utenza: la validazione gli dà il
-  # servizio dei sacchetti, e il suo comune è quello in cui viene letto
+  # a database un sacchetto ha solo l'utenza: il suo servizio atteso è il
+  # giro che lo ha letto, censito o no, e il suo comune è quello in cui viene
+  # letto. La voce dei sacchetti gliela dà l'app, dal codice
   censito <- s$presente_a_database == "Presente"
-  expect_true(all(s$servizio_transponder[censito] == servizio_sacchetti()))
-  expect_true(all(is.na(s$servizio_transponder[!censito])))
+  expect_true(all(s$servizio_atteso == "SECCO"))
+  expect_true(all(s$origine_servizio == "Calendario"))
+  expect_true(all(servizio_mostrato(s) == servizio_sacchetti()))
   expect_setequal(s$id_utenza[censito], sprintf("SAC%03d", 1:4))
   expect_false(any(s$id_utenza[censito] %in% d$id_utenza[!sacchetto]))
   expect_true(all(is.na(s$comune_da_database)))

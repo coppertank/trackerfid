@@ -44,8 +44,8 @@ Il file deve contenere 9 campi obbligatori e può contenerne altri facoltativi, 
 | `matricola_veicolo` | testo | Matricola aziendale del mezzo, in relazione 1:1 con la targa |
 | `RFID` | testo | Identificativo del chip, ripetuto a ogni lettura |
 | `presente_a_database` | testo | `Presente` oppure `Non Presente` |
-| `servizio_transponder` | testo | Facoltativo. Servizio del contenitore secondo il database (`SECCO`, `CARTA`, `VETRO`, `UMIDO`, `PLASTICA E METALLI`, `VERDE E RAMAGLIE`), vuoto se non censito. Per un censito coincide con `servizio_atteso`, che lo sostituisce: se il file non lo riporta, l'app lo ricava da lì |
-| `servizio_atteso` | testo | Servizio del contenitore. Per un censito è quello del database. Per un non censito viene dai censiti letti dallo stesso mezzo nella mezz'ora attorno e, se sono pochi, dal giro del calendario. Ha sempre i nomi del database: vedi [la tabella di conversione](#tipologie-di-servizio-e-icone). C'è per ogni lettura |
+| `servizio_atteso` | testo | Servizio del contenitore: una colonna sola, per censiti e non censiti. Per un censito è quello del database (`SECCO`, `CARTA`, `VETRO`, `UMIDO`, `PLASTICA E METALLI`, `VERDE E RAMAGLIE`). Per un non censito viene dai censiti letti dallo stesso mezzo nella mezz'ora attorno e, se sono pochi, dal giro del calendario. Ha sempre i nomi del database: vedi [la tabella di conversione](#tipologie-di-servizio-e-icone). C'è per ogni lettura |
+| `origine_servizio` | testo | Facoltativo. Da dove viene `servizio_atteso`: `Database`, `Censiti` oppure `Calendario`. Vuoto dove manca il servizio. Se il file non lo riporta, l'app sa dire solo che il servizio di un censito viene dal database |
 | `servizio_giro` | testo | Facoltativo. Giro che il calendario dava al mezzo, scritto come nel calendario, senza conversioni: `SECCO PAP`, non `SECCO`. Se manca vale `servizio_atteso` |
 | `coerenza` | testo | Facoltativo. `Coerente` se servizio atteso e giro sono dello stesso rifiuto, `Non coerente` altrimenti; vuoto se uno dei due manca. L'app lo ricalcola sempre, anche se il file lo contiene già |
 | `id_utenza` | testo | Utenza proprietaria, vuoto se non censito |
@@ -61,6 +61,16 @@ Il file deve contenere 9 campi obbligatori e può contenerne altri facoltativi, 
 **Giro e comune del giro.** Una lettura esiste solo se un mezzo passa durante un giro, e dal calendario dei mezzi si ricavano il servizio del giro e il suo comune. Per questo `servizio_giro`, `servizio_atteso` e `comune_giro` sono compilati per ogni lettura, anche per i bidoni censiti. La preparazione dei dati cerca il turno del mezzo in cui cade la lettura; se la lettura è fuori orario prende il turno più vicino di quel mezzo in quel giorno, e un turno che finisce dopo mezzanotte vale anche per il giorno dopo. `servizio_giro` è il giro di quel turno, con il nome del calendario: resta `SECCO PAP`, perché il secco porta a porta va distinto dagli altri giri del secco. `servizio_atteso` è invece il servizio del contenitore: per un censito quello del database; per un non censito lo stesso giro con il nome del database, `SECCO`, salvo quanto segue. Il calendario dice però che cosa era previsto, non che cosa è successo: un mezzo può sostituirne un altro e fare un giro che non era il suo.
 
 **Servizio atteso dei non censiti.** Un giro raccoglie un rifiuto solo. Per ogni lettura di un non censito, la preparazione dei dati guarda i contenitori censiti letti dallo stesso mezzo nei 30 minuti prima e dopo: se sono almeno 5, e almeno l'80% ha lo stesso servizio, quello è il servizio atteso della lettura. Altrimenti resta il servizio del calendario: i censiti sono pochi, oppure misti, come vicino al momento in cui il mezzo passa da un giro all'altro. Ogni censito vota una volta al giorno. `servizio_giro` non cambia: resta il giro del calendario, che la scheda «Ricerca Giro» mostra come giro previsto. Per un censito il servizio atteso è sempre quello del database: il voto non lo tocca. Un censito che a database non ha un servizio, come un sacchetto, tiene quello del giro. Le tre soglie sono argomenti di `associa_servizio_atteso_dai_censiti()`, indicati nel passo 3.
+
+**Origine del servizio.** Il servizio del contenitore sta in una colonna sola, `servizio_atteso`, e `origine_servizio` dice quanto fidarsene:
+
+| Valore | Da dove viene il servizio atteso |
+|---|---|
+| `Database` | È il servizio del contenitore nel database aziendale: un dato certo. Lo hanno i censiti |
+| `Censiti` | È il servizio dei contenitori censiti letti dallo stesso mezzo nella mezz'ora attorno: una stima che viene da quello che il mezzo ha raccolto davvero |
+| `Calendario` | È il giro che il calendario dava al mezzo, con il nome del database: una stima che viene da quello che il mezzo doveva fare. Lo ha anche un censito senza servizio a database, come un sacchetto |
+
+Il servizio del database non ha più una colonna sua: è il servizio atteso delle letture con origine `Database`. La colonna `servizio_transponder` dei file preparati in passato viene ancora letta: per i censiti vale quel servizio, con origine `Database`, e nei dati caricati la colonna non resta. Quei file non dicono però se il servizio di un non censito viene dai censiti o dal calendario: per saperlo vanno rigenerati con il passo 3.
 
 **Coerenza.** Il campo `coerenza` dice se il servizio atteso e il giro di una lettura sono dello stesso rifiuto. Si confrontano le tipologie, non i nomi: un servizio atteso `SECCO` e un giro `SECCO PAP` concordano.
 
@@ -88,8 +98,8 @@ RFID e utenze sono sempre letti come testo, quindi gli zeri iniziali si conserva
 
 Al caricamento l'app controlla il file e mostra l'esito sotto il campo di caricamento.
 
-- **Errori, il file viene rifiutato**: colonne mancanti, date non riconoscibili, coordinate non numeriche o fuori scala, valori di `presente_a_database` diversi dai due ammessi. Il messaggio indica il campo e le righe del file coinvolte.
-- **Avvisi, il file viene caricato**: righe prive di un campo essenziale (data, RFID, stato, coordinate), che vengono scartate; letture "Non Presente" che riportano comunque servizio o utenza; relazione targa/matricola non univoca; colonne facoltative assenti, nel qual caso le informazioni che ne dipendono restano vuote.
+- **Errori, il file viene rifiutato**: colonne mancanti, date non riconoscibili, coordinate non numeriche o fuori scala, valori di `presente_a_database` diversi dai due ammessi, valori di `origine_servizio` diversi dai tre ammessi. Il messaggio indica il campo e le righe del file coinvolte.
+- **Avvisi, il file viene caricato**: righe prive di un campo essenziale (data, RFID, stato, coordinate), che vengono scartate; letture "Non Presente" che riportano comunque il servizio del database o un'utenza; relazione targa/matricola non univoca; colonne facoltative assenti, nel qual caso le informazioni che ne dipendono restano vuote.
 
 ### Letture storiche
 
@@ -214,7 +224,7 @@ Un nome non previsto viene comunque caricato e mostrato con il punto di domanda.
 Un click su un marker apre il popup con i dati della lettura e, nella barra laterale, l'analisi di tutta la storia del bidone:
 
 - **censito con servizio stabile**: conferma della tipologia;
-- **cambio di servizio**: cronologia dei passaggi, con il servizio attuale;
+- **cambio di servizio**: cronologia dei passaggi, con il servizio attuale. Contano i servizi del database, cioè le letture con origine `Database`;
 - **non censito**: stima percentuale del servizio, ricavata dal servizio atteso delle sue letture: quello dei contenitori censiti letti dallo stesso mezzo e, dove sono pochi, quello del calendario dei mezzi. Se nessuna lettura ha un servizio atteso, l'indicazione che non ci sono elementi per stimarlo;
 - **cambio di proprietario**: cronologia delle utenze, mostrata in aggiunta ai casi precedenti;
 - **letture non coerenti**: quante letture hanno il servizio atteso diverso dal giro, con le più recenti;
@@ -222,7 +232,7 @@ Un click su un marker apre il popup con i dati della lettura e, nella barra late
 
 Il dettaglio segnala anche le letture fuori dai comuni dichiarati: quante sono fuori dal comune del database e dove sono state fatte, quante sono fuori giro, con le cinque più recenti.
 
-Il popup riporta il comune a database, per un censito, il comune di lettura, il comune del giro se è diverso da quello di lettura, il cantiere, e una riga per ogni incongruenza: «a database LIMENA, letto a CITTADELLA».
+Il popup riporta il servizio atteso con accanto la sua origine, «da database», «dai censiti letti dallo stesso mezzo» oppure «dal calendario dei mezzi», il giro del calendario, il comune a database, per un censito, il comune di lettura, il comune del giro se è diverso da quello di lettura, il cantiere, e una riga per ogni incongruenza: «a database LIMENA, letto a CITTADELLA».
 
 ### Analisi Cluster Spaziale
 
@@ -442,7 +452,7 @@ Specifica delle correzioni e dell'analisi dei cluster:
 
 - **Dataset di esempio su base annuale.** La prima versione copriva 30 giorni, con una o due letture per la maggior parte dei bidoni. Raccolte annue e soglie dell'analisi dei cluster non erano dimostrabili su quei dati. I casi speciali della prima versione sono rimasti. Il file ha mantenuto il nome `sample_rfid_dataset.csv`.
 - **Periodo valido per tutta l'app.** La selezione dell'anno e il periodo personalizzato stanno in un solo controllo nella barra laterale, usato anche dall'analisi dei cluster.
-- **Tre colonne in più nell'output.** La specifica parlava di 25 campi e ne definiva 22. Sono stati aggiunti `presente_a_database`, `servizio_transponder_cronologia` e `servizio_atteso_dettaglio`.
+- **Colonne dell'output.** La specifica parlava di 25 campi e ne definiva 22. Sono stati aggiunti `presente_a_database`, la cronologia dei cambi di servizio e la composizione del servizio stimato. Il servizio sta oggi in una colonna sola, `servizio_atteso`, con `origine_servizio`, `servizio_atteso_cronologia` e `servizio_atteso_dettaglio`: vedi più sotto.
 - **Classificazione.** Tre correzioni alle regole, descritte in [docs/analisi_cluster.md](docs/analisi_cluster.md).
 - **Distanze per DBSCAN.** Proiezione locale in metri al posto della matrice di Haversine, per reggere tag con migliaia di letture. I cluster coincidono.
 - **Script autonomo.** Le funzioni stanno nel pacchetto, lo script in `inst/scripts` le richiama. Un file con codice duplicato sarebbe rimasto disallineato alla prima modifica.
@@ -466,8 +476,8 @@ Correzioni alla logica dei non censiti:
 - **Servizio dei non censiti dai censiti dello stesso giro.** Il servizio atteso di un non censito non viene più dal solo calendario: se il mezzo ha letto abbastanza censiti nella mezz'ora attorno, vale il loro servizio. Il giro del calendario resta in `servizio_giro`.
 - **Filtri su servizio atteso, giro e coerenza.** Il filtro sul servizio transponder è stato sostituito dal servizio atteso, che per un censito è il servizio del database e per un non censito quello stimato. Si aggiungono un elenco sul giro del calendario e un filtro sulla coerenza. Tutti valgono per censiti e non censiti: lo stato a database si sceglie a parte. La casella «Includi Non Censiti» è stata tolta: era un doppione dello stato «Non Presente».
 - **Servizio atteso come stima del bidone, per i non censiti.** Per un non censito il filtro non guarda il servizio atteso della singola lettura, ma il servizio stimato del bidone, lo stesso dell'icona: sta quindi sotto una voce sola, il suo servizio stimato oppure la stima incerta. Per un censito vale il servizio atteso di ogni lettura.
-- **Coerenza al posto della provenienza.** La colonna `origine_servizio_atteso` è stata sostituita da `coerenza`, che dice se il servizio atteso e il giro sono dello stesso rifiuto.
-- **Servizio atteso al posto del servizio transponder.** Per un censito `servizio_atteso` è il servizio del database: `servizio_transponder` è diventata una colonna facoltativa, e il popup non la riporta più.
+- **Coerenza accanto alla provenienza.** La colonna `origine_servizio_atteso` era stata sostituita da `coerenza`, che dice se il servizio atteso e il giro sono dello stesso rifiuto. La provenienza è poi tornata, con un altro nome e un valore in più: vedi il punto seguente.
+- **Una colonna sola per il servizio, con la sua origine.** `servizio_transponder` e `servizio_atteso` sono state fuse in `servizio_atteso`: per un censito è il servizio del database, per un non censito quello stimato. La nuova colonna `origine_servizio` dice da dove viene: `Database`, `Censiti` o `Calendario`. Il servizio del database è il servizio atteso con origine `Database`. Nell'analisi dei cluster le colonne `servizio_transponder` e `servizio_transponder_cronologia` sono diventate `servizio_atteso`, con `origine_servizio`, e `servizio_atteso_cronologia`: le colonne restano 30. I file con la colonna `servizio_transponder` si caricano ancora.
 - **«Coerenza» solo per i servizi.** Nel filtro sulla posizione la voce «Coerente» è diventata «Regolare»; nell'indice di fiducia dei cluster la verifica «Coerenza» è diventata «Stabilità del servizio».
 - **Tipologia dei sacchetti.** I sacchetti censiti arrivavano senza servizio, e sulla mappa avevano il punto di domanda. Ora hanno una tipologia e un'icona loro, riconosciuti dal codice RFID.
 - **Stima incerta al posto di «senza stima».** La casella riguardava i non censiti senza nessun giro, che nei dati reali non esistono. Ora riguarda quelli sotto l'80%, cioè i marker con il punto di domanda.

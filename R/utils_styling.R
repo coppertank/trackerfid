@@ -64,11 +64,11 @@ stile_confini <- function() {
 #' Tipologie di servizio: icona Font Awesome, colore del glifo, emoji
 #'
 #' PUNTO UNICO DA MODIFICARE per aggiungere servizi o cambiare icone.
-#' Ogni tipologia raggruppa i nomi che condividono la stessa icona: i valori
-#' di `servizio_transponder` e i nomi dei giri usati in `servizio_atteso`
-#' (PAP = porta a porta). I sacchetti hanno una tipologia loro: non hanno un
-#' servizio a database, e l'app glielo assegna riconoscendoli dal codice
-#' RFID, vedi `rfid_sacchetto()`. Per un nuovo nome basta aggiungerlo al vettore
+#' Ogni tipologia raggruppa i nomi che condividono la stessa icona: i nomi
+#' del database, usati in `servizio_atteso`, e i nomi dei giri del calendario,
+#' usati in `servizio_giro` (PAP = porta a porta). I sacchetti hanno una
+#' tipologia loro: non hanno un servizio a database, e l'app li riconosce dal
+#' codice RFID, vedi `rfid_sacchetto()`. Per un nuovo nome basta aggiungerlo al vettore
 #' `servizi` della tipologia giusta; per una nuova tipologia si aggiunge una
 #' voce alla lista. I nomi vanno scritti in maiuscolo, come dopo il caricamento
 #' del CSV. Le icone sono nomi Font Awesome (https://fontawesome.com/icons).
@@ -362,7 +362,7 @@ svg_icona_servizio <- function(servizio, lato = 16) {
 
 #' Disegna il marker SVG di un contenitore
 #'
-#' @param servizio Servizio transponder (un solo valore, anche `NA`).
+#' @param servizio Servizio del contenitore (un solo valore, anche `NA`).
 #' @param presente Valore di `presente_a_database`.
 #' @param stile `"normale"`, `"ultimo"` (bordo spesso) o `"precedente"`
 #'   (bordo sottile tratteggiato): gli ultimi due servono nella ricerca RFID.
@@ -444,7 +444,7 @@ uri_svg <- function(svg) {
 
 #' Genera icone Leaflet per servizio e stato a database
 #'
-#' @param servizio Vettore di `servizio_transponder`.
+#' @param servizio Vettore di servizi, vedi `servizio_mostrato()`.
 #' @param presente Vettore di `presente_a_database`.
 #' @param stile Stile del bordo, vedi `svg_marker()`.
 #' @return Oggetto icone di Leaflet, un'icona per elemento.

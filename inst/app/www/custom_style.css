@@ -793,6 +793,12 @@ details.parametri-dbscan summary {
   color: #b03a2e;
 }
 
+/* Origine del servizio atteso, accanto al servizio */
+.popup-origine {
+  color: #5f6b76;
+  font-size: 11px;
+}
+
 .info-nota {
   margin: 4px 0 0;
   color: #5f6b76;

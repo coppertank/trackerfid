@@ -70,7 +70,7 @@ turni <- list(
   turno("VEH005", c(2, 4), 13, 19, "PLAST.CONT.STRADALI", "PLASTICA E METALLI")
 )
 
-# Tipologie di `servizio_transponder` e loro quota tra i contenitori censiti.
+# Servizi del database e loro quota tra i contenitori censiti.
 servizi <- c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA E METALLI", "VERDE E RAMAGLIE")
 quote_servizi <- c(0.40, 0.27, 0.11, 0.10, 0.07, 0.05)
 names(quote_servizi) <- servizi
@@ -523,10 +523,10 @@ genera_letture <- function(b) {
     out <- aggiungi(
       manuali(
         c("2025-09-01 06:00:00", "2025-09-15 08:42:17", "2025-09-28 09:21:44"), "VEH001",
-        servizio_transponder = c("CARTA", "SECCO", "CARTA")
+        servizio_database = c("CARTA", "SECCO", "CARTA")
       ),
       letture_calendario(b),
-      servizio_transponder = "CARTA"
+      servizio_database = "CARTA"
     )
   } else if (b$chiave == k_cambio_utenza) {
     # Passa da UTZ001 a UTZ025 il 20 settembre.
@@ -634,14 +634,14 @@ genera_letture <- function(b) {
     mancanti <- is.na(out[[campo]])
     out[[campo]][mancanti] <<- rep_len(valore, n)[mancanti]
   }
-  completa("servizio_transponder", if (b$presente) b$servizio else NA_character_)
+  completa("servizio_database", if (b$presente) b$servizio else NA_character_)
   completa("id_utenza", if (b$presente) b$utenza else NA_character_)
   completa("latitudine", b$lat + rumore_gps(n))
   completa("longitudine", b$lng + rumore_gps(n))
   out$chiave <- b$chiave
   out$presente <- b$presente
   out[, c(
-    "giorno_lettura", "matricola_veicolo", "servizio_transponder", "id_utenza",
+    "giorno_lettura", "matricola_veicolo", "servizio_database", "id_utenza",
     "latitudine", "longitudine", "chiave", "presente"
   )]
 }
@@ -688,7 +688,7 @@ for (k in k_utenza) {
 # Altri 2 contenitori che cambiano servizio in modo definitivo.
 k_servizio <- sample(setdiff(candidati(12), k_utenza), 2)
 for (k in k_servizio) {
-  letture$servizio_transponder[dopo_svolta(k)] <- estrai(setdiff(servizi, bidoni$servizio[k]))
+  letture$servizio_database[dopo_svolta(k)] <- estrai(setdiff(servizi, bidoni$servizio[k]))
 }
 
 # 8 contenitori spostati di qualche centinaio di metri.
@@ -767,7 +767,7 @@ letture_sacchetti <- con_seme(2029, do.call(rbind, lapply(seq_len(nrow(sacchetti
   data.frame(
     giorno_lettura = istante(s$giorno, min(max(ora, t$da), t$a - 0.02)),
     matricola_veicolo = t$m,
-    servizio_transponder = NA_character_,
+    servizio_database = NA_character_,
     id_utenza = s$utenza,
     latitudine = p$lat + rumore_gps(1),
     longitudine = p$lng + rumore_gps(1),
@@ -885,13 +885,20 @@ letture <- letture[order(letture$giorno_lettura, letture$RFID), ]
 # attorno, se bastano: nell'esempio le letture sono rade, poche per mezzo e
 # per giorno, e resta quasi sempre il giro. La coerenza dice se servizio
 # atteso e giro sono dello stesso rifiuto.
+# L'origine dice da dove viene il servizio atteso: "Database", "Censiti" o
+# "Calendario". Il servizio del database non ha una colonna sua nel file.
+dal_database <- !is.na(letture$servizio_database)
 con_servizio <- associa_servizio_atteso_dai_censiti(data.frame(
   giorno_lettura = letture$giorno_lettura,
   matricola_veicolo = letture$matricola_veicolo,
   RFID = letture$RFID,
   presente_a_database = letture$presente_a_database,
-  servizio_transponder = letture$servizio_transponder,
-  servizio_atteso = uniforma_servizio(letture$servizio_atteso),
+  servizio_atteso = ifelse(
+    dal_database,
+    letture$servizio_database,
+    uniforma_servizio(letture$servizio_atteso)
+  ),
+  origine_servizio = ifelse(dal_database, "Database", "Calendario"),
   servizio_giro = letture$servizio_atteso,
   stringsAsFactors = FALSE
 ))
@@ -901,8 +908,8 @@ finale <- data.frame(
   matricola_veicolo = letture$matricola_veicolo,
   RFID = letture$RFID,
   presente_a_database = letture$presente_a_database,
-  servizio_transponder = letture$servizio_transponder,
   servizio_atteso = con_servizio$servizio_atteso,
+  origine_servizio = con_servizio$origine_servizio,
   servizio_giro = con_servizio$servizio_giro,
   coerenza = con_servizio$coerenza,
   id_utenza = letture$id_utenza,
@@ -954,7 +961,7 @@ stopifnot(
   finale$giorno_lettura[finale$RFID == "RFD20250901001"][1] == "2025-09-01 06:00:00",
   finale$giorno_lettura[finale$RFID == "RFD20250901002"][1] == "2025-09-01 06:15:00",
   finale$giorno_lettura[finale$RFID == "RFD20250901201"][1] == "2025-09-01 06:30:00",
-  identical(per_rfid$RFD20250901001$servizio_transponder[1:4], c("CARTA", "SECCO", "CARTA", "CARTA")),
+  identical(per_rfid$RFD20250901001$servizio_atteso[1:4], c("CARTA", "SECCO", "CARTA", "CARTA")),
   identical(substr(per_rfid$RFD20250901001$giorno_lettura[1:3], 1, 10), c("2025-09-01", "2025-09-15", "2025-09-28")),
   identical(per_rfid$RFD20250901050$id_utenza[1:4], c("UTZ001", "UTZ001", "UTZ025", "UTZ025")),
   all(per_rfid$RFD20250901050$id_utenza[-(1:2)] == "UTZ025"),
@@ -973,11 +980,15 @@ stopifnot(
   ),
   # coerenza dei campi: i dati del contenitore mancano ai non censiti e ai
   # sacchetti, l'utenza solo ai non censiti
-  all(is.na(finale$servizio_transponder) == (non_presente | sacchetto)),
+  all((finale$origine_servizio == "Database") == !(non_presente | sacchetto)),
   all(is.na(finale$id_utenza) == non_presente),
   all(is.na(finale$volume_previsto) == (non_presente | sacchetto)),
   all(is.na(finale$numero_raccolte_annue_previste) == (non_presente | sacchetto)),
-  all(finale$servizio_transponder %in% c(servizi, NA)),
+  all(finale$servizio_atteso[dal_database] %in% servizi),
+  # l'origine c'e' per ogni lettura; quella dei non censiti e dei sacchetti e'
+  # il calendario oppure i censiti letti dallo stesso mezzo
+  all(finale$origine_servizio %in% c("Database", "Censiti", "Calendario")),
+  all(finale$origine_servizio[sacchetto] == "Calendario"),
   # ogni lettura ha il giro del mezzo che l'ha fatta, con il nome del
   # calendario: i giri sono dodici
   !anyNA(finale$servizio_giro),
@@ -989,8 +1000,7 @@ stopifnot(
   # dallo stesso mezzo
   !anyNA(finale$servizio_atteso),
   all(servizi %in% finale$servizio_atteso),
-  all(finale$servizio_atteso[!is.na(finale$servizio_transponder)] ==
-    finale$servizio_transponder[!is.na(finale$servizio_transponder)]),
+  all(finale$servizio_atteso[dal_database] == letture$servizio_database[dal_database]),
   all((finale$servizio_atteso == uniforma_servizio(finale$servizio_giro))[
     sacchetto & !non_presente
   ]),

@@ -28,9 +28,10 @@
 #'   tempi globali e del cluster, `presente_a_database`, `cantiere` e
 #'   `comune` dell'RFID, `comune_geografico` in cui cade il cluster,
 #'   `incongruenza_comune` e `distanza_comune_m` rispetto al comune dichiarato,
-#'   servizio transponder
-#'   (attuale e cronologia dei cambi), servizio atteso (prevalente e
-#'   composizione), volumi, periodo di analisi, raccolte annue previste e
+#'   `servizio_atteso` con la sua `origine_servizio` (per un censito il
+#'   servizio del database, con la cronologia dei cambi; per un non censito
+#'   il servizio prevalente, con la composizione), volumi, periodo di analisi,
+#'   raccolte annue previste e
 #'   presunte, numero di letture, baricentro, `cluster_dispersione_90th_m`,
 #'   `cluster_indice_fiducia` e `indicatore_cluster`.
 #'

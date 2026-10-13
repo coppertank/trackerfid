@@ -32,8 +32,7 @@ conta <- function(n, singolare, plurale) {
 #' provenienti dal file vengono sempre sottoposti a escape HTML.
 #'
 #' @param rfid Character
-#' @param servizio Character
-#' @param servizio_atteso Character
+#' @param servizio_atteso Character: servizio del contenitore.
 #' @param targa Character
 #' @param matricola Character
 #' @param giorno_lettura POSIXct
@@ -45,6 +44,8 @@ conta <- function(n, singolare, plurale) {
 #' @param comune_giro Character, facoltativo: comune in cui il calendario
 #'   mandava il mezzo. Compare solo se è diverso dal comune di lettura.
 #' @param cantiere Character, facoltativo.
+#' @param origine_servizio Character, facoltativo: da dove viene il servizio
+#'   atteso, vedi `origini_servizio()`. Compare accanto al servizio.
 #' @return HTML string
 #' @noRd
 create_popup_html <- function(
@@ -63,7 +64,8 @@ create_popup_html <- function(
   fuori_comune = NULL,
   fuori_giro = NULL,
   servizio_giro = NULL,
-  coerenza = NULL
+  coerenza = NULL,
+  origine_servizio = NULL
 ) {
   testo <- function(x, se_mancante = "N/A") {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
@@ -133,6 +135,17 @@ create_popup_html <- function(
   riga_fuori_comune <- riga_incongruenza("Fuori comune", fuori_comune, "a database")
   riga_fuori_giro <- riga_incongruenza("Fuori giro", fuori_giro, "giro a")
   riga_giro <- riga_facoltativa("Servizio Giro", servizio_giro)
+  # L'origine dice quanto fidarsi del servizio atteso: sta sulla stessa riga.
+  nota_origine <- if (is.null(origine_servizio)) {
+    ""
+  } else {
+    descrizione <- descrivi_origine(origine_servizio)
+    ifelse(
+      is.na(descrizione) | is.na(servizio_atteso),
+      "",
+      paste0(" <span class='popup-origine'>(", descrizione, ")</span>")
+    )
+  }
   # I servizi che non concordano hanno una riga loro, che li riporta tutti.
   riga_coerenza <- if (is.null(coerenza)) {
     ""
@@ -155,6 +168,7 @@ create_popup_html <- function(
     "<br>",
     "<b>Servizio Atteso:</b> ",
     testo(servizio_atteso),
+    nota_origine,
     "<br>",
     riga_giro,
     "<b>Targa:</b> ",
@@ -180,6 +194,22 @@ create_popup_html <- function(
     riga_coerenza,
     "</div>"
   )
+}
+
+#' Origine del servizio atteso, in parole
+#'
+#' @param origine Valori di `origine_servizio`, vedi `origini_servizio()`.
+#' @return Un testo per valore, ad esempio `"da database"`; mancante per
+#'   un'origine mancante o sconosciuta.
+#' @noRd
+descrivi_origine <- function(origine) {
+  origini <- origini_servizio()
+  testi <- c(
+    database = "da database",
+    censiti = "dai censiti letti dallo stesso mezzo",
+    calendario = "dal calendario dei mezzi"
+  )
+  unname(testi[names(origini)[match(as.character(origine), origini)]])
 }
 
 #' Servizio atteso e giro di una lettura, per popup e dettaglio
@@ -649,7 +679,7 @@ righe_cantieri <- function(rfid, letture = NULL) {
 
 #' Riquadro con le statistiche del dataset filtrato
 #'
-#' Il servizio transponder conta i censiti. Il servizio atteso conta i non
+#' Il servizio atteso conta i censiti con il servizio del database, e i non
 #' censiti: una riga per servizio stimato e, in fondo, quelli con la stima
 #' incerta, che sulla mappa hanno il punto di domanda.
 #'

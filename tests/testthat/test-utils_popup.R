@@ -497,3 +497,56 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
     fixed = TRUE
   )
 })
+
+test_that("il popup dice da dove viene il servizio atteso", {
+  popup <- function(...) {
+    create_popup_html(
+      rfid = "R1",
+      targa = "AB123CD",
+      matricola = "VEH001",
+      giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
+      id_utenza = NA,
+      presente = "Non Presente",
+      ...
+    )
+  }
+  # senza la colonna il popup non ne parla
+  expect_no_match(popup(servizio_atteso = "CARTA"), "popup-origine", fixed = TRUE)
+
+  con_origine <- popup(
+    servizio_atteso = c("CARTA", "SECCO", "VETRO", "UMIDO", NA),
+    origine_servizio = c("Database", "Censiti", "Calendario", NA, "Calendario")
+  )
+  expect_length(con_origine, 5)
+  # l'origine sta accanto al servizio, sulla stessa riga
+  expect_match(
+    con_origine[1],
+    "<b>Servizio Atteso:</b> CARTA <span class='popup-origine'>(da database)</span><br>",
+    fixed = TRUE
+  )
+  expect_match(
+    con_origine[2],
+    "SECCO <span class='popup-origine'>(dai censiti letti dallo stesso mezzo)</span>",
+    fixed = TRUE
+  )
+  expect_match(con_origine[3], "(dal calendario dei mezzi)", fixed = TRUE)
+  # senza origine, o senza servizio, non c'è niente da dire
+  expect_no_match(con_origine[4], "popup-origine", fixed = TRUE)
+  expect_no_match(con_origine[5], "popup-origine", fixed = TRUE)
+
+  expect_identical(
+    descrivi_origine(c(origini_servizio(), NA, "Altro")),
+    c(
+      "da database",
+      "dai censiti letti dallo stesso mezzo",
+      "dal calendario dei mezzi",
+      NA,
+      NA
+    )
+  )
+  # sulla mappa il popup riceve l'origine dalle letture
+  esempio <- deduplica_ultimo_rfid(aggiungi_servizio_icona(dati_esempio()))
+  marker <- aggiungi_marker(leaflet::leaflet(), esempio[1:20, ])
+  testo <- marker$x$calls[[1]]$args[[7]]
+  expect_true(all(grepl("popup-origine", testo, fixed = TRUE)))
+})

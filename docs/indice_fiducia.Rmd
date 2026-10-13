@@ -156,9 +156,12 @@ verifiche$inizio <- cumsum(verifiche$peso) - verifiche$peso
 # La tabella di analisi non riporta due dati che entrano nell'indice: se il
 # servizio è cambiato e quanto pesa il giro prevalente. Si ricavano dalle letture.
 nel_periodo <- filtra_periodo(letture, periodo)
+# I cambi di servizio sono quelli del database: contano le letture il cui
+# servizio atteso ha origine "Database".
+nel_periodo$servizio_database <- servizio_a_database(nel_periodo)
 servizi <- dplyr::summarise(
   nel_periodo,
-  servizio_stabile = dplyr::n_distinct(servizio_transponder, na.rm = TRUE) <= 1,
+  servizio_stabile = dplyr::n_distinct(servizio_database, na.rm = TRUE) <= 1,
   .by = "RFID"
 )
 quote_giro <- nel_periodo |>

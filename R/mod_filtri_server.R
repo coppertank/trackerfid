@@ -84,7 +84,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       if (is.null(d)) {
         return(character(0))
       }
-      ordina_servizi(servizio_dei_filtri(d))
+      ordina_servizi(servizio_mostrato(d))
     })
     scelte_giro <- reactive(ordina_servizi(dati()[["servizio_giro"]]))
 

@@ -77,7 +77,7 @@ misura(
 # e senza i non censiti con la stima incerta.
 stimati <- misura(
   "Elenco dei servizi attesi",
-  ordina_servizi(servizio_dei_filtri(nel_periodo))
+  ordina_servizi(servizio_mostrato(nel_periodo))
 )
 misura(
   "Cambio del filtro sul servizio atteso, in tutto",

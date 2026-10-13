@@ -88,9 +88,10 @@ letture <- data.table(
   matricola_veicolo = mezzi[i_mezzo],
   RFID = bidoni$RFID[k],
   presente_a_database = fifelse(censito, "Presente", "Non Presente"),
-  servizio_transponder = fifelse(censito, servizi[bidoni$i_servizio[k]], NA_character_),
-  # i giri sono nello stesso ordine dei servizi del database
-  servizio_atteso = servizi[i_giro],
+  # per un censito il servizio del contenitore a database, per un non censito
+  # quello del giro: i giri sono nello stesso ordine dei servizi del database
+  servizio_atteso = fifelse(censito, servizi[bidoni$i_servizio[k]], servizi[i_giro]),
+  origine_servizio = fifelse(censito, "Database", "Calendario"),
   servizio_giro = giri[i_giro],
   id_utenza = fifelse(censito, bidoni$utenza[k], NA_character_),
   latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),

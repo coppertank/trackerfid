@@ -336,7 +336,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     # servizio stimato dei non censiti
     expect_identical(
       scelte_atteso(),
-      ordina_servizi(servizio_dei_filtri(esempio))
+      ordina_servizi(servizio_mostrato(esempio))
     )
     expect_identical(
       scelte_atteso(),
@@ -381,13 +381,10 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     expect_equal(nrow(filtrati()), 87)
     expect_equal(nrow(non_censiti()), 5)
     # per i censiti è il servizio del contenitore a database
-    expect_true(all(
-      filtrati()$servizio_transponder[
-        filtrati()$presente_a_database == "Presente"
-      ] ==
-        "SECCO"
-    ))
-    expect_true(all(servizio_dei_filtri(filtrati()) == "SECCO"))
+    censiti <- filtrati()[filtrati()$presente_a_database == "Presente", ]
+    expect_true(all(censiti$servizio_atteso == "SECCO"))
+    expect_true(all(censiti$origine_servizio == "Database"))
+    expect_true(all(servizio_mostrato(filtrati()) == "SECCO"))
     expect_true("RFD20250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
     # con lo stato a database: i soli non censiti
@@ -415,7 +412,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     # e una voce spuntata vale solo per sé
     session$setInputs(servizio_atteso_check = "SECCO")
     expect_gt(nrow(filtrati()), 0)
-    expect_true(all(servizio_dei_filtri(filtrati()) == "SECCO"))
+    expect_true(all(servizio_mostrato(filtrati()) == "SECCO"))
 
     # il reset riporta tutto ai valori predefiniti
     session$setInputs(reset = 1)

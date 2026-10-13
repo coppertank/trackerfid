@@ -253,6 +253,8 @@ test_that("il servizio atteso è il turno in cui cade la lettura, o il più vici
     risultato$servizio_atteso,
     c("SECCO", "CARTA", "SECCO", "CARTA", "SECCO", "CARTA")
   )
+  # e l'origine lo dice
+  expect_identical(risultato$origine_servizio, rep("Calendario", 6))
 
   # per un censito il servizio atteso è quello del contenitore a database,
   # qualunque sia il turno: il giro resta quello del calendario
@@ -263,8 +265,10 @@ test_that("il servizio atteso è il turno in cui cade la lettura, o il più vici
     ),
     calendario_prova
   )
-  expect_identical(censiti$servizio_transponder, c("VETRO", "VETRO"))
   expect_identical(censiti$servizio_atteso, c("VETRO", "VETRO"))
+  expect_identical(censiti$origine_servizio, c("Database", "Database"))
+  # il servizio del database non ha una colonna sua
+  expect_false("servizio_transponder" %in% names(censiti))
   expect_identical(censiti$servizio_giro, c("SECCO PAP", "CARTA/CARTONE PAP"))
   # anche senza turni: il servizio del contenitore non dipende dal calendario
   senza_turni <- associa_servizio_atteso_da_calendario(
@@ -272,6 +276,7 @@ test_that("il servizio atteso è il turno in cui cade la lettura, o il più vici
     calendario_prova
   )
   expect_identical(senza_turni$servizio_atteso, "VETRO")
+  expect_identical(senza_turni$origine_servizio, "Database")
   expect_true(is.na(senza_turni$servizio_giro))
 })
 
@@ -306,6 +311,7 @@ test_that("senza turni il servizio atteso resta vuoto", {
   )
   expect_equal(nrow(senza_turni), 1)
   expect_true(is.na(senza_turni$servizio_atteso))
+  expect_true(is.na(senza_turni$origine_servizio))
 
   # un altro giorno, per lo stesso mezzo, non ha turni
   altro_giorno <- associa_servizio_atteso_da_calendario(
@@ -492,7 +498,8 @@ test_that("i turni che finiscono in giornata non passano al giorno dopo", {
 })
 
 # Letture di un mezzo in un giorno, come escono dall'associazione al
-# calendario: `calendario` è il servizio che il calendario dava al mezzo.
+# calendario: `calendario` è il giro che il calendario dava al mezzo. Il
+# servizio atteso è quello del database per i censiti, il giro per gli altri.
 letture_giro <- function(
   orari,
   rfid,
@@ -509,12 +516,13 @@ letture_giro <- function(
     matricola_veicolo = matricola,
     RFID = rfid,
     presente_a_database = presente,
-    servizio_transponder = ifelse(
+    servizio_atteso = ifelse(
       presente == "Presente",
       rep_len(servizio, n),
-      NA_character_
+      rep_len(calendario, n)
     ),
-    servizio_atteso = rep_len(calendario, n)
+    origine_servizio = ifelse(presente == "Presente", "Database", "Calendario"),
+    servizio_giro = rep_len(calendario, n)
   )
 }
 ogni_cinque_minuti <- function(n, dalle = "08:00:00") {
@@ -533,6 +541,15 @@ giro_sostituito <- function(n_censiti = 6, servizio = "SECCO") {
   )
 }
 non_censito <- function(esito) esito[esito$RFID == "N01", ]
+# Le stesse letture senza il calendario: manca il giro, e con il giro il
+# servizio di chi non ha quello del database.
+senza_calendario <- function(letture) {
+  senza_database <- letture$origine_servizio != "Database"
+  letture$servizio_giro <- NA_character_
+  letture$servizio_atteso[senza_database] <- NA_character_
+  letture$origine_servizio[senza_database] <- NA_character_
+  letture
+}
 
 test_that("il servizio atteso di un non censito viene dai censiti letti dallo stesso mezzo", {
   esito <- associa_servizio_atteso_dai_censiti(giro_sostituito())
@@ -540,6 +557,7 @@ test_that("il servizio atteso di un non censito viene dai censiti letti dallo st
   # il mezzo ha sostituito quello del secco: il calendario dice carta, i
   # censiti dicono secco
   expect_identical(non_censito(esito)$servizio_atteso, "SECCO")
+  expect_identical(non_censito(esito)$origine_servizio, "Censiti")
   # il servizio atteso e il giro non concordano: il mezzo non raccoglieva la
   # carta del calendario
   expect_identical(non_censito(esito)$coerenza, "Non coerente")
@@ -550,7 +568,8 @@ test_that("il servizio atteso di un non censito viene dai censiti letti dallo st
   censiti <- esito[esito$presente_a_database == "Presente", ]
   expect_identical(censiti$servizio_atteso, rep("SECCO", 6))
   expect_identical(censiti$coerenza, rep("Non coerente", 6))
-  # le due colonne nuove stanno dopo il servizio atteso, le altre non cambiano
+  # origine, giro e coerenza stanno dopo il servizio atteso, le altre colonne
+  # non cambiano
   expect_identical(
     names(esito),
     c(
@@ -559,30 +578,33 @@ test_that("il servizio atteso di un non censito viene dai censiti letti dallo st
       "matricola_veicolo",
       "RFID",
       "presente_a_database",
-      "servizio_transponder",
       "servizio_atteso",
+      "origine_servizio",
       "servizio_giro",
       "coerenza"
     )
   )
   expect_identical(esito$RFID, giro_sostituito()$RFID)
-  expect_identical(esito$servizio_transponder, giro_sostituito()$servizio_transponder)
+  # il servizio dei censiti resta quello del database
+  expect_identical(esito$origine_servizio, c(rep("Database", 6), "Censiti"))
 
   # quando i censiti confermano il calendario tutto concorda
   confermato <- associa_servizio_atteso_dai_censiti(
     giro_sostituito(servizio = "CARTA")
   )
   expect_identical(non_censito(confermato)$servizio_atteso, "CARTA")
+  # il servizio è quello del calendario, ma lo dicono i censiti
+  expect_identical(non_censito(confermato)$origine_servizio, "Censiti")
   expect_identical(confermato$coerenza, rep("Coerente", 7))
 
   # il giro ha il nome del calendario: resta com'è, e il ripiego per il
   # servizio atteso è lo stesso giro con il nome del database
   con_giro <- giro_sostituito(4)
   con_giro$servizio_giro <- "CARTA/CARTONE PAP"
-  con_giro$servizio_atteso <- "CARTA"
   esito_giro <- associa_servizio_atteso_dai_censiti(con_giro)
   expect_identical(esito_giro$servizio_giro, rep("CARTA/CARTONE PAP", 5))
   expect_identical(esito_giro$servizio_atteso, c(rep("SECCO", 4), "CARTA"))
+  expect_identical(non_censito(esito_giro)$origine_servizio, "Calendario")
   # il non censito segue il calendario: coerente. I censiti del secco no
   expect_identical(non_censito(esito_giro)$coerenza, "Coerente")
   expect_identical(
@@ -602,6 +624,7 @@ test_that("con pochi censiti, o con censiti misti, resta il servizio del calenda
   # quattro censiti non bastano, cinque sì
   pochi <- associa_servizio_atteso_dai_censiti(giro_sostituito(4))
   expect_identical(non_censito(pochi)$servizio_atteso, "CARTA")
+  expect_identical(non_censito(pochi)$origine_servizio, "Calendario")
   expect_identical(non_censito(pochi)$coerenza, "Coerente")
   expect_identical(pochi$servizio_giro, rep("CARTA", 5))
   cinque <- associa_servizio_atteso_dai_censiti(giro_sostituito(5))
@@ -646,12 +669,21 @@ test_that("con pochi censiti, o con censiti misti, resta il servizio del calenda
     non_censito(associa_servizio_atteso_dai_censiti(ripetuto))$servizio_atteso,
     "CARTA"
   )
-  # un censito senza servizio a database, come un sacchetto, non vota
+  # un censito senza servizio a database, come un sacchetto, non vota: il suo
+  # servizio è quello del giro, e resta quello
   senza_servizio <- giro_sostituito()
-  senza_servizio$servizio_transponder <- NA_character_
+  senza_servizio$servizio_atteso <- "CARTA"
+  senza_servizio$origine_servizio <- "Calendario"
+  esito <- associa_servizio_atteso_dai_censiti(senza_servizio)
+  expect_identical(esito$servizio_atteso, rep("CARTA", 7))
+  expect_identical(esito$origine_servizio, rep("Calendario", 7))
+  # se le letture non hanno la colonna dell'origine, il servizio di un
+  # censito vale come quello del database
+  senza_origine <- giro_sostituito()
+  senza_origine$origine_servizio <- NULL
   expect_identical(
-    non_censito(associa_servizio_atteso_dai_censiti(senza_servizio))$servizio_atteso,
-    "CARTA"
+    associa_servizio_atteso_dai_censiti(senza_origine),
+    associa_servizio_atteso_dai_censiti(giro_sostituito())
   )
 })
 
@@ -735,10 +767,12 @@ test_that("un mezzo che fa due giri nello stesso giorno dà a ognuno il suo serv
 })
 
 test_that("senza calendario e senza censiti il servizio atteso di un non censito resta vuoto", {
-  senza <- giro_sostituito(3)
-  senza$servizio_atteso <- NA_character_
-  esito <- associa_servizio_atteso_dai_censiti(senza)
+  esito <- associa_servizio_atteso_dai_censiti(
+    senza_calendario(giro_sostituito(3))
+  )
   expect_true(is.na(non_censito(esito)$servizio_atteso))
+  # senza servizio non c'è nemmeno un'origine
+  expect_true(is.na(non_censito(esito)$origine_servizio))
   # i censiti hanno comunque il servizio del loro contenitore
   expect_identical(
     esito$servizio_atteso[esito$presente_a_database == "Presente"],
@@ -748,10 +782,11 @@ test_that("senza calendario e senza censiti il servizio atteso di un non censito
   # senza il giro la coerenza non si può dire
   expect_true(all(is.na(esito$coerenza)))
   # senza calendario, ma con abbastanza censiti, il servizio viene da loro
-  con_censiti <- giro_sostituito()
-  con_censiti$servizio_atteso <- NA_character_
-  esito <- associa_servizio_atteso_dai_censiti(con_censiti)
+  esito <- associa_servizio_atteso_dai_censiti(
+    senza_calendario(giro_sostituito())
+  )
   expect_identical(non_censito(esito)$servizio_atteso, "SECCO")
+  expect_identical(non_censito(esito)$origine_servizio, "Censiti")
   expect_true(is.na(non_censito(esito)$servizio_giro))
 
   # applicata due volte dà lo stesso risultato: il servizio del calendario
@@ -761,7 +796,9 @@ test_that("senza calendario e senza censiti il servizio atteso di un non censito
   # senza letture
   vuota <- associa_servizio_atteso_dai_censiti(giro_sostituito()[0, ])
   expect_equal(nrow(vuota), 0)
-  expect_true(all(c("servizio_giro", "coerenza") %in% names(vuota)))
+  expect_true(all(
+    c("origine_servizio", "servizio_giro", "coerenza") %in% names(vuota)
+  ))
 })
 
 test_that("il calendario deve riportare il comune di ogni giro", {
@@ -796,13 +833,16 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
   expect_setequal(names(risultato), c(colonne_csv(), "coerenza"))
   # per i censiti il servizio atteso è quello del database. Le letture di
   # prova sono poche: per il non censito resta il giro, con il nome del database
+  censita <- risultato$presente_a_database == "Presente"
   expect_identical(
-    risultato$servizio_atteso,
-    dplyr::coalesce(
-      risultato$servizio_transponder,
-      uniforma_servizio(risultato$servizio_giro)
-    )
+    risultato$origine_servizio,
+    ifelse(censita, "Database", "Calendario")
   )
+  expect_identical(
+    risultato$servizio_atteso[!censita],
+    uniforma_servizio(risultato$servizio_giro[!censita])
+  )
+  expect_false("servizio_transponder" %in% names(risultato))
   expect_equal(nrow(risultato), 4)
 
   file <- withr::local_tempfile(fileext = ".csv")
@@ -817,7 +857,11 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
     c("0000ABC123", "FFFFFFFFFF", "0000000001", "0000ABC123")
   )
   expect_identical(
-    caricate$servizio_transponder,
+    caricate$origine_servizio,
+    c("Database", "Calendario", "Database", "Database")
+  )
+  expect_identical(
+    servizio_a_database(caricate),
     c("CARTA", NA, "VETRO", "SECCO")
   )
   expect_identical(

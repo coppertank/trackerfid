@@ -176,7 +176,6 @@ test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
     matricola_veicolo = "VEH001",
     RFID = c("N1", "N2"),
     presente_a_database = "Non Presente",
-    servizio_transponder = NA_character_,
     servizio_atteso = c("VETRO PAP", NA),
     id_utenza = NA_character_,
     latitudine = c(41.9, 41.91),
@@ -194,13 +193,14 @@ test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
   # il marker resta rosso anche con l'icona del servizio
   expect_match(utils::URLdecode(url[1]), "#e74c3c", fixed = TRUE)
 
-  # senza la colonna dedicata si usa il servizio transponder
+  # senza la colonna dedicata il servizio stimato si calcola sulle letture
+  # ricevute: qui dà le stesse icone
   senza <- letture[, setdiff(names(letture), "servizio_icona")]
   icone <- chiamata(
     disegna_marker(mappa_base("utenza"), senza, "utenza"),
     "addMarkers"
   )$args[[3]]
-  expect_length(icone$iconUrl$data, 1)
+  expect_identical(icone$iconUrl$data[icone$iconUrl$index + 1], attese)
 })
 
 test_that("la mappa di base inquadra la zona servita", {

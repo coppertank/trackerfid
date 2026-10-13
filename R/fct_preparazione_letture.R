@@ -178,7 +178,9 @@ associa_servizio <- function(
 #' del database. Per un non censito, e per un censito che a database non ha
 #' un servizio, come un sacchetto, è il giro con il nome del database, vedi
 #' `servizio_da_giro()`: `associa_servizio_atteso_dai_censiti()` lo affina poi
-#' con i censiti letti dallo stesso mezzo.
+#' con i censiti letti dallo stesso mezzo. `origine_servizio` dice quale dei
+#' due vale: `Database` oppure `Calendario`, vedi `origini_servizio()`. Il
+#' servizio del database non ha una colonna sua.
 #'
 #' Restituisce le colonne con i nomi che l'app si aspetta, comprese quelle
 #' geografiche:
@@ -284,7 +286,6 @@ associa_servizio_atteso_da_calendario <- function(
     dplyr::arrange(.data$id_lettura, .data$distanza_minima) |>
     dplyr::filter(!duplicated(.data$id_lettura)) |>
     dplyr::rename(
-      servizio_transponder = "descrizione_rifiuto",
       servizio_giro = "descrizione_servizio",
       volume_previsto = "volume",
       numero_raccolte_annue_previste = "numero_raccolte_annue",
@@ -292,10 +293,15 @@ associa_servizio_atteso_da_calendario <- function(
     ) |>
     # Il giro resta com'è nel calendario. Il servizio atteso è quello del
     # contenitore a database; dove manca, il giro con il nome del database.
+    # L'origine dice quale dei due vale.
     dplyr::mutate(
-      servizio_atteso = dplyr::coalesce(
-        as.character(.data$servizio_transponder),
-        servizio_da_giro(.data$servizio_giro)
+      del_database = as.character(.data$descrizione_rifiuto),
+      del_giro = servizio_da_giro(.data$servizio_giro),
+      servizio_atteso = dplyr::coalesce(.data$del_database, .data$del_giro),
+      origine_servizio = dplyr::case_when(
+        !is.na(.data$del_database) ~ origini_servizio()[["database"]],
+        !is.na(.data$del_giro) ~ origini_servizio()[["calendario"]],
+        TRUE ~ NA_character_
       )
     ) |>
     completa_geografia() |>
@@ -307,8 +313,8 @@ associa_servizio_atteso_da_calendario <- function(
         "matricola_veicolo",
         "RFID",
         "presente_a_database",
-        "servizio_transponder",
         "servizio_atteso",
+        "origine_servizio",
         "servizio_giro",
         "volume_previsto",
         "numero_raccolte_annue_previste",
@@ -346,6 +352,11 @@ associa_servizio_atteso_da_calendario <- function(
 #' il voto non lo tocca. Un censito senza servizio a database, come un
 #' sacchetto, tiene quello del calendario.
 #'
+#' Chi ha il servizio del database lo dice `origine_servizio`: votano le
+#' letture dei censiti con origine `Database`, e il loro servizio non cambia.
+#' Le altre letture escono con origine `Censiti`, se vale il voto, oppure
+#' `Calendario`. Se le letture non hanno la colonna vale `origine_dedotta()`.
+#'
 #' `servizio_giro` non cambia mai: è il giro del calendario, con il suo nome.
 #' La colonna `coerenza` dice se servizio atteso e giro sono dello stesso
 #' rifiuto, vedi `coerenza_servizio()`.
@@ -355,10 +366,11 @@ associa_servizio_atteso_da_calendario <- function(
 #' @param minuti Minuti prima e dopo la lettura entro cui un censito vota.
 #' @param minimo_censiti Numero minimo di censiti perché il voto valga.
 #' @param soglia Quota minima dei voti per lo stesso servizio.
-#' @return Le letture, con `servizio_atteso` aggiornato per i non censiti e
-#'   la colonna `coerenza`: `"Coerente"`, `"Non coerente"` o mancante. Se le
-#'   letture non hanno `servizio_giro`, la colonna viene creata con il servizio
-#'   atteso ricevuto. Applicata due volte dà lo stesso risultato.
+#' @return Le letture, con `servizio_atteso` e `origine_servizio` aggiornati
+#'   per i non censiti e la colonna `coerenza`: `"Coerente"`,
+#'   `"Non coerente"` o mancante. Se le letture non hanno `servizio_giro`, la
+#'   colonna viene creata con il servizio atteso ricevuto. Applicata due volte
+#'   dà lo stesso risultato.
 #' @noRd
 associa_servizio_atteso_dai_censiti <- function(
   df_letture,
@@ -378,10 +390,13 @@ associa_servizio_atteso_dai_censiti <- function(
   censita <- df_letture$presente_a_database %in% "Presente"
   mezzo <- indice_gruppi(df_letture$matricola_veicolo)
   stimato <- rep(NA_character_, n)
+  # Il servizio del contenitore a database: quello dei censiti con origine
+  # `Database`. Gli altri servizi ricevuti si ricalcolano da capo.
+  origini <- origini_servizio()
+  del_contenitore <- servizio_a_database(df_letture)
+  del_contenitore[!censita] <- NA_character_
 
-  votanti <- which(
-    con_mezzo & censita & !is.na(df_letture$servizio_transponder)
-  )
+  votanti <- which(con_mezzo & !is.na(del_contenitore))
   # Un voto al giorno per contenitore e per mezzo: la prima lettura.
   votanti <- votanti[order(istante[votanti], method = "radix")]
   votanti <- votanti[
@@ -399,13 +414,13 @@ associa_servizio_atteso_dai_censiti <- function(
     posizione <- function(righe) mezzo[righe] * 1e10 + istante[righe]
     finestra <- 60 * minuti
     centro <- posizione(da_stimare)
-    servizi <- unique(df_letture$servizio_transponder[votanti])
+    servizi <- unique(del_contenitore[votanti])
     # Voti per ogni servizio nella finestra di ogni lettura da stimare.
     voti <- vapply(
       servizi,
       function(servizio) {
         del_servizio <- sort(posizione(
-          votanti[df_letture$servizio_transponder[votanti] == servizio]
+          votanti[del_contenitore[votanti] == servizio]
         ))
         findInterval(centro + finestra, del_servizio) -
           findInterval(centro - finestra, del_servizio, left.open = TRUE)
@@ -422,17 +437,21 @@ associa_servizio_atteso_dai_censiti <- function(
 
   # Per un censito vale il servizio del contenitore a database; per un non
   # censito il voto dei censiti; in mancanza, il giro del calendario.
-  del_contenitore <- as.character(df_letture$servizio_transponder)
-  del_contenitore[!censita] <- NA_character_
   df_letture$servizio_atteso <- dplyr::coalesce(
     del_contenitore,
     stimato,
     calendario
   )
+  df_letture$origine_servizio <- dplyr::case_when(
+    !is.na(del_contenitore) ~ origini[["database"]],
+    !is.na(stimato) ~ origini[["censiti"]],
+    !is.na(calendario) ~ origini[["calendario"]],
+    TRUE ~ NA_character_
+  )
   df_letture$coerenza <- coerenza_servizio(df_letture)
   dplyr::relocate(
     df_letture,
-    dplyr::all_of(c("servizio_giro", "coerenza")),
+    dplyr::all_of(c("origine_servizio", "servizio_giro", "coerenza")),
     .after = dplyr::all_of("servizio_atteso")
   )
 }

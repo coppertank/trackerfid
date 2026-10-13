@@ -27,18 +27,26 @@ scrivi_csv <- function(righe, env = parent.frame()) {
   percorso
 }
 
+# Le nove colonne obbligatorie, nell'ordine usato dalle righe dei test.
 intestazione_csv <- paste(
   "giorno_lettura",
   "targa_veicolo",
   "matricola_veicolo",
   "RFID",
   "presente_a_database",
-  "servizio_transponder",
   "servizio_atteso",
   "id_utenza",
   "latitudine",
   "longitudine",
   sep = ","
+)
+
+# Intestazione dei file preparati prima della fusione dei due servizi: il
+# servizio del database stava in `servizio_transponder`.
+intestazione_precedente <- sub(
+  "servizio_atteso",
+  "servizio_transponder,servizio_atteso",
+  intestazione_csv
 )
 
 # Piccolo insieme di letture costruito a mano.
@@ -59,8 +67,8 @@ letture_test <- function() {
     matricola_veicolo = "VEH001",
     RFID = c("A", "A", "A", "B", "C", "C"),
     presente_a_database = c(rep("Presente", 4), rep("Non Presente", 2)),
-    servizio_transponder = c("CARTA", "SECCO", "CARTA", "VETRO", NA, NA),
-    servizio_atteso = c(NA, NA, NA, NA, "SECCO", NA),
+    servizio_atteso = c("CARTA", "SECCO", "CARTA", "VETRO", "SECCO", NA),
+    origine_servizio = c(rep("Database", 4), "Calendario", NA),
     id_utenza = c("U1", "U1", "U2", "U1", NA, NA),
     latitudine = c(41.90, 41.91, 41.92, 41.80, 41.70, 41.70),
     longitudine = c(12.40, 12.41, 12.42, 12.30, 12.20, 12.20)
@@ -85,7 +93,9 @@ analisi_esempio <- local({
 # Gradi di latitudine corrispondenti a una distanza in metri.
 gradi_lat <- function(metri) metri / (raggio_terra_m() * pi / 180)
 
-# Letture sintetiche di un RFID: una per data, tutte nello stesso punto.
+# Letture sintetiche di un RFID: una per data, tutte nello stesso punto. Un
+# censito ha il servizio del database, `servizio`; un non censito quello del
+# calendario, `atteso`.
 letture_rfid <- function(
   rfid,
   date,
@@ -100,14 +110,19 @@ letture_rfid <- function(
 ) {
   n <- length(date)
   censito <- presente == "Presente"
+  servizio_atteso <- rep_len(if (censito) servizio else atteso, n)
   dplyr::tibble(
     giorno_lettura = as.POSIXct(paste(date, "08:00:00"), tz = "UTC"),
     targa_veicolo = "AB123CD",
     matricola_veicolo = "VEH001",
     RFID = rfid,
     presente_a_database = presente,
-    servizio_transponder = if (censito) rep_len(servizio, n) else NA_character_,
-    servizio_atteso = rep_len(atteso, n),
+    servizio_atteso = servizio_atteso,
+    origine_servizio = ifelse(
+      is.na(servizio_atteso),
+      NA_character_,
+      if (censito) "Database" else "Calendario"
+    ),
     id_utenza = if (censito) utenza else NA_character_,
     latitudine = rep_len(lat, n),
     longitudine = rep_len(lon, n),

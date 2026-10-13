@@ -135,11 +135,7 @@ aggiungi_marker <- function(
   rialzo = 0
 ) {
   # Per i non censiti l'icona segue il servizio atteso prevalente dell'RFID.
-  servizio <- if ("servizio_icona" %in% names(df)) {
-    df$servizio_icona
-  } else {
-    df$servizio_transponder
-  }
+  servizio <- servizio_mostrato(df)
   leaflet::addMarkers(
     map,
     lng = df$longitudine,
@@ -168,7 +164,8 @@ aggiungi_marker <- function(
       fuori_comune = df[["fuori_comune"]],
       fuori_giro = df[["fuori_giro"]],
       servizio_giro = df[["servizio_giro"]],
-      coerenza = df[["coerenza"]]
+      coerenza = df[["coerenza"]],
+      origine_servizio = df[["origine_servizio"]]
     ),
     label = df$RFID,
     options = leaflet::markerOptions(

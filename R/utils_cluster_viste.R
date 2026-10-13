@@ -44,8 +44,8 @@ tabella_cluster_dt <- function(risultato) {
     "presente_a_database",
     "cantiere",
     "comune",
-    "servizio_transponder",
-    "servizio_atteso"
+    "servizio_atteso",
+    "origine_servizio"
   )
   tabella <- as.data.frame(risultato) |>
     dplyr::mutate(
@@ -423,7 +423,6 @@ popup_cluster <- function(righe) {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
   }
   servizio <- dplyr::coalesce(
-    righe$servizio_transponder,
     righe$servizio_atteso,
     righe$servizio_atteso_dettaglio
   )

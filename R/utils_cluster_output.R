@@ -18,9 +18,9 @@ colonne_analisi_cluster <- function() {
     "comune_geografico",
     "incongruenza_comune",
     "distanza_comune_m",
-    "servizio_transponder",
-    "servizio_transponder_cronologia",
     "servizio_atteso",
+    "origine_servizio",
+    "servizio_atteso_cronologia",
     "servizio_atteso_dettaglio",
     "volume_previsto",
     "volume_atteso",
@@ -240,7 +240,7 @@ posizione_cluster <- function(
 #' @param censito `TRUE` se il contenitore è presente a database.
 #' @param cluster_letture,globale_letture Letture del cluster e dell'RFID.
 #' @param dispersione_m Dispersione del cluster in metri.
-#' @param servizio_stabile `TRUE` se il servizio transponder non è cambiato.
+#' @param servizio_stabile `TRUE` se il servizio a database non è cambiato.
 #' @param quota_atteso Quota del servizio atteso prevalente nel cluster.
 #' @param previste,presunte Raccolte annue previste e presunte.
 #' @param soglie,pesi Vedi `soglie_indicatore()` e `pesi_fiducia()`.
@@ -311,9 +311,9 @@ analisi_cluster_vuota <- function() {
     comune_geografico = character(0),
     incongruenza_comune = character(0),
     distanza_comune_m = numeric(0),
-    servizio_transponder = character(0),
-    servizio_transponder_cronologia = character(0),
     servizio_atteso = character(0),
+    origine_servizio = character(0),
+    servizio_atteso_cronologia = character(0),
     servizio_atteso_dettaglio = character(0),
     volume_previsto = numeric(0),
     volume_atteso = numeric(0),
@@ -432,13 +432,17 @@ calcola_analisi_cluster <- function(
   )
 
   # --- Valori globali dell'RFID nel periodo -----------------------------------
-  n_servizi <- n_distinti_per_gruppo(dati$servizio_transponder, rfid, n_rfid)
+  # Il servizio di un censito è quello del database: le letture con un
+  # servizio di altra origine, fatte prima che il contenitore fosse censito,
+  # non contano tra i suoi cambi di servizio.
+  servizio_database <- servizio_a_database(dati)
+  n_servizi <- n_distinti_per_gruppo(servizio_database, rfid, n_rfid)
   # La cronologia dei servizi serve solo agli RFID che ne hanno più di uno.
   sequenza_servizi <- rep(NA_character_, n_rfid)
   con_cambi <- which(n_servizi[rfid] > 1)
   if (length(con_cambi) > 0) {
     sequenze <- tapply(
-      dati$servizio_transponder[con_cambi],
+      servizio_database[con_cambi],
       rfid[con_cambi],
       function(servizi) paste(sequenza_valori(servizi), collapse = " > ")
     )
@@ -465,8 +469,8 @@ calcola_analisi_cluster <- function(
     comune = geografia$comune,
     n_servizi = n_servizi,
     sequenza_servizi = sequenza_servizi,
-    servizio_transponder = ultimo_valido_per_gruppo(
-      dati$servizio_transponder,
+    servizio_database = ultimo_valido_per_gruppo(
+      servizio_database,
       rfid,
       n_rfid
     ),
@@ -484,12 +488,12 @@ calcola_analisi_cluster <- function(
     dplyr::mutate(
       censito = .data$presente_a_database == "Presente",
       # Servizio, volume e raccolte previste valgono solo per i censiti.
-      servizio_transponder = dplyr::if_else(
+      servizio_database = dplyr::if_else(
         .data$censito,
-        .data$servizio_transponder,
+        .data$servizio_database,
         NA_character_
       ),
-      servizio_transponder_cronologia = dplyr::if_else(
+      servizio_atteso_cronologia = dplyr::if_else(
         .data$censito & .data$n_servizi > 1,
         .data$sequenza_servizi,
         NA_character_
@@ -554,7 +558,8 @@ calcola_analisi_cluster <- function(
     ),
     atteso_prevalente = NA_character_,
     quota_atteso = NA_real_,
-    composizione_atteso = NA_character_
+    composizione_atteso = NA_character_,
+    origine_prevalente = NA_character_
   )
   # Un RFID ha tutti i cluster compatti se nessuno supera la soglia.
   non_compatti <- tabulate(
@@ -607,16 +612,38 @@ calcola_analisi_cluster <- function(
     per_cluster$composizione_atteso[
       as.integer(names(composizione))
     ] <- composizione
+    # Da dove viene il servizio prevalente: l'origine più frequente tra le
+    # letture del cluster che lo riportano.
+    if (!is.null(dati[["origine_servizio"]])) {
+      del_prevalente <- con_atteso[
+        dati$servizio_atteso[con_atteso] ==
+          per_cluster$atteso_prevalente[cluster[con_atteso]]
+      ]
+      per_cluster$origine_prevalente <- piu_frequente_per_gruppo(
+        as.character(dati$origine_servizio)[del_prevalente],
+        cluster[del_prevalente],
+        n_cluster
+      )
+    }
   }
 
   risultato <- per_cluster |>
     dplyr::left_join(per_rfid, by = "RFID") |>
     dplyr::mutate(
+      # Una colonna sola per il servizio: per un censito quello del database,
+      # per un non censito quello prevalente tra le letture del cluster, se
+      # raggiunge la soglia. L'origine dice quale dei due casi vale.
+      stima_netta = !.data$censito &
+        dplyr::coalesce(.data$quota_atteso, 0) >= soglie$prevalenza_atteso,
       servizio_atteso = dplyr::if_else(
-        !.data$censito &
-          dplyr::coalesce(.data$quota_atteso, 0) >= soglie$prevalenza_atteso,
+        .data$stima_netta,
         .data$atteso_prevalente,
-        NA_character_
+        .data$servizio_database
+      ),
+      origine_servizio = dplyr::case_when(
+        is.na(.data$servizio_atteso) ~ NA_character_,
+        .data$stima_netta ~ .data$origine_prevalente,
+        TRUE ~ origini_servizio()[["database"]]
       ),
       servizio_atteso_dettaglio = dplyr::if_else(
         .data$censito,
