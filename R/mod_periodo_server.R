@@ -5,10 +5,10 @@
 #' periodo si riallinea subito, senza attendere il browser.
 #'
 #' @param id Identificativo del modulo.
-#' @param dati Reactive con il dataset validato (o `NULL`).
+#' @param dati Reactive con l'archivio delle letture (o `NULL`).
 #' @return Lista di reactive: `periodo` (due date, `NULL` se non valido),
-#'   `etichetta` (descrizione breve) e `dati` (letture del periodo, con il
-#'   servizio da usare per l'icona; `NULL` senza dataset o periodo).
+#'   `etichetta` (descrizione breve) e `dati` (selezione delle letture del
+#'   periodo, vedi `seleziona_periodo()`; `NULL` senza dataset o periodo).
 #' @noRd
 mod_periodo_server <- function(id, dati) {
   moduleServer(id, function(input, output, session) {
@@ -105,7 +105,7 @@ mod_periodo_server <- function(id, dati) {
       if (is.null(d) || is.null(p)) {
         return(NULL)
       }
-      aggiungi_servizio_icona(filtra_periodo(d, p))
+      seleziona_periodo(d, p)
     })
 
     output$riepilogo <- renderUI({
@@ -121,15 +121,15 @@ mod_periodo_server <- function(id, dati) {
       div(
         class = paste(
           "esito-ricerca",
-          if (nrow(d) > 0) "esito-ok" else "esito-avviso"
+          if (d$n > 0) "esito-ok" else "esito-avviso"
         ),
         tags$div(paste(format(p, "%d/%m/%Y"), collapse = " \u2013 ")),
         tags$div(
-          if (nrow(d) > 0) {
+          if (d$n > 0) {
             paste(
-              conta(nrow(d), "lettura", "letture"),
+              conta(d$n, "lettura", "letture"),
               "di",
-              conta(dplyr::n_distinct(d$RFID), "RFID", "RFID")
+              conta(d$n_rfid, "RFID", "RFID")
             )
           } else {
             "Nessuna lettura nel periodo."

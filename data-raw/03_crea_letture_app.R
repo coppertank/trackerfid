@@ -2,7 +2,8 @@
 #
 # Usa le funzioni di R/fct_preparazione_letture.R e le tabelle caricate dal
 # passo 2. Scrive data-raw/output/letture_app.csv, con le colonne che l'app
-# si aspetta. Eseguire dalla radice del progetto.
+# si aspetta, e data-raw/output/letture_app.duckdb, lo stesso file già
+# validato: l'app lo apre in un istante. Eseguire dalla radice del progetto.
 
 devtools::load_all()
 source("data-raw/02_importa_tabelle.R")
@@ -32,6 +33,14 @@ letture_app <- servizio_atteso |>
 
 
 write.csv(letture_app, "data-raw/output/letture_app.csv", row.names = FALSE)
+
+# L'archivio DuckDB: il CSV appena scritto, letto e validato come lo legge
+# l'app, con gli avvisi della validazione. Caricato nell'app, o indicato in
+# run_app(letture = ), si apre senza rileggere né validare le letture.
+scrivi_archivio(
+  "data-raw/output/letture_app.csv",
+  "data-raw/output/letture_app.duckdb"
+)
 
 # Con milioni di letture conviene anche il file compresso: occupa circa un
 # decimo e l'app lo legge allo stesso modo. dateTimeAs = "write.csv" scrive

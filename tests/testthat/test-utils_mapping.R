@@ -1,30 +1,57 @@
-chiamate <- function(mappa) {
-  vapply(mappa$x$calls, function(k) k$method, character(1))
+# Livello di una configurazione, per identificativo.
+livello <- function(livelli, id) {
+  Filter(function(l) identical(l$id, id), livelli)[[1]]
 }
-chiamata <- function(mappa, metodo) {
-  Filter(function(k) k$method == metodo, mappa$x$calls)[[1]]
-}
+identificativi <- function(livelli) vapply(livelli, function(l) l$id, character(1))
 
-test_that("la mappa di base ha sfondo, confini dei comuni, scala e legenda", {
+test_that("la mappa di base ha sfondo vettoriale, zona servita e configurazione", {
   mappa <- mappa_base("cluster")
-  expect_s3_class(mappa, "leaflet")
-  expect_identical(
-    chiamate(mappa),
-    c("addTiles", "createMapPane", "addGeoJSON", "addScaleBar", "addControl")
-  )
+  expect_s3_class(mappa, "maplibregl")
+  expect_identical(mappa$x$style, stile_mappa())
+  expect_identical(stile_mappa(), "https://tiles.openfreemap.org/styles/bright")
+  expect_identical(mappa$x$projection, "mercator")
   # inquadra tutta la zona servita, comuni nuovi compresi
   zona <- riquadro_zona()
   expect_equal(
-    unlist(mappa$x$fitBounds[1:4]),
-    c(zona$lat_min, zona$lng_min, zona$lat_max, zona$lng_max)
+    mappa$x$additional_params$bounds,
+    c(zona$lng_min, zona$lat_min, zona$lng_max, zona$lat_max)
   )
+  # all'avvio il browser riceve la configurazione della modalità
+  avvio <- mappa$jsHooks$render[[1]]
+  expect_match(avvio$code, "TrackerfidMappa.inizia", fixed = TRUE)
+  expect_identical(avvio$data$modalita, "cluster")
+  expect_identical(avvio$data, configurazione_mappa("cluster"))
+  # lo sfondo si cambia con un'opzione
+  withr::local_options(trackerfid.stile_mappa = "https://esempio.it/stile.json")
+  expect_identical(mappa_base("rfid")$x$style, "https://esempio.it/stile.json")
+})
+
+test_that("se lo sfondo non si scarica la mappa ha uno sfondo di ripiego", {
+  config <- configurazione_mappa("cluster")
+  expect_identical(config$stile_url, stile_mappa())
+  ripiego <- config$stile_ripiego
+  expect_identical(ripiego, stile_ripiego())
+  expect_equal(ripiego$version, 8)
+  # nessuna tessera da scaricare: solo un fondo
+  expect_length(ripiego$sources, 0)
+  expect_identical(identificativi(ripiego$layers), "sfondo")
+  expect_identical(ripiego$layers[[1]]$type, "background")
+  # i numeri di cluster e bolle hanno bisogno di un indirizzo dei caratteri
+  expect_match(ripiego$glyphs, "{fontstack}", fixed = TRUE)
+  expect_identical(
+    as.character(jsonlite::toJSON(ripiego$sources)),
+    "{}"
+  )
+  # uno sfondo dato come lista non ha un indirizzo da controllare
+  withr::local_options(trackerfid.stile_mappa = stile_ripiego())
+  expect_null(configurazione_mappa("rfid")$stile_url)
 })
 
 test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
   testo <- geojson_confini()
   expect_type(testo, "character")
   expect_length(testo, 1)
-  # pochi dati per il browser: la mappa li riceve a ogni disegno
+  # pochi dati per il browser
   expect_lt(nchar(testo), 200000)
   # preparati una volta sola
   expect_identical(geojson_confini(), testo)
@@ -41,13 +68,8 @@ test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
     vapply(proprieta, function(p) p$cantiere, character(1)),
     comuni$cantiere
   )
-  # bordo e riempimento hanno il colore del cantiere
   expect_identical(
-    vapply(proprieta, function(p) p$style$color, character(1)),
-    colore_cantiere(comuni$cantiere)
-  )
-  expect_identical(
-    vapply(proprieta, function(p) p$style$fillColor, character(1)),
+    vapply(proprieta, function(p) p$colore, character(1)),
     colore_cantiere(comuni$cantiere)
   )
   tipi <- vapply(
@@ -65,296 +87,293 @@ test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
   expect_gte(min(coordinate), zona$lng_min - 1e-5)
   expect_lte(max(coordinate), zona$lat_max + 1e-5)
 
-  # sulla mappa: un livello a parte, sotto i marker, che non risponde al mouse
-  mappa <- aggiungi_confini(leaflet::leaflet())
-  riquadro <- chiamata(mappa, "createMapPane")
-  expect_identical(riquadro$args[[1]], "confini")
-  # i marker di Leaflet stanno a 600, riquadri e cerchi a 400
-  expect_lt(riquadro$args[[2]], 400)
-  disegno <- chiamata(mappa, "addGeoJSON")
-  expect_identical(disegno$args[[1]], testo)
-  expect_identical(disegno$args[[3]], "confini")
-  opzioni <- disegno$args[[4]]
-  expect_identical(opzioni$pane, "confini")
-  expect_false(opzioni$interactive)
+  # su ogni mappa: riempimento e bordo tratteggiato, sotto le etichette dello
+  # sfondo, colorati per cantiere, e nessuno dei due risponde al mouse
   stile <- stile_confini()
-  expect_identical(opzioni$weight, stile$weight)
-  expect_identical(opzioni$fillOpacity, stile$fillOpacity)
-  expect_identical(opzioni$dashArray, stile$dashArray)
+  for (modalita in c("cluster", "rfid", "utenza", "giro", "analisi")) {
+    config <- livelli_mappa(modalita)
+    expect_identical(config$sorgenti$confini$data, "confini")
+    primi <- config$livelli[1:2]
+    expect_identical(identificativi(primi), c("confini-riempimento", "confini-bordo"))
+    expect_true(all(vapply(primi, function(l) isTRUE(l$sotto_etichette), logical(1))))
+    expect_false(any(identificativi(primi) %in% names(config$interattivi)))
+  }
+  config <- livelli_mappa("cluster")
+  riempimento <- livello(config$livelli, "confini-riempimento")
+  bordo <- livello(config$livelli, "confini-bordo")
+  expect_identical(riempimento$paint[["fill-color"]], list("get", "colore"))
+  expect_identical(riempimento$paint[["fill-opacity"]], stile$fillOpacity)
+  expect_identical(bordo$paint[["line-width"]], stile$weight)
+  expect_identical(bordo$paint[["line-dasharray"]], list(5 / 1.5, 4 / 1.5))
   # appena accennati: bordo sottile, riempimento molto trasparente
   expect_lte(stile$weight, 2)
   expect_lte(stile$fillOpacity, 0.15)
-
-  # ridisegnare i marker non toglie i confini
-  ripulita <- pulisci_mappa(mappa_base("rfid"))
-  expect_false("clearGeoJSON" %in% chiamate(ripulita))
-  expect_false("clearGroup" %in% chiamate(ripulita))
-  # anche la mappa dei cluster spaziali ha i confini
-  expect_true("addGeoJSON" %in% chiamate(mappa_cluster(NULL)))
+  # la configurazione porta il GeoJSON dei confini così com'è
+  expect_s3_class(configurazione_mappa("rfid")$confini, "json")
 })
 
-test_that("la mappa principale raggruppa i marker in cluster colorati", {
-  ultimi <- deduplica_ultimo_rfid(dati_esempio())
-  mappa <- disegna_marker(mappa_base("cluster"), ultimi, "cluster")
-  marker <- chiamata(mappa, "addMarkers")
+test_that("ogni combinazione di marker ha un'icona", {
+  icone <- icone_mappa()
+  expect_false(anyDuplicated(icone$id) > 0)
+  # due stati, tre stili, tre combinazioni di segnali, tutti i glifi
+  glifi <- unique(paste(icone$icona, icone$colore))
+  expect_equal(nrow(icone), 2 * 3 * 3 * length(glifi))
+  expect_true("question" %in% icone$icona)
+  expect_true(all(startsWith(icone$svg, "<svg")))
+  # preparate una volta sola
+  expect_identical(icone_mappa(), icone)
 
-  # argomenti di addMarkers: lat, lng, icon, layerId, group, options, popup,
-  # popupOptions, clusterOptions, ...
-  expect_length(marker$args[[1]], nrow(ultimi))
-  expect_equal(anyDuplicated(marker$args[[4]]), 0)
-  opzioni <- marker$args[[6]]
-  expect_identical(opzioni$censito, ultimi$presente_a_database == "Presente")
-  cluster <- marker$args[[9]]
-  expect_s3_class(cluster$iconCreateFunction, "JS_EVAL")
-  expect_false("addRectangles" %in% chiamate(mappa))
-})
-
-test_that("la ricerca RFID mostra tutte le letture, senza cluster, con i riquadri", {
-  trovate <- cerca_per_rfid(
-    dati_esempio(),
-    c("RFD20250901001", "RFD20250905100")
+  # il numero dell'icona parte da 0, come nell'elenco del browser
+  k <- indice_icona(
+    c("CARTA", "SECCO PAP", NA, "NOME IGNOTO", servizio_sacchetti()),
+    c("Presente", "Presente", "Non Presente", "Non Presente", "Presente")
   )
-  mappa <- disegna_marker(mappa_base("rfid"), trovate, "rfid")
-  marker <- chiamata(mappa, "addMarkers")
-
-  expect_length(marker$args[[1]], nrow(trovate))
-  expect_null(marker$args[[9]])
-  opzioni <- marker$args[[6]]
-  expect_identical(opzioni$opacity, ifelse(trovate$is_ultimo, 1, 0.6))
-
-  riquadri <- chiamata(mappa, "addRectangles")
-  # argomenti di addRectangles: lat1, lng1, lat2, lng2, ...
-  expect_length(riquadri$args[[1]], 2)
-  spostato <- which(names(split(trovate, trovate$RFID)) == "RFD20250905100")
-  # da Limena, a sud-est, a Cittadella, a nord-ovest
-  expect_equal(riquadri$args[[1]][[spostato]], 45.4744)
-  expect_equal(riquadri$args[[3]][[spostato]], 45.6488, tolerance = 1e-4)
-  expect_equal(riquadri$args[[2]][[spostato]], 11.7836, tolerance = 1e-4)
-  expect_equal(riquadri$args[[4]][[spostato]], 11.8449)
-})
-
-test_that("i bidoni mai spostati non hanno riquadro", {
-  fermo <- letture_test()
-  fermo <- cerca_per_rfid(fermo, "C")
-  mappa <- disegna_marker(mappa_base("rfid"), fermo, "rfid")
-  expect_false("addRectangles" %in% chiamate(mappa))
-  expect_true("addMarkers" %in% chiamate(mappa))
-})
-
-test_that("la ricerca utenza non usa il clustering", {
-  bidoni <- filtra_ultimo_per_utenza(dati_esempio(), "UTZ025")
-  mappa <- disegna_marker(mappa_base("utenza"), bidoni, "utenza")
-  expect_null(chiamata(mappa, "addMarkers")$args[[9]])
-})
-
-test_that("senza dati la mappa viene solo ripulita", {
-  for (df in list(NULL, dati_esempio()[0, ])) {
-    mappa <- disegna_marker(mappa_base("cluster"), df, "cluster")
-    expect_false("addMarkers" %in% chiamate(mappa))
-    expect_true("clearMarkers" %in% chiamate(mappa))
-  }
+  expect_false(anyNA(k))
+  scelte <- icone[k + 1, ]
+  expect_identical(scelte$presente, c("Presente", "Presente", "Non Presente", "Non Presente", "Presente"))
+  expect_identical(scelte$icona[1], info_servizio("CARTA")$icona)
+  # un giro del calendario ha l'icona della sua tipologia
+  expect_identical(scelte$icona[2], info_servizio("SECCO")$icona)
+  # un servizio mancante o sconosciuto ha il punto di domanda
+  expect_identical(scelte$icona[3:4], c("question", "question"))
+  expect_identical(scelte$icona[5], info_servizio(servizio_sacchetti())$icona)
+  # stile e segnali
+  segnati <- icone[
+    indice_icona("CARTA", "Presente", "ultimo", fuori_comune = TRUE) + 1,
+  ]
+  expect_identical(segnati$stile, "ultimo")
+  expect_true(segnati$fuori_comune)
+  expect_false(segnati$fuori_giro)
   expect_identical(
-    adatta_vista(mappa_base("cluster"), NULL),
-    mappa_base("cluster")
+    segnati$svg,
+    svg_marker("CARTA", "Presente", "ultimo", fuori_comune = TRUE)
+  )
+  # il marker di un non censito resta rosso anche con l'icona del servizio
+  expect_match(icone$svg[indice_icona("VETRO", "Non Presente") + 1], "#e74c3c", fixed = TRUE)
+})
+
+test_that("la mappa principale ha le bolle del territorio e i cluster colorati", {
+  config <- livelli_mappa("cluster")
+  expect_named(config$sorgenti, c("confini", "bidoni", "bolle_cantiere", "bolle_comune"))
+  bidoni <- config$sorgenti$bidoni
+  expect_true(bidoni$cluster)
+  expect_identical(bidoni$clusterProperties, list(censiti = list("+", list("get", "c"))))
+  soglie <- soglie_zoom()
+  # una fascia di zoom per livello: cantieri, comuni, bidoni
+  expect_equal(livello(config$livelli, "bolle-cantiere")$maxzoom, soglie$cantiere + 1)
+  expect_equal(livello(config$livelli, "bolle-comune")$minzoom, soglie$cantiere + 1)
+  expect_equal(livello(config$livelli, "bolle-comune")$maxzoom, soglie$comune + 1)
+  expect_equal(livello(config$livelli, "cluster")$minzoom, soglie$comune + 1)
+  expect_equal(livello(config$livelli, "bidoni")$minzoom, soglie$comune + 1)
+  # i cluster hanno i loro conteggi, i bidoni no
+  expect_identical(livello(config$livelli, "cluster")$filter, list("has", "point_count"))
+  expect_identical(
+    livello(config$livelli, "bidoni")$filter,
+    list("!", list("has", "point_count"))
+  )
+  # il colore va dal rosso al verde con la quota di censiti, come prima
+  colore <- livello(config$livelli, "cluster")$paint[["circle-color"]]
+  colori <- colori_stato()
+  expect_identical(colore[[1]], "interpolate")
+  expect_identical(unlist(colore[c(5, 7, 9)]), c(colori$non_presente, colori$misto, colori$presente))
+  # il raggio cresce con i bidoni come il lato delle bolle
+  raggio <- livello(config$livelli, "cluster")$paint[["circle-radius"]]
+  expect_equal(raggio[[3]], lato_bolla(1) / 2 - 2.5)
+  expect_equal(raggio[[length(raggio)]], lato_bolla(1e5) / 2 - 2.5)
+  # il nome del cantiere resta sotto la bolla
+  expect_identical(
+    livello(config$livelli, "bolle-cantiere-nome")$layout[["text-field"]],
+    list("get", "nome")
+  )
+  # click: un bidone apre il dettaglio, un cluster e una bolla si aprono
+  expect_identical(
+    vapply(config$interattivi, function(r) r$click, character(1)),
+    c("bolle-cantiere" = "bolla", "bolle-comune" = "bolla", cluster = "cluster", bidoni = "punto")
   )
 })
 
-test_that("la vista si adatta alle letture", {
-  mappa <- adatta_vista(mappa_base("rfid"), letture_test())
-  limiti <- mappa$x$fitBounds
-  # fitBounds: lat1, lng1, lat2, lng2
-  expect_lt(limiti[[1]], 41.70)
-  expect_gt(limiti[[3]], 41.92)
-  expect_lt(limiti[[2]], 12.20)
-  expect_gt(limiti[[4]], 12.42)
+test_that("ricerche, giri e cluster spaziali hanno i loro livelli", {
+  rfid <- livelli_mappa("rfid")
+  expect_identical(identificativi(rfid$livelli)[-(1:2)], c("riquadri", "letture"))
+  marker <- livello(rfid$livelli, "letture")
+  # l'ultima lettura sta sopra le altre, che sono attenuate
+  expect_identical(marker$layout[["symbol-sort-key"]], list("get", "u"))
+  expect_identical(marker$paint[["icon-opacity"]][[4]], 0.6)
+  # senza cluster
+  expect_null(rfid$sorgenti$letture$cluster)
+  # la punta del marker cade sul punto della lettura
+  expect_identical(marker$layout[["icon-anchor"]], "bottom")
+
+  utenza <- livelli_mappa("utenza")
+  expect_identical(identificativi(utenza$livelli)[-(1:2)], "letture")
+  expect_null(livello(utenza$livelli, "letture")$paint)
+
+  giro <- livelli_mappa("giro")
+  expect_identical(identificativi(giro$livelli)[-(1:2)], c("comuni-giro", "letture"))
+  expect_identical(
+    livello(giro$livelli, "comuni-giro")$paint[["line-color"]],
+    colori_stato()$bordo
+  )
+
+  analisi <- livelli_mappa("analisi")
+  expect_identical(identificativi(analisi$livelli)[-(1:2)], c("dispersione", "baricentri"))
+  # il raggio della dispersione è in metri: raddoppia a ogni livello di zoom
+  raggio <- livello(analisi$livelli, "dispersione")$paint[["circle-radius"]]
+  expect_identical(raggio[[2]], list("exponential", 2))
+  expect_identical(names(analisi$interattivi), "baricentri")
 })
 
-test_that("l'icona dei non censiti segue il servizio atteso prevalente", {
+test_that("i punti viaggiano in colonne compatte", {
+  trovate <- cerca_per_rfid(
+    seleziona_periodo(archivio_esempio()),
+    "RFD20250905100"
+  )
+  punti <- punti_mappa(trovate, "rfid")
+  expect_named(punti, c("x", "y", "k", "c", "r", "u"))
+  # coordinate intere, in centomillesimi di grado
+  expect_type(punti$x, "integer")
+  expect_equal(punti$x / 1e5, trovate$longitudine, tolerance = 1e-5)
+  expect_equal(punti$y / 1e5, trovate$latitudine, tolerance = 1e-5)
+  expect_identical(punti$u, as.integer(trovate$is_ultimo))
+  expect_identical(punti$r, trovate$RFID)
+  expect_true(all(punti$c == 1L))
+  # l'icona dell'ultima lettura ha il bordo spesso, le altre tratteggiato
+  icone <- icone_mappa()
+  expect_identical(icone$stile[punti$k + 1], ifelse(trovate$is_ultimo, "ultimo", "precedente"))
+  # le letture fuori comune hanno il segnale C
+  expect_identical(
+    icone$fuori_comune[punti$k + 1],
+    trovate$coerenza_comune == "Fuori comune"
+  )
+  # fuori dalla ricerca RFID niente `u`
+  expect_named(punti_mappa(trovate, "utenza"), c("x", "y", "k", "c", "r"))
+
+  # l'icona di un non censito segue il servizio stimato
   letture <- dplyr::tibble(
-    giorno_lettura = as.POSIXct("2025-09-15 08:00:00", tz = "UTC"),
-    targa_veicolo = "AB123CD",
-    matricola_veicolo = "VEH001",
     RFID = c("N1", "N2"),
     presente_a_database = "Non Presente",
-    servizio_atteso = c("VETRO PAP", NA),
-    id_utenza = NA_character_,
+    servizio_icona = c("VETRO PAP", NA),
     latitudine = c(41.9, 41.91),
-    longitudine = c(12.5, 12.51),
-    servizio_icona = c("VETRO PAP", NA)
+    longitudine = c(12.5, 12.51)
   )
-  icone <- chiamata(
-    disegna_marker(mappa_base("utenza"), letture, "utenza"),
-    "addMarkers"
-  )$args[[3]]
-  url <- icone$iconUrl$data[icone$iconUrl$index + 1]
-  attese <- get_leaflet_icon(c("VETRO PAP", NA), "Non Presente")$iconUrl
-  expect_identical(url, attese)
-  expect_false(identical(url[1], url[2]))
-  # il marker resta rosso anche con l'icona del servizio
-  expect_match(utils::URLdecode(url[1]), "#e74c3c", fixed = TRUE)
-
-  # senza la colonna dedicata il servizio stimato si calcola sulle letture
-  # ricevute: qui dà le stesse icone
-  senza <- letture[, setdiff(names(letture), "servizio_icona")]
-  icone <- chiamata(
-    disegna_marker(mappa_base("utenza"), senza, "utenza"),
-    "addMarkers"
-  )$args[[3]]
-  expect_identical(icone$iconUrl$data[icone$iconUrl$index + 1], attese)
+  k <- punti_mappa(letture, "utenza")$k
+  expect_identical(icone$icona[k + 1], c(info_servizio("VETRO")$icona, "question"))
+  expect_identical(icone$presente[k + 1], rep("Non Presente", 2))
 })
 
-test_that("la mappa di base inquadra la zona servita", {
-  zona <- riquadro_zona()
-  limiti <- mappa_base("cluster")$x$fitBounds
-  # fitBounds: lat1, lng1, lat2, lng2
-  expect_equal(
-    unlist(limiti[1:4]),
-    c(zona$lat_min, zona$lng_min, zona$lat_max, zona$lng_max)
-  )
+test_that("la mappa principale riceve bidoni e bolle di cantieri e comuni", {
+  ultimi <- ultime_esempio(periodo = periodo_anno(2025))
+  dati <- dati_mappa(ultimi, "cluster")
+  expect_named(dati, c("punti", "bolle_cantiere", "bolle_comune", "territorio"))
+  expect_length(dati$punti$x, nrow(ultimi))
+  expect_true(dati$territorio)
+  cantieri <- dati$bolle_cantiere
+  expect_setequal(cantieri$nome, cantieri())
+  expect_equal(sum(cantieri$n), nrow(ultimi))
+  expect_true(all(cantieri$livello == "cantiere"))
+  expect_match(cantieri$d[cantieri$nome == "BASSANO"], "^BASSANO: 64 bidoni, \\d+ censiti$")
+  # la bolla di un comune sta nel baricentro del comune
+  comuni <- dati$bolle_comune
+  baricentri <- baricentri_comuni()
+  riga <- match(comuni$nome, baricentri$comune)
+  expect_equal(comuni$y / 1e5, baricentri$latitudine[riga], tolerance = 1e-5)
+  # il riquadro dei bidoni, per il click
+  bolle <- aggrega_marker(ultimi, "cantiere")
+  expect_identical(cantieri$ovest, bolle$lng_min)
+  expect_identical(cantieri$nord, bolle$lat_max)
+
+  # senza cantieri né comuni le bolle non servono
+  senza <- dati_mappa(ultime_di(letture_test()), "cluster")
+  expect_false(senza$territorio)
+  # senza bidoni: elenchi vuoti
+  vuota <- dati_mappa(NULL, "cluster")
+  expect_length(vuota$punti$x, 0)
+  expect_length(vuota$bolle_cantiere$x, 0)
+  expect_false(vuota$territorio)
+  expect_identical(names(dati_mappa(ultimi[0, ], "utenza")), "punti")
 })
 
-test_that("le bolle della vista aggregata hanno identificativo ed etichetta", {
-  ultimi <- deduplica_ultimo_rfid(dati_esempio())
-  per_cantiere <- aggrega_marker(ultimi, "cantiere")
-  bolle <- chiamata(
-    aggiungi_bolle(mappa_base("cluster"), per_cantiere),
-    "addMarkers"
-  )
-  # argomenti di addMarkers: lat, lng, icon, layerId, group, options, popup,
-  # popupOptions, clusterOptions, clusterId, label, labelOptions
-  expect_equal(bolle$args[[1]], per_cantiere$latitudine)
-  expect_equal(bolle$args[[2]], per_cantiere$longitudine)
-  # l'identificativo distingue una bolla da un marker
-  expect_identical(bolle$args[[4]], paste0("bolla-", seq_len(nrow(per_cantiere))))
-  # le bolle sono già gruppi: il browser non le raggruppa ancora
-  expect_null(bolle$args[[9]])
-  # il nome di un cantiere resta sempre visibile
-  expect_identical(
-    bolle$args[[11]],
-    dplyr::coalesce(per_cantiere$nome, senza_cantiere())
-  )
-  expect_true(bolle$args[[12]]$permanent)
-
-  # le altre bolle descrivono il gruppo al passaggio del mouse
-  per_comune <- aggrega_marker(ultimi, "comune")
-  bolle <- chiamata(
-    aggiungi_bolle(mappa_base("cluster"), per_comune),
-    "addMarkers"
-  )
-  expect_false(bolle$args[[12]]$permanent)
-  asiago <- which(per_comune$nome == "ASIAGO")
-  expect_identical(
-    bolle$args[[11]][asiago],
-    sprintf(
-      "ASIAGO: %d bidoni, %d censiti",
-      per_comune$n[asiago],
-      per_comune$censiti[asiago]
-    )
-  )
-  griglia <- aggrega_marker(ultimi, "griglia", 15)
-  bolle <- chiamata(
-    aggiungi_bolle(mappa_base("cluster"), griglia),
-    "addMarkers"
-  )
-  uno <- which(griglia$n == 1)[1]
-  expect_match(bolle$args[[11]][uno], "^Zona: 1 bidone, [01] censiti$")
-
-  # nessuna bolla: la mappa resta com'è
-  expect_identical(
-    aggiungi_bolle(mappa_base("cluster"), per_cantiere[0, ]),
-    mappa_base("cluster")
-  )
+test_that("la ricerca RFID riceve i riquadri degli spostamenti", {
+  selezione <- seleziona_periodo(archivio_esempio())
+  trovate <- cerca_per_rfid(selezione, c("RFD20250905100", "RFD20250901050"))
+  dati <- dati_mappa(trovate, "rfid")
+  riquadri <- dati$riquadri
+  spostato <- trovate[trovate$RFID == "RFD20250905100", ]
+  riga <- match("RFD20250905100", riquadri$r)
+  expect_equal(c(riquadri$sud[riga], riquadri$nord[riga]), range(spostato$latitudine))
+  expect_equal(c(riquadri$ovest[riga], riquadri$est[riga]), range(spostato$longitudine))
+  # un RFID letto sempre nello stesso punto non ha riquadro
+  fermo <- letture_test()[letture_test()$RFID == "C", ]
+  expect_length(riquadri_rfid(fermo)$r, 0)
+  # i riquadri coprono tutte le letture, anche quando i marker sono limitati
+  poche <- limita_letture_ricerca(trovate, massimo = 3)
+  expect_identical(dati_mappa(poche, "rfid", riquadri = trovate)$riquadri, riquadri)
+  expect_length(dati_mappa(NULL, "rfid")$riquadri$r, 0)
 })
 
-test_that("i riquadri della ricerca coprono tutte le letture anche con i marker limitati", {
-  trovate <- cerca_per_rfid(dati_esempio(), "RFD20250905100")
-  poche <- limita_letture_ricerca(trovate, 3)
-  mappa <- disegna_marker(mappa_base("rfid"), poche, "rfid", riquadri = trovate)
-  expect_length(chiamata(mappa, "addMarkers")$args[[1]], 3)
-  # addRectangles: lat1, lng1, lat2, lng2
-  riquadro <- chiamata(mappa, "addRectangles")
-  expect_equal(
-    c(riquadro$args[[1]], riquadro$args[[3]]),
-    range(trovate$latitudine),
-    ignore_attr = TRUE
-  )
-  expect_equal(
-    c(riquadro$args[[2]], riquadro$args[[4]]),
-    range(trovate$longitudine),
-    ignore_attr = TRUE
-  )
-})
-
-test_that("il popup dei marker riporta comune e cantiere della lettura", {
-  spostato <- cerca_per_rfid(dati_esempio(), "RFD20250905100")
-  popup <- chiamata(
-    disegna_marker(mappa_base("rfid"), spostato, "rfid"),
-    "addMarkers"
-  )$args[[7]]
-  expect_length(popup, nrow(spostato))
-  expect_true(all(grepl("<b>Comune a database:</b> LIMENA", popup, fixed = TRUE)))
-  # il cantiere è quello del comune in cui cade la lettura
-  expect_true(any(grepl("<b>Cantiere:</b> RUBANO", popup, fixed = TRUE)))
-  expect_true(any(grepl("<b>Cantiere:</b> CAMPOSAMPIERO", popup, fixed = TRUE)))
-  # dopo lo spostamento viene letto a Cittadella, dal giro di Cittadella: il
-  # comune del giro è quello di lettura e non viene ripetuto. La lettura è
-  # fuori comune, e il marker porta il segnale
-  expect_equal(
-    sum(grepl("<b>Comune di lettura:</b> CITTADELLA", popup, fixed = TRUE)),
-    8
-  )
-  expect_equal(
-    sum(grepl("<b>Comune di lettura:</b> LIMENA", popup, fixed = TRUE)),
-    1
-  )
-  expect_false(any(grepl("Comune del giro", popup, fixed = TRUE)))
-  expect_equal(
-    sum(grepl(
-      "Fuori comune:</b> a database LIMENA, letto a CITTADELLA",
-      popup,
-      fixed = TRUE
-    )),
-    sum(spostato$coerenza_comune == "Fuori comune")
-  )
-  expect_false(any(grepl("Fuori giro", popup, fixed = TRUE)))
-  icone <- chiamata(
-    disegna_marker(mappa_base("utenza"), spostato, "utenza"),
-    "addMarkers"
-  )$args[[3]]$iconUrl
-  # due disegni: senza segnale e con il segnale del fuori comune
-  expect_length(icone$data, 2)
-  fuori <- spostato$coerenza_comune == "Fuori comune"
-  coerente <- icone$index[!fuori][1]
-  expect_identical(icone$index != coerente, fuori)
-})
-
-test_that("la mappa dei giri disegna le letture e mette in evidenza i comuni dei giri", {
-  letture <- cerca_giri(dati_esempio(), "VEH001", "2025-09-24", "2025-09-24")
-  mappa <- disegna_marker(mappa_base("giro"), letture, "giro")
-  marker <- chiamata(mappa, "addMarkers")
-  expect_length(marker$args[[1]], nrow(letture))
-  # senza cluster
-  expect_null(marker$args[[9]])
-  # il confine del comune del giro, un contorno senza riempimento
-  contorni <- Filter(function(k) k$method == "addPolygons", mappa$x$calls)
-  expect_length(contorni, dplyr::n_distinct(letture$comune_giro))
-  expect_identical(contorni[[1]]$args[[3]], "comuni_giro")
-  expect_false(contorni[[1]]$args[[4]]$fill)
-  expect_match(contorni[[1]]$args[[7]], "Comune del giro: LIMENA", fixed = TRUE)
+test_that("la mappa dei giri riceve il contorno dei comuni dei giri", {
+  selezione <- seleziona_periodo(archivio_esempio())
+  letture <- cerca_giri(selezione, "VEH001", "2025-09-24", "2025-09-24")
+  dati <- dati_mappa(letture, "giro")
+  expect_length(dati$punti$x, nrow(letture))
+  # il comune del giro è Limena: un anello
+  limena <- lati_comuni()[[indice_comune("LIMENA")]]
+  expect_length(dati$comuni_giro, max(limena$anello))
+  expect_equal(dati$comuni_giro[[1]]$x, round(limena$x[limena$anello == 1], 5))
 
   # con troppi comuni il contorno non viene disegnato; i comuni fuori tabella
   # e quelli mancanti non contano
-  vuota <- leaflet::leaflet()
-  expect_false(
-    "addPolygons" %in% chiamate(aggiungi_comuni_giro(vuota, comuni_cantieri()$comune))
+  expect_length(contorni_comuni_giro(comuni_cantieri()$comune), 0)
+  expect_length(contorni_comuni_giro(c("MILANO", NA)), 0)
+  expect_length(contorni_comuni_giro(NULL), 0)
+  # Valbrenta ha due poligoni: restano due anelli separati
+  due <- contorni_comuni_giro(c("Valbrenta", "ASIAGO", "ASIAGO"))
+  valbrenta <- lati_comuni()[[indice_comune("VALBRENTA")]]
+  asiago <- lati_comuni()[[indice_comune("ASIAGO")]]
+  expect_length(due, max(valbrenta$anello) + max(asiago$anello))
+  expect_gte(max(valbrenta$anello), 2)
+})
+
+test_that("la vista si adatta ai punti", {
+  d <- letture_test()
+  riquadro <- riquadro_vista(d)
+  expect_equal(
+    riquadro,
+    c(min(d$longitudine), min(d$latitudine), max(d$longitudine), max(d$latitudine)) +
+      c(-1, -1, 1, 1) * 0.0015
   )
-  expect_false("addPolygons" %in% chiamate(aggiungi_comuni_giro(vuota, c("MILANO", NA))))
-  expect_false("addPolygons" %in% chiamate(aggiungi_comuni_giro(vuota, NULL)))
-  due <- aggiungi_comuni_giro(vuota, c("Valbrenta", "ASIAGO", "ASIAGO"))
-  expect_equal(sum(chiamate(due) == "addPolygons"), 2)
-  # Valbrenta ha due poligoni: restano separati
-  valbrenta <- chiamata(due, "addPolygons")$args[[1]]
-  expect_length(valbrenta, 2)
-  # ridisegnare toglie i contorni: sono forme
-  expect_true("clearShapes" %in% chiamate(pulisci_mappa(due)))
+  expect_null(riquadro_vista(NULL))
+  expect_null(riquadro_vista(d[0, ]))
+})
+
+test_that("il popup di una lettura riporta comune e cantiere", {
+  spostato <- cerca_per_rfid(seleziona_periodo(archivio_esempio()), "RFD20250905100")
+  popup <- vapply(seq_len(nrow(spostato)), function(i) popup_lettura(spostato, i), character(1))
+  expect_true(all(grepl("<b>Comune a database:</b> LIMENA", popup, fixed = TRUE)))
+  # il cantiere è quello del comune di lettura
+  expect_true(any(grepl("<b>Cantiere:</b> RUBANO", popup, fixed = TRUE)))
+  expect_true(any(grepl("<b>Cantiere:</b> CAMPOSAMPIERO", popup, fixed = TRUE)))
+  # dopo lo spostamento viene letto a Cittadella, dal giro di Cittadella: il
+  # comune del giro è quello di lettura e non viene ripetuto
+  expect_equal(sum(grepl("<b>Comune di lettura:</b> CITTADELLA", popup, fixed = TRUE)), 8)
+  expect_equal(sum(grepl("<b>Comune di lettura:</b> LIMENA", popup, fixed = TRUE)), 1)
+  expect_false(any(grepl("Comune del giro", popup, fixed = TRUE)))
+  expect_equal(
+    sum(grepl("Fuori comune:</b> a database LIMENA, letto a CITTADELLA", popup, fixed = TRUE)),
+    sum(spostato$coerenza_comune == "Fuori comune")
+  )
+  expect_false(any(grepl("Fuori giro", popup, fixed = TRUE)))
+})
+
+test_that("i messaggi alla mappa hanno identificativo e tipo", {
+  inviati <- list()
+  sessione <- list(sendCustomMessage = function(tipo, messaggio) {
+    inviati[[length(inviati) + 1]] <<- list(tipo = tipo, messaggio = messaggio)
+  })
+  invia_mappa(sessione, "mappa_rfid-mappa", "inquadra", riquadro = 1:4)
+  expect_identical(inviati[[1]]$tipo, "trackerfid-mappa")
+  expect_identical(
+    inviati[[1]]$messaggio,
+    list(id = "mappa_rfid-mappa", tipo = "inquadra", riquadro = 1:4)
+  )
 })

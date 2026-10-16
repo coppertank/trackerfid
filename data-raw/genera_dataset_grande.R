@@ -5,13 +5,12 @@
 #   letture_prova.csv            letture con le antenne, nel formato dell'app
 #   letture_prova.csv.gz         le stesse letture, compresse
 #   letture_prova.parquet        le stesse letture in Parquet (serve nanoparquet)
-#   letture_storiche_prova.csv   letture del sistema precedente
 #
 # Uso, dalla radice del pacchetto:
-#   Rscript data-raw/genera_dataset_grande.R <cartella> [letture] [rfid] [storiche]
+#   Rscript data-raw/genera_dataset_grande.R <cartella> [letture] [rfid]
 #
-# Predefiniti: 2.000.000 di letture in un anno, 100.000 RFID, 3.000.000 di
-# letture storiche. I file occupano qualche centinaio di megabyte: la cartella
+# Predefiniti: 2.000.000 di letture in un anno, 100.000 RFID. I file occupano
+# qualche centinaio di megabyte: la cartella
 # non deve stare sotto git. I dati sono casuali e non hanno casi particolari:
 # servono a misurare i tempi, non a provare le funzioni.
 #
@@ -32,7 +31,6 @@ numero <- function(i, predefinito) {
 }
 n_letture <- numero(2, 2e6)
 n_rfid <- numero(3, 1e5)
-n_storiche <- numero(4, 3e6)
 dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
 
 library(data.table)
@@ -113,15 +111,17 @@ letture <- data.table(
   ),
   numero_raccolte_annue = fifelse(censito, bidoni$raccolte[k], NA_real_),
   codice_categoria = fifelse(censito, "UD", NA_character_),
-  comune_da_database = fifelse(censito, bidoni$comune[k], NA_character_),
+  comune_fornitura = fifelse(censito, bidoni$comune[k], NA_character_),
   comune_giro = bidoni$comune[k],
   comune_lettura = bidoni$comune[k],
   # ogni contenitore e' letto nel suo comune, dal giro del suo comune
   coerenza_comune = "Coerente",
   cantiere = bidoni$cantiere[k],
-  stato_servizio = fifelse(censito, "ATTIVO", NA_character_),
   data_attivazione_contenitore = fifelse(censito, "2024-01-01", NA_character_),
   data_cessazione_contenitore = NA_character_,
+  # una fornitura per contenitore censito
+  id_fornitura = fifelse(censito, sprintf("FOR%07d", k), NA_character_),
+  stato_fornitura = fifelse(censito, "APERTO", NA_character_),
   id_utenza = fifelse(censito, bidoni$utenza[k], NA_character_),
   latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),
   longitudine = round(bidoni$lon[k] + rnorm(n_letture, 0, 0.0001), 5)
@@ -135,32 +135,11 @@ if (requireNamespace("nanoparquet", quietly = TRUE)) {
   nanoparquet::write_parquet(as.data.frame(letture), file.path(cartella, "letture_prova.parquet"))
 }
 
-# ---- Letture storiche: dal 2020 a tutto il 2024 ----------------------------------
-
-# Otto contenitori su dieci esistevano gia'. Il sistema precedente ne leggeva
-# alcuni molto meno di altri, e ogni tanto saltava un anno intero.
-con_storia <- which(runif(n_rfid) < 0.8)
-k <- con_storia[sample(length(con_storia), n_storiche, replace = TRUE)]
-anno <- sample(2020:2024, n_storiche, replace = TRUE)
-istante <- as.POSIXct(sprintf("%d-01-01", anno), tz = "UTC") +
-  floor(runif(n_storiche, 0, 365)) * 86400 + runif(n_storiche, 6, 19) * 3600
-# Un anno su sei senza letture, diverso per ogni contenitore.
-anno_vuoto <- (k * 7 + anno) %% 6 == 0
-storiche <- data.table(
-  RFID = bidoni$RFID[k],
-  giorno_lettura = format(istante, "%Y-%m-%d %H:%M:%S", tz = "UTC")
-)[!anno_vuoto]
-setorder(storiche, giorno_lettura)
-storiche <- unique(storiche)
-file_storiche <- file.path(cartella, "letture_storiche_prova.csv")
-fwrite(storiche, file_storiche)
-
 for (file in list.files(cartella, pattern = "_prova", full.names = TRUE)) {
   message(sprintf("%-32s %7.0f MB", basename(file), file.size(file) / 1024^2))
 }
 message(sprintf(
-  "%s letture di %s RFID, %s letture storiche.",
+  "%s letture di %s RFID.",
   format(nrow(letture), big.mark = ".", decimal.mark = ","),
-  format(n_rfid, big.mark = ".", decimal.mark = ",", scientific = FALSE),
-  format(nrow(storiche), big.mark = ".", decimal.mark = ",")
+  format(n_rfid, big.mark = ".", decimal.mark = ",", scientific = FALSE)
 ))

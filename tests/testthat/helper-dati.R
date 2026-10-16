@@ -9,16 +9,49 @@ dati_esempio <- local({
   }
 })
 
-# Letture storiche di esempio validate, lette una sola volta.
-storico_esempio <- local({
+# Archivio DuckDB del dataset di esempio, aperto una sola volta.
+archivio_esempio <- local({
   cache <- NULL
   function() {
     if (is.null(cache)) {
-      cache <<- carica_storico(percorso_storico_esempio())$dati
+      cache <<- carica_archivio(percorso_dataset_esempio())$archivio
     }
     cache
   }
 })
+
+# Selezione delle letture di un data frame, come la usa l'app: le letture
+# vanno in un archivio DuckDB, vedi `archivio_da_letture()`.
+selezione_di <- function(letture, periodo = NULL) {
+  seleziona_periodo(archivio_da_letture(letture), periodo)
+}
+
+# Ultima lettura di ogni RFID tra quelle che superano i filtri, come la
+# calcola l'app, vedi `ultime_letture()`. Senza filtri: l'ultima di ogni RFID.
+ultime_di <- function(letture, ..., periodo = NULL) {
+  ultime_letture(selezione_di(letture, periodo), ...)
+}
+
+# Letture del dataset di esempio che superano i filtri, una per RFID.
+ultime_esempio <- function(..., periodo = NULL) {
+  ultime_letture(seleziona_periodo(archivio_esempio(), periodo), ...)
+}
+
+# Quali letture superano i filtri: un valore per riga di `letture`, come
+# la condizione SQL dell'app, vedi `condizione_filtri()`.
+maschera_di <- function(letture, ...) {
+  selezione <- selezione_di(letture)
+  con <- selezione$archivio$con
+  esito <- DBI::dbGetQuery(
+    con,
+    sprintf(
+      "SELECT riga, coalesce(%s, FALSE) AS passa FROM %s",
+      condizione_filtri(con, ...),
+      sql_con_icona(selezione)
+    )
+  )
+  esito$passa[match(seq_len(nrow(letture)), esito$riga)]
+}
 
 # Scrive un CSV temporaneo a partire dalle righe indicate.
 scrivi_csv <- function(righe, env = parent.frame()) {

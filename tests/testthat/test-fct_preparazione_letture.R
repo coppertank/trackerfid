@@ -42,14 +42,18 @@ contenitori_prova <- dplyr::tibble(
     "2099-12-31",
     "2099-12-31"
   )),
-  stato_servizio = "ATTIVO",
+  # la fornitura lega il contenitore all'utenza: il 10 marzo il contenitore
+  # passa a un'altra fornitura, di un'altra utenza
+  id_fornitura = c("F1", "F2", "F3"),
+  stato_fornitura = "APERTO",
   id_utenza = c("U1", "U2", "U3"),
-  comune_servizio = "ROSÀ",
+  comune_fornitura = "ROSÀ",
   codice_categoria = "UD"
 )
+# un sacchetto ha solo la fornitura del suo gruppo
 sacchetti_prova <- dplyr::tibble(
   codice_uhf = "000000000000012345678901",
-  id_servizio = "S9"
+  id_fornitura = "S9"
 )
 
 calendario_prova <- dplyr::tibble(
@@ -88,14 +92,15 @@ colonne_passo_3 <- c(
   "frequenza",
   "numero_raccolte_annue",
   "codice_categoria",
-  "comune_da_database",
+  "comune_fornitura",
   "comune_giro",
   "comune_lettura",
   "coerenza_comune",
   "cantiere",
-  "stato_servizio",
   "data_attivazione_contenitore",
   "data_cessazione_contenitore",
+  "id_fornitura",
+  "stato_fornitura",
   "id_utenza",
   "latitudine",
   "longitudine"
@@ -128,11 +133,12 @@ letture_associate <- function(
     numero_raccolte_annue = ifelse(censito, 26, NA_real_),
     data_attivazione_contenitore = as.Date(ifelse(censito, "2025-01-01", NA)),
     data_cessazione_contenitore = as.Date(ifelse(censito, "2099-12-31", NA)),
-    stato_servizio = ifelse(censito, "ATTIVO", NA_character_),
+    id_fornitura = ifelse(censito, "F1", NA_character_),
+    stato_fornitura = ifelse(censito, "APERTO", NA_character_),
     id_utenza = ifelse(censito, "U1", NA_character_),
     codice_categoria = ifelse(censito, "UD", NA_character_),
     presente_a_database = ifelse(censito, "Presente", "Non Presente"),
-    comune_da_database = ifelse(censito, "ROSÀ", NA_character_)
+    comune_fornitura = ifelse(censito, "ROSÀ", NA_character_)
   )
 }
 
@@ -227,35 +233,45 @@ test_that("ogni lettura riceve il contenitore valido nel suo giorno", {
     associate$servizio_transponder,
     c("CARTA", "CARTA", "SECCO", NA, NA)
   )
-  # l'utenza dei sacchetti è il loro servizio
-  expect_identical(associate$id_utenza, c("U1", "U1", "U2", "S9", NA))
+  # censito vuol dire legato a una fornitura: quella del contenitore o, per
+  # un sacchetto, quella del suo gruppo
+  expect_identical(associate$id_fornitura, c("F1", "F1", "F2", "S9", NA))
   expect_identical(
     associate$presente_a_database,
     c(rep("Presente", 4), "Non Presente")
   )
-  # i dati del contenitore li hanno solo le letture che lo trovano
+  # l'utenza viene dalla fornitura del contenitore: un sacchetto non ce l'ha
+  expect_identical(associate$id_utenza, c("U1", "U1", "U2", NA, NA))
+  # i dati del contenitore e della fornitura li hanno solo le letture che
+  # trovano il contenitore
   expect_equal(associate$volume, c(240, 240, 240, NA, NA))
   expect_identical(
-    associate$stato_servizio,
-    c(rep("ATTIVO", 3), NA, NA)
+    associate$stato_fornitura,
+    c(rep("APERTO", 3), NA, NA)
   )
-  expect_false("id_servizio" %in% names(associate))
-  expect_false("presente_in_tag_contenitori" %in% names(associate))
-  # il comune di servizio dell'anagrafica diventa il comune del database
-  expect_false("comune_servizio" %in% names(associate))
   expect_identical(
-    associate$comune_da_database,
+    associate$comune_fornitura,
     c(rep("ROSÀ", 3), NA, NA)
   )
+  expect_false("fornitura_sacchetto" %in% names(associate))
+  expect_false("presente_in_tag_contenitori" %in% names(associate))
 
-  # l'anagrafica dei contenitori deve riportare il comune di servizio
+  # le due tabelle possono scrivere la fornitura come numero o come testo
+  numeriche <- contenitori_prova
+  numeriche$id_fornitura <- c(101, 102, 103)
+  expect_identical(
+    associa_servizio(letture, numeriche, sacchetti_prova)$id_fornitura,
+    c("101", "101", "102", "S9", NA)
+  )
+
+  # l'anagrafica dei contenitori deve riportare la fornitura
   expect_error(
     associa_servizio(
       letture,
-      dplyr::select(contenitori_prova, -"comune_servizio"),
+      dplyr::select(contenitori_prova, -"id_fornitura"),
       sacchetti_prova
     ),
-    "comune_servizio"
+    "id_fornitura"
   )
 })
 
@@ -308,7 +324,7 @@ test_that("il giro è il turno in cui cade la lettura, o il più vicino", {
   # database, non con quello del giro
   expect_identical(censiti$coerenza_comune, c("Coerente", "Coerente"))
   spostato <- letture_associate("2026-03-02 08:30:00", rifiuto = "CARTA")
-  spostato$comune_da_database <- "CASSOLA"
+  spostato$comune_fornitura <- "CASSOLA"
   expect_identical(
     associa_servizio_atteso_da_calendario(spostato, calendario_prova)$coerenza_comune,
     "Fuori comune"
@@ -661,11 +677,11 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
     dplyr::arrange(risultato, giorno_lettura)$coerenza_servizio,
     caricate$coerenza_servizio
   )
-  # il comune del database arriva dall'anagrafica dei contenitori, solo per i
-  # censiti; quello del giro dal calendario del mezzo; quello di lettura con
-  # le letture
+  # il comune della fornitura arriva dall'anagrafica dei contenitori, solo
+  # per i censiti; quello del giro dal calendario del mezzo; quello di
+  # lettura con le letture
   expect_identical(
-    caricate$comune_da_database,
+    caricate$comune_fornitura,
     c("ROSÀ", NA, "ROSÀ", "ROSÀ")
   )
   expect_identical(
@@ -674,4 +690,22 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
   )
   expect_identical(caricate$comune_lettura, rep("ROSÀ", 4))
   expect_identical(caricate$cantiere, rep("BASSANO", 4))
+})
+
+test_that("gli script leggono i CSV come testo, con il separatore del file", {
+  virgola <- scrivi_csv(c("a,b,c", "1,2,3"))
+  punto_virgola <- scrivi_csv(c("RFID;giorno_lettura", "0000012345; 2025-01-10 08:00:00", ";"))
+  expect_identical(rileva_separatore(virgola), ",")
+  expect_identical(rileva_separatore(punto_virgola), ";")
+
+  letto <- read_csv_auto(punto_virgola)
+  expect_identical(names(letto), c("RFID", "giorno_lettura"))
+  # gli zeri iniziali restano, gli spazi ai margini no, i vuoti mancano
+  expect_identical(letto$RFID, c("0000012345", NA))
+  expect_identical(letto$giorno_lettura, c("2025-01-10 08:00:00", NA))
+  expect_s3_class(letto, "data.frame")
+  expect_true(all(vapply(read_csv_auto(virgola), is.character, logical(1))))
+
+  vuoto <- scrivi_csv("")
+  expect_error(read_csv_auto(vuoto), class = "errore_validazione")
 })

@@ -355,7 +355,7 @@ test_that("i nomi dei comuni si confrontano senza accenti e apostrofi", {
 
 test_that("senza comune di lettura il comune assegnato è quello del database", {
   letture <- dplyr::tibble(
-    comune_da_database = c("LIMENA", NA, NA, "PAESE IGNOTO", NA),
+    comune_fornitura = c("LIMENA", NA, NA, "PAESE IGNOTO", NA),
     comune_giro = c(
       "CITTADELLA",
       "CITTADELLA",
@@ -405,7 +405,7 @@ test_that("la geografia di una lettura parte dal comune di lettura", {
       "Presente",
       "Non Presente"
     ),
-    comune_da_database = c("Bassano del Grappa", "LIMENA", NA, NA, "MILANO", NA),
+    comune_fornitura = c("Bassano del Grappa", "LIMENA", NA, NA, "MILANO", NA),
     comune_giro = c(
       "BASSANO DEL GRAPPA",
       "CITTADELLA",
@@ -499,7 +499,7 @@ test_that("i confini dei comuni sono pronti per il disegno", {
 test_that("ogni RFID ha il comune del database o quello in cui è letto più spesso", {
   letture <- dplyr::tibble(
     RFID = c("A", "A", "A", "B", "B", "B", "C", "D", "D", "E"),
-    comune_da_database = c(
+    comune_fornitura = c(
       "LIMENA",
       "LIMENA",
       "RUBANO",
@@ -549,7 +549,7 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
   # tra i comuni serviti
   posizioni <- dplyr::tibble(
     RFID = c("B", "B", "B", "C"),
-    comune_da_database = NA_character_,
+    comune_fornitura = NA_character_,
     comune_giro = "ROANA",
     comune_lettura = c("Gallio", "GALLIO", "ROMA", "ROMA")
   )
@@ -574,7 +574,7 @@ test_that("sul dataset di esempio ogni contenitore censito ha il comune del data
   gruppo <- indice_gruppi(dati$RFID)
   geografia <- geografia_per_gruppo(dati, gruppo)
   expect_equal(nrow(geografia), 251)
-  ultimo_comune <- ultimo_valido_per_gruppo(dati$comune_da_database, gruppo)
+  ultimo_comune <- ultimo_valido_per_gruppo(dati$comune_fornitura, gruppo)
   censiti <- !is.na(ultimo_comune)
   expect_identical(geografia$comune[censiti], ultimo_comune[censiti])
   expect_identical(

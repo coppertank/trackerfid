@@ -5,7 +5,7 @@
 #' risultato viene scartato, così non resta a schermo un'analisi superata.
 #'
 #' @param id Identificativo del modulo.
-#' @param dati Reactive con il dataset validato completo (o `NULL`).
+#' @param dati Reactive con l'archivio delle letture (o `NULL`).
 #' @param periodo Reactive con le due date del periodo di analisi (o `NULL`).
 #' @param etichetta Reactive con la descrizione breve del periodo.
 #' @return Reactive con l'ultimo cluster scelto in tabella o sulla mappa:
@@ -47,11 +47,12 @@ mod_cluster_analysis_server <- function(
         message = "Calcolo dei cluster in corso\u2026",
         value = 0.6,
         calcola_analisi_cluster(
-          d,
+          letture_periodo(seleziona_periodo(d, p)),
           p[1],
           p[2],
           eps_m = eps_m,
-          min_pts = round(min_pts)
+          min_pts = round(min_pts),
+          copertura = c(d$primo, d$ultimo)
         )
       )
       secondi(as.numeric(difftime(Sys.time(), inizio, units = "secs")))
@@ -207,8 +208,23 @@ mod_cluster_analysis_server <- function(
     })
 
     # --- Mappa -----------------------------------------------------------------------
-    output$mappa <- leaflet::renderLeaflet({
-      mappa_cluster(righe_filtrate())
+    # La mappa di base si disegna una volta; baricentri e cerchi arrivano con
+    # un messaggio, a ogni nuova analisi e a ogni filtro della tabella. Il
+    # numero di riga di un cluster è quello del campione disegnato.
+    output$mappa <- mapgl::renderMaplibre(mappa_base("analisi"))
+    id_mappa <- session$ns("mappa")
+    disegnati <- reactiveVal(NULL)
+    observe({
+      righe <- if (pronta()) righe_filtrate()
+      campione <- if (!is.null(righe)) {
+        campiona_cluster(righe, limiti_viste_cluster()$mappa)
+      }
+      disegnati(campione)
+      invia_mappa(session, id_mappa, "dati", dati = dati_mappa_cluster(campione))
+      riquadro <- riquadro_cluster(campione)
+      if (!is.null(riquadro)) {
+        invia_mappa(session, id_mappa, "inquadra", riquadro = riquadro)
+      }
     })
 
     # --- Selezione di un cluster: riga della tabella o punto sulla mappa -----------------
@@ -218,11 +234,19 @@ mod_cluster_analysis_server <- function(
     observeEvent(input$tabella_rows_selected, {
       scegli(risultato()$RFID[input$tabella_rows_selected])
     })
-    observeEvent(input$mappa_marker_click, {
-      righe <- righe_filtrate()
-      riga <- suppressWarnings(as.integer(input$mappa_marker_click$id))
-      req(length(riga) == 1, !is.na(riga), riga >= 1, riga <= nrow(righe))
+    observeEvent(input$mappa_clic, {
+      righe <- disegnati()
+      riga <- suppressWarnings(as.integer(input$mappa_clic$i)) + 1L
+      req(righe, length(riga) == 1, !is.na(riga), riga >= 1, riga <= nrow(righe))
       scegli(righe$RFID[riga])
+      invia_mappa(
+        session,
+        id_mappa,
+        "popup",
+        lng = righe$lon_baricentro_cluster[riga],
+        lat = righe$lat_baricentro_cluster[riga],
+        html = popup_cluster(righe[riga, , drop = FALSE])
+      )
     })
 
     selezione

@@ -3,77 +3,10 @@
 # Un giro è il lavoro di un mezzo in un giorno, per un servizio e in un
 # comune: lo dice il calendario dei mezzi, e nel file sta su ogni lettura come
 # `servizio_giro` e `comune_giro`. Le funzioni di questo file servono
-# alla scheda "Ricerca Giro": trovano le letture di un mezzo in un intervallo
-# di giorni e le riassumono giro per giro, con le letture fuori giro e quelle
-# fuori comune, vedi `aggiungi_geografia()`.
-
-#' Mezzi presenti nelle letture
-#'
-#' @param dati Letture validate.
-#' @return Vettore delle matricole, in ordine: i nomi sono le etichette per
-#'   l'elenco, con matricola e targa.
-#' @noRd
-mezzi_presenti <- function(dati) {
-  if (is.null(dati) || nrow(dati) == 0) {
-    return(character(0))
-  }
-  mezzi <- dati[
-    !duplicated(dati$matricola_veicolo),
-    c("matricola_veicolo", "targa_veicolo")
-  ]
-  mezzi <- mezzi[order(mezzi$matricola_veicolo), ]
-  stats::setNames(
-    as.character(mezzi$matricola_veicolo),
-    paste(mezzi$matricola_veicolo, "\u00b7", mezzi$targa_veicolo)
-  )
-}
-
-#' Giorni coperti dalle letture
-#'
-#' @param dati Letture validate.
-#' @return Vettore con il primo e l'ultimo giorno, `NULL` senza letture.
-#' @noRd
-giorni_letture <- function(dati) {
-  if (is.null(dati) || nrow(dati) == 0) {
-    return(NULL)
-  }
-  lubridate::as_date(range(dati$giorno_lettura))
-}
-
-#' Letture dei mezzi in un intervallo di giorni
-#'
-#' @param dati Letture validate.
-#' @param mezzo Matricola del mezzo. Tutti i mezzi, se manca o è vuota.
-#' @param dal,al Primo e ultimo giorno, inclusi.
-#' @param solo Voci tra `"fuori_giro"` e `"fuori_comune"`: restano le sole
-#'   letture con almeno una delle incongruenze indicate. Tutte, se è vuoto.
-#' @return Le letture trovate, in ordine di tempo, con la colonna `giorno`.
-#' @noRd
-cerca_giri <- function(dati, mezzo = NULL, dal, al, solo = character(0)) {
-  dal <- lubridate::as_date(dal)
-  al <- lubridate::as_date(al)
-  # Il confronto è sugli istanti: convertire in giorni milioni di letture a
-  # ogni ricerca costerebbe di più.
-  inizio <- as.POSIXct(paste(format(dal), "00:00:00"), tz = "UTC")
-  fine <- as.POSIXct(paste(format(al + 1), "00:00:00"), tz = "UTC")
-  tieni <- dati$giorno_lettura >= inizio & dati$giorno_lettura < fine
-  if (!is.null(mezzo) && length(mezzo) == 1 && !is.na(mezzo) && nzchar(mezzo)) {
-    tieni <- tieni & dati$matricola_veicolo == mezzo
-  }
-  solo <- intersect(solo, c("fuori_giro", "fuori_comune"))
-  if (length(solo) > 0) {
-    incongruenze <- incongruenze_comune(dati)
-    tieni <- tieni & Reduce(`|`, incongruenze[solo])
-  }
-  trovate <- dati[which(tieni), , drop = FALSE]
-  trovate <- trovate[
-    order(trovate$giorno_lettura, trovate$RFID, method = "radix"),
-    ,
-    drop = FALSE
-  ]
-  trovate$giorno <- lubridate::as_date(trovate$giorno_lettura)
-  trovate
-}
+# alla scheda "Ricerca Giro": riassumono giro per giro le letture trovate da
+# `cerca_giri()`, con le letture fuori giro e quelle fuori comune, vedi
+# `coerenza_comune()`. Le ricerche nell'archivio stanno in
+# `R/utils_selezione.R`.
 
 #' Servizio del giro di ogni lettura, secondo il calendario
 #'

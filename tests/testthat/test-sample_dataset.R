@@ -13,7 +13,7 @@ test_that("dimensioni, periodo e mezzi", {
     as.Date(range(d$giorno_lettura)),
     as.Date(c("2024-10-01", "2025-12-31"))
   )
-  expect_identical(anni_disponibili(d), c(2025, 2024))
+  expect_identical(anni_disponibili(archivio_esempio()), c(2025, 2024))
 
   ore <- as.numeric(format(d$giorno_lettura, "%H", tz = "UTC")) +
     as.numeric(format(d$giorno_lettura, "%M", tz = "UTC")) / 60
@@ -28,8 +28,13 @@ test_that("dimensioni, periodo e mezzi", {
 test_that("coerenza tra stato a database, servizio, utenza, volume e raccolte", {
   d <- dati_esempio()
   non_presente <- d$presente_a_database == "Non Presente"
+  # l'utenza viene dalla fornitura del contenitore: la hanno i contenitori
+  # censiti, non i non censiti e non i sacchetti
   expect_true(all(is.na(d$id_utenza[non_presente])))
-  expect_false(anyNA(d$id_utenza[!non_presente]))
+  expect_identical(
+    is.na(d$id_utenza),
+    non_presente | rfid_sacchetto(d$RFID)
+  )
   # il servizio atteso dal giro c'è su ogni lettura; il servizio a database
   # solo sui contenitori censiti, non sui sacchetti
   expect_false(anyNA(d$servizio_atteso))
@@ -70,7 +75,7 @@ test_that("volume e raccolte previste sono realistici e univoci per RFID", {
     dplyr::n_distinct(servizio_atteso) == 1,
     .by = "RFID"
   )
-  ultimi <- deduplica_ultimo_rfid(stabili)
+  ultimi <- ultime_di(stabili)
   expect_true(all(
     ultimi$volume_previsto[
       ultimi$servizio_atteso == "PLASTICA E METALLI"
@@ -99,7 +104,7 @@ test_that("distribuzioni vicine a quelle richieste", {
   # le quote riguardano i contenitori: i sacchetti hanno un test a parte
   d <- dati_esempio()
   d <- d[!rfid_sacchetto(d$RFID), ]
-  ultimi <- deduplica_ultimo_rfid(d)
+  ultimi <- ultime_di(d)
 
   expect_equal(
     mean(ultimi$presente_a_database == "Presente"),
@@ -265,14 +270,15 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "frequenza",
       "numero_raccolte_annue",
       "codice_categoria",
-      "comune_da_database",
+      "comune_fornitura",
       "comune_giro",
       "comune_lettura",
       "coerenza_comune",
       "cantiere",
-      "stato_servizio",
       "data_attivazione_contenitore",
       "data_cessazione_contenitore",
+      "id_fornitura",
+      "stato_fornitura",
       "id_utenza",
       "latitudine",
       "longitudine"
@@ -363,7 +369,7 @@ test_that("casi speciali presenti", {
   incerto <- letture("RFD20250920250")
   expect_equal(nrow(incerto), 2)
   expect_identical(incerto$servizio_atteso, c("SECCO", "CARTA"))
-  expect_true(all(is.na(incerto$comune_da_database)))
+  expect_true(all(is.na(incerto$comune_fornitura)))
   expect_false(anyNA(incerto$comune_giro))
 
   spostato <- letture("RFD20250905100")
@@ -379,7 +385,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   # una lettura sola
   expect_equal(nrow(s), 12)
   expect_equal(anyDuplicated(s$RFID), 0)
-  ultimi <- deduplica_ultimo_rfid(s)
+  ultimi <- ultime_di(s)
   expect_equal(nrow(ultimi), 12)
   expect_equal(sum(ultimi$presente_a_database == "Presente"), 8)
   expect_equal(sum(ultimi$presente_a_database == "Non Presente"), 4)
@@ -388,16 +394,23 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   expect_true(all(nchar(s$RFID) == 24 & startsWith(s$RFID, "00BD")))
   expect_false(any(startsWith(d$RFID[!sacchetto], "00BD")))
 
-  # a database un sacchetto ha solo l'utenza: il suo servizio atteso è il
-  # giro che lo ha letto, censito o no, e il suo comune è quello in cui viene
-  # letto. La voce dei sacchetti gliela dà l'app, dal codice
+  # a database un sacchetto ha solo la fornitura del suo gruppo, niente
+  # utenza: il suo servizio atteso è il giro che lo ha letto, censito o no, e
+  # il suo comune è quello in cui viene letto. La voce dei sacchetti gliela
+  # dà l'app, dal codice
   censito <- s$presente_a_database == "Presente"
   expect_true(all(s$servizio_atteso == "SECCO"))
   expect_true(all(is.na(s$servizio_transponder)))
   expect_true(all(servizio_mostrato(s) == servizio_sacchetti()))
-  expect_setequal(s$id_utenza[censito], sprintf("SAC%03d", 1:4))
-  expect_false(any(s$id_utenza[censito] %in% d$id_utenza[!sacchetto]))
-  expect_true(all(is.na(s$comune_da_database)))
+  expect_true(all(is.na(s$id_utenza)))
+  expect_true(all(is.na(s$comune_fornitura)))
+  # la fornitura sta nel file, che l'app non carica: si legge dal CSV
+  grezzo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
+  forniture <- grezzo$id_fornitura[rfid_sacchetto(grezzo$RFID)]
+  censiti_grezzo <- grezzo$presente_a_database[rfid_sacchetto(grezzo$RFID)] == "Presente"
+  expect_setequal(forniture[censiti_grezzo], sprintf("SAC%03d", 1:4))
+  expect_true(all(is.na(forniture[!censiti_grezzo])))
+  expect_false(any(forniture[censiti_grezzo] %in% grezzo$id_fornitura[!rfid_sacchetto(grezzo$RFID)]))
   expect_identical(s$comune_assegnato, s$comune_lettura)
   expect_identical(s$comune_lettura, s$comune_giro)
   expect_setequal(s$cantiere, cantieri())
@@ -416,7 +429,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
     servizio_mostrato(nel_2025)[rfid_sacchetto(nel_2025$RFID)] ==
       servizio_sacchetti()
   ))
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(nel_2025))
+  stat <- calcola_statistiche(ultime_esempio(periodo = periodo_anno(2025)))
   expect_equal(stat$servizio_censiti[[servizio_sacchetti()]], 7)
   expect_equal(stat$servizio_stimato[[servizio_sacchetti()]], 3)
   # i contenitori non censiti restano 18 con la stima e 19 con la stima incerta
@@ -471,17 +484,17 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   # comune del database: solo per i contenitori censiti, uno per RFID. Un
   # sacchetto non lo ha nemmeno da censito
   sacchetto <- rfid_sacchetto(d$RFID)
-  expect_true(all(is.na(d$comune_da_database[non_presente | sacchetto])))
-  expect_false(anyNA(d$comune_da_database[!non_presente & !sacchetto]))
+  expect_true(all(is.na(d$comune_fornitura[non_presente | sacchetto])))
+  expect_false(anyNA(d$comune_fornitura[!non_presente & !sacchetto]))
   per_rfid <- tapply(
-    d$comune_da_database[!non_presente],
+    d$comune_fornitura[!non_presente],
     d$RFID[!non_presente],
     dplyr::n_distinct
   )
   expect_true(all(per_rfid == 1))
 
   # tutti i comuni sono in tabella; il cantiere è quello del comune assegnato
-  comuni <- stats::na.omit(c(d$comune_da_database, d$comune_giro))
+  comuni <- stats::na.omit(c(d$comune_fornitura, d$comune_giro))
   expect_true(all(comuni %in% comuni_cantieri()$comune))
   # il comune di lettura è quello il cui confine contiene il punto: nel
   # dataset di esempio ogni lettura sta in un comune servito
@@ -526,7 +539,7 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   # il contenitore spostato resta registrato a Limena, cantiere di Rubano, ma
   # dalla seconda lettura in poi viene letto a Cittadella
   spostato <- d[d$RFID == "RFD20250905100", ]
-  expect_identical(unique(spostato$comune_da_database), "LIMENA")
+  expect_identical(unique(spostato$comune_fornitura), "LIMENA")
   expect_identical(spostato$comune_lettura[1:2], c("LIMENA", "CITTADELLA"))
   expect_identical(spostato$comune_giro[1:2], c("LIMENA", "CITTADELLA"))
   expect_identical(spostato$comune_geografico[1:2], c("LIMENA", "CITTADELLA"))
@@ -541,7 +554,7 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
     c("Coerente", rep("Fuori comune", nrow(spostato) - 1))
   )
   expect_identical(
-    unique(d$comune_da_database[d$RFID == "RFD20250901001"]),
+    unique(d$comune_fornitura[d$RFID == "RFD20250901001"]),
     "BASSANO DEL GRAPPA"
   )
   # il tag rimasto sul mezzo viene letto durante giri di più comuni, sempre
@@ -552,62 +565,4 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
     sul_mezzo$comune_lettura,
     c("MAROSTICA", "BASSANO DEL GRAPPA", "NOVE")
   )
-})
-
-test_that("le letture storiche di esempio precedono quelle con le antenne", {
-  esito <- carica_storico(percorso_storico_esempio())
-  storico <- esito$dati
-  d <- dati_esempio()
-
-  expect_length(esito$avvisi, 0)
-  expect_identical(names(storico), colonne_storico())
-  expect_equal(nrow(storico), 6855)
-  expect_lt(max(storico$giorno_lettura), min(d$giorno_lettura))
-  expect_equal(
-    as.Date(range(storico$giorno_lettura)),
-    as.Date(c("2020-01-01", "2024-09-30"))
-  )
-  expect_setequal(lubridate::year(storico$giorno_lettura), 2020:2024)
-
-  # RFID letti da entrambi i sistemi, solo dalle antenne, solo in passato
-  rfid_storico <- unique(storico$RFID)
-  rfid_antenne <- unique(d$RFID)
-  expect_length(rfid_storico, 222)
-  expect_length(intersect(rfid_storico, rfid_antenne), 179)
-  # solo dalle antenne: 60 contenitori e i 12 sacchetti
-  solo_antenne <- setdiff(rfid_antenne, rfid_storico)
-  expect_length(solo_antenne, 72)
-  expect_equal(sum(rfid_sacchetto(solo_antenne)), 12)
-  expect_false(any(rfid_sacchetto(rfid_storico)))
-  # solo in passato: contenitori ritirati, o non ancora letti dalle antenne
-  expect_length(setdiff(rfid_storico, rfid_antenne), 43)
-
-  # tra gli RFID con una storia ci sono anche dei non censiti
-  ultimi <- deduplica_ultimo_rfid(d)
-  con_storia <- ultimi[ultimi$RFID %in% rfid_storico, ]
-  expect_gt(sum(con_storia$presente_a_database == "Non Presente"), 5)
-  # i contenitori dei casi speciali, letti da settembre 2025, non hanno storia
-  expect_false(any(
-    c("RFD20250901001", "RFD20250901050", "RFD20250905100") %in% rfid_storico
-  ))
-})
-
-test_that("le letture storiche contengono anni interi senza letture", {
-  storico <- storico_esempio()
-  # contenitore di esempio: letto nel 2020, 2022 e 2024, mai nel 2021 e nel 2023
-  anni <- lubridate::year(storico$giorno_lettura[
-    storico$RFID == "RFD20241004003"
-  ])
-  expect_identical(as.integer(table(anni)), c(11L, 15L, 6L))
-  expect_identical(sort(unique(anni)), c(2020, 2022, 2024))
-
-  # le stesse letture nell'istogramma del dettaglio del bidone, con le antenne
-  andamento <- andamento_rfid("RFD20241004003", dati_esempio(), storico)
-  expect_identical(andamento$anno, 2020:2025)
-  expect_equal(andamento$storico + andamento$antenne, c(11, 0, 15, 0, 12, 25))
-  esempio <- dati_esempio()
-  esempio <- esempio[esempio$RFID == "RFD20241004003", ]
-  expect_identical(unique(esempio$comune_da_database), "LIMENA")
-  expect_identical(unique(esempio$cantiere), "RUBANO")
-  expect_equal(unique(esempio$numero_raccolte_annue_previste), 26)
 })

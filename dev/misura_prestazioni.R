@@ -1,13 +1,13 @@
 # Misura i tempi e la memoria di ogni passaggio dell'app su un file di letture.
 #
 # Uso, dalla radice del pacchetto:
-#   Rscript dev/misura_prestazioni.R <file delle letture> [file delle letture storiche]
+#   Rscript dev/misura_prestazioni.R <file delle letture>
 #
-# Accetta gli stessi formati dell'app: CSV, CSV compresso con gzip, Parquet.
-# Per un file di prova: Rscript data-raw/genera_dataset_grande.R <cartella>
+# Accetta gli stessi formati dell'app: CSV, CSV compresso con gzip, Parquet,
+# DuckDB. Per un file di prova: Rscript data-raw/genera_dataset_grande.R <cartella>
 #
 # I tempi sono quelli del solo server: a questi si aggiunge il disegno nel
-# browser, che dipende dal peso del messaggio riportato per ogni vista.
+# browser, che dipende dal peso del messaggio riportato per la mappa.
 
 argomenti <- commandArgs(TRUE)
 if (length(argomenti) < 1) {
@@ -35,145 +35,125 @@ file <- argomenti[1]
 message(sprintf("%s, %.0f MB", basename(file), file.size(file) / 1024^2))
 
 # ---- Caricamento -----------------------------------------------------------------
-grezzo <- misura("Lettura del file", leggi_tabella(file))
-esito <- misura("Validazione", validate_dataset(grezzo))
-rm(grezzo)
-letture <- esito$dati
-n_rfid <- dplyr::n_distinct(letture$RFID)
+esito <- misura("Lettura e validazione in DuckDB", carica_archivio(file))
+archivio <- esito$archivio
 message(sprintf(
-  "%s letture, %s RFID, %d MB in memoria, %d avvisi",
-  formatta_numero(nrow(letture)),
-  formatta_numero(n_rfid),
-  megabyte(letture),
+  "%s letture, %s RFID, %d avvisi",
+  formatta_numero(archivio$n),
+  formatta_numero(archivio$n_rfid),
   length(esito$avvisi)
 ))
+if (tolower(tools::file_ext(file)) != "duckdb") {
+  # Lo stesso archivio scritto in un file .duckdb, come fa il passo 3, e
+  # riaperto: è il caricamento dell'app con il file del passo 3.
+  file_duckdb <- tempfile(fileext = ".duckdb")
+  misura("Scrittura del file .duckdb", scrivi_archivio(archivio, file_duckdb))
+  message(sprintf("  file .duckdb di %.0f MB", file.size(file_duckdb) / 1024^2))
+  riaperto <- misura("Apertura del file .duckdb", carica_archivio(file_duckdb))
+  chiudi_archivio(riaperto$archivio)
+  unlink(file_duckdb)
+}
 
 # ---- Periodo, filtri e mappa principale --------------------------------------------
-anno <- max(anni_disponibili(letture))
+anno <- max(anni_disponibili(archivio))
 periodo <- periodo_anno(anno)
-nel_periodo <- misura(
-  "Filtro del periodo e icone",
-  aggiungi_servizio_icona(filtra_periodo(letture, periodo))
+selezione <- misura(
+  "Periodo: conteggi e stima dei non censiti",
+  seleziona_periodo(archivio, periodo)
 )
-maschera <- misura("Filtri: letture che li superano", maschera_filtri(nel_periodo))
-ultime <- misura(
-  "Filtri: ultima lettura per RFID",
-  deduplica_ultimo_rfid(nel_periodo, maschera)
-)
-giro <- ordina_servizi(nel_periodo$servizio_giro)[1]
-misura(
-  "Cambio di un filtro, in tutto",
-  deduplica_ultimo_rfid(
-    nel_periodo,
-    maschera_filtri(
-      nel_periodo,
-      giri_esclusi = giro,
-      coerenza_escluse = "coerente"
-    )
-  )
-)
+scelte <- misura("Voci dei filtri", scelte_periodo(selezione))
+ultime <- misura("Ultima lettura per RFID, senza filtri", ultime_letture(selezione))
+giro <- scelte$giri[1]
+misura("Cambio di un filtro, in tutto", {
+  ultime_letture(selezione, giri_esclusi = giro, coerenza_escluse = "coerente")
+  conteggi_cantieri(selezione, giri_esclusi = giro, coerenza_escluse = "coerente")
+})
 # Il servizio: per i censiti quello a database, per i non censiti quello
-# stimato dai giri. Prima le voci dell'elenco, poi un servizio in meno
-# e senza i non censiti con la stima incerta.
-stimati <- misura(
-  "Elenco dei servizi",
-  ordina_servizi(servizio_mostrato(nel_periodo))
-)
+# stimato dai giri. Un servizio in meno e senza i non censiti con la stima
+# incerta.
 misura(
   "Cambio del filtro sul servizio, in tutto",
-  deduplica_ultimo_rfid(
-    nel_periodo,
-    maschera_filtri(
-      nel_periodo,
-      servizi_esclusi = stimati[1],
+  {
+    ultime_letture(
+      selezione,
+      servizi_esclusi = scelte$servizi[1],
       includi_stima_incerta = FALSE
     )
-  )
+    conteggi_cantieri(
+      selezione,
+      servizi_esclusi = scelte$servizi[1],
+      includi_stima_incerta = FALSE
+    )
+  }
+)
+misura(
+  "Cambio del comune, con l'area da inquadrare",
+  {
+    comune <- scelte$comuni$comune_assegnato[1]
+    ultime_letture(selezione, comuni = comune)
+    area_filtri(selezione, comuni = comune)
+  }
 )
 misura(
   "Statistiche",
-  calcola_statistiche(ultime, nel_periodo$cantiere[maschera])
+  calcola_statistiche(ultime, conteggi_cantieri(selezione))
 )
 
-# La mappa: che cosa disegna a tre zoom, e quanto pesa il messaggio al browser.
-zona <- riquadro_zona()
-tutta <- list(
-  north = zona$lat_max,
-  south = zona$lat_min,
-  east = zona$lng_max,
-  west = zona$lng_min
+# La mappa: bidoni e bolle vanno al browser in un messaggio solo, poi zoom e
+# spostamenti non chiedono niente al server.
+dati <- misura("Mappa: dati per il browser", dati_mappa(ultime, "cluster"))
+messaggio <- jsonlite::toJSON(
+  dati,
+  auto_unbox = TRUE,
+  null = "null",
+  na = "null",
+  digits = I(16),
+  use_signif = TRUE,
+  force = TRUE
 )
-centro <- c(stats::median(ultime$latitudine), stats::median(ultime$longitudine))
-viste <- list(
-  "zoom 9, tutta la zona" = list(riquadro = tutta, zoom = 9),
-  "zoom 12, un'area di 30 km" = list(
-    riquadro = list(
-      north = centro[1] + 0.10,
-      south = centro[1] - 0.10,
-      east = centro[2] + 0.20,
-      west = centro[2] - 0.20
-    ),
-    zoom = 12
-  ),
-  "zoom 15, un quartiere" = list(
-    riquadro = list(
-      north = centro[1] + 0.012,
-      south = centro[1] - 0.012,
-      east = centro[2] + 0.025,
-      west = centro[2] - 0.025
-    ),
-    zoom = 15
-  )
-)
-for (nome in names(viste)) {
-  vista <- viste[[nome]]
-  mappa <- misura(paste("Mappa:", nome), {
-    scelta <- scegli_vista(ultime, vista$riquadro, vista$zoom)
-    if (scelta$tipo %in% c("tutti", "singoli")) {
-      righe <- if (scelta$tipo == "tutti") ultime else ultime[scelta$righe, ]
-      disegna_marker(mappa_base(), righe, "cluster")
-    } else {
-      righe <- if (scelta$tipo == "griglia") ultime[scelta$righe, ] else ultime
-      aggiungi_bolle(mappa_base(), aggrega_marker(righe, scelta$tipo, vista$zoom))
-    }
-  })
-  messaggio <- jsonlite::toJSON(mappa$x$calls, auto_unbox = TRUE, force = TRUE)
-  message(sprintf(
-    "  %-28s vista '%s', messaggio al browser %.2f MB",
-    nome,
-    scegli_vista(ultime, vista$riquadro, vista$zoom)$tipo,
-    nchar(messaggio) / 1024^2
-  ))
-}
+message(sprintf(
+  "  %s bidoni, messaggio al browser %.2f MB",
+  formatta_numero(length(dati$punti$x)),
+  nchar(messaggio) / 1024^2
+))
 
 # ---- Ricerca, dettaglio, analisi ---------------------------------------------------
-rfid <- names(sort(table(nel_periodo$RFID), decreasing = TRUE))[1]
-trovate <- misura("Ricerca di un RFID", cerca_per_rfid(nel_periodo, rfid))
+rfid <- interroga(
+  archivio,
+  sprintf(
+    "SELECT RFID FROM %s WHERE %s GROUP BY RFID ORDER BY count(*) DESC, RFID LIMIT 1",
+    archivio$tabella,
+    sql_periodo(selezione)
+  )
+)$RFID
+trovate <- misura("Ricerca di un RFID", cerca_per_rfid(selezione, rfid))
 message(sprintf(
   "  l'RFID con piu' letture ne ha %s: sulla mappa della ricerca ne vanno %s",
   formatta_numero(nrow(trovate)),
   formatta_numero(nrow(limita_letture_ricerca(trovate)))
 ))
 misura("Dettaglio di un bidone", {
-  analizza_rfid(nel_periodo[nel_periodo$RFID == rfid, ])
-  andamento_rfid(rfid, letture, NULL)
+  crea_info_panel(analizza_rfid(letture_del_rfid(selezione, rfid)))
 })
+mezzi <- mezzi_presenti(selezione)
+giorni <- giorni_letture(selezione)
+misura("Ricerca dei giri: un mezzo in un giorno, con il riepilogo", {
+  riepilogo_giri(cerca_giri(selezione, mezzi[1], max(giorni), max(giorni)))
+})
+misura("Ricerca dei giri: tutti i mezzi in un mese, con il riepilogo", {
+  riepilogo_giri(cerca_giri(selezione, NULL, max(giorni) - 30, max(giorni)))
+})
+letture <- misura("Analisi dei cluster: letture del periodo", letture_periodo(selezione))
 analisi <- misura(
   "Analisi dei cluster",
-  calcola_analisi_cluster(letture, periodo[1], periodo[2])
+  calcola_analisi_cluster(
+    letture,
+    periodo[1],
+    periodo[2],
+    copertura = c(archivio$primo, archivio$ultimo)
+  )
 )
 message(sprintf("  %s cluster", formatta_numero(nrow(analisi))))
-
-# ---- Letture storiche ---------------------------------------------------------
-if (length(argomenti) >= 2) {
-  storico <- misura("Letture storiche: lettura e validazione", {
-    carica_storico(argomenti[2])$dati
-  })
-  message(sprintf("  %s letture storiche", formatta_numero(nrow(storico))))
-  misura("Istogramma per anno di un bidone, con le letture storiche", {
-    andamento_rfid(rfid, letture, storico)
-  })
-}
 
 misure$secondi <- round(misure$secondi, 2)
 misure$picco_mb <- round(misure$picco_mb)

@@ -22,13 +22,6 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   expect_length(esito$avvisi, 0)
 })
 
-test_that("il separatore viene rilevato automaticamente", {
-  virgola <- scrivi_csv(c("a,b,c", "1,2,3"))
-  punto_virgola <- scrivi_csv(c("a;b;c", "1;2;3"))
-  expect_identical(rileva_separatore(virgola), ",")
-  expect_identical(rileva_separatore(punto_virgola), ";")
-})
-
 test_that("legge CSV con punto e virgola, virgola decimale e date italiane", {
   percorso <- scrivi_csv(c(
     gsub(",", ";", intestazione_transponder),
@@ -125,15 +118,30 @@ test_that("le incoerenze del dataset generano avvisi non bloccanti", {
   expect_match(esito$avvisi[3], "univoca")
 })
 
-test_that("la deduplica mantiene solo l'ultima lettura di ogni RFID", {
-  ultimi <- deduplica_ultimo_rfid(letture_test())
+test_that("l'ultima lettura di ogni RFID si sceglie in DuckDB", {
+  ultimi <- ultime_di(letture_test())
   expect_equal(nrow(ultimi), 3)
   expect_setequal(ultimi$RFID, c("A", "B", "C"))
   expect_equal(
     ultimi$giorno_lettura[ultimi$RFID == "A"],
     as.POSIXct("2025-09-20 08:00:00", tz = "UTC")
   )
-  expect_identical(names(ultimi), names(letture_test()))
+  # le colonne del dataset, il servizio dell'icona e la posizione nel file
+  expect_identical(
+    names(ultimi),
+    c(colonne_dataset(), "servizio_icona", "riga")
+  )
+  # dalla più recente alla meno recente
+  expect_false(is.unsorted(rev(ultimi$giorno_lettura)))
+  # a parità di istante resta la lettura che viene prima nel file
+  doppie <- letture_test()[c(1, 1), ]
+  doppie$servizio_transponder <- c("PRIMA", "SECONDA")
+  expect_identical(ultime_di(doppie)$servizio_transponder, "PRIMA")
+  # si possono chiedere solo alcune colonne
+  expect_named(
+    ultime_letture(selezione_di(letture_test()), colonne = c("RFID", "latitudine")),
+    c("RFID", "latitudine", "riga")
+  )
 })
 
 test_that("il filtro per periodo include gli estremi", {
@@ -152,7 +160,7 @@ test_that("il filtro per periodo include gli estremi", {
 codice_sacchetto <- function(n) sprintf("00BD%020d", n)
 
 # Letture che superano i filtri.
-filtrate <- function(d, ...) d[maschera_filtri(d, ...), , drop = FALSE]
+filtrate <- function(d, ...) d[maschera_di(d, ...), , drop = FALSE]
 
 test_that("i filtri per stato e servizio si combinano correttamente", {
   d <- letture_test()
@@ -190,7 +198,7 @@ test_that("i filtri per stato e servizio si combinano correttamente", {
   stimata <- esempio$presente_a_database == "Non Presente" |
     rfid_sacchetto(esempio$RFID)
   expect_identical(
-    maschera_filtri(
+    maschera_di(
       esempio,
       servizi_esclusi = "SECCO",
       includi_stima_incerta = FALSE
@@ -259,7 +267,7 @@ test_that("il servizio atteso filtra i censiti per lettura e i non censiti per s
     c("CENSITO", "NETTO")
   )
   # tolta ogni voce non resta niente; lo stato a database si sceglie a parte
-  expect_false(any(maschera_filtri(
+  expect_false(any(maschera_di(
     d,
     servizi_esclusi = c("CARTA", "VETRO", "SECCO PAP"),
     includi_stima_incerta = FALSE
@@ -278,12 +286,12 @@ test_that("il servizio atteso filtra i censiti per lettura e i non censiti per s
   expect_identical(servizio_mostrato(d), con_icona$servizio_icona)
   expect_identical(servizio_mostrato(con_icona), con_icona$servizio_icona)
   expect_identical(
-    maschera_filtri(con_icona, servizi_esclusi = "SECCO PAP"),
-    maschera_filtri(d, servizi_esclusi = "SECCO PAP")
+    maschera_di(con_icona, servizi_esclusi = "SECCO PAP"),
+    maschera_di(d, servizi_esclusi = "SECCO PAP")
   )
 
   # le statistiche contano con gli stessi criteri dei filtri
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(con_icona))
+  stat <- calcola_statistiche(ultime_di(d))
   expect_equal(stat$presente, 1)
   expect_equal(stat$non_presente, 3)
   expect_identical(stat$servizio_censiti, c(CARTA = 1L))
@@ -339,8 +347,8 @@ test_that("i filtri sul giro e sulla coerenza dei servizi valgono per ogni stato
   expect_setequal(rimasti(giri_esclusi = "SECCO"), tutti)
   # una lettura senza giro non è mai tra quelle deselezionate
   expect_identical(
-    maschera_filtri(d, giri_esclusi = c("SECCO PAP", NA)),
-    maschera_filtri(d, giri_esclusi = "SECCO PAP")
+    maschera_di(d, giri_esclusi = c("SECCO PAP", NA)),
+    maschera_di(d, giri_esclusi = "SECCO PAP")
   )
   # vale per censiti e non censiti: lo stato si sceglie a parte
   expect_setequal(
@@ -394,7 +402,7 @@ test_that("i filtri sul giro e sulla coerenza dei servizi valgono per ogni stato
   expect_equal(nrow(filtrate(semplici, coerenza_escluse = "coerente")), 0)
 
   # le statistiche contano i giri e i bidoni non coerenti, per ultima lettura
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(aggiungi_servizio_icona(d)))
+  stat <- calcola_statistiche(ultime_di(d))
   expect_identical(
     stat$giri,
     c("SECCO PAP" = 2L, "SECCO CONT.STRADALI" = 1L)
@@ -470,11 +478,7 @@ test_that("la coerenza confronta le tipologie dei servizi di una lettura", {
 })
 test_that("i filtri si applicano prima della deduplica", {
   # Escludendo CARTA, del bidone A resta visibile l'ultima lettura SECCO.
-  letture <- letture_test()
-  ultimi <- deduplica_ultimo_rfid(
-    letture,
-    maschera_filtri(letture, servizi_esclusi = "CARTA")
-  )
+  ultimi <- ultime_di(letture_test(), servizi_esclusi = "CARTA")
   riga <- ultimi[ultimi$RFID == "A", ]
   expect_identical(riga$servizio_transponder, "SECCO")
   expect_equal(
@@ -484,8 +488,7 @@ test_that("i filtri si applicano prima della deduplica", {
 })
 
 test_that("le statistiche contano una riga per RFID", {
-  ultimi <- deduplica_ultimo_rfid(aggiungi_servizio_icona(letture_test()))
-  stat <- calcola_statistiche(ultimi)
+  stat <- calcola_statistiche(ultime_di(letture_test()))
   expect_equal(stat$totale, 3)
   expect_equal(stat$presente, 2)
   expect_equal(stat$non_presente, 1)
@@ -527,7 +530,8 @@ test_that("il confronto tra codici ignora maiuscole e valori mancanti", {
 })
 
 test_that("la ricerca per RFID restituisce tutte le letture e marca l'ultima", {
-  trovate <- cerca_per_rfid(letture_test(), c("a", "C", "inesistente"))
+  selezione <- selezione_di(letture_test())
+  trovate <- cerca_per_rfid(selezione, c("a", "C", "inesistente"))
   expect_equal(nrow(trovate), 5)
   expect_equal(sum(trovate$is_ultimo), 2)
   ultima_a <- trovate[trovate$RFID == "A" & trovate$is_ultimo, ]
@@ -535,18 +539,23 @@ test_that("la ricerca per RFID restituisce tutte le letture e marca l'ultima", {
     ultima_a$giorno_lettura,
     as.POSIXct("2025-09-20 08:00:00", tz = "UTC")
   )
-  expect_equal(nrow(cerca_per_rfid(letture_test(), "inesistente")), 0)
+  expect_equal(nrow(cerca_per_rfid(selezione, "inesistente")), 0)
+  # le letture hanno il servizio dell'icona, e sono in ordine di RFID e di
+  # data decrescente
+  expect_true("servizio_icona" %in% names(trovate))
+  expect_identical(trovate$RFID, c("A", "A", "A", "C", "C"))
+  expect_false(is.unsorted(rev(trovate$giorno_lettura[trovate$RFID == "A"])))
 })
 
 test_that("la ricerca per utenza considera solo l'utenza attuale", {
-  d <- letture_test()
+  d <- selezione_di(letture_test())
   # A era di U1 ma ora è di U2: cercando U1 compare solo B.
   expect_identical(filtra_ultimo_per_utenza(d, "U1")$RFID, "B")
   expect_identical(filtra_ultimo_per_utenza(d, "u2")$RFID, "A")
   expect_setequal(filtra_ultimo_per_utenza(d, c("U1", "U2"))$RFID, c("A", "B"))
   expect_equal(nrow(filtra_ultimo_per_utenza(d, "U9")), 0)
 
-  esempio <- dati_esempio()
+  esempio <- seleziona_periodo(archivio_esempio())
   expect_false(
     "RFD20250901050" %in% filtra_ultimo_per_utenza(esempio, "UTZ001")$RFID
   )
@@ -650,7 +659,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_equal(esito$dati$volume_previsto, c(1100, NA))
   expect_equal(esito$dati$numero_raccolte_annue_previste, c(26, NA))
   # i nomi dei comuni tornano alla grafia della tabella dei comuni
-  expect_identical(esito$dati$comune_da_database, c("ROSÀ", NA))
+  expect_identical(esito$dati$comune_fornitura, c("ROSÀ", NA))
   expect_identical(esito$dati$comune_giro, c("BASSANO DEL GRAPPA", "RUBANO"))
   # la prima lettura è a Rosà, anche se il calendario mandava il mezzo a
   # Bassano del Grappa
@@ -726,7 +735,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   gia_scritto <- carica_dataset(scrivi_csv(c(
     paste0(
       intestazione_csv,
-      ",comune_da_database,comune_giro,comune_lettura"
+      ",comune_fornitura,comune_giro,comune_lettura"
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5,Bassano del Grappa,Rubano,BASSANO DEL GRAPPA",
     "2025-09-15 09:30:00,AB123CD,VEH001,R2,Presente,CARTA,UTZ002,41.9,12.5,Limena,Rubano,Rubano",
@@ -765,7 +774,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   ricalcolata <- carica_dataset(scrivi_csv(c(
     paste0(
       intestazione_csv,
-      ",comune_da_database,comune_giro,comune_lettura,coerenza_comune"
+      ",comune_fornitura,comune_giro,comune_lettura,coerenza_comune"
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5,Limena,Rubano,Rubano,Coerente"
   )))
@@ -779,7 +788,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.47,11.84,1100,26,Limena"
   )))
-  expect_identical(vecchio$dati$comune_da_database, "LIMENA")
+  expect_identical(vecchio$dati$comune_fornitura, "LIMENA")
   expect_identical(vecchio$dati$cantiere, "RUBANO")
   # senza il comune di lettura la coerenza del comune è ignota
   expect_identical(vecchio$dati$coerenza_comune, "Coerenza ignota")
@@ -789,11 +798,26 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
     fixed = TRUE
   )
 
+  # fino al 17 ottobre 2026 il comune della fornitura si chiamava
+  # `comune_da_database`; con tutti e due i nomi vale quello nuovo
+  expect_identical(alias_colonne()[["comune_da_database"]], "comune_fornitura")
+  da_database <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",comune_da_database,comune_lettura"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.47,11.84,Limena,Cittadella"
+  )))
+  expect_identical(da_database$dati$comune_fornitura, "LIMENA")
+  expect_identical(da_database$dati$coerenza_comune, "Fuori comune")
+  tutti_e_due <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",comune_da_database,comune_fornitura"),
+    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.47,11.84,Limena,Cittadella"
+  )))
+  expect_identical(tutti_e_due$dati$comune_fornitura, "CITTADELLA")
+
   # un comune fuori dalla tabella tiene il cantiere scritto nel file
   fuori <- carica_dataset(scrivi_csv(c(
     paste0(
       intestazione_csv,
-      ",volume_previsto,numero_raccolte_annue_previste,comune_da_database,comune_giro,cantiere"
+      ",volume_previsto,numero_raccolte_annue_previste,comune_fornitura,comune_giro,cantiere"
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.4,11.9,1100,26,Padova,,ovest",
     "2025-09-15 09:30:00,AB123CD,VEH001,R2,Presente,CARTA,UTZ002,45.4,11.9,1100,26,Vicenza,,"
@@ -813,7 +837,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   soppresso <- carica_dataset(scrivi_csv(c(
     paste0(
       intestazione_csv,
-      ",comune_da_database,comune_giro,comune_lettura,cantiere"
+      ",comune_fornitura,comune_giro,comune_lettura,cantiere"
     ),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,Rosà,Valstagna,Rosà,BASSANO",
     "2025-09-15 09:30:00,AB123CD,VEH001,R2,Non Presente,CARTA,NA,45.72,11.76,,Valstagna,Valbrenta,BASSANO"
@@ -842,7 +866,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_identical(senza$dati$coerenza_comune, "Coerenza ignota")
   expect_match(
     senza$avvisi,
-    "Colonne facoltative assenti: volume_previsto, numero_raccolte_annue_previste, comune_da_database, comune_giro, comune_lettura, cantiere.",
+    "Colonne facoltative assenti: volume_previsto, numero_raccolte_annue_previste, comune_fornitura, comune_giro, comune_lettura, cantiere.",
     fixed = TRUE
   )
 
@@ -858,7 +882,8 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
 })
 
 test_that("anni e periodi di analisi", {
-  expect_identical(anni_disponibili(dati_esempio()), c(2025, 2024))
+  expect_identical(anni_disponibili(archivio_esempio()), c(2025, 2024))
+  expect_identical(anni_disponibili(NULL), numeric(0))
   expect_identical(periodo_anno(2025), as.Date(c("2025-01-01", "2025-12-31")))
   expect_identical(etichetta_periodo(periodo_anno(2024)), "Anno 2024")
   expect_identical(
@@ -972,61 +997,14 @@ test_that("l'icona di un censito è il servizio a database della lettura", {
   expect_gt(sum(is.na(non_censiti$servizio_icona)), 5)
 })
 
-test_that("la pulizia del testo coincide con str_squish su ogni cella", {
-  esatta <- function(x) dplyr::na_if(stringr::str_squish(x), "")
-  # spazio non separabile: scritto così per non lasciarlo invisibile nel file
-  spazio_fisso <- intToUtf8(160)
-  casi <- c(
-    "abc",
-    " abc",
-    "abc ",
-    "a  b",
-    "a b",
-    "",
-    " ",
-    "\tabc",
-    "abc\t",
-    "a\tb",
-    "a\nb",
-    "a\r\nb",
-    "a \t b",
-    paste0("a", spazio_fisso, "b"),
-    paste0(spazio_fisso, "abc"),
-    NA,
-    "2025-01-01 10:00:00",
-    "2025-01-01  10:00:00",
-    " 45,5"
-  )
-  # le celle da pulire sono le vuote e quelle che str_squish modificherebbe
-  expect_identical(
-    celle_da_pulire(casi),
-    which(!is.na(casi) & (casi == "" | stringr::str_squish(casi) != casi))
-  )
-  expect_identical(celle_da_pulire(c("abc", "a b", NA)), integer(0))
-
-  # colonna con valori quasi tutti diversi: si puliscono le sole celle sporche
-  diversi <- c(casi, sprintf("codice %05d", 1:6000))
-  expect_identical(pulisci_testo(diversi), esatta(diversi))
-  # colonna con pochi valori ripetuti: si puliscono i valori distinti
-  ripetuti <- rep(casi, 400)
-  expect_identical(pulisci_testo(ripetuti), esatta(ripetuti))
-
-  # i fattori diventano testo, gli altri tipi restano come sono
-  expect_identical(pulisci_testo(factor(c(" a ", "b", ""))), c("a", "b", NA))
-  expect_identical(pulisci_testo(c(1.5, NA)), c(1.5, NA))
-  quando <- as.POSIXct("2025-01-01 10:00:00", tz = "UTC")
-  expect_identical(pulisci_testo(quando), quando)
-  expect_identical(pulisci_testo(character(0)), character(0))
-})
-
 test_that("gli spazi superflui non cambiano il dataset letto", {
   pulito <- carica_dataset(scrivi_csv(c(
-    paste0(intestazione_csv, ",comune_da_database"),
+    paste0(intestazione_csv, ",comune_fornitura"),
     "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,Limena",
     "2025-09-16 09:30:00,AB123CD,VEH001,R2,Non Presente,SECCO PAP,NA,45.43,11.79,"
   )))
   sporco <- carica_dataset(scrivi_csv(c(
-    paste0(intestazione_csv, ",comune_da_database"),
+    paste0(intestazione_csv, ",comune_fornitura"),
     "\"2025-09-15  08:30:00 \",AB123CD , VEH001,\" R1 \",Presente ,\"CARTA \",UTZ001,\" 45.72\",11.76 ,\"  Limena \"",
     "2025-09-16 09:30:00,AB123CD,VEH001,R2,\"Non  Presente\",\"SECCO  PAP\",NA,45.43,11.79,\" \""
   )))
@@ -1034,10 +1012,13 @@ test_that("gli spazi superflui non cambiano il dataset letto", {
   expect_identical(sporco$avvisi, pulito$avvisi)
 })
 
-test_that("i formati accettati sono CSV, CSV compresso e Parquet", {
-  expect_identical(names(formati_file()), c("csv", "txt", "gz", "parquet"))
+test_that("i formati accettati sono CSV, CSV compresso, Parquet e DuckDB", {
+  expect_identical(
+    names(formati_file()),
+    c("csv", "txt", "gz", "parquet", "duckdb")
+  )
   accettate <- estensioni_accettate()
-  expect_true(all(c(".csv", ".txt", ".gz", ".parquet") %in% accettate))
+  expect_true(all(c(".csv", ".txt", ".gz", ".parquet", ".duckdb") %in% accettate))
 })
 
 test_that("le letture si leggono da un CSV compresso con gzip", {
@@ -1058,7 +1039,6 @@ test_that("le letture si leggono da un CSV compresso con gzip", {
   esito <- carica_dataset(compresso)
   expect_identical(esito$dati, atteso)
   expect_length(esito$avvisi, 0)
-  expect_identical(leggi_tabella(compresso), read_csv_auto(percorso_dataset_esempio()))
 
   # un file caricato dal browser ha un nome temporaneo: conta quello originale
   anonimo <- withr::local_tempfile(fileext = ".dat")
@@ -1141,28 +1121,25 @@ test_that("un file indicato all'avvio viene letto una volta sola", {
   )
 })
 
-test_that("la deduplica può scegliere tra le sole letture indicate", {
+test_that("l'ultima lettura si sceglie tra quelle che superano i filtri", {
   dati <- dati_esempio()
-  maschera <- maschera_filtri(
-    dati,
-    stato_db = "Presente",
-    servizi_esclusi = "SECCO"
-  )
+  filtri <- list(stato_db = "Presente", servizi_esclusi = "SECCO")
+  maschera <- do.call(maschera_di, c(list(dati), filtri))
   expect_identical(
-    deduplica_ultimo_rfid(dati, maschera),
-    deduplica_ultimo_rfid(dati[maschera, ])
+    do.call(ultime_esempio, filtri)$RFID,
+    ultime_di(dati[maschera, ])$RFID
   )
   # stesso risultato della regola: l'ultima lettura di ogni RFID
   attese <- dati |>
     dplyr::slice_max(.data$giorno_lettura, n = 1, by = "RFID", with_ties = FALSE)
-  ultimi <- deduplica_ultimo_rfid(dati)
+  ultimi <- ultime_esempio()
   expect_identical(
     ultimi$giorno_lettura[match(attese$RFID, ultimi$RFID)],
     attese$giorno_lettura
   )
   # dalla più recente alla meno recente
   expect_false(is.unsorted(rev(ultimi$giorno_lettura)))
-  expect_equal(nrow(deduplica_ultimo_rfid(dati, rep(FALSE, nrow(dati)))), 0)
+  expect_equal(nrow(ultime_esempio(stato_db = character(0))), 0)
 })
 
 test_that("un periodo che contiene tutte le letture restituisce il dataset com'è", {
@@ -1206,10 +1183,10 @@ test_that("i cantieri seguono l'ordine dei filtri, con i non assegnati in fondo"
 test_that("i filtri per cantiere e comune si combinano con gli altri", {
   dati <- dati_esempio()
   tutte <- rep(TRUE, nrow(dati))
-  expect_identical(maschera_filtri(dati), tutte)
+  expect_identical(maschera_di(dati), tutte)
 
   # i cantieri si filtrano per esclusione, come i servizi
-  senza_asiago <- maschera_filtri(dati, cantieri_esclusi = "ASIAGO")
+  senza_asiago <- maschera_di(dati, cantieri_esclusi = "ASIAGO")
   expect_identical(
     senza_asiago,
     is.na(dati$cantiere) | dati$cantiere != "ASIAGO"
@@ -1217,12 +1194,12 @@ test_that("i filtri per cantiere e comune si combinano con gli altri", {
   # le letture senza cantiere hanno una voce loro: nel dataset di esempio
   # non ce ne sono, in un file possono esserci
   expect_identical(
-    maschera_filtri(dati, cantieri_esclusi = senza_cantiere()),
+    maschera_di(dati, cantieri_esclusi = senza_cantiere()),
     tutte
   )
   con_vuoti <- dati
   con_vuoti$cantiere[con_vuoti$RFID == "RFD20241001301"] <- NA
-  solo_assegnate <- maschera_filtri(
+  solo_assegnate <- maschera_di(
     con_vuoti,
     cantieri_esclusi = senza_cantiere()
   )
@@ -1230,28 +1207,28 @@ test_that("i filtri per cantiere e comune si combinano con gli altri", {
   expect_equal(sum(!solo_assegnate), sum(dati$RFID == "RFD20241001301"))
 
   # il comune è quello assegnato alla lettura
-  limena <- maschera_filtri(dati, comuni = "LIMENA")
+  limena <- maschera_di(dati, comuni = "LIMENA")
   expect_identical(
     limena,
     !is.na(dati$comune_assegnato) & dati$comune_assegnato == "LIMENA"
   )
   expect_gt(sum(limena), 0)
   # più comuni, anche di cantieri diversi
-  asiago <- maschera_filtri(dati, comuni = "ASIAGO")
-  due <- maschera_filtri(dati, comuni = c("LIMENA", "ASIAGO"))
+  asiago <- maschera_di(dati, comuni = "ASIAGO")
+  due <- maschera_di(dati, comuni = c("LIMENA", "ASIAGO"))
   expect_identical(due, limena | asiago)
   expect_setequal(unique(dati$cantiere[due]), c("RUBANO", "ASIAGO"))
   expect_equal(sum(due), sum(limena) + sum(asiago))
   # nessuna scelta: tutti i comuni
-  expect_identical(maschera_filtri(dati, comuni = character(0)), tutte)
-  expect_identical(maschera_filtri(dati, comuni = ""), tutte)
-  expect_identical(maschera_filtri(dati, comuni = NULL), tutte)
-  expect_identical(maschera_filtri(dati, comuni = NA_character_), tutte)
+  expect_identical(maschera_di(dati, comuni = character(0)), tutte)
+  expect_identical(maschera_di(dati, comuni = ""), tutte)
+  expect_identical(maschera_di(dati, comuni = NULL), tutte)
+  expect_identical(maschera_di(dati, comuni = NA_character_), tutte)
   # un comune che non c'è non lascia letture
-  expect_false(any(maschera_filtri(dati, comuni = "PAESE IGNOTO")))
+  expect_false(any(maschera_di(dati, comuni = "PAESE IGNOTO")))
 
   # insieme agli altri filtri
-  combinata <- maschera_filtri(
+  combinata <- maschera_di(
     dati,
     stato_db = "Presente",
     cantieri_esclusi = c("ASIAGO", "BASSANO"),
@@ -1259,13 +1236,13 @@ test_that("i filtri per cantiere e comune si combinano con gli altri", {
   )
   expect_identical(combinata, limena & dati$presente_a_database == "Presente")
   # i comuni di un cantiere escluso non lasciano letture, gli altri sì
-  expect_false(any(maschera_filtri(
+  expect_false(any(maschera_di(
     dati,
     cantieri_esclusi = "RUBANO",
     comuni = "LIMENA"
   )))
   expect_identical(
-    maschera_filtri(
+    maschera_di(
       dati,
       cantieri_esclusi = "RUBANO",
       comuni = c("LIMENA", "ASIAGO")
@@ -1277,21 +1254,23 @@ test_that("i filtri per cantiere e comune si combinano con gli altri", {
   expect_equal(nrow(rimaste), sum(senza_asiago))
   expect_false("ASIAGO" %in% rimaste$cantiere)
 
-  # un dataset senza colonne geografiche ignora i filtri geografici
+  # in un dataset senza geografia le letture non hanno cantiere: escludere un
+  # cantiere non toglie niente, e nessuna lettura sta in un comune scelto
   expect_identical(
-    maschera_filtri(letture_test(), cantieri_esclusi = "ASIAGO"),
+    maschera_di(letture_test(), cantieri_esclusi = "ASIAGO"),
     rep(TRUE, 6)
   )
   expect_identical(
-    maschera_filtri(letture_test(), comuni = "LIMENA"),
-    rep(TRUE, 6)
+    maschera_di(letture_test(), comuni = "LIMENA"),
+    rep(FALSE, 6)
   )
 })
 
 test_that("le statistiche contano RFID e letture di ogni cantiere", {
   dati <- dati_esempio()
-  ultimi <- deduplica_ultimo_rfid(dati)
-  stat <- calcola_statistiche(ultimi, dati$cantiere)
+  selezione <- seleziona_periodo(archivio_esempio())
+  ultimi <- ultime_letture(selezione)
+  stat <- calcola_statistiche(ultimi, conteggi_cantieri(selezione))
   expect_identical(
     stat$rfid_cantieri,
     c(ASIAGO = 33L, BASSANO = 66L, CAMPOSAMPIERO = 92L, RUBANO = 60L)
@@ -1306,9 +1285,10 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
   # le letture senza cantiere contano sotto una voce loro, in fondo
   con_vuoti <- dati
   con_vuoti$cantiere[con_vuoti$RFID == "RFD20241001301"] <- NA
+  selezione_vuoti <- selezione_di(con_vuoti)
   vuoti <- calcola_statistiche(
-    deduplica_ultimo_rfid(con_vuoti),
-    con_vuoti$cantiere
+    ultime_letture(selezione_vuoti),
+    conteggi_cantieri(selezione_vuoti)
   )
   expect_identical(names(vuoti$rfid_cantieri), c(cantieri(), senza_cantiere()))
   expect_equal(vuoti$rfid_cantieri[[senza_cantiere()]], 1)
@@ -1319,9 +1299,15 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
 
   # senza le letture restano i soli RFID; senza cantieri niente
   expect_length(calcola_statistiche(ultimi)$letture_cantieri, 0)
-  senza <- calcola_statistiche(deduplica_ultimo_rfid(letture_test()))
+  senza <- calcola_statistiche(ultime_di(letture_test()))
   expect_length(senza$rfid_cantieri, 0)
   expect_length(senza$letture_cantieri, 0)
+  expect_length(conteggi_cantieri(selezione_di(letture_test())), 0)
+  # i conteggi seguono i filtri
+  expect_identical(
+    conteggi_cantieri(selezione, cantieri_esclusi = "ASIAGO"),
+    stat$letture_cantieri[-1]
+  )
 })
 
 # Codice RFID di un sacchetto: 24 caratteri, con il prefisso 00BD.
@@ -1365,9 +1351,9 @@ test_that("le letture senza i sacchetti sono quelle dei contenitori", {
   # senza sacchetti le letture tornano così come sono
   expect_identical(senza_sacchetti(soli), soli)
   expect_equal(nrow(senza_sacchetti(d[0, ])), 0)
-  # vale anche per le letture storiche, che hanno solo RFID e istante
-  storico <- d[, c("RFID", "giorno_lettura")]
-  expect_identical(senza_sacchetti(storico)$RFID, soli$RFID)
+  # basta la colonna RFID
+  solo_codici <- d[, c("RFID", "giorno_lettura")]
+  expect_identical(senza_sacchetti(solo_codici)$RFID, soli$RFID)
   # nel dataset di esempio toglie i 12 sacchetti e le loro 12 letture
   esempio <- dati_esempio()
   expect_equal(nrow(esempio) - nrow(senza_sacchetti(esempio)), 12)
@@ -1475,7 +1461,7 @@ test_that("i sacchetti stanno sotto la loro tipologia, censiti o no", {
   # la casella della stima incerta non li riguarda
   expect_setequal(rimasti(includi_stima_incerta = FALSE), tutti)
 
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(con_icona))
+  stat <- calcola_statistiche(ultime_di(d))
   expect_identical(stat$servizio_censiti, c(CARTA = 1L, SACCHETTI = 1L))
   expect_identical(stat$servizio_stimato, c("SECCO PAP" = 1L, SACCHETTI = 1L))
   expect_equal(stat$stima_incerta, 0)
@@ -1503,7 +1489,7 @@ test_that("la coerenza del comune confronta il comune di lettura con quello dich
       "Non Presente"
     ),
     # per un censito conta il comune del database, mai quello del giro
-    comune_da_database = c("Limena", "LIMENA", NA, NA, NA, NA, "ROSÀ", "ASIAGO"),
+    comune_fornitura = c("Limena", "LIMENA", NA, NA, NA, NA, "ROSÀ", "ASIAGO"),
     comune_giro = c(
       "RUBANO",
       "LIMENA",
@@ -1578,7 +1564,7 @@ letture_coerenza_comune <- function() {
 
 test_that("il filtro sulla coerenza del comune tiene le voci spuntate", {
   d <- letture_coerenza_comune()
-  rimasti <- function(...) d$RFID[maschera_filtri(d, ...)]
+  rimasti <- function(...) d$RFID[maschera_di(d, ...)]
   expect_identical(rimasti(), c("A", "B", "C", "D"))
   expect_identical(
     rimasti(coerenza_comune_escluse = "coerente"),
@@ -1612,7 +1598,7 @@ test_that("il filtro sulla coerenza del comune tiene le voci spuntate", {
   )
   # un dataset senza la colonna non viene filtrato
   semplice <- letture_test()
-  expect_true(all(maschera_filtri(
+  expect_true(all(maschera_di(
     semplice,
     coerenza_comune_escluse = names(stati_coerenza_comune())
   )))
@@ -1623,16 +1609,13 @@ test_that("le statistiche contano i bidoni fuori comune e fuori giro", {
   expect_identical(stat$fuori_comune, 1L)
   expect_identical(stat$fuori_giro, 1L)
   expect_identical(stat$coerenza_comune_ignota, 1L)
-  senza <- calcola_statistiche(deduplica_ultimo_rfid(letture_test()))
+  senza <- calcola_statistiche(ultime_di(letture_test()))
   expect_identical(senza$fuori_comune, 0L)
   expect_identical(senza$fuori_giro, 0L)
   expect_identical(senza$coerenza_comune_ignota, 0L)
   # sul dataset di esempio del 2025, per ultima lettura di ogni RFID: i
   # sacchetti censiti non hanno un comune a database
-  nel_2025 <- aggiungi_servizio_icona(
-    filtra_periodo(dati_esempio(), periodo_anno(2025))
-  )
-  esempio <- calcola_statistiche(deduplica_ultimo_rfid(nel_2025))
+  esempio <- calcola_statistiche(ultime_esempio(periodo = periodo_anno(2025)))
   expect_identical(esempio$fuori_comune, 3L)
   expect_identical(esempio$fuori_giro, 19L)
   expect_identical(esempio$coerenza_comune_ignota, 7L)

@@ -198,4 +198,4 @@ Cosa rende veloce il calcolo.
 - **Indice spaziale** al posto delle matrici di distanze.
 - **Riepiloghi senza cicli sui gruppi.** Le quantità di ogni cluster sono calcolate con operazioni su tutta la tabella, e la distanza di Haversine con una sola chiamata per tutte le letture.
 
-Nell'app il risultato resta in memoria finché non cambiano dataset o periodo. La tabella interattiva è paginata dal server. Il grafico a dispersione disegna al massimo 20.000 cluster e la mappa 5.000: tutti gli anomali e un campione dei regolari, con un avviso. I limiti sono in `limiti_viste_cluster()`, in `R/utils_cluster_viste.R`.
+Nell'app l'analisi riceve da DuckDB le letture del periodo quando si preme «Genera Analisi», e il risultato resta in memoria finché non cambiano dataset o periodo. La tabella interattiva è paginata dal server. Il grafico a dispersione disegna al massimo 20.000 cluster e la mappa, in WebGL, 50.000: tutti gli anomali e un campione dei regolari, con un avviso. I limiti sono in `limiti_viste_cluster()`, in `R/utils_cluster_viste.R`.

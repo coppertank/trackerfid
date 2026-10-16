@@ -33,22 +33,23 @@ letture_giri <- function() {
 }
 
 test_that("l'elenco dei mezzi e i giorni delle letture", {
-  d <- letture_giri()
+  d <- selezione_di(letture_giri())
   expect_identical(
     mezzi_presenti(d),
     c("M1 \u00b7 AA111AA" = "M1", "M2 \u00b7 BB222BB" = "M2")
   )
-  expect_identical(mezzi_presenti(d[0, ]), character(0))
+  vuota <- selezione_di(letture_giri()[0, ])
+  expect_identical(mezzi_presenti(vuota), character(0))
   expect_identical(mezzi_presenti(NULL), character(0))
   expect_identical(giorni_letture(d), as.Date(c("2025-03-03", "2025-03-05")))
-  expect_null(giorni_letture(d[0, ]))
+  expect_null(giorni_letture(vuota))
   expect_null(giorni_letture(NULL))
   # sul dataset di esempio: cinque mezzi
-  expect_length(mezzi_presenti(dati_esempio()), 5)
+  expect_length(mezzi_presenti(seleziona_periodo(archivio_esempio())), 5)
 })
 
 test_that("la ricerca trova le letture di un mezzo nei giorni scelti", {
-  d <- letture_giri()
+  d <- selezione_di(letture_giri())
   # un giorno, tutti i mezzi: in ordine di tempo, con il giorno
   giorno <- cerca_giri(d, "", "2025-03-03", "2025-03-03")
   expect_identical(giorno$RFID, c("R1", "R2", "R1", "R4", "R3"))
@@ -78,13 +79,15 @@ test_that("la ricerca trova le letture di un mezzo nei giorni scelti", {
 
 test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del giro", {
   d <- letture_giri()
-  giri <- riepilogo_giri(cerca_giri(d, "", "2025-03-03", "2025-03-05"))
+  selezione <- selezione_di(d)
+  giri <- riepilogo_giri(cerca_giri(selezione, "", "2025-03-03", "2025-03-05"))
   expect_named(giri, colonne_riepilogo_giri())
   expect_equal(nrow(giri), 5)
   # in ordine di giorno, mezzo e prima lettura
   expect_identical(giri$matricola_veicolo, c("M1", "M1", "M2", "M1", "M2"))
   expect_identical(giri$targa_veicolo[1], "AA111AA")
-  # senza la colonna del servizio del calendario vale il servizio atteso
+  # senza la colonna del servizio del calendario vale il servizio atteso,
+  # come nella validazione
   expect_identical(
     giri$servizio_giro,
     c("SECCO PAP", "CARTA/CARTONE PAP", "VETRO PAP", "SECCO PAP", NA)
@@ -106,7 +109,8 @@ test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del gir
     c("ASIAGO e un altro comune", "GALLIO", "ROANA", "FOZA", "comune sconosciuto")
   )
   # il riepilogo si calcola anche sulle letture non ancora ordinate
-  expect_identical(riepilogo_giri(d[nrow(d):1, ]), giri)
+  trovate <- cerca_giri(selezione, "", "2025-03-03", "2025-03-05")
+  expect_identical(riepilogo_giri(trovate[nrow(trovate):1, ]), giri)
 
   vuoto <- riepilogo_giri(d[0, ])
   expect_equal(nrow(vuoto), 0)
@@ -114,7 +118,6 @@ test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del gir
   expect_identical(riepilogo_giri(NULL), vuoto)
 
   # letture di un giro del riepilogo
-  trovate <- cerca_giri(d, "", "2025-03-03", "2025-03-05")
   expect_identical(letture_del_giro(trovate, giri[1, ])$RFID, c("R1", "R2", "R1"))
   expect_identical(letture_del_giro(trovate, giri[4, ])$RFID, "R1")
   # un giro senza servizio e senza comune nel calendario
@@ -122,7 +125,7 @@ test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del gir
 })
 
 test_that("frase, limite e tabella dei giri", {
-  d <- cerca_giri(letture_giri(), "", "2025-03-03", "2025-03-05")
+  d <- cerca_giri(selezione_di(letture_giri()), "", "2025-03-03", "2025-03-05")
   expect_identical(
     descrizione_giri(d),
     "7 letture di 5 bidoni \u00b7 2 fuori giro \u00b7 1 fuori comune"
@@ -145,7 +148,7 @@ test_that("frase, limite e tabella dei giri", {
   expect_null(limita_letture_giro(NULL))
 
   # l'area da inquadrare comprende i comuni dei giri, se sono pochi
-  esempio <- cerca_giri(dati_esempio(), "VEH001", "2025-09-24", "2025-09-24")
+  esempio <- cerca_giri(seleziona_periodo(archivio_esempio()), "VEH001", "2025-09-24", "2025-09-24")
   area <- area_giri(esempio)
   expect_named(area, c("latitudine", "longitudine"))
   expect_equal(nrow(area), nrow(esempio) + 2)
@@ -154,7 +157,7 @@ test_that("frase, limite e tabella dei giri", {
   expect_lte(min(area$longitudine), limena$x_min)
   expect_gt(min(esempio$longitudine), limena$x_max)
   # con molti comuni, o senza comuni noti, valgono le sole letture
-  anno <- cerca_giri(dati_esempio(), "", "2025-09-01", "2025-09-30")
+  anno <- cerca_giri(seleziona_periodo(archivio_esempio()), "", "2025-09-01", "2025-09-30")
   expect_equal(nrow(area_giri(anno)), nrow(anno))
   expect_equal(nrow(area_giri(d)), nrow(d) + 2 * 3)
   senza <- d
@@ -224,14 +227,14 @@ test_that("un giro \u00e8 quello del calendario anche se il servizio atteso vien
 })
 
 test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbagliato", {
-  d <- dati_esempio()
+  d <- seleziona_periodo(archivio_esempio())
   giri <- riepilogo_giri(cerca_giri(d, "", "2025-01-01", "2025-12-31"))
   # un mezzo fa uno o due giri al giorno
   per_giorno <- table(paste(giri$giorno, giri$matricola_veicolo))
   expect_lte(max(per_giorno), 2)
   expect_false(anyNA(giri$comune_giro))
   expect_false(anyNA(giri$servizio_giro))
-  expect_equal(sum(giri$letture), sum(lubridate::year(d$giorno_lettura) == 2025))
+  expect_equal(sum(giri$letture), seleziona_periodo(archivio_esempio(), periodo_anno(2025))$n)
 
   # mercoled\u00ec 24 settembre 2025 il mezzo VEH001 doveva lavorare a Limena e
   # ha letto a Borgoricco. I censiti sono nel loro comune: fuori giro resta il

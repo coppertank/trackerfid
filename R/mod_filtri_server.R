@@ -20,13 +20,17 @@
 #' atteso dal giro; un quarto, tra quelli geografici, la coerenza tra il
 #' comune di lettura e il comune dichiarato.
 #'
+#' Filtri, ultima lettura e statistiche sono interrogazioni su DuckDB, vedi
+#' `ultime_letture()`: in R arriva solo una riga per bidone.
+#'
 #' @param id Identificativo del modulo.
-#' @param dati Reactive con le letture del periodo di analisi (o `NULL`).
+#' @param dati Reactive con la selezione delle letture del periodo di analisi,
+#'   vedi `seleziona_periodo()` (o `NULL`).
 #' @param azzera Reactive il cui cambiamento riporta i filtri ai valori
 #'   predefiniti: di norma il dataset caricato.
 #' @return Lista di reactive: `dati_filtrati`, l'ultima lettura di ogni RFID
-#'   tra quelle che superano i filtri, e `area`, le coordinate delle letture
-#'   dei cantieri e dei comuni scelti, su cui inquadrare la mappa.
+#'   tra quelle che superano i filtri, e `area`, gli angoli del riquadro delle
+#'   letture dei cantieri e dei comuni scelti, su cui inquadrare la mappa.
 #' @noRd
 mod_filtri_server <- function(id, dati, azzera = dati) {
   moduleServer(id, function(input, output, session) {
@@ -76,17 +80,18 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     observeEvent(azzera(), reimposta(), ignoreNULL = FALSE, priority = 100)
     observeEvent(input$reset, reimposta(), priority = 100)
 
-    # --- Scelte dinamiche dei servizi: valori presenti nel periodo -------------
+    # --- Valori presenti nel periodo, per le voci dei filtri -------------------
     # Il servizio: per i censiti quello del contenitore a database, per i non
     # censiti quello stimato. Il giro: quello del calendario, con il suo nome.
-    scelte_servizio <- reactive({
+    scelte <- reactive({
       d <- dati()
       if (is.null(d)) {
-        return(character(0))
+        return(NULL)
       }
-      ordina_servizi(servizio_mostrato(d))
+      scelte_periodo(d)
     })
-    scelte_giro <- reactive(ordina_servizi(dati()[["servizio_giro"]]))
+    scelte_servizio <- reactive(scelte()$servizi %||% character(0))
+    scelte_giro <- reactive(scelte()$giri %||% character(0))
 
     aggiorna_gruppo <- function(id_input, scelte, esclusi) {
       etichette <- paste(info_servizio(scelte)$emoji, scelte)
@@ -116,18 +121,11 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
 
     # --- Scelte geografiche: cantieri e comuni presenti nel periodo -------------
     # Una riga per ogni comune, con il suo cantiere.
-    comuni_presenti <- reactive({
-      d <- dati()
-      if (is.null(d) || !"comune_assegnato" %in% names(d)) {
-        return(NULL)
-      }
-      coppie <- dplyr::distinct(d[, c("cantiere", "comune_assegnato")])
-      coppie[!is.na(coppie$comune_assegnato), , drop = FALSE]
-    })
-    scelte_cantieri <- reactive(ordina_cantieri(dati()[["cantiere"]]))
+    comuni_presenti <- reactive(scelte()$comuni)
+    scelte_cantieri <- reactive(scelte()$cantieri %||% character(0))
 
     # I filtri geografici compaiono solo se almeno una lettura ha un cantiere.
-    con_geografia <- reactive(any(!is.na(dati()[["cantiere"]])))
+    con_geografia <- reactive(isTRUE(scelte()$con_geografia))
     output$con_geografia <- reactive(con_geografia())
     outputOptions(output, "con_geografia", suspendWhenHidden = FALSE)
 
@@ -301,32 +299,23 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     )
 
     # --- Dataset filtrato: prima i filtri, poi l'ultima lettura per RFID -------
-    # La maschera dice quali letture superano i filtri: la deduplica lavora
-    # su quella, senza una copia filtrata di tutte le letture.
-    maschera <- reactive({
-      d <- dati()
-      if (is.null(d)) {
-        return(NULL)
-      }
-      maschera_filtri(
-        d,
-        stato_db = stato$stato_db,
-        servizi_esclusi = stato$servizi_esclusi,
-        includi_stima_incerta = stato$includi_stima_incerta,
-        giri_esclusi = stato$giri_esclusi,
-        coerenza_escluse = stato$coerenza_escluse,
-        cantieri_esclusi = stato$cantieri_esclusi,
-        comuni = stato$comuni,
-        coerenza_comune_escluse = stato$coerenza_comune_escluse
-      )
-    })
+    filtri <- reactive(list(
+      stato_db = stato$stato_db,
+      servizi_esclusi = stato$servizi_esclusi,
+      includi_stima_incerta = stato$includi_stima_incerta,
+      giri_esclusi = stato$giri_esclusi,
+      coerenza_escluse = stato$coerenza_escluse,
+      cantieri_esclusi = stato$cantieri_esclusi,
+      comuni = stato$comuni,
+      coerenza_comune_escluse = stato$coerenza_comune_escluse
+    ))
 
     dati_filtrati <- reactive({
       d <- dati()
       if (is.null(d)) {
         return(NULL)
       }
-      deduplica_ultimo_rfid(d, maschera())
+      do.call(ultime_letture, c(list(d), filtri()))
     })
 
     output$stat_box <- renderUI({
@@ -334,7 +323,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       req(df)
       crea_box_statistiche(calcola_statistiche(
         df,
-        dati()[["cantiere"]][maschera()]
+        do.call(conteggi_cantieri, c(list(dati()), filtri()))
       ))
     })
 
@@ -345,13 +334,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       if (is.null(d)) {
         return(NULL)
       }
-      scelte <- maschera_filtri(
-        d,
-        stato_db = stati_database(),
-        cantieri_esclusi = stato$cantieri_esclusi,
-        comuni = stato$comuni
-      )
-      d[scelte, c("latitudine", "longitudine"), drop = FALSE]
+      area_filtri(d, stato$cantieri_esclusi, stato$comuni)
     })
 
     list(dati_filtrati = dati_filtrati, area = area)

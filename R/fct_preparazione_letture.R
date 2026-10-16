@@ -96,25 +96,26 @@ formatta_rfid <- function(df) {
   )
 }
 
-#' Associa a ogni lettura il servizio e l'utenza del database
+#' Associa a ogni lettura il contenitore e la fornitura del database
 #'
 #' Cerca il contenitore con lo stesso codice transponder, attivo nel giorno
-#' della lettura. Se non lo trova, cerca il codice tra i sacchetti e ne usa il
-#' servizio come utenza. La lettura è "Presente" a database se alla fine ha
-#' un'utenza.
+#' della lettura, e ne prende i dati e quelli della sua fornitura. Se non lo
+#' trova, cerca il codice tra i sacchetti e ne prende la fornitura. La lettura
+#' è "Presente" a database se alla fine ha una fornitura. Un'utenza può avere
+#' più forniture, ma una lettura ha al più una fornitura. Un sacchetto ha
+#' solo la fornitura: l'utenza resta vuota.
 #'
 #' @param df_letture Letture con `RFID` e `giorno`.
 #' @param df_associazione_contenitori Associazioni dei contenitori, con
 #'   `codice_transponder`, il periodo di validità
 #'   (`data_attivazione_contenitore` e `data_cessazione_contenitore`), i dati
 #'   del contenitore (`servizio_transponder`, `volume`, `frequenza`,
-#'   `numero_raccolte_annue`, `stato_servizio`, `codice_categoria`),
-#'   `id_utenza` e `comune_servizio`.
+#'   `numero_raccolte_annue`, `codice_categoria`) e i dati della fornitura
+#'   (`id_fornitura`, `id_utenza` e `comune_fornitura`).
 #' @param df_associazione_sacchetti Associazioni dei sacchetti, con
-#'   `codice_uhf` e `id_servizio`.
-#' @return Le letture con i dati del contenitore, `id_utenza`,
-#'   `presente_a_database` e `comune_da_database`, cioè il comune di servizio
-#'   dell'anagrafica. Per un non censito i dati del contenitore mancano.
+#'   `codice_uhf` e `id_fornitura`.
+#' @return Le letture con i dati del contenitore e della fornitura, e
+#'   `presente_a_database`. Per un non censito mancano.
 #' @noRd
 associa_servizio <- function(
   df_letture,
@@ -132,20 +133,27 @@ associa_servizio <- function(
       )
     ) |>
     dplyr::left_join(
-      df_associazione_sacchetti,
+      dplyr::select(
+        df_associazione_sacchetti,
+        "codice_uhf",
+        fornitura_sacchetto = "id_fornitura"
+      ),
       by = c("RFID" = "codice_uhf")
     ) |>
     dplyr::mutate(
-      id_utenza = dplyr::coalesce(.data$id_utenza, .data$id_servizio),
-      # Presente a database se una delle due ricerche ha trovato un'utenza
+      # Le due tabelle possono scrivere il codice con tipi diversi: numero e
+      # testo.
+      id_fornitura = dplyr::coalesce(
+        as.character(.data$id_fornitura),
+        as.character(.data$fornitura_sacchetto)
+      ),
       presente_a_database = dplyr::if_else(
-        !is.na(.data$id_utenza),
+        !is.na(.data$id_fornitura),
         "Presente",
         "Non Presente"
       )
     ) |>
-    dplyr::select(-dplyr::all_of("id_servizio")) |>
-    dplyr::rename(comune_da_database = "comune_servizio")
+    dplyr::select(-dplyr::all_of("fornitura_sacchetto"))
 }
 
 #' Associa a ogni lettura il giro del calendario e il servizio atteso
@@ -177,7 +185,7 @@ associa_servizio <- function(
 #' Il comune di lettura e il cantiere arrivano già con le letture: vedi
 #' `filtra_letture_post_test()`. `coerenza_comune` confronta il comune di
 #' lettura con quello dichiarato, vedi `coerenza_comune()`: per un censito il
-#' comune del database, e se differisce la lettura è `Fuori comune`; per un
+#' comune della fornitura, e se differisce la lettura è `Fuori comune`; per un
 #' non censito il comune del giro, e se differisce la lettura è `Fuori giro`.
 #' Se i due comuni coincidono la lettura è `Coerente`; se manca uno dei due,
 #' `Coerenza ignota`.
@@ -190,7 +198,7 @@ associa_servizio <- function(
 #' @param servizi_applica_moda Giri del calendario, con il loro nome, per cui
 #'   il servizio atteso viene dai censiti letti nel giro: vedi
 #'   `giri_servizio_dai_censiti()`.
-#' @return Una riga per lettura, con le colonne del CSV dell'app.
+#' @return Una riga per lettura, con le 28 colonne del CSV dell'app.
 #' @noRd
 associa_servizio_atteso_da_calendario <- function(
   df_letture,
@@ -283,14 +291,15 @@ associa_servizio_atteso_da_calendario <- function(
       "frequenza",
       "numero_raccolte_annue",
       "codice_categoria",
-      "comune_da_database",
+      "comune_fornitura",
       "comune_giro",
       "comune_lettura",
       "coerenza_comune",
       "cantiere",
-      "stato_servizio",
       "data_attivazione_contenitore",
       "data_cessazione_contenitore",
+      "id_fornitura",
+      "stato_fornitura",
       "id_utenza",
       "latitudine",
       "longitudine"
@@ -369,10 +378,11 @@ moda_unica_per_gruppo <- function(valori, gruppo) {
   conteggi <- conteggi[order(conteggi$gruppo, -conteggi$n), ]
   primo <- !duplicated(conteggi$gruppo)
   # Il primo valore di un gruppo vale se il secondo è meno frequente.
-  secondo <- c(primo[-1], TRUE) | c(
-    conteggi$n[-1] < conteggi$n[-nrow(conteggi)],
-    TRUE
-  )
+  secondo <- c(primo[-1], TRUE) |
+    c(
+      conteggi$n[-1] < conteggi$n[-nrow(conteggi)],
+      TRUE
+    )
   unici <- conteggi[primo & secondo, ]
   unici$valore[match(gruppo, unici$gruppo)]
 }
@@ -404,4 +414,54 @@ servizio_da_giro <- function(servizio_giro) {
     )
   }
   uniforma_servizio(servizio_giro)
+}
+
+# --- Lettura dei CSV degli script -------------------------------------------
+
+#' Rileva il separatore del CSV (virgola o punto e virgola)
+#'
+#' @param path Percorso del file.
+#' @return `","` oppure `";"`.
+#' @noRd
+rileva_separatore <- function(path) {
+  intestazione <- readLines(path, n = 1, warn = FALSE, encoding = "UTF-8")
+  if (length(intestazione) == 0 || !nzchar(stringr::str_trim(intestazione))) {
+    errore_validazione("Il file \u00e8 vuoto.")
+  }
+  n_virgole <- stringr::str_count(intestazione, stringr::fixed(","))
+  n_punti_virgola <- stringr::str_count(intestazione, stringr::fixed(";"))
+  if (n_punti_virgola > n_virgole) ";" else ","
+}
+
+#' Legge un CSV rilevando automaticamente il separatore
+#'
+#' Tutte le colonne vengono lette come testo, così codici come RFID e utenze
+#' non perdono eventuali zeri iniziali. L'app legge le letture con DuckDB,
+#' vedi `carica_archivio()`: questa funzione serve agli script della
+#' preparazione dei dati, come il passo 4 per le letture storiche.
+#'
+#' @param path Percorso del file CSV.
+#' @return Un data frame di sole colonne `character`.
+#' @noRd
+read_csv_auto <- function(path) {
+  separatore <- rileva_separatore(path)
+  tryCatch(
+    data.table::fread(
+      path,
+      sep = separatore,
+      header = TRUE,
+      colClasses = "character",
+      na.strings = c("NA", ""),
+      encoding = "UTF-8",
+      strip.white = TRUE,
+      showProgress = FALSE,
+      data.table = FALSE
+    ),
+    error = function(e) {
+      errore_validazione(paste0(
+        "Impossibile leggere il file come CSV: ",
+        conditionMessage(e)
+      ))
+    }
+  )
 }

@@ -1,10 +1,9 @@
 #' The application server-side
 #'
-#' Collega i moduli: il dataset caricato viene ristretto al periodo di analisi,
-#' che alimenta filtri, ricerche e mappe. L'analisi dei cluster lavora sullo
-#' stesso periodo. Il click su un marker o su un cluster apre il dettaglio del
-#' bidone nella barra laterale, con le letture per anno: lì entrano anche le
-#' letture storiche, se sono state caricate.
+#' Collega i moduli: l'archivio delle letture caricato viene ristretto al
+#' periodo di analisi, che alimenta filtri, ricerche e mappe. L'analisi dei
+#' cluster lavora sullo stesso periodo. Il click su un marker o su un cluster
+#' apre il dettaglio del bidone nella barra laterale.
 #'
 #' @param input,output,session Internal parameters for {shiny}.
 #'     DO NOT REMOVE.
@@ -19,8 +18,7 @@ app_server <- function(input, output, session) {
     shiny.maxRequestSize = getOption("trackerfid.max_upload_mb", 2048) * 1024^2
   )
 
-  caricamento <- mod_caricamento_server("caricamento")
-  dati_caricati <- caricamento$letture
+  dati_caricati <- mod_caricamento_server("caricamento")
   periodo <- mod_periodo_server("periodo", dati = dati_caricati)
   # Letture del periodo di analisi: da qui in poi tutta l'app lavora su queste.
   dati <- periodo$dati
@@ -54,7 +52,7 @@ app_server <- function(input, output, session) {
       "Carica un file CSV dal pannello laterale per visualizzare i bidoni sulla mappa."
     } else if (is.null(dati())) {
       "Scegli un periodo di analisi valido nel pannello laterale."
-    } else if (nrow(dati()) == 0) {
+    } else if (dati()$n == 0) {
       "Nessuna lettura nel periodo di analisi selezionato."
     }
   })
@@ -156,7 +154,7 @@ app_server <- function(input, output, session) {
       return(NULL)
     }
     rfid <- rfid_selezionato()
-    letture <- if (!is.null(rfid)) d[d$RFID == rfid, , drop = FALSE]
+    letture <- if (!is.null(rfid)) letture_del_rfid(d, rfid)
     if (vuoto(letture)) {
       return(sezione_sidebar(
         "Dettaglio Bidone",
@@ -176,11 +174,7 @@ app_server <- function(input, output, session) {
         icon = icon("xmark"),
         class = "chiudi-info"
       ),
-      crea_info_panel(
-        analizza_rfid(letture),
-        # Le letture per anno non dipendono dal periodo di analisi.
-        andamento_rfid(rfid, dati_caricati(), caricamento$storico())
-      )
+      crea_info_panel(analizza_rfid(letture))
     )
   })
 }

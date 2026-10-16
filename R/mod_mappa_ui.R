@@ -1,7 +1,11 @@
-#' Modulo mappa Leaflet: interfaccia
+#' Modulo mappa WebGL: interfaccia
+#'
+#' La legenda sta sopra la mappa, in un riquadro che si chiude con un click
+#' sul titolo.
 #'
 #' @param id Identificativo del modulo.
-#' @param modalita `"cluster"` (mappa principale), `"rfid"` o `"utenza"`.
+#' @param modalita `"cluster"` (mappa principale), `"rfid"`, `"utenza"` o
+#'   `"giro"`.
 #' @noRd
 mod_mappa_ui <- function(
   id,
@@ -29,7 +33,8 @@ mod_mappa_ui <- function(
     div(
       class = "mappa-contenitore",
       uiOutput(ns("messaggio")),
-      leaflet::leafletOutput(ns("mappa"), height = "100%")
+      mapgl::maplibreOutput(ns("mappa"), height = "100%"),
+      div(class = "legenda-mappa", HTML(html_legenda(modalita)))
     )
   )
 }

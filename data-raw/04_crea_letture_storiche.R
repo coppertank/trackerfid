@@ -1,9 +1,10 @@
 # Passo 4, facoltativo: prepara le letture storiche, cioè quelle fatte prima
-# dell'installazione delle antenne sui mezzi.
+# dell'installazione delle antenne sui mezzi, per i report di confronto con le
+# letture delle antenne. L'app non le usa.
 #
-# Legge data-raw/origine/letture_storiche.csv e scrive
-# data-raw/output/letture_storiche.csv, con le due colonne che l'app si
-# aspetta: RFID e giorno_lettura.
+# Legge il file delle letture storiche in data-raw/origine/ e scrive
+# data-raw/output/letture_storiche.csv, con due colonne, RFID e
+# giorno_lettura, e i codici RFID nello stesso formato del passo 3.
 # Eseguire dalla radice del progetto.
 #
 # Da adattare al file di origine: il nome del file e i nomi delle due colonne.

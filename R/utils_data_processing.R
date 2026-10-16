@@ -39,9 +39,11 @@ colonne_contenitore <- function() "servizio_transponder"
 #'
 #' Il passo 3 della preparazione dei dati scrive `volume` e
 #' `numero_raccolte_annue`, come l'anagrafica dei contenitori; l'app li chiama
-#' come la tabella dell'analisi dei cluster. La colonna `comune` dei file meno
-#' recenti vale come `comune_da_database`. Un nome alternativo vale solo se il
-#' file non ha già la colonna con il nome dell'app.
+#' come la tabella dell'analisi dei cluster. Il comune della fornitura si
+#' chiamava `comune_da_database` nei file preparati fino al 17 ottobre 2026, e
+#' `comune` in quelli ancora più vecchi: valgono come `comune_fornitura`. Un
+#' nome alternativo vale solo se il file non ha già la colonna con il nome
+#' dell'app.
 #'
 #' @return Vettore con nome: i nomi sono quelli del file, i valori quelli
 #'   dell'app.
@@ -50,7 +52,8 @@ alias_colonne <- function() {
   c(
     volume = "volume_previsto",
     numero_raccolte_annue = "numero_raccolte_annue_previste",
-    comune = "comune_da_database"
+    comune_da_database = "comune_fornitura",
+    comune = "comune_fornitura"
   )
 }
 
@@ -71,14 +74,15 @@ colonne_quantita <- function() {
 
 #' Campi facoltativi geografici del CSV
 #'
-#' `comune_da_database` è il comune dell'anagrafica, vuoto per i non censiti.
+#' `comune_fornitura` è il comune della fornitura a cui è legato il
+#' contenitore, secondo il database: vuoto per i non censiti.
 #' `comune_giro` è il comune in cui il calendario mandava il mezzo che ha
 #' fatto la lettura. `comune_lettura` è il comune in cui è stata fatta la
 #' lettura, come lo dà il sistema di localizzazione dei mezzi. `cantiere` è il
 #' cantiere del comune assegnato, vedi `colonne_derivate()`.
 #' @noRd
 colonne_geografiche <- function() {
-  c("comune_da_database", "comune_giro", "comune_lettura", "cantiere")
+  c("comune_fornitura", "comune_giro", "comune_lettura", "cantiere")
 }
 
 #' Campi calcolati dalla validazione
@@ -155,7 +159,7 @@ stati_coerenza_comune <- function() {
 #' riporta gli stessi valori che l'app ricalcola al caricamento.
 #'
 #' @param data Letture con `presente_a_database`, `comune_lettura`,
-#'   `comune_da_database` e `comune_giro`. Una colonna che manca vale come
+#'   `comune_fornitura` e `comune_giro`. Una colonna che manca vale come
 #'   vuota.
 #' @return Vettore di testo, un valore di `stati_coerenza_comune()` per
 #'   lettura.
@@ -176,7 +180,7 @@ coerenza_comune <- function(data) {
   lettura <- chiave("comune_lettura")
   censito <- data[["presente_a_database"]] %in% "Presente"
   dichiarato <- chiave("comune_giro")
-  dichiarato[censito] <- chiave("comune_da_database")[censito]
+  dichiarato[censito] <- chiave("comune_fornitura")[censito]
   stati <- stati_coerenza_comune()
   esito <- rep(stati[["ignota"]], n)
   noto <- !is.na(lettura) & !is.na(dichiarato)
@@ -301,8 +305,7 @@ rfid_sacchetto <- function(rfid) {
 #'
 #' Un sacchetto è monouso: viene letto una volta sola, quando il mezzo lo
 #' raccoglie. Si vede sulla mappa e nelle ricerche, ma non entra nell'analisi
-#' dei cluster né nel confronto con le letture storiche, che riguardano i
-#' contenitori.
+#' dei cluster, che riguarda i contenitori.
 #'
 #' @param data Data frame con la colonna `RFID`.
 #' @return Le righe che non sono di un sacchetto. Se non ce ne sono, `data`
@@ -332,54 +335,9 @@ errore_validazione <- function(messaggi) {
   )
 }
 
-#' Rileva il separatore del CSV (virgola o punto e virgola)
-#'
-#' @param path Percorso del file.
-#' @return `","` oppure `";"`.
-#' @noRd
-rileva_separatore <- function(path) {
-  intestazione <- readLines(path, n = 1, warn = FALSE, encoding = "UTF-8")
-  if (length(intestazione) == 0 || !nzchar(stringr::str_trim(intestazione))) {
-    errore_validazione("Il file \u00e8 vuoto.")
-  }
-  n_virgole <- stringr::str_count(intestazione, stringr::fixed(","))
-  n_punti_virgola <- stringr::str_count(intestazione, stringr::fixed(";"))
-  if (n_punti_virgola > n_virgole) ";" else ","
-}
-
-#' Legge un CSV rilevando automaticamente il separatore
-#'
-#' Tutte le colonne vengono lette come testo: la conversione dei tipi è
-#' demandata a `validate_dataset()`, così codici come RFID e utenze non
-#' perdono eventuali zeri iniziali.
-#'
-#' @param path Percorso del file CSV.
-#' @return Un data frame di sole colonne `character`.
-#' @noRd
-read_csv_auto <- function(path) {
-  separatore <- rileva_separatore(path)
-  tryCatch(
-    data.table::fread(
-      path,
-      sep = separatore,
-      header = TRUE,
-      colClasses = "character",
-      na.strings = c("NA", ""),
-      encoding = "UTF-8",
-      strip.white = TRUE,
-      showProgress = FALSE,
-      data.table = FALSE
-    ),
-    error = function(e) {
-      errore_validazione(paste0(
-        "Impossibile leggere il file come CSV: ",
-        conditionMessage(e)
-      ))
-    }
-  )
-}
-
 #' Formati di file accettati per le letture
+#'
+#' Il file `.duckdb` è l'archivio scritto da `scrivi_archivio()`.
 #'
 #' @return Vettore con nome: l'estensione e la descrizione del formato.
 #' @noRd
@@ -388,14 +346,15 @@ formati_file <- function() {
     csv = "CSV",
     txt = "CSV",
     gz = "CSV compresso con gzip",
-    parquet = "Parquet"
+    parquet = "Parquet",
+    duckdb = "Archivio DuckDB"
   )
 }
 
 #' Decomprime un file gzip in un file temporaneo
 #'
 #' Legge e scrive a blocchi, così la memoria usata non dipende dalla
-#' dimensione del file.
+#' dimensione del file. Serve a `scarica_confini_comuni()`.
 #'
 #' @param path Percorso del file compresso.
 #' @return Percorso del file decompresso, da eliminare dopo l'uso.
@@ -416,50 +375,6 @@ decomprimi_gz <- function(path) {
     writeBin(blocco, uscita)
   }
   destinazione
-}
-
-#' Legge un file di letture nel formato indicato dalla sua estensione
-#'
-#' Accetta CSV, CSV compresso con gzip (`.csv.gz`) e Parquet. Il Parquet
-#' arriva con le colonne già tipizzate: la validazione le accetta così.
-#'
-#' @param path Percorso del file.
-#' @param nome Nome originale del file: dà l'estensione quando `path` è il
-#'   percorso temporaneo di un file caricato.
-#' @return Un data frame.
-#' @noRd
-leggi_tabella <- function(path, nome = basename(path)) {
-  estensione <- tolower(tools::file_ext(nome))
-  if (estensione == "gz") {
-    decompresso <- tryCatch(
-      decomprimi_gz(path),
-      error = function(e) {
-        errore_validazione(paste0(
-          "Impossibile decomprimere il file: ",
-          conditionMessage(e)
-        ))
-      }
-    )
-    on.exit(unlink(decompresso))
-    return(read_csv_auto(decompresso))
-  }
-  if (estensione == "parquet") {
-    if (!requireNamespace("nanoparquet", quietly = TRUE)) {
-      errore_validazione(
-        "Per leggere un file Parquet serve il pacchetto nanoparquet: install.packages(\"nanoparquet\")."
-      )
-    }
-    return(tryCatch(
-      as.data.frame(nanoparquet::read_parquet(path)),
-      error = function(e) {
-        errore_validazione(paste0(
-          "Impossibile leggere il file come Parquet: ",
-          conditionMessage(e)
-        ))
-      }
-    ))
-  }
-  read_csv_auto(path)
 }
 
 #' Converte un vettore in data e ora (POSIXct, UTC)
@@ -484,69 +399,6 @@ converti_data_ora <- function(x) {
   )
 }
 
-#' Converte un vettore in numerico (accetta la virgola decimale)
-#' @noRd
-converti_numero <- function(x) {
-  if (is.numeric(x)) {
-    return(as.numeric(x))
-  }
-  # La sostituzione della virgola serve solo ai file che la usano.
-  if (any(stringr::str_detect(x, stringr::fixed(",")), na.rm = TRUE)) {
-    x <- stringr::str_replace(x, stringr::fixed(","), ".")
-  }
-  suppressWarnings(as.numeric(x))
-}
-
-#' Toglie gli spazi superflui e rende mancanti i testi vuoti
-#'
-#' Il risultato è quello di `stringr::str_squish()` su ogni cella, con i testi
-#' vuoti resi mancanti. Su milioni di righe però pulire ogni cella costa
-#' secondi, e quasi nessuna ne ha bisogno. Una colonna con pochi valori
-#' ripetuti, come un servizio o un comune, viene pulita sui soli valori
-#' distinti. In una colonna con valori quasi tutti diversi, come una data o
-#' una coordinata, vengono pulite le sole celle trovate da
-#' `celle_da_pulire()`. Le colonne non testuali, come quelle di un file
-#' Parquet, restano come sono.
-#' @noRd
-pulisci_testo <- function(x) {
-  if (is.factor(x)) {
-    x <- as.character(x)
-  }
-  if (!is.character(x)) {
-    return(x)
-  }
-  pulisci <- function(valori) dplyr::na_if(stringr::str_squish(valori), "")
-  campione <- utils::head(x, 5000)
-  if (length(unique(campione)) <= length(campione) / 2) {
-    return(per_valori_distinti(x, pulisci))
-  }
-  da_pulire <- celle_da_pulire(x)
-  x[da_pulire] <- pulisci(x[da_pulire])
-  x
-}
-
-#' Posizioni delle celle che `stringr::str_squish()` modificherebbe, più le vuote
-#'
-#' Una cella va pulita se è vuota, se inizia o finisce con uno spazio, se ha
-#' due spazi di seguito, o se contiene uno spazio che non è quello semplice:
-#' una tabulazione, un a capo, uno spazio non separabile. Ogni controllo è una
-#' ricerca di testo fisso o di un solo carattere: su due milioni di celle
-#' costa un decimo di secondo, contro il secondo di un'espressione regolare
-#' con più alternative.
-#'
-#' @param x Vettore di testo.
-#' @return Vettore di posizioni. Le celle mancanti non compaiono.
-#' @noRd
-celle_da_pulire <- function(x) {
-  which(
-    !nzchar(x) |
-      startsWith(x, " ") |
-      endsWith(x, " ") |
-      stringr::str_detect(x, stringr::fixed("  ")) |
-      stringr::str_detect(x, "[^\\S\\x20]")
-  )
-}
-
 #' Elenca le prime righe del file che presentano un problema
 #' @noRd
 elenco_righe <- function(indici, massimo = 5) {
@@ -554,358 +406,6 @@ elenco_righe <- function(indici, massimo = 5) {
   righe <- utils::head(indici, massimo) + 1
   testo <- paste(righe, collapse = ", ")
   if (length(indici) > massimo) paste0(testo, ", \u2026") else testo
-}
-
-#' Valida il dataset e converte i campi nei tipi corretti
-#'
-#' Controlla la presenza dei campi obbligatori, converte `giorno_lettura` in
-#' POSIXct e le coordinate in numerico, normalizza i valori testuali.
-#' I valori non interpretabili generano un errore esplicito; le righe con campi
-#' essenziali vuoti vengono scartate e segnalate tra gli avvisi.
-#'
-#' I campi facoltativi numerici (`volume_previsto`,
-#' `numero_raccolte_annue_previste`) vengono convertiti se presenti. I nomi dei
-#' comuni sono riportati alla grafia della tabella dei comuni. Se un campo
-#' facoltativo manca, la colonna è creata vuota e la mancanza è segnalata tra
-#' gli avvisi. Alcune colonne possono avere un altro nome, vedi
-#' `alias_colonne()`. Le colonne che l'app non usa vengono ignorate.
-#'
-#' Comune di lettura, comune assegnato e cantiere sono completati da
-#' `aggiungi_geografia()`; la coerenza dei servizi da `coerenza_servizio()`.
-#'
-#' @param data Data frame letto da `leggi_tabella()`.
-#' @return Lista con `dati` (tibble validato) e `avvisi` (vettore di testo).
-#' @noRd
-validate_dataset <- function(data) {
-  attese <- colonne_obbligatorie()
-  nomi <- stringr::str_trim(names(data))
-  # Nomi alternativi: valgono se il file non ha la colonna con il nome dell'app.
-  alias <- alias_colonne()
-  for (alternativo in names(alias)) {
-    if (!alias[[alternativo]] %in% tolower(nomi)) {
-      nomi[tolower(nomi) == alternativo] <- alias[[alternativo]]
-    }
-  }
-  posizione <- match(tolower(attese), tolower(nomi))
-  mancanti <- attese[is.na(posizione)]
-  if (length(mancanti) > 0) {
-    errore_validazione(sprintf(
-      "Colonne mancanti nel file: %s. Il CSV deve contenere tutti i %d campi obbligatori.",
-      paste(mancanti, collapse = ", "),
-      length(attese)
-    ))
-  }
-
-  facoltative <- colonne_facoltative()
-  posizione_facoltative <- match(tolower(facoltative), tolower(nomi))
-  originale <- data
-  data <- dplyr::as_tibble(data[, posizione, drop = FALSE])
-  names(data) <- attese
-  for (i in seq_along(facoltative)) {
-    data[[facoltative[i]]] <- if (is.na(posizione_facoltative[i])) {
-      rep(NA_character_, nrow(data))
-    } else {
-      originale[[posizione_facoltative[i]]]
-    }
-  }
-  # Il servizio del contenitore a database, vuoto per i non censiti.
-  posizione_contenitore <- match(colonne_contenitore(), tolower(nomi))
-  con_contenitore <- !is.na(posizione_contenitore)
-  data[[colonne_contenitore()]] <- if (con_contenitore) {
-    originale[[posizione_contenitore]]
-  } else {
-    rep(NA_character_, nrow(data))
-  }
-  # I file preparati tra il 13 e il 15 ottobre 2026 non hanno
-  # `servizio_transponder`: il servizio del database stava nel servizio
-  # atteso, con `origine_servizio` uguale a "Database". Resta in una colonna
-  # di passaggio, che il risultato non riporta.
-  posizione_origine <- match("origine_servizio", tolower(nomi))
-  con_origine <- !con_contenitore && !is.na(posizione_origine)
-  if (con_origine) {
-    data$origine_servizio <- originale[[posizione_origine]]
-  }
-  # Il servizio del calendario: nei file che non lo riportano è quello atteso.
-  posizione_giro <- match(colonne_calendario(), tolower(nomi))
-  data[[colonne_calendario()]] <- if (is.na(posizione_giro)) {
-    data$servizio_atteso
-  } else {
-    originale[[posizione_giro]]
-  }
-  rm(originale)
-  if (nrow(data) == 0) {
-    errore_validazione("Il file non contiene righe di dati.")
-  }
-
-  for (campo in names(data)) {
-    data[[campo]] <- pulisci_testo(data[[campo]])
-  }
-  # Codici e nomi sono sempre testo, anche se il file li riporta come numeri.
-  testuali <- setdiff(
-    names(data),
-    c("giorno_lettura", "latitudine", "longitudine", colonne_quantita())
-  )
-  for (campo in testuali) {
-    if (!is.character(data[[campo]])) {
-      data[[campo]] <- as.character(data[[campo]])
-    }
-  }
-
-  errori <- character(0)
-  avvisi <- character(0)
-
-  # --- Conversione dei tipi -------------------------------------------------
-  giorno <- converti_data_ora(data$giorno_lettura)
-  non_validi <- which(!is.na(data$giorno_lettura) & is.na(giorno))
-  if (length(non_validi) > 0) {
-    errori <- c(
-      errori,
-      sprintf(
-        "giorno_lettura: %d valori non riconosciuti come data e ora (formato atteso YYYY-MM-DD HH:MM:SS). Righe del file: %s.",
-        length(non_validi),
-        elenco_righe(non_validi)
-      )
-    )
-  }
-
-  coordinate <- list(latitudine = c(-90, 90), longitudine = c(-180, 180))
-  numeri <- purrr::imap(coordinate, function(limiti, campo) {
-    valori <- converti_numero(data[[campo]])
-    non_numerici <- which(!is.na(data[[campo]]) & is.na(valori))
-    fuori_scala <- which(
-      !is.na(valori) & (valori < limiti[1] | valori > limiti[2])
-    )
-    list(
-      valori = valori,
-      non_numerici = non_numerici,
-      fuori_scala = fuori_scala
-    )
-  })
-  for (campo in names(numeri)) {
-    esito <- numeri[[campo]]
-    if (length(esito$non_numerici) > 0) {
-      errori <- c(
-        errori,
-        sprintf(
-          "%s: %d valori non numerici. Righe del file: %s.",
-          campo,
-          length(esito$non_numerici),
-          elenco_righe(esito$non_numerici)
-        )
-      )
-    }
-    if (length(esito$fuori_scala) > 0) {
-      errori <- c(
-        errori,
-        sprintf(
-          "%s: %d valori fuori dall'intervallo ammesso (%s .. %s). Righe del file: %s.",
-          campo,
-          length(esito$fuori_scala),
-          coordinate[[campo]][1],
-          coordinate[[campo]][2],
-          elenco_righe(esito$fuori_scala)
-        )
-      )
-    }
-  }
-
-  stato <- per_valori_distinti(data$presente_a_database, function(valori) {
-    stati_database()[match(tolower(valori), tolower(stati_database()))]
-  })
-  non_validi <- which(!is.na(data$presente_a_database) & is.na(stato))
-  if (length(non_validi) > 0) {
-    errori <- c(
-      errori,
-      sprintf(
-        "presente_a_database: valori non ammessi (%s). Sono accettati solo \"Presente\" e \"Non Presente\". Righe del file: %s.",
-        paste(
-          utils::head(unique(data$presente_a_database[non_validi]), 3),
-          collapse = ", "
-        ),
-        elenco_righe(non_validi)
-      )
-    )
-  }
-
-  quantita <- purrr::map(
-    stats::setNames(colonne_quantita(), colonne_quantita()),
-    function(campo) {
-      valori <- converti_numero(data[[campo]])
-      list(
-        valori = valori,
-        non_validi = which(!is.na(data[[campo]]) & (is.na(valori) | valori < 0))
-      )
-    }
-  )
-  for (campo in colonne_quantita()) {
-    non_validi <- quantita[[campo]]$non_validi
-    if (length(non_validi) > 0) {
-      errori <- c(
-        errori,
-        sprintf(
-          "%s: %d valori non numerici o negativi. Righe del file: %s.",
-          campo,
-          length(non_validi),
-          elenco_righe(non_validi)
-        )
-      )
-    }
-  }
-
-  if (length(errori) > 0) {
-    errore_validazione(errori)
-  }
-
-  assenti <- facoltative[is.na(posizione_facoltative)]
-  if (length(assenti) > 0) {
-    avvisi <- c(
-      avvisi,
-      sprintf(
-        "Colonne facoltative assenti: %s. Le informazioni che ne dipendono resteranno vuote.",
-        paste(assenti, collapse = ", ")
-      )
-    )
-  }
-
-  maiuscolo <- function(x) per_valori_distinti(x, stringr::str_to_upper)
-  data$volume_previsto <- quantita$volume_previsto$valori
-  data$numero_raccolte_annue_previste <- quantita$numero_raccolte_annue_previste$valori
-  data$giorno_lettura <- giorno
-  data$presente_a_database <- stato
-  data$servizio_transponder <- maiuscolo(data$servizio_transponder)
-  data$servizio_atteso <- maiuscolo(data$servizio_atteso)
-  data$servizio_giro <- maiuscolo(data$servizio_giro)
-  # Un file con l'origine del servizio: il servizio del database torna nella
-  # sua colonna, e il servizio atteso torna quello del giro.
-  if (con_origine) {
-    dal_database <- which(
-      stato %in% "Presente" & toupper(data$origine_servizio) %in% "DATABASE"
-    )
-    data$servizio_transponder[dal_database] <- data$servizio_atteso[
-      dal_database
-    ]
-    data$servizio_atteso[dal_database] <- uniforma_servizio(
-      data$servizio_giro[dal_database]
-    )
-  }
-  data$coerenza_servizio <- coerenza_servizio(data)
-  data$comune_da_database <- normalizza_comune(data$comune_da_database)
-  data$comune_giro <- normalizza_comune(data$comune_giro)
-  data$comune_lettura <- normalizza_comune(data$comune_lettura)
-  data$cantiere <- maiuscolo(data$cantiere)
-  data$latitudine <- numeri$latitudine$valori
-  data$longitudine <- numeri$longitudine$valori
-
-  # --- Righe con campi essenziali vuoti --------------------------------------
-  essenziali <- c(
-    "giorno_lettura",
-    "RFID",
-    "presente_a_database",
-    "latitudine",
-    "longitudine"
-  )
-  complete <- stats::complete.cases(data[, essenziali])
-  n_scartate <- sum(!complete)
-  if (n_scartate == nrow(data)) {
-    errore_validazione(sprintf(
-      "Nessuna riga utilizzabile: tutte le righe hanno almeno un campo essenziale vuoto (%s).",
-      paste(essenziali, collapse = ", ")
-    ))
-  }
-  if (n_scartate > 0) {
-    data <- data[complete, , drop = FALSE]
-    avvisi <- c(
-      avvisi,
-      sprintf(
-        "%d righe scartate perch\u00e9 prive di un campo essenziale (%s).",
-        n_scartate,
-        paste(essenziali, collapse = ", ")
-      )
-    )
-  }
-
-  # --- Controlli di coerenza (non bloccanti) ----------------------------------
-  incoerenti <- sum(
-    data$presente_a_database == "Non Presente" &
-      (!is.na(data$servizio_transponder) | !is.na(data$id_utenza))
-  )
-  if (incoerenti > 0) {
-    avvisi <- c(
-      avvisi,
-      sprintf(
-        "%d letture \"Non Presente\" riportano comunque servizio_transponder o id_utenza.",
-        incoerenti
-      )
-    )
-  }
-  coppie <- dplyr::distinct(data, .data$targa_veicolo, .data$matricola_veicolo)
-  if (
-    anyDuplicated(coppie$targa_veicolo) > 0 ||
-      anyDuplicated(coppie$matricola_veicolo) > 0
-  ) {
-    avvisi <- c(
-      avvisi,
-      "La relazione tra targa_veicolo e matricola_veicolo non \u00e8 univoca (1:1)."
-    )
-  }
-
-  # --- Comune assegnato e cantiere ----------------------------------------------
-  data <- aggiungi_geografia(data)
-  # Un comune di lettura del file che la tabella non contiene: la lettura
-  # conta come fatta fuori dai comuni serviti.
-  letti <- unique(data$comune_lettura)
-  letti_ignoti <- sort(letti[!is.na(letti) & is.na(cantiere_di_comune(letti))])
-  if (length(letti_ignoti) > 0) {
-    avvisi <- c(
-      avvisi,
-      sprintf(
-        "Comuni di lettura assenti dalla tabella dei comuni: %s%s. Le letture fatte l\u00ec contano come fatte fuori dai comuni serviti.",
-        paste(utils::head(letti_ignoti, 5), collapse = ", "),
-        if (length(letti_ignoti) > 5) ", \u2026" else ""
-      )
-    )
-  }
-  comuni <- unique(data$comune_assegnato)
-  ignoti <- sort(comuni[!is.na(comuni) & is.na(cantiere_di_comune(comuni))])
-  if (length(ignoti) > 0) {
-    avvisi <- c(
-      avvisi,
-      sprintf(
-        "Comuni assenti dalla tabella dei comuni: %s%s. Il loro cantiere \u00e8 quello indicato nel file, se c'\u00e8.",
-        paste(utils::head(ignoti, 5), collapse = ", "),
-        if (length(ignoti) > 5) ", \u2026" else ""
-      )
-    )
-  }
-
-  # Un comune del giro con un nome che la tabella non conosce: forse scritto
-  # male, e allora non coincide con il comune di lettura.
-  dei_giri <- unique(data$comune_giro)
-  giri_ignoti <- sort(
-    dei_giri[!is.na(dei_giri) & is.na(cantiere_di_comune(dei_giri))]
-  )
-  if (length(giri_ignoti) > 0) {
-    avvisi <- c(
-      avvisi,
-      sprintf(
-        "Comuni dei giri assenti dalla tabella dei comuni: %s%s. Se il nome \u00e8 sbagliato, i non censiti letti in quei giri risultano fuori giro.",
-        paste(utils::head(giri_ignoti, 5), collapse = ", "),
-        if (length(giri_ignoti) > 5) ", \u2026" else ""
-      )
-    )
-  }
-
-  list(dati = data[, colonne_dataset()], avvisi = avvisi)
-}
-
-#' Legge e valida un file di letture RFID
-#'
-#' @param path Percorso del file: CSV, CSV compresso con gzip o Parquet.
-#' @param nome Nome originale del file, vedi `leggi_tabella()`.
-#' @return Lista con `dati` e `avvisi`, vedi `validate_dataset()`.
-#' @noRd
-carica_dataset <- function(path, nome = basename(path)) {
-  validate_dataset(leggi_tabella(path, nome))
 }
 
 # File letti da percorso: restano in memoria per tutte le sessioni del processo.
@@ -918,8 +418,8 @@ memoria_file <- new.env(parent = emptyenv())
 #' file cambia sul disco viene riletto, e la versione precedente lascia la
 #' memoria.
 #'
-#' @param lettore Funzione che legge e valida il file: `carica_dataset()` o
-#'   `carica_storico()`.
+#' @param lettore Funzione che legge e valida il file, di norma
+#'   `carica_archivio()`.
 #' @param path Percorso del file.
 #' @return Il risultato di `lettore(path)`.
 #' @noRd
@@ -936,29 +436,6 @@ leggi_una_volta <- function(lettore, path) {
     memoria_file[[chiave]] <- voce
   }
   voce$esito
-}
-
-#' Deduplica RFID mantenendo solo l'ultima lettura
-#'
-#' Le righe del risultato vanno dalla lettura più recente alla meno recente.
-#' Con `righe` la scelta avviene tra le sole letture indicate, senza creare
-#' prima una copia filtrata del dataset: su milioni di letture è la parte più
-#' costosa di ogni cambio di filtro.
-#'
-#' @param data Dataframe con letture
-#' @param righe Vettore logico con le letture da considerare. Tutte, se manca.
-#' @return Dataframe deduplicato (un RFID = una riga)
-#' @noRd
-deduplica_ultimo_rfid <- function(data, righe = NULL) {
-  indici <- if (is.null(righe)) seq_len(nrow(data)) else which(righe)
-  # A parità di istante resta l'ordine delle righe.
-  recenti <- order(
-    data$giorno_lettura[indici],
-    decreasing = TRUE,
-    method = "radix"
-  )
-  indici <- indici[recenti]
-  data[indici[!duplicated(data$RFID[indici])], , drop = FALSE]
 }
 
 #' Ordina i servizi: prima quelli noti (ordine canonico), poi gli altri
@@ -989,12 +466,6 @@ filtra_periodo <- function(data, periodo = NULL) {
     return(data)
   }
   data[nel_periodo, , drop = FALSE]
-}
-
-#' Anni presenti nel dataset, dal più recente
-#' @noRd
-anni_disponibili <- function(data) {
-  sort(unique(lubridate::year(data$giorno_lettura)), decreasing = TRUE)
 }
 
 #' Periodo corrispondente a un anno solare (1 gennaio - 31 dicembre)
@@ -1163,118 +634,6 @@ ordina_cantieri <- function(valori) {
   )
 }
 
-#' Letture che superano i filtri laterali
-#'
-#' I servizi si filtrano per esclusione. Una lettura passa se il suo servizio
-#' non è tra quelli deselezionati: per un censito è il servizio del
-#' contenitore a database, per un non censito il servizio stimato dell'RFID,
-#' vedi `servizio_mostrato()`. Gli RFID non censiti con la stima incerta, quelli
-#' che sulla mappa hanno il punto di domanda, passano solo con
-#' `includi_stima_incerta`. Lo stato a database si sceglie a parte, e vale
-#' per tutti gli elenchi.
-#'
-#' Il giro è `servizio_giro`, con il nome del calendario: `SECCO PAP` è una
-#' voce diversa da `SECCO CONT.STRADALI`. Vale per ogni lettura, di un censito
-#' o no. Una lettura senza giro non è mai tra quelle deselezionate.
-#'
-#' La coerenza è la colonna `coerenza_servizio`: servizio a database e
-#' servizio atteso dal giro dello stesso rifiuto, vedi `coerenza_servizio()`.
-#' Una lettura di cui non si può dire, come quella di un non censito, sta
-#' con quelle coerenti.
-#'
-#' La coerenza del comune è la colonna `coerenza_comune`, con le voci di
-#' `stati_coerenza_comune()`: passano le letture la cui voce non è tra quelle
-#' deselezionate.
-#'
-#' Anche i cantieri si filtrano per esclusione; le letture senza cantiere
-#' corrispondono alla voce `senza_cantiere()`. I comuni si scelgono: passano
-#' le letture il cui comune assegnato è tra quelli indicati, anche se
-#' appartengono a cantieri diversi.
-#'
-#' @param data Dataframe con letture. Per il filtro sul servizio serve la
-#'   colonna `servizio_icona`: vedi `servizio_mostrato()`.
-#' @param stato_db Valori di `presente_a_database` da mantenere.
-#' @param servizi_esclusi Servizi deselezionati.
-#' @param includi_stima_incerta Mantiene le letture degli RFID non censiti
-#'   senza un servizio stimato.
-#' @param giri_esclusi Giri deselezionati, con il nome del calendario.
-#' @param coerenza_escluse Voci di `stati_coerenza()` deselezionate.
-#' @param cantieri_esclusi Cantieri deselezionati.
-#' @param comuni Comuni da mantenere. Tutti, se il vettore è vuoto.
-#' @param coerenza_comune_escluse Voci di `stati_coerenza_comune()`
-#'   deselezionate.
-#' @return Vettore logico, un valore per lettura.
-#' @noRd
-maschera_filtri <- function(
-  data,
-  stato_db = stati_database(),
-  servizi_esclusi = character(0),
-  includi_stima_incerta = TRUE,
-  giri_esclusi = character(0),
-  coerenza_escluse = character(0),
-  cantieri_esclusi = character(0),
-  comuni = character(0),
-  coerenza_comune_escluse = character(0)
-) {
-  # Ogni filtro passa su tutte le letture solo se è attivo: con milioni di
-  # righe un confronto in meno si sente. Un servizio mancante non è mai tra
-  # quelli deselezionati.
-  servizi_esclusi <- servizi_esclusi[!is.na(servizi_esclusi)]
-  giri_esclusi <- giri_esclusi[!is.na(giri_esclusi)]
-  tieni <- data$presente_a_database %in% stato_db
-  senza_incerti <- !isTRUE(includi_stima_incerta)
-  if (length(servizi_esclusi) > 0 || senza_incerti) {
-    servizio <- servizio_mostrato(data)
-    if (length(servizi_esclusi) > 0) {
-      tieni <- tieni & !(servizio %in% servizi_esclusi)
-    }
-    if (senza_incerti) {
-      tieni <- tieni &
-        !(data$presente_a_database == "Non Presente" & is.na(servizio))
-    }
-  }
-  if (length(giri_esclusi) > 0 && "servizio_giro" %in% names(data)) {
-    tieni <- tieni & !(data$servizio_giro %in% giri_esclusi)
-  }
-  # Coerenza dei servizi: le letture di cui non si può dire stanno con quelle
-  # coerenti.
-  stati <- stati_coerenza()
-  coerenza_escluse <- intersect(coerenza_escluse, names(stati))
-  if (length(coerenza_escluse) > 0) {
-    non_coerente <- if (is.null(data[["coerenza_servizio"]])) {
-      rep(FALSE, nrow(data))
-    } else {
-      data$coerenza_servizio %in% stati[["non_coerente"]]
-    }
-    if ("coerente" %in% coerenza_escluse) {
-      tieni <- tieni & non_coerente
-    }
-    if ("non_coerente" %in% coerenza_escluse) {
-      tieni <- tieni & !non_coerente
-    }
-  }
-
-  # I filtri geografici valgono solo per i dataset che hanno le colonne.
-  if (length(cantieri_esclusi) > 0 && "cantiere" %in% names(data)) {
-    cantiere <- data$cantiere
-    cantiere[is.na(cantiere)] <- senza_cantiere()
-    tieni <- tieni & !(cantiere %in% cantieri_esclusi)
-  }
-  comuni <- comuni[!is.na(comuni) & nzchar(comuni)]
-  if (length(comuni) > 0 && "comune_assegnato" %in% names(data)) {
-    tieni <- tieni & data$comune_assegnato %in% comuni
-  }
-  # Coerenza del comune: comune di lettura contro comune dichiarato.
-  voci <- stati_coerenza_comune()
-  coerenza_comune_escluse <- intersect(coerenza_comune_escluse, names(voci))
-  if (
-    length(coerenza_comune_escluse) > 0 && "coerenza_comune" %in% names(data)
-  ) {
-    tieni <- tieni & !(data$coerenza_comune %in% voci[coerenza_comune_escluse])
-  }
-  tieni
-}
-
 #' Conta le occorrenze di un servizio, in ordine canonico
 #' @noRd
 conta_servizi <- function(valori) {
@@ -1309,8 +668,8 @@ conta_cantieri <- function(valori) {
 #'
 #' @param data Dataframe deduplicato per RFID, con la colonna
 #'   `servizio_icona`: vedi `servizio_mostrato()`.
-#' @param cantieri_letture Colonna `cantiere` di tutte le letture che
-#'   superano i filtri, per contare le letture di ogni cantiere. Facoltativa.
+#' @param letture_cantieri Letture per cantiere tra tutte quelle che superano
+#'   i filtri, vedi `conteggi_cantieri()`. Facoltative.
 #' @return Lista con totale, conteggi per stato database, per servizio e per
 #'   cantiere: `servizio_censiti` conta i censiti per servizio a database,
 #'   `servizio_stimato` i non censiti con un servizio stimato,
@@ -1319,7 +678,7 @@ conta_cantieri <- function(valori) {
 #'   i servizi che non concordano. `rfid_cantieri` conta gli RFID,
 #'   `letture_cantieri` le letture.
 #' @noRd
-calcola_statistiche <- function(data, cantieri_letture = NULL) {
+calcola_statistiche <- function(data, letture_cantieri = NULL) {
   censiti <- data$presente_a_database == "Presente"
   servizio <- servizio_mostrato(data)
   incongruenze <- incongruenze_comune(data)
@@ -1340,7 +699,8 @@ calcola_statistiche <- function(data, cantieri_letture = NULL) {
       data[["coerenza_comune"]] %in% stati_coerenza_comune()[["ignota"]]
     ),
     rfid_cantieri = conta_cantieri(data[["cantiere"]]),
-    letture_cantieri = conta_cantieri(cantieri_letture)
+    letture_cantieri = letture_cantieri %||%
+      stats::setNames(integer(0), character(0))
   )
 }
 
@@ -1367,38 +727,6 @@ codice_in <- function(valori, codici) {
   per_valori_distinti(valori, function(distinti) {
     !is.na(distinti) & stringr::str_to_upper(distinti) %in% codici
   })
-}
-
-#' Tutte le letture degli RFID cercati
-#'
-#' @param data Dataframe con letture.
-#' @param rfid_list Vettore di RFID cercati.
-#' @return Tutte le letture trovate, ordinate per RFID e data decrescente, con
-#'   la colonna `is_ultimo` che marca la lettura più recente di ogni RFID.
-#' @noRd
-cerca_per_rfid <- function(data, rfid_list) {
-  data |>
-    dplyr::filter(codice_in(.data$RFID, rfid_list)) |>
-    dplyr::arrange(.data$RFID, dplyr::desc(.data$giorno_lettura)) |>
-    dplyr::group_by(.data$RFID) |>
-    dplyr::mutate(is_ultimo = dplyr::row_number() == 1L) |>
-    dplyr::ungroup()
-}
-
-#' Filtra RFID dove l'ultima lettura ha una delle utenze cercate
-#'
-#' Un contenitore passato da un'utenza a un'altra compare solo cercando
-#' l'utenza attuale.
-#'
-#' @param data Dataframe
-#' @param utenze Vettore di id utenza ricercati
-#' @return Dataframe filtrato (ultima lettura di ogni RFID)
-#' @noRd
-filtra_ultimo_per_utenza <- function(data, utenze) {
-  data |>
-    deduplica_ultimo_rfid() |>
-    dplyr::filter(codice_in(.data$id_utenza, utenze)) |>
-    dplyr::arrange(.data$id_utenza, .data$RFID)
 }
 
 #' Calcola bounding box di tutte le letture di un RFID
@@ -1556,7 +884,7 @@ coerenza_comune_rfid <- function(letture) {
     ]
   }
   list(
-    fuori_comune = riepilogo(incongruenze$fuori_comune, "comune_da_database"),
+    fuori_comune = riepilogo(incongruenze$fuori_comune, "comune_fornitura"),
     fuori_giro = fuori_giro
   )
 }

@@ -39,7 +39,8 @@ conta <- function(n, singolare, plurale) {
 #' @param giorno_lettura POSIXct
 #' @param id_utenza Character
 #' @param presente Character
-#' @param comune Character, facoltativo: comune del database.
+#' @param comune Character, facoltativo: comune della fornitura, secondo il
+#'   database.
 #' @param comune_lettura Character, facoltativo: comune in cui è stata fatta
 #'   la lettura.
 #' @param comune_giro Character, facoltativo: comune in cui il calendario
@@ -184,7 +185,12 @@ create_popup_html <- function(
     data_formattata,
     "<br>",
     "<b>Utenza:</b> ",
-    testo(id_utenza, "Non Censito"),
+    # Un censito senza utenza, come un sacchetto, non è un non censito.
+    ifelse(
+      is.na(id_utenza) & !(presente %in% "Presente"),
+      "Non Censito",
+      testo(id_utenza)
+    ),
     "<br>",
     riga_comune,
     riga_lettura,
@@ -283,63 +289,6 @@ barre_stima <- function(stima) {
   tags$div(class = "info-stima", righe)
 }
 
-#' Istogramma delle letture per anno di un bidone
-#'
-#' Una colonna per anno, alta in proporzione alle letture. Le letture del
-#' sistema precedente e quelle delle antenne hanno colori diversi. Un anno
-#' senza letture resta vuoto, con lo zero in evidenza.
-#'
-#' @param andamento Risultato di `andamento_rfid()`.
-#' @return Tag HTML, oppure `NULL` se non ci sono anni da mostrare.
-#' @noRd
-istogramma_annuale <- function(andamento) {
-  if (is.null(andamento) || nrow(andamento) == 0) {
-    return(NULL)
-  }
-  tags <- htmltools::tags
-  massimo <- max(andamento$storico + andamento$antenne, 1)
-  segmento <- function(fonte, letture) {
-    if (letture > 0) {
-      tags$span(
-        class = paste0("anni-segmento anni-", fonte),
-        style = sprintf("height: %.1f%%;", 100 * letture / massimo)
-      )
-    }
-  }
-  colonne <- purrr::pmap(
-    list(andamento$anno, andamento$storico, andamento$antenne),
-    function(anno, storico, antenne) {
-      totale <- storico + antenne
-      tags$div(
-        class = "anni-colonna",
-        tags$span(
-          class = if (totale == 0) "anni-valore anni-zero" else "anni-valore",
-          formatta_numero(totale)
-        ),
-        tags$span(
-          class = "anni-barra",
-          segmento("antenne", antenne),
-          segmento("storico", storico)
-        ),
-        tags$span(class = "anni-etichetta", anno)
-      )
-    }
-  )
-  legenda <- if (any(andamento$storico > 0)) {
-    tags$div(
-      class = "anni-legenda",
-      tags$span(tags$i(class = "anni-storico"), "Sistema precedente"),
-      tags$span(tags$i(class = "anni-antenne"), "Antenne")
-    )
-  }
-  blocco_info(
-    "neutro",
-    "\U0001F4CA LETTURE PER ANNO",
-    tags$div(class = "anni-grafico", colonne),
-    legenda
-  )
-}
-
 #' Blocco del pannello di dettaglio per un bidone
 #'
 #' Sceglie il messaggio in base alla storia dell'RFID: censito con servizio
@@ -435,14 +384,13 @@ blocco_sacchetto <- function(analisi) {
 #'
 #' Sceglie il messaggio da mostrare in base alla storia dell'RFID, vedi
 #' `blocco_bidone()`; per un sacchetto, vedi `blocco_sacchetto()`. In più
-#' segnala l'eventuale cambio di utenza e, se viene passato l'andamento,
-#' mostra l'istogramma delle letture per anno.
+#' segnala le letture fuori dai comuni dichiarati, quelle non coerenti e
+#' l'eventuale cambio di utenza.
 #'
 #' @param analisi Risultato di `analizza_rfid()`.
-#' @param andamento Risultato di `andamento_rfid()`, facoltativo.
 #' @return Tag HTML.
 #' @noRd
-crea_info_panel <- function(analisi, andamento = NULL) {
+crea_info_panel <- function(analisi) {
   tags <- htmltools::tags
 
   # Un sacchetto non ha una tipologia di rifiuto: ha un blocco suo.
@@ -484,8 +432,7 @@ crea_info_panel <- function(analisi, andamento = NULL) {
     corpo,
     blocco_coerenza_comune(analisi$coerenza_comune, analisi$n_letture),
     blocco_coerenza(analisi$coerenza, analisi$n_letture),
-    utenza,
-    istogramma_annuale(andamento)
+    utenza
   )
 }
 

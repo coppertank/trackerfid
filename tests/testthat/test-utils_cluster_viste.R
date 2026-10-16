@@ -71,31 +71,47 @@ test_that("il grafico a dispersione ha un riquadro per indicatore presente", {
 
 test_that("la mappa mostra un baricentro e un cerchio di dispersione per cluster", {
   analisi <- analisi_esempio()
-  mappa <- mappa_cluster(analisi)
-  metodi <- vapply(mappa$x$calls, function(k) k$method, character(1))
-  presenti <- intersect(
-    indicatori_config()$indicatore,
-    analisi$indicatore_cluster
+  dati <- dati_mappa_cluster(analisi)
+  punti <- dati$punti
+  expect_named(punti, c("x", "y", "colore", "ind", "r22", "r"))
+  # un punto per cluster, nel suo baricentro
+  expect_length(punti$x, nrow(analisi))
+  expect_equal(punti$y / 1e5, analisi$lat_baricentro_cluster, tolerance = 1e-5)
+  expect_identical(punti$r, analisi$RFID)
+  # il colore è quello dell'indicatore
+  config <- indicatori_config()
+  expect_identical(
+    punti$colore,
+    config$colore[match(analisi$indicatore_cluster, config$indicatore)]
   )
-  expect_equal(sum(metodi == "addCircles"), length(presenti))
-  expect_equal(sum(metodi == "addCircleMarkers"), length(presenti))
-  expect_true("addLayersControl" %in% metodi)
-
-  # argomenti di addCircleMarkers: lat, lng, radius, layerId, ...
-  punti <- Filter(function(k) k$method == "addCircleMarkers", mappa$x$calls)
-  identificativi <- unlist(lapply(punti, function(k) k$args[[4]]))
-  expect_setequal(identificativi, as.character(seq_len(nrow(analisi))))
-
-  # argomenti di addCircles: lat, lng, radius, ...; raggio pari alla dispersione
-  cerchi <- Filter(function(k) k$method == "addCircles", mappa$x$calls)
-  raggi <- unlist(lapply(cerchi, function(k) k$args[[3]]))
-  expect_equal(max(raggi), max(analisi$cluster_dispersione_90th_m))
-  expect_true(all(raggi >= 1))
-
-  vuota <- mappa_cluster(analisi[0, ])
-  expect_false(
-    "addCircles" %in% vapply(vuota$x$calls, function(k) k$method, character(1))
+  # gli indicatori presenti, nell'ordine della configurazione
+  expect_identical(
+    dati$indicatori$nome,
+    intersect(config$indicatore, analisi$indicatore_cluster)
   )
+  # il raggio del cerchio è la dispersione in metri, almeno un metro: in
+  # pixel a zoom 22, dove un pixel di MapLibre misura 2 pi R cos(lat) / 512 / 2^22
+  metri <- punti$r22 * 2 * pi * raggio_terra_m() *
+    cos(analisi$lat_baricentro_cluster * pi / 180) / 512 / 2^22
+  expect_equal(metri, pmax(analisi$cluster_dispersione_90th_m, 1), tolerance = 1e-3)
+  expect_null(dati$nota)
+
+  vuota <- dati_mappa_cluster(analisi[0, ])
+  expect_length(vuota$punti$x, 0)
+  expect_length(vuota$indicatori$nome, 0)
+  expect_identical(dati_mappa_cluster(NULL), vuota)
+  # il riquadro da inquadrare comprende tutti i baricentri
+  riquadro <- riquadro_cluster(analisi)
+  expect_equal(
+    riquadro,
+    c(
+      min(analisi$lon_baricentro_cluster) - 0.002,
+      min(analisi$lat_baricentro_cluster) - 0.002,
+      max(analisi$lon_baricentro_cluster) + 0.002,
+      max(analisi$lat_baricentro_cluster) + 0.002
+    )
+  )
+  expect_null(riquadro_cluster(analisi[0, ]))
 })
 
 test_that("il popup del cluster riporta i dati principali e fa l'escape", {
@@ -116,7 +132,7 @@ test_that("l'attesa sulle righe della tabella copre l'elenco vuoto di un ridiseg
 
 test_that("le viste disegnano un campione quando i cluster sono troppi", {
   analisi <- analisi_esempio()
-  expect_identical(limiti_viste_cluster(), list(grafico = 20000, mappa = 5000))
+  expect_identical(limiti_viste_cluster(), list(grafico = 20000, mappa = 50000))
 
   # sotto il limite restano tutti, senza avviso
   tutti <- campiona_cluster(analisi, nrow(analisi))
@@ -187,31 +203,28 @@ test_that("grafico a dispersione e mappa dei cluster rispettano il limite", {
     fixed = TRUE
   )))
 
-  mappa <- mappa_cluster(analisi)
-  metodi <- vapply(mappa$x$calls, function(k) k$method, character(1))
-  expect_true("addControl" %in% metodi)
-  nota <- Filter(function(k) k$method == "addControl", mappa$x$calls)[[1]]
+  campione <- campiona_cluster(analisi, limiti_viste_cluster()$mappa)
+  dati <- dati_mappa_cluster(campione)
   expect_match(
-    nota$args[[1]],
+    dati$nota,
     sprintf("Mostrati 70 cluster su %d", nrow(analisi)),
     fixed = TRUE
   )
-  # argomenti di addCircleMarkers: lat, lng, radius, layerId, ...
-  punti <- Filter(function(k) k$method == "addCircleMarkers", mappa$x$calls)
-  identificativi <- as.integer(unlist(lapply(punti, function(k) k$args[[4]])))
-  expect_length(identificativi, 70)
-  expect_equal(anyDuplicated(identificativi), 0)
-  # l'identificativo resta il numero di riga della tabella ricevuta: tutti gli
-  # anomali sono sulla mappa
-  expect_true(all(
-    which(analisi$indicatore_cluster != "VALID_TARGET") %in% identificativi
-  ))
+  expect_length(dati$punti$x, 70)
+  # tutti gli anomali sono sulla mappa
+  expect_identical(
+    sum(dati$punti$ind != "VALID_TARGET"),
+    sum(analisi$indicatore_cluster != "VALID_TARGET")
+  )
 
   # meno posto degli anomali: la mappa si disegna lo stesso
   testthat::local_mocked_bindings(
     limiti_viste_cluster = function() list(grafico = 3, mappa = 3)
   )
-  expect_s3_class(mappa_cluster(analisi), "leaflet")
+  expect_length(
+    dati_mappa_cluster(campiona_cluster(analisi, limiti_viste_cluster()$mappa))$punti$x,
+    3
+  )
   expect_s3_class(
     grafico_dispersione(analisi, parametri$soglie, parametri$giorni_osservati),
     "plotly"

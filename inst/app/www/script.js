@@ -11,21 +11,15 @@ $(document).on("shiny:connected", function () {
   });
 });
 
-// Una mappa che riceve i dati mentre è nascosta li tiene in attesa di un
-// ridimensionamento. Quando torna in vista con la misura di prima il
-// ridimensionamento non arriva, e la mappa resterebbe grigia: lo chiediamo
-// qui, a ogni scheda che torna visibile. Lo stesso gestore riceve anche
-// l'evento "shown" con cui Shiny mostra un riquadro condizionale.
+// Una mappa nata in una scheda nascosta non conosce la sua misura, e una che
+// riceve un inquadramento mentre è nascosta lo rimanda: tutte e due
+// aspettano un ridimensionamento, che chiediamo qui a ogni scheda che torna
+// visibile. Lo stesso gestore riceve anche l'evento "shown" con cui Shiny
+// mostra un riquadro condizionale.
 $(document).on("shown.bs.tab", function () {
-  $(".leaflet.html-widget").each(function () {
-    if (this.offsetWidth === 0 || this.offsetHeight === 0) {
-      return;
-    }
-    var mappa = window.HTMLWidgets && HTMLWidgets.find("#" + this.id);
-    if (mappa && mappa.resize) {
-      mappa.resize(this.offsetWidth, this.offsetHeight);
-    }
-  });
+  if (window.TrackerfidMappa) {
+    window.TrackerfidMappa.ridimensiona();
+  }
 });
 
 // I menu dei filtri sopra la mappa principale restano aperti mentre si
@@ -46,3 +40,41 @@ $(document).on("change", ".filtro-mappa", function () {
     .find(".filtro-conteggio")
     .text(attivo ? spuntate + "/" + caselle.length : "");
 });
+
+// La legenda delle mappe si chiude con un click sull'intestazione. La scelta
+// vale per tutte le mappe e il browser la ricorda: chi l'ha chiusa la ritrova
+// chiusa. Si salva solo al click, non all'evento "toggle": il browser lo
+// lancia anche quando legge una legenda nata aperta.
+(function () {
+  var chiave = "trackerfid-legenda-aperta";
+  var applica = function (aperta) {
+    document.querySelectorAll(".legenda-dettagli").forEach(function (d) {
+      if (d.open !== aperta) {
+        d.open = aperta;
+      }
+    });
+  };
+  var ripristina = function () {
+    var salvata = null;
+    try {
+      salvata = window.localStorage.getItem(chiave);
+    } catch (e) {}
+    if (salvata !== null) {
+      applica(salvata === "1");
+    }
+  };
+  // Lo script può arrivare a pagina già pronta.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ripristina);
+  } else {
+    ripristina();
+  }
+  $(document).on("click", ".legenda-intestazione", function (evento) {
+    evento.preventDefault();
+    var aperta = !this.parentNode.open;
+    applica(aperta);
+    try {
+      window.localStorage.setItem(chiave, aperta ? "1" : "0");
+    } catch (e) {}
+  });
+})();

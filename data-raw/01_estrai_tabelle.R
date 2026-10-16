@@ -30,7 +30,7 @@ for (target_label in tabelle) {
   # Applica il filtro se la tabella è "dv_cnt_letture", altrimenti query standard
   if (target_label == "dv_cnt_letture") {
     query_sql <- sprintf(
-      'SELECT * FROM "%s" WHERE data_lettura > \'2026-01-01\'',
+      'SELECT * FROM "%s" WHERE data_lettura > \'2025-01-01\'',
       target_label
     )
   } else {

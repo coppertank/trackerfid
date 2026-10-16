@@ -335,6 +335,9 @@ analisi_cluster_vuota <- function() {
 #' @param soglie,pesi Vedi `soglie_indicatore()` e `pesi_fiducia()`.
 #' @param durata_minima_giorni Durata minima di un cluster perché le sue
 #'   raccolte annue vengano stimate anche dalla sua durata effettiva.
+#' @param copertura Primo e ultimo giorno coperti dal dataset, per i giorni
+#'   osservati. Se manca vale l'intervallo di `letture`: va indicato quando
+#'   `letture` contiene le sole letture del periodo.
 #' @return Tibble con le colonne di `colonne_analisi_cluster()`, una riga per
 #'   cluster. L'attributo `parametri` riporta i parametri usati.
 #' @noRd
@@ -346,7 +349,8 @@ calcola_analisi_cluster <- function(
   min_pts = 1,
   soglie = soglie_indicatore(),
   pesi = pesi_fiducia(),
-  durata_minima_giorni = 30
+  durata_minima_giorni = 30,
+  copertura = NULL
 ) {
   analisi_dal <- lubridate::as_date(analisi_dal)
   analisi_al <- lubridate::as_date(analisi_al)
@@ -380,7 +384,7 @@ calcola_analisi_cluster <- function(
   }
 
   # Parte del periodo effettivamente coperta dal dataset.
-  copertura <- range(lubridate::as_date(letture$giorno_lettura))
+  copertura <- lubridate::as_date(copertura %||% range(letture$giorno_lettura))
   giorni_osservati <- as.numeric(
     min(analisi_al, copertura[2]) - max(analisi_dal, copertura[1])
   ) +

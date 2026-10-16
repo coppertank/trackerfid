@@ -174,16 +174,19 @@ test_that("i segnali sul marker dicono fuori comune e fuori giro", {
   # colore, forma e icona del marker restano quelli di stato e servizio
   expect_true(startsWith(entrambi, sub("</svg>$", "", semplice)))
 
-  icone <- get_leaflet_icon(
+  icone <- indice_icona(
     rep("CARTA", 5),
     "Presente",
     fuori_comune = c(FALSE, TRUE, TRUE, NA, FALSE),
     fuori_giro = c(FALSE, FALSE, TRUE, FALSE, FALSE)
   )
-  expect_equal(dplyr::n_distinct(icone$iconUrl), 3)
+  # la terza lettura è fuori comune e fuori giro insieme: con la coerenza del
+  # comune non succede, e le icone non prevedono la combinazione
+  expect_true(is.na(icone[3]))
+  expect_equal(dplyr::n_distinct(icone[-3]), 2)
   # un valore mancante vale come nessun segnale
-  expect_identical(icone$iconUrl[4], icone$iconUrl[1])
-  expect_identical(icone$iconUrl[5], icone$iconUrl[1])
+  expect_identical(icone[4], icone[1])
+  expect_identical(icone[5], icone[1])
 
   # la legenda di ogni mappa spiega i due segnali; quella dei giri anche il
   # contorno del comune del giro
@@ -205,25 +208,6 @@ test_that("i segnali sul marker dicono fuori comune e fuori giro", {
   expect_no_match(html_legenda("cluster"), "legenda-comune-giro", fixed = TRUE)
 })
 
-test_that("le icone Leaflet sono una per lettura", {
-  icone <- get_leaflet_icon(
-    c("SECCO", "SECCO", NA, "CARTA"),
-    c("Presente", "Presente", "Non Presente", "Presente")
-  )
-  expect_length(icone$iconUrl, 4)
-  expect_identical(icone$iconUrl[1], icone$iconUrl[2])
-  expect_equal(dplyr::n_distinct(icone$iconUrl), 3)
-  expect_true(all(startsWith(icone$iconUrl, "data:image/svg+xml")))
-})
-
-test_that("la funzione JavaScript dei cluster usa gli stessi colori di R", {
-  js <- js_icona_cluster()
-  expect_match(js, "[231,76,60]", fixed = TRUE)
-  expect_match(js, "[243,156,18]", fixed = TRUE)
-  expect_match(js, "[46,204,113]", fixed = TRUE)
-  expect_match(js, "options.censito", fixed = TRUE)
-})
-
 test_that("la legenda cambia con la modalita", {
   expect_match(html_legenda("cluster"), "Cluster: % censiti", fixed = TRUE)
   expect_match(html_legenda("rfid"), "Ultima lettura", fixed = TRUE)
@@ -233,38 +217,19 @@ test_that("la legenda cambia con la modalita", {
   }
 })
 
-test_that("le bolle della vista aggregata crescono con i bidoni e si colorano con i censiti", {
+test_that("le bolle crescono con i bidoni e si colorano con i censiti", {
   expect_identical(
     lato_bolla(c(1, 9, 10, 99, 100, 999, 1000, 9999, 10000, 5e5)),
     c(40, 40, 46, 46, 54, 54, 62, 62, 72, 72)
   )
 
-  n <- c(120, 8, 0, 25000)
-  censiti <- c(120, 2, 0, 12500)
-  svg <- svg_bolla(n, censiti)
-  expect_length(svg, 4)
-  expect_match(svg[1], "width='54' height='54'", fixed = TRUE)
-  expect_match(svg[1], ">120</text>", fixed = TRUE)
-  expect_match(svg[1], ">100%</text>", fixed = TRUE)
-  expect_match(svg[2], ">25%</text>", fixed = TRUE)
-  expect_match(svg[4], ">25.000</text>", fixed = TRUE)
-  expect_match(svg[4], ">50%</text>", fixed = TRUE)
-  # un gruppo vuoto non divide per zero
-  expect_match(svg[3], ">0%</text>", fixed = TRUE)
-  # stesso colore dei cluster di marker disegnati dal browser
-  colori <- genera_colore_cluster(c(1, 0.25, 0, 0.5))
-  for (i in seq_along(svg)) {
-    expect_match(svg[i], sprintf("fill='%s'", colori[i]), fixed = TRUE)
-  }
-
-  icone <- icone_bolle(n[1:2], censiti[1:2])
-  expect_identical(icone$iconWidth, c(54, 40))
-  expect_identical(icone$iconHeight, c(54, 40))
-  # l'ancora è il centro della bolla
-  expect_identical(icone$iconAnchorX, c(27, 20))
-  expect_identical(icone$iconAnchorY, c(27, 20))
-  expect_match(icone$iconUrl, "^data:image/svg\\+xml")
-  expect_match(utils::URLdecode(icone$iconUrl[1]), ">120</text>", fixed = TRUE)
+  # stesso colore dei cluster di marker di prima: da rosso a verde passando
+  # per l'arancio
+  colori <- colori_stato()
+  expect_identical(
+    genera_colore_cluster(c(0, 0.5, 1)),
+    c(colori$non_presente, colori$misto, colori$presente)
+  )
 })
 
 test_that("la tabella di conversione riporta i giri ai servizi del database", {
@@ -340,4 +305,17 @@ test_that("i nomi dei servizi si uniformano senza badare a maiuscole e spazi", {
   expect_identical(uniforma_servizio(NA), NA_character_)
   # vale anche per un fattore
   expect_identical(uniforma_servizio(factor(c("VETRO PAP", "UMIDO"))), c("VETRO", "UMIDO"))
+})
+
+test_that("la legenda si apre e si chiude dalla sua intestazione", {
+  for (modalita in c("cluster", "rfid", "utenza", "giro")) {
+    legenda <- html_legenda(modalita)
+    # aperta all'avvio; `script.js` applica poi la scelta ricordata
+    expect_match(legenda, '^<details open class="legenda-dettagli">')
+    expect_match(
+      legenda,
+      '<summary class="legenda-intestazione" title="Mostra o nascondi la legenda">Legenda</summary>',
+      fixed = TRUE
+    )
+  }
 })

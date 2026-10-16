@@ -55,7 +55,7 @@ mod_cluster_analysis_ui <- function(id) {
           icon = icon("map-location-dot"),
           div(
             class = "vista-cluster mappa-contenitore mappa-cluster",
-            leaflet::leafletOutput(ns("mappa"), height = "100%")
+            mapgl::maplibreOutput(ns("mappa"), height = "100%")
           )
         )
       )

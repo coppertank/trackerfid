@@ -109,6 +109,7 @@ associazione_contenitori <- readRDS(
 #     numero_raccolte_annue,
 #     data_attivazione_contenitore,
 #     data_cessazione_contenitore,
+#     id_servizio,
 #     stato_servizio,
 #     id_utenza,
 #     comune_servizio,
@@ -128,7 +129,12 @@ associazione_contenitori <- readRDS(
 #     ),
 #     codice_categoria = as.factor(codice_categoria)
 #   ) |>
-#   rename(servizio_transponder = descrizione_rifiuto)
+#   rename(
+#     servizio_transponder = descrizione_rifiuto,
+#     id_fornitura = id_servizio,
+#     stato_fornitura = stato_servizio,
+#     comune_fornitura = comune_servizio
+#   )
 
 # saveRDS(associazione_contenitori, file = "data-raw/intermedi/associazione_contenitori.rds")
 
@@ -184,7 +190,7 @@ associazione_sacchetti <- readRDS(
 #   ) |>
 #   select(
 #     codice_uhf,
-#     id_servizio
+#     id_fornitura = id_servizio
 #   )
 # # 1. Salvare il dataframe in un file RDS
 # saveRDS(associazione_sacchetti, file = "data-raw/intermedi/associazione_sacchetti.rds")

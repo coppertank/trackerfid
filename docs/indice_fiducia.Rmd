@@ -99,7 +99,7 @@ tema_grafico <- theme_void(base_size = 12) +
 ```{r dati}
 # Analisi dei cluster sull'anno più recente del dataset di esempio.
 letture <- carica_dataset(percorso_dataset_esempio())$dati
-anno <- max(anni_disponibili(letture))
+anno <- max(lubridate::year(letture$giorno_lettura))
 periodo <- periodo_anno(anno)
 analisi <- calcola_analisi_cluster(letture, periodo[1], periodo[2])
 parametri <- attr(analisi, "parametri")

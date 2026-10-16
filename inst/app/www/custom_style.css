@@ -152,7 +152,7 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
 /* ---------- Filtri sopra la mappa principale ---------- */
 /* Una riga di menu a discesa: ogni menu apre le caselle del suo filtro. La
    riga sta sopra la mappa, e i riquadri aperti coprono la mappa: per questo
-   la riga ha uno z-index più alto dei controlli di Leaflet. */
+   la riga ha uno z-index più alto dei controlli della mappa. */
 .barra-filtri {
   position: relative;
   z-index: 1050;
@@ -319,13 +319,6 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
   color: #9c640c;
 }
 
-/* Secondo file, facoltativo: le letture storiche */
-.caricamento-storico {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid #e3e8ed;
-}
-
 /* ---------- Statistiche ---------- */
 .stat-box {
   padding: 12px 15px;
@@ -482,86 +475,6 @@ p.info-avvertenza {
   font-size: 12px;
 }
 
-/* Istogramma delle letture per anno */
-.info-neutro {
-  background: #f4f6f8;
-  border-color: #aab4be;
-}
-
-.anni-grafico {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-}
-
-.anni-colonna {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-variant-numeric: tabular-nums;
-}
-
-.anni-valore {
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.anni-zero {
-  color: #c0392b;
-}
-
-.anni-barra {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  width: 100%;
-  max-width: 34px;
-  height: 64px;
-  border-bottom: 1px solid #aab4be;
-}
-
-.anni-segmento {
-  display: block;
-  width: 100%;
-}
-
-.anni-segmento:first-child {
-  border-radius: 3px 3px 0 0;
-}
-
-.anni-storico {
-  background: #95a1ad;
-}
-
-.anni-antenne {
-  background: #2a78d6;
-}
-
-.anni-etichetta {
-  margin-top: 2px;
-  color: #5f6b76;
-  font-size: 11px;
-}
-
-.anni-legenda {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 6px;
-  color: #5f6b76;
-  font-size: 11px;
-}
-
-.anni-legenda i {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  margin-right: 4px;
-  border-radius: 2px;
-}
-
 /* ---------- Mappe ---------- */
 .content {
   padding: 12px 12px 0;
@@ -626,13 +539,69 @@ p.info-avvertenza {
   text-align: center;
 }
 
-.cluster-rfid {
-  background: transparent;
-  border: none;
+/* ---------- Mappe WebGL ---------- */
+/* Testo al passaggio del mouse su un marker, un cluster o una bolla. */
+.tooltip-mappa .maplibregl-popup-content {
+  padding: 2px 7px;
+  border-radius: 9px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  color: #1f2d3a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tooltip-mappa .maplibregl-popup-tip {
+  display: none;
+}
+
+.popup-mappa .maplibregl-popup-content {
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Bidoni di un cluster che non si divide più, perché stanno nello stesso
+   punto. */
+.elenco-cluster ul {
+  max-height: 220px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  overflow-y: auto;
+}
+
+/* Indicatori della mappa dei cluster spaziali, attivabili. */
+.controllo-indicatori {
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, 0.93);
+  border-radius: 5px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+  font-size: 11px;
+}
+
+.controllo-indicatori label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 0;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.punto-indicatore {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }
 
 /* ---------- Legenda ---------- */
-.leaflet-control.legenda-rfid {
+.legenda-mappa {
+  position: absolute;
+  right: 10px;
+  bottom: 30px;
+  z-index: 2;
+  max-height: calc(100% - 60px);
+  overflow-y: auto;
   padding: 6px 9px;
   background: rgba(255, 255, 255, 0.93);
   border-radius: 5px;
@@ -642,10 +611,49 @@ p.info-avvertenza {
   line-height: 1.3;
 }
 
-.legenda-rfid summary {
+.legenda-mappa summary {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+}
+
+/* Intestazione della legenda: un click la chiude o la apre. Chiusa, la
+   legenda è un piccolo pulsante nell'angolo della mappa. */
+.legenda-intestazione {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  list-style: none;
+  user-select: none;
+}
+
+.legenda-intestazione::-webkit-details-marker {
+  display: none;
+}
+
+.legenda-intestazione::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+
+.legenda-dettagli:not([open]) > .legenda-intestazione::after {
+  margin-top: 3px;
+  transform: rotate(-135deg);
+}
+
+.legenda-mappa:has(> .legenda-dettagli:not([open])) {
+  padding: 4px 9px;
+}
+
+.legenda-dettagli[open] > .legenda-intestazione {
+  margin-bottom: 2px;
 }
 
 .legenda-titolo {
@@ -789,24 +797,12 @@ details.parametri-dbscan summary {
   font-size: 12px;
 }
 
-/* ---------- Vista aggregata della mappa principale ---------- */
-.leaflet-tooltip.etichetta-bolla {
-  padding: 1px 6px;
-  background: rgba(255, 255, 255, 0.9);
-  border: none;
-  border-radius: 9px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  color: #1f2d3a;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.leaflet-tooltip.etichetta-bolla::before {
-  display: none;
-}
-
 /* ---------- Nota sui cluster campionati ---------- */
-.leaflet-control.nota-campione {
+.nota-campione {
+  position: absolute;
+  top: 10px;
+  left: 50px;
+  z-index: 2;
   max-width: 340px;
   padding: 6px 9px;
   background: rgba(255, 255, 255, 0.93);

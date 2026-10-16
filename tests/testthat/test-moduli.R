@@ -1,8 +1,7 @@
 test_that("il caricamento restituisce il dataset validato", {
   atteso <- dati_esempio()
   shiny::testServer(mod_caricamento_server, {
-    expect_null(session$getReturned()$letture())
-    expect_null(session$getReturned()$storico())
+    expect_null(session$getReturned()())
 
     session$setInputs(
       file_upload = data.frame(
@@ -11,10 +10,11 @@ test_that("il caricamento restituisce il dataset validato", {
         stringsAsFactors = FALSE
       )
     )
-    dati <- session$getReturned()$letture()
-    expect_equal(nrow(dati), nrow(atteso))
-    # le letture storiche sono un file a parte
-    expect_null(session$getReturned()$storico())
+    dati <- session$getReturned()()
+    # le letture stanno in un archivio DuckDB
+    expect_s3_class(dati, "archivio_letture")
+    expect_equal(dati$n, nrow(atteso))
+    expect_identical(letture_archivio(dati), atteso)
     html <- as.character(output$esito$html)
     expect_match(
       html,
@@ -31,7 +31,10 @@ test_that("un file non valido azzera il dataset e mostra l'errore", {
   errato <- scrivi_csv(c("giorno_lettura,RFID", "2025-09-15 08:30:00,R1"))
   shiny::testServer(mod_caricamento_server, {
     session$setInputs(carica_esempio = 1)
-    expect_equal(nrow(session$getReturned()$letture()), nrow(dati_esempio()))
+    esempio <- session$getReturned()()
+    expect_equal(esempio$n, nrow(dati_esempio()))
+    # l'archivio di esempio è condiviso tra le sessioni: nessuna lo chiude
+    expect_true(esempio$condiviso)
 
     session$setInputs(
       file_upload = data.frame(
@@ -40,94 +43,77 @@ test_that("un file non valido azzera il dataset e mostra l'errore", {
         stringsAsFactors = FALSE
       )
     )
-    expect_null(session$getReturned()$letture())
+    expect_null(session$getReturned()())
+    # l'archivio di esempio sostituito resta aperto per le altre sessioni
+    expect_true(DBI::dbIsValid(esempio$con))
     html <- as.character(output$esito$html)
     expect_match(html, "Caricamento non riuscito")
     expect_match(html, "Colonne mancanti")
   })
 })
 
-test_that("le letture storiche si caricano a parte e l'esempio le comprende", {
-  errato <- scrivi_csv(c("RFID,giorno_lettura", "R1,ieri"))
+test_that("un file caricato a mano sostituisce il precedente e ne chiude l'archivio", {
   shiny::testServer(mod_caricamento_server, {
     caricati <- session$getReturned()
-
     session$setInputs(carica_esempio = 1)
-    expect_equal(nrow(caricati$storico()), nrow(storico_esempio()))
-    html <- as.character(output$esito_storico$html)
-    expect_match(html, "letture storiche")
-    expect_match(html, "01/01/2020")
-    expect_match(html, "30/09/2024")
+    esempio <- caricati()
+    expect_true(esempio$condiviso)
 
-    # un file di letture caricato a mano toglie le letture storiche di esempio
-    session$setInputs(
-      file_upload = data.frame(
-        name = "letture.csv",
-        datapath = percorso_dataset_esempio(),
-        stringsAsFactors = FALSE
+    carica_a_mano <- function() {
+      session$setInputs(
+        file_upload = data.frame(
+          name = "letture.csv",
+          datapath = percorso_dataset_esempio(),
+          stringsAsFactors = FALSE
+        )
       )
-    )
-    expect_null(caricati$storico())
-    expect_equal(nrow(caricati$letture()), nrow(dati_esempio()))
+      caricati()
+    }
+    caricato <- carica_a_mano()
+    expect_equal(caricato$n, nrow(dati_esempio()))
+    # un file caricato dal browser appartiene alla sessione
+    expect_false(caricato$condiviso)
+    # l'archivio di esempio resta aperto per le altre sessioni
+    expect_true(DBI::dbIsValid(esempio$con))
 
-    # quelle caricate a mano restano anche se cambiano le letture
-    session$setInputs(
-      file_storico = data.frame(
-        name = "storiche.csv",
-        datapath = percorso_storico_esempio(),
-        stringsAsFactors = FALSE
-      )
-    )
-    expect_equal(nrow(caricati$storico()), nrow(storico_esempio()))
-    session$setInputs(
-      file_upload = data.frame(
-        name = "letture.csv",
-        datapath = percorso_dataset_esempio(),
-        stringsAsFactors = FALSE
-      )
-    )
-    expect_equal(nrow(caricati$storico()), nrow(storico_esempio()))
-
-    # un file storico non valido non tocca le letture con le antenne
-    session$setInputs(
-      file_storico = data.frame(
-        name = "errato.csv",
-        datapath = errato,
-        stringsAsFactors = FALSE
-      )
-    )
-    expect_null(caricati$storico())
-    expect_equal(nrow(caricati$letture()), nrow(dati_esempio()))
-    expect_match(
-      as.character(output$esito_storico$html),
-      "Caricamento non riuscito"
-    )
+    # l'archivio caricato a mano e sostituito si chiude
+    secondo <- carica_a_mano()
+    expect_false(DBI::dbIsValid(caricato$con))
+    expect_true(DBI::dbIsValid(secondo$con))
   })
 })
 
 test_that("il periodo predefinito è l'anno più recente del dataset", {
-  dati <- shiny::reactiveVal(dati_esempio())
+  dati <- shiny::reactiveVal(archivio_esempio())
   shiny::testServer(mod_periodo_server, args = list(dati = dati), {
     periodo <- session$getReturned()
     session$flushReact()
     expect_identical(periodo$periodo(), as.Date(c("2025-01-01", "2025-12-31")))
     expect_identical(periodo$etichetta(), "Anno 2025")
-    letture <- periodo$dati()
+    # il periodo è una selezione dell'archivio, senza copie delle letture
+    selezione <- periodo$dati()
+    expect_s3_class(selezione, "selezione_letture")
+    letture <- letture_periodo(selezione)
     expect_true(all(lubridate::year(letture$giorno_lettura) == 2025))
-    # le letture del periodo portano il servizio da usare per l'icona
-    expect_true("servizio_icona" %in% names(letture))
+    expect_equal(selezione$n, nrow(letture))
     expect_match(as.character(output$riepilogo$html), "01/01/2025")
+    expect_match(
+      as.character(output$riepilogo$html),
+      sprintf("%s letture di 248 RFID", formatta_numero(nrow(letture)))
+    )
 
     session$setInputs(anno_filtro = "2024")
     expect_identical(periodo$periodo(), as.Date(c("2024-01-01", "2024-12-31")))
     expect_identical(periodo$etichetta(), "Anno 2024")
-    expect_true(all(lubridate::year(periodo$dati()$giorno_lettura) == 2024))
-    expect_lt(nrow(periodo$dati()), nrow(letture))
+    expect_true(all(
+      lubridate::year(letture_periodo(periodo$dati())$giorno_lettura) == 2024
+    ))
+    expect_lt(periodo$dati()$n, nrow(letture))
   })
 })
 
 test_that("il periodo personalizzato sostituisce l'anno e viene validato", {
-  dati <- shiny::reactiveVal(dati_esempio())
+  dati <- shiny::reactiveVal(archivio_esempio())
   shiny::testServer(mod_periodo_server, args = list(dati = dati), {
     periodo <- session$getReturned()
     session$flushReact()
@@ -138,7 +124,7 @@ test_that("il periodo personalizzato sostituisce l'anno e viene validato", {
     session$setInputs(personalizzato = TRUE)
     expect_identical(periodo$periodo(), as.Date(c("2025-03-15", "2025-09-30")))
     expect_identical(periodo$etichetta(), "15/03/2025 - 30/09/2025")
-    giorni <- as.Date(periodo$dati()$giorno_lettura)
+    giorni <- as.Date(letture_periodo(periodo$dati())$giorno_lettura)
     expect_true(all(
       giorni >= as.Date("2025-03-15") & giorni <= as.Date("2025-09-30")
     ))
@@ -153,7 +139,7 @@ test_that("il periodo personalizzato sostituisce l'anno e viene validato", {
 
     # periodo senza letture: dataset vuoto, non errore
     session$setInputs(intervallo = as.Date(c("2030-01-01", "2030-12-31")))
-    expect_equal(nrow(periodo$dati()), 0)
+    expect_equal(periodo$dati()$n, 0)
     expect_match(
       as.character(output$riepilogo$html),
       "Nessuna lettura nel periodo"
@@ -173,7 +159,7 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
     expect_null(periodo$dati())
     expect_null(periodo$etichetta())
 
-    dati(dati_esempio())
+    dati(archivio_esempio())
     session$flushReact()
     session$setInputs(
       personalizzato = TRUE,
@@ -184,18 +170,17 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
     solo_2024 <- dati_esempio()[
       lubridate::year(dati_esempio()$giorno_lettura) == 2024,
     ]
-    dati(solo_2024)
+    dati(archivio_da_letture(solo_2024))
     session$flushReact()
     expect_identical(periodo$etichetta(), "Anno 2024")
-    expect_equal(nrow(periodo$dati()), nrow(solo_2024))
+    expect_equal(periodo$dati()$n, nrow(solo_2024))
   })
 })
 
 test_that("i filtri partono senza esclusioni e reagiscono agli input", {
-  esempio <- aggiungi_servizio_icona(dati_esempio())
-  ultimi <- deduplica_ultimo_rfid(esempio)
+  ultimi <- ultime_esempio()
   n_presenti <- sum(ultimi$presente_a_database == "Presente")
-  dati <- shiny::reactiveVal(esempio)
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
@@ -237,9 +222,9 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
 })
 
 test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa", {
-  esempio <- aggiungi_servizio_icona(dati_esempio())
+  esempio <- dati_esempio()
   n_rfid <- dplyr::n_distinct(esempio$RFID)
-  dati <- shiny::reactiveVal(esempio)
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
@@ -321,10 +306,10 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
   esempio <- aggiungi_servizio_icona(
     filtra_periodo(dati_esempio(), periodo_anno(2025))
   )
-  ultimi <- deduplica_ultimo_rfid(esempio)
+  ultimi <- ultime_esempio(periodo = periodo_anno(2025))
   # Il periodo cambia senza che cambi il dataset: i filtri non si azzerano.
   origine <- shiny::reactiveVal(1)
-  dati <- shiny::reactiveVal(esempio)
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio(), periodo_anno(2025)))
   shiny::testServer(mod_filtri_server, args = list(dati = dati, azzera = origine), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     non_censiti <- function() {
@@ -402,9 +387,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     voci_2025 <- scelte_servizio()
     session$setInputs(servizio_nessuno = 2)
     expect_equal(nrow(filtrati()), 0)
-    dati(aggiungi_servizio_icona(
-      filtra_periodo(dati_esempio(), periodo_anno(2024))
-    ))
+    dati(seleziona_periodo(archivio_esempio(), periodo_anno(2024)))
     session$flushReact()
     expect_gt(length(setdiff(scelte_servizio(), voci_2025)), 0)
     expect_equal(nrow(filtrati()), 0)
@@ -435,13 +418,13 @@ test_that("i filtri si azzerano con un nuovo dataset ma non al cambio di periodo
       session$flushReact()
       expect_null(filtrati())
 
-      dati(filtra_periodo(dati_esempio(), periodo_anno(2025)))
+      dati(seleziona_periodo(archivio_esempio(), periodo_anno(2025)))
       session$flushReact()
       session$setInputs(presente_filter = "Non Presente")
       expect_true(all(filtrati()$presente_a_database == "Non Presente"))
 
       # cambio di periodo: le scelte dell'utente restano
-      dati(filtra_periodo(dati_esempio(), periodo_anno(2024)))
+      dati(seleziona_periodo(archivio_esempio(), periodo_anno(2024)))
       session$flushReact()
       expect_true(all(filtrati()$presente_a_database == "Non Presente"))
       expect_true(all(lubridate::year(filtrati()$giorno_lettura) == 2024))
@@ -456,7 +439,7 @@ test_that("i filtri si azzerano con un nuovo dataset ma non al cambio di periodo
 
 test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
   n_letture <- sum(dati_esempio()$RFID == "RFD20250901001")
-  dati <- shiny::reactiveVal(dati_esempio())
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(
     mod_ricerca_server,
     args = list(dati = dati, tipo = "rfid"),
@@ -482,7 +465,7 @@ test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
 })
 
 test_that("la ricerca utenza mostra solo i bidoni dell'utenza attuale", {
-  dati <- shiny::reactiveVal(dati_esempio())
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(
     mod_ricerca_server,
     args = list(dati = dati, tipo = "utenza"),
@@ -504,9 +487,28 @@ test_that("la ricerca utenza mostra solo i bidoni dell'utenza attuale", {
   )
 })
 
-test_that("il click su un marker restituisce l'RFID della lettura", {
+# Sostituisce `invia_mappa()` con una funzione che registra i messaggi, che la
+# sessione di prova di Shiny non conserva.
+registra_messaggi <- function(env = parent.frame()) {
+  registro <- new.env()
+  registro$messaggi <- list()
+  testthat::local_mocked_bindings(
+    invia_mappa = function(session, id, tipo, ...) {
+      registro$messaggi[[length(registro$messaggi) + 1]] <-
+        c(list(id = id, tipo = tipo), list(...))
+    },
+    .env = env
+  )
+  registro
+}
+tipi_messaggi <- function(registro) {
+  vapply(registro$messaggi, function(m) m$tipo, character(1))
+}
+
+test_that("il click su un marker restituisce l'RFID della lettura e apre il popup", {
+  registro <- registra_messaggi()
   trovate <- cerca_per_rfid(
-    dati_esempio(),
+    seleziona_periodo(archivio_esempio()),
     c("RFD20250901001", "RFD20250905100")
   )
   dati <- shiny::reactiveVal(trovate)
@@ -516,34 +518,37 @@ test_that("il click su un marker restituisce l'RFID della lettura", {
     {
       selezione <- session$getReturned()
       expect_null(selezione())
-
-      # il browser comunica lo zoom quando la mappa è pronta
-      session$setInputs(mappa_zoom = 11)
+      session$flushReact()
       expect_match(
         output$riepilogo,
         sprintf("%d letture di 2 RFID", nrow(trovate))
       )
+      # dati e inquadratura arrivano alla mappa
+      expect_identical(tipi_messaggi(registro), c("dati", "inquadra"))
+      expect_identical(registro$messaggi[[1]]$id, session$ns("mappa"))
+      expect_identical(registro$messaggi[[1]]$dati, dati_mappa(trovate, "rfid"))
+      expect_identical(registro$messaggi[[2]]$riquadro, riquadro_vista(trovate))
 
+      # il browser manda la posizione del marker nell'elenco, da 0
       ultima <- nrow(trovate)
-      session$setInputs(
-        mappa_marker_click = list(
-          id = as.character(ultima),
-          lat = 42,
-          lng = 12.5
-        )
-      )
+      session$setInputs(mappa_clic = list(i = ultima - 1, nonce = 1))
       expect_identical(selezione()$rfid, trovate$RFID[ultima])
+      popup <- registro$messaggi[[3]]
+      expect_identical(popup$tipo, "popup")
+      expect_identical(popup$html, popup_lettura(trovate, ultima))
+      expect_identical(c(popup$lng, popup$lat), c(trovate$longitudine[ultima], trovate$latitudine[ultima]))
 
-      session$setInputs(
-        mappa_marker_click = list(id = "9999", lat = 42, lng = 12.5)
-      )
+      # un marker che non esiste non sceglie niente
+      session$setInputs(mappa_clic = list(i = 9999, nonce = 2))
       expect_identical(selezione()$rfid, trovate$RFID[ultima])
+      expect_length(registro$messaggi, 3)
     }
   )
 })
 
 test_that("l'analisi dei cluster parte dal pulsante e segue il periodo", {
-  dati <- shiny::reactiveVal(dati_esempio())
+  registro <- registra_messaggi()
+  dati <- shiny::reactiveVal(archivio_esempio())
   periodo <- shiny::reactiveVal(as.Date(c("2025-01-01", "2025-12-31")))
   shiny::testServer(
     mod_cluster_analysis_server,
@@ -587,14 +592,18 @@ test_that("l'analisi dei cluster parte dal pulsante e segue il periodo", {
       # selezione da tabella e da mappa
       session$setInputs(tabella_rows_selected = 3)
       expect_identical(selezione()$rfid, attesa$RFID[3])
-      session$setInputs(mappa_marker_click = list(id = "7"))
+      # la mappa riceve i cluster mostrati dalla tabella
+      ultimi_dati <- Filter(function(m) m$tipo == "dati", registro$messaggi)
+      expect_length(ultimi_dati[[length(ultimi_dati)]]$dati$punti$x, 10)
+      session$setInputs(mappa_clic = list(i = 6, nonce = 1))
       expect_identical(selezione()$rfid, attesa$RFID[7])
+      expect_identical(registro$messaggi[[length(registro$messaggi)]]$tipo, "popup")
 
       # un filtro che non lascia righe: grafici e mappa restano vuoti
       righe_dalla_tabella(NULL)
       expect_equal(nrow(righe_filtrate()), 0)
       expect_s3_class(grafico_indicatori(righe_filtrate()), "plotly")
-      expect_s3_class(mappa_cluster(righe_filtrate()), "leaflet")
+      expect_length(dati_mappa_cluster(righe_filtrate())$punti$x, 0)
       # l'elenco vuoto che accompagna ogni ridisegno della tabella non conta
       righe_dalla_tabella(1:10)
       session$setInputs(tabella_rows_all = NULL)
@@ -640,7 +649,7 @@ test_that("l'analisi dei cluster parte dal pulsante e segue il periodo", {
 })
 
 test_that("l'esportazione dalla scheda usa il nome con le date del periodo", {
-  dati <- shiny::reactiveVal(dati_esempio())
+  dati <- shiny::reactiveVal(archivio_esempio())
   periodo <- shiny::reactiveVal(as.Date(c("2025-03-15", "2025-09-30")))
   shiny::testServer(
     mod_cluster_analysis_server,
@@ -753,8 +762,14 @@ test_that("la pagina ha come favicon il simbolo aziendale", {
   expect_equal(lato(17), 192)
   expect_equal(lato(21), 192)
 
-  # nell'intestazione non c'è nessun logo
-  expect_no_match(pagina$html, "<img", fixed = TRUE)
+  # nell'intestazione non c'è nessun logo: le sole immagini della pagina sono
+  # i simboli della legenda delle mappe
+  intestazione_pagina <- regmatches(
+    pagina$html,
+    regexpr("(?s)<header.*?</header>", pagina$html, perl = TRUE)
+  )
+  expect_length(intestazione_pagina, 1)
+  expect_no_match(intestazione_pagina, "<img", fixed = TRUE)
 })
 
 # Scrive una copia compressa con gzip di un file.
@@ -768,7 +783,6 @@ comprimi <- function(origine, env = parent.frame()) {
 
 test_that("il caricamento accetta i file compressi", {
   compresso <- comprimi(percorso_dataset_esempio())
-  storiche <- comprimi(percorso_storico_esempio())
   shiny::testServer(mod_caricamento_server, {
     caricati <- session$getReturned()
     # il formato si riconosce dal nome originale del file
@@ -777,48 +791,27 @@ test_that("il caricamento accetta i file compressi", {
         name = "letture.csv.gz",
         datapath = compresso,
         stringsAsFactors = FALSE
-      ),
-      file_storico = data.frame(
-        name = "storiche.csv.gz",
-        datapath = storiche,
-        stringsAsFactors = FALSE
       )
     )
-    expect_identical(caricati$letture(), dati_esempio())
-    expect_identical(caricati$storico(), storico_esempio())
+    expect_identical(letture_archivio(caricati()), dati_esempio())
     expect_match(as.character(output$esito$html), "letture.csv.gz", fixed = TRUE)
-    expect_match(
-      as.character(output$esito_storico$html),
-      "storiche.csv.gz",
-      fixed = TRUE
-    )
   })
 })
 
-test_that("i file indicati all'avvio sono caricati senza passare dal browser", {
+test_that("il file indicato all'avvio è caricato senza passare dal browser", {
   shiny::testServer(
     mod_caricamento_server,
-    args = list(
-      percorsi = list(
-        letture = percorso_dataset_esempio(),
-        storico = percorso_storico_esempio()
-      )
-    ),
+    args = list(percorso = percorso_dataset_esempio()),
     {
       caricati <- session$getReturned()
-      expect_identical(caricati$letture(), dati_esempio())
-      expect_identical(caricati$storico(), storico_esempio())
+      expect_identical(letture_archivio(caricati()), dati_esempio())
+      # un file letto all'avvio è condiviso tra le sessioni
+      expect_true(caricati()$condiviso)
       esito <- as.character(output$esito$html)
       expect_match(esito, "sample_rfid_dataset.csv", fixed = TRUE)
       expect_match(esito, "251</b>\\s*RFID univoci")
-      expect_match(
-        as.character(output$esito_storico$html),
-        "sample_letture_storiche.csv",
-        fixed = TRUE
-      )
 
-      # un file caricato a mano prende il posto di quello dell'avvio; le
-      # letture storiche dell'avvio restano
+      # un file caricato a mano prende il posto di quello dell'avvio
       session$setInputs(
         file_upload = data.frame(
           name = "altre.csv",
@@ -827,7 +820,6 @@ test_that("i file indicati all'avvio sono caricati senza passare dal browser", {
         )
       )
       expect_match(as.character(output$esito$html), "altre.csv", fixed = TRUE)
-      expect_identical(caricati$storico(), storico_esempio())
     }
   )
 })
@@ -835,28 +827,22 @@ test_that("i file indicati all'avvio sono caricati senza passare dal browser", {
 test_that("le opzioni di avvio mancanti o errate non bloccano l'app", {
   # senza opzioni: niente di caricato
   shiny::testServer(mod_caricamento_server, {
-    expect_null(session$getReturned()$letture())
-    expect_null(session$getReturned()$storico())
+    expect_null(session$getReturned()())
   })
 
-  # demo: i due dataset di esempio
+  # demo: il dataset di esempio
   shiny::testServer(mod_caricamento_server, args = list(demo = TRUE), {
-    caricati <- session$getReturned()
-    expect_equal(nrow(caricati$letture()), nrow(dati_esempio()))
-    expect_equal(nrow(caricati$storico()), nrow(storico_esempio()))
+    expect_equal(session$getReturned()()$n, nrow(dati_esempio()))
   })
 
   # un percorso che non esiste: l'errore compare al posto dell'esito
   shiny::testServer(
     mod_caricamento_server,
     args = list(
-      percorsi = list(
-        letture = file.path(tempdir(), "letture_che_non_esistono.csv"),
-        storico = NULL
-      )
+      percorso = file.path(tempdir(), "letture_che_non_esistono.csv")
     ),
     {
-      expect_null(session$getReturned()$letture())
+      expect_null(session$getReturned()())
       html <- as.character(output$esito$html)
       expect_match(html, "Caricamento non riuscito")
       expect_match(html, "File non trovato")
@@ -865,9 +851,17 @@ test_that("le opzioni di avvio mancanti o errate non bloccano l'app", {
   )
 })
 
+# Angoli del riquadro di alcune letture, come li dà `area_filtri()`.
+angoli <- function(letture) {
+  dplyr::tibble(
+    latitudine = range(letture$latitudine),
+    longitudine = range(letture$longitudine)
+  )
+}
+
 test_that("i filtri geografici restringono cantieri e comuni e danno l'area da inquadrare", {
   tutte <- dati_esempio()
-  dati <- shiny::reactiveVal(tutte)
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     restituito <- session$getReturned()
     session$flushReact()
@@ -876,7 +870,7 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
     expect_identical(scelte_cantieri(), cantieri())
     expect_named(restituito, c("dati_filtrati", "area"))
     expect_named(restituito$area(), c("latitudine", "longitudine"))
-    expect_equal(nrow(restituito$area()), nrow(tutte))
+    expect_equal(restituito$area(), angoli(tutte))
 
     # i cantieri si deselezionano: restano le letture di quelli spuntati
     session$setInputs(cantiere_check = c("ASIAGO", "RUBANO"))
@@ -885,8 +879,8 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
       c("ASIAGO", "RUBANO")
     )
     expect_equal(
-      nrow(restituito$area()),
-      sum(tutte$cantiere %in% c("ASIAGO", "RUBANO"))
+      restituito$area(),
+      angoli(tutte[tutte$cantiere %in% c("ASIAGO", "RUBANO"), ])
     )
     statistiche <- as.character(output$stat_box$html)
     expect_match(statistiche, "ASIAGO:", fixed = TRUE)
@@ -899,8 +893,8 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
     session$setInputs(comuni = "LIMENA")
     expect_true(all(restituito$dati_filtrati()$comune_assegnato == "LIMENA"))
     expect_equal(
-      nrow(restituito$area()),
-      sum(tutte$comune_assegnato == "LIMENA", na.rm = TRUE)
+      restituito$area(),
+      angoli(tutte[tutte$comune_assegnato %in% "LIMENA", ])
     )
 
     # più comuni insieme, anche di cantieri diversi
@@ -908,15 +902,15 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
     scelti <- restituito$dati_filtrati()
     expect_setequal(unique(scelti$comune_assegnato), c("LIMENA", "GALLIO"))
     expect_setequal(unique(scelti$cantiere), c("RUBANO", "ASIAGO"))
-    nei_due_comuni <- sum(tutte$comune_assegnato %in% c("LIMENA", "GALLIO"))
-    expect_equal(nrow(restituito$area()), nei_due_comuni)
+    nei_due_comuni <- angoli(tutte[tutte$comune_assegnato %in% c("LIMENA", "GALLIO"), ])
+    expect_equal(restituito$area(), nei_due_comuni)
     statistiche <- as.character(output$stat_box$html)
     expect_match(statistiche, "ASIAGO:", fixed = TRUE)
     expect_match(statistiche, "RUBANO:", fixed = TRUE)
 
     # l'area segue cantieri e comuni, non gli altri filtri
     session$setInputs(presente_filter = "Non Presente")
-    expect_equal(nrow(restituito$area()), nei_due_comuni)
+    expect_equal(restituito$area(), nei_due_comuni)
     session$setInputs(presente_filter = stati_database())
 
     # deselezionare un cantiere toglie dalla scelta i suoi comuni, non gli altri
@@ -933,11 +927,8 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
     expect_gt(dplyr::n_distinct(filtrati$comune_assegnato), 1)
 
     session$setInputs(reset = 1)
-    expect_equal(
-      nrow(restituito$dati_filtrati()),
-      nrow(deduplica_ultimo_rfid(tutte))
-    )
-    expect_equal(nrow(restituito$area()), nrow(tutte))
+    expect_equal(nrow(restituito$dati_filtrati()), nrow(ultime_esempio()))
+    expect_equal(restituito$area(), angoli(tutte))
   })
 })
 
@@ -949,7 +940,7 @@ test_that("le letture senza cantiere hanno una voce tra i cantieri", {
   tutte$comune_geografico[vuote] <- NA
   tutte$comune_assegnato[vuote] <- NA
   tutte$cantiere[vuote] <- NA
-  dati <- shiny::reactiveVal(tutte)
+  dati <- shiny::reactiveVal(selezione_di(tutte))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     restituito <- session$getReturned()
     session$flushReact()
@@ -962,13 +953,13 @@ test_that("le letture senza cantiere hanno una voce tra i cantieri", {
     session$setInputs(cantiere_check = senza_cantiere())
     expect_identical(restituito$dati_filtrati()$RFID, "RFD20241001301")
     expect_true(is.na(restituito$dati_filtrati()$cantiere))
-    expect_equal(nrow(restituito$area()), sum(vuote))
+    expect_equal(restituito$area(), angoli(tutte[vuote, ]))
   })
 })
 
 test_that("le scelte geografiche restano al cambio di periodo e si azzerano con un nuovo dataset", {
   origine <- shiny::reactiveVal(1)
-  dati <- shiny::reactiveVal(filtra_periodo(dati_esempio(), periodo_anno(2025)))
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio(), periodo_anno(2025)))
   shiny::testServer(
     mod_filtri_server,
     args = list(dati = dati, azzera = origine),
@@ -980,7 +971,7 @@ test_that("le scelte geografiche restano al cambio di periodo e si azzerano con 
       expect_true(all(filtrati()$comune_assegnato == "BASSANO DEL GRAPPA"))
 
       # cambio di periodo: cantiere e comune scelti restano
-      dati(filtra_periodo(dati_esempio(), periodo_anno(2024)))
+      dati(seleziona_periodo(archivio_esempio(), periodo_anno(2024)))
       session$flushReact()
       expect_gt(nrow(filtrati()), 0)
       expect_true(all(filtrati()$comune_assegnato == "BASSANO DEL GRAPPA"))
@@ -996,7 +987,7 @@ test_that("le scelte geografiche restano al cambio di periodo e si azzerano con 
 })
 
 test_that("un dataset senza cantieri non mostra i filtri geografici", {
-  dati <- shiny::reactiveVal(validate_dataset(letture_test())$dati)
+  dati <- shiny::reactiveVal(selezione_di(letture_test()))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     session$flushReact()
     expect_false(con_geografia())
@@ -1006,216 +997,89 @@ test_that("un dataset senza cantieri non mostra i filtri geografici", {
   })
 })
 
-test_that("oltre il limite la mappa principale passa alla vista aggregata", {
-  withr::local_options(trackerfid.max_marker = 50)
-  ultimi <- deduplica_ultimo_rfid(dati_esempio())
-  zona <- riquadro_zona()
-  tutta <- list(
-    north = zona$lat_max,
-    south = zona$lat_min,
-    east = zona$lng_max,
-    west = zona$lng_min
-  )
-  centro <- comuni_cantieri()[comuni_cantieri()$comune == "ASIAGO", ]
-  piccola <- list(
-    north = centro$latitudine + 0.02,
-    south = centro$latitudine - 0.02,
-    east = centro$longitudine + 0.03,
-    west = centro$longitudine - 0.03
-  )
-  inquadrati <- ultimi[nel_riquadro(ultimi, allarga_riquadro(piccola)), ]
-
+test_that("la mappa principale riceve bidoni e bolle in un messaggio solo", {
+  registro <- registra_messaggi()
+  ultimi <- ultime_esempio()
   dati <- shiny::reactiveVal(ultimi)
+  attiva <- shiny::reactiveVal(FALSE)
   shiny::testServer(
     mod_mappa_server,
-    args = list(dati = dati, modalita = "cluster"),
+    args = list(dati = dati, modalita = "cluster", attiva = attiva),
     {
       selezione <- session$getReturned()
-      expect_null(vista())
-
-      # tutta la zona: una bolla per cantiere
-      session$setInputs(mappa_bounds = tutta, mappa_zoom = 9)
-      expect_identical(vista()$tipo, "cantiere")
-      expect_equal(nrow(bolle()), 4)
-      expect_equal(sum(bolle()$n), nrow(ultimi))
-      expect_null(disegnati())
-      expect_match(output$riepilogo, "251 bidoni sulla mappa")
-      expect_match(output$riepilogo, "una bolla per cantiere")
-
-      # il click su una bolla ingrandisce, non seleziona un bidone
-      session$setInputs(mappa_marker_click = list(id = "bolla-1"))
-      expect_null(selezione())
-      session$setInputs(mappa_marker_click = list(id = "bolla-99"))
-      expect_null(selezione())
-
-      # uno zoom che resta nella stessa fascia non ridisegna: i cantieri
-      # restano fino a zoom 11
-      disegnate <- bolle()
-      session$setInputs(mappa_zoom = 11)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "cantiere")
-      expect_identical(vista()$zoom, 9)
-      expect_identical(bolle(), disegnate)
-
-      # ingrandendo: una bolla per comune, subito, senza attendere
-      session$setInputs(mappa_zoom = 12)
-      expect_identical(vista()$tipo, "comune")
-      expect_identical(vista()$zoom, 12)
-      expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
-      expect_match(output$riepilogo, "una bolla per comune")
-      # passata l'attesa non si ridisegna una seconda volta
-      disegnate <- bolle()
-      session$elapse(400)
-      expect_identical(bolle(), disegnate)
-
-      # a zoom 13 e 14 restano i comuni: stessa fascia, nessun ridisegno
-      session$setInputs(mappa_zoom = 13)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "comune")
-      expect_identical(bolle(), disegnate)
-      session$setInputs(mappa_zoom = 14)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "comune")
-      expect_identical(bolle(), disegnate)
-
-      # ancora: bolle per riquadro, valide per l'area caricata. Da vicino la
-      # mappa aspetta la fine degli spostamenti
-      session$setInputs(mappa_zoom = 15)
-      expect_identical(vista()$tipo, "comune")
-      session$elapse(400)
-      expect_identical(vista()$tipo, "griglia")
-      expect_identical(vista()$riquadro, allarga_riquadro(tutta))
-
-      # un'area con pochi bidoni: i singoli marker
-      session$setInputs(mappa_bounds = piccola, mappa_zoom = 16)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "singoli")
-      expect_null(bolle())
-      expect_identical(disegnati()$RFID, inquadrati$RFID)
-      expect_match(output$riepilogo, "solo i bidoni dell'area inquadrata")
-
-      # il click su un marker risale al bidone tra quelli inquadrati
-      session$setInputs(mappa_marker_click = list(id = "2"))
-      expect_identical(selezione()$rfid, inquadrati$RFID[2])
-      session$setInputs(
-        mappa_marker_click = list(id = as.character(nrow(inquadrati) + 1))
-      )
-      expect_identical(selezione()$rfid, inquadrati$RFID[2])
-
-      # uno spostamento dentro l'area caricata non ridisegna i marker
-      poco_oltre <- piccola
-      poco_oltre$north <- piccola$north + 0.005
-      poco_oltre$south <- piccola$south + 0.005
-      session$setInputs(mappa_bounds = poco_oltre)
-      session$elapse(400)
-      expect_identical(vista()$riquadro, allarga_riquadro(piccola))
-
-      # con meno bidoni del limite tornano tutti, raggruppati dal browser
-      dati(ultimi[1:40, ])
       session$flushReact()
-      expect_identical(vista()$tipo, "tutti")
-      expect_equal(nrow(disegnati()), 40)
-      expect_no_match(output$riepilogo, "bolla")
-    }
-  )
-})
+      # una mappa nascosta non riceve niente
+      expect_length(registro$messaggi, 0)
+      attiva(TRUE)
+      session$flushReact()
+      # prima le bolle, poi i bidoni, poi l'inquadratura
+      expect_identical(tipi_messaggi(registro), c("bolle", "dati", "inquadra"))
+      attesi <- dati_mappa(ultimi, "cluster")
+      expect_identical(registro$messaggi[[1]]$dati, attesi[campi_bolle()])
+      expect_identical(registro$messaggi[[2]]$dati, attesi["punti"])
+      expect_length(registro$messaggi[[2]]$dati$punti$x, nrow(ultimi))
+      expect_identical(sort(registro$messaggi[[1]]$dati$bolle_cantiere$nome), cantieri())
+      expect_true(registro$messaggi[[1]]$dati$territorio)
+      expect_identical(disegnati(), ultimi)
 
-test_that("sotto il limite la mappa principale segue lo zoom: cantieri, comuni, bidoni", {
-  withr::local_options(trackerfid.max_marker = NULL)
-  ultimi <- deduplica_ultimo_rfid(dati_esempio())
-  dati <- shiny::reactiveVal(ultimi)
-  shiny::testServer(
-    mod_mappa_server,
-    args = list(dati = dati, modalita = "cluster"),
-    {
-      selezione <- session$getReturned()
-      # da lontano una bolla per cantiere
-      session$setInputs(mappa_zoom = 9)
-      expect_identical(vista()$tipo, "cantiere")
-      expect_identical(sort(bolle()$nome), cantieri())
-      expect_equal(sum(bolle()$n), nrow(ultimi))
-      expect_null(disegnati())
+      # zoom e spostamenti restano nel browser: cambia solo l'intestazione
       expect_match(output$riepilogo, "^251 bidoni sulla mappa \\(ultima lettura\\)")
       expect_match(output$riepilogo, "una bolla per cantiere")
-
-      # a zoom 11 restano i cantieri
-      session$setInputs(mappa_zoom = 11)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "cantiere")
-      expect_match(output$riepilogo, "una bolla per cantiere")
-
-      # avvicinandosi ancora una bolla per comune, senza attesa
-      session$setInputs(mappa_zoom = 12)
-      expect_identical(vista()$tipo, "comune")
-      # e di nuovo i cantieri allontanandosi, sempre senza attesa
-      session$setInputs(mappa_zoom = 11)
-      expect_identical(vista()$tipo, "cantiere")
-      session$setInputs(mappa_zoom = 12)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "comune")
-      expect_equal(nrow(bolle()), dplyr::n_distinct(ultimi$comune_assegnato))
+      session$setInputs(mappa_zoom = 11.5)
       expect_match(output$riepilogo, "una bolla per comune")
-      # i comuni restano anche a zoom 13 e 14
-      session$setInputs(mappa_zoom = 13)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "comune")
-      session$setInputs(mappa_zoom = 14)
-      session$elapse(400)
-      expect_identical(vista()$tipo, "comune")
+      session$setInputs(mappa_zoom = 14.2)
+      expect_identical(output$riepilogo, "251 bidoni sulla mappa (ultima lettura)")
+      expect_length(registro$messaggi, 3)
 
-      # da vicino tutti i bidoni, uno per uno: dopo l'attesa
-      session$setInputs(mappa_zoom = 15)
-      expect_identical(vista()$tipo, "comune")
-      session$elapse(400)
-      expect_identical(vista()$tipo, "tutti")
-      expect_equal(nrow(disegnati()), nrow(ultimi))
-      expect_null(bolle())
-      expect_identical(
-        output$riepilogo,
-        "251 bidoni sulla mappa (ultima lettura)"
-      )
-      session$setInputs(mappa_marker_click = list(id = "3"))
+      # il click su un bidone
+      session$setInputs(mappa_clic = list(i = 2, nonce = 1))
       expect_identical(selezione()$rfid, ultimi$RFID[3])
+      expect_identical(registro$messaggi[[4]]$html, popup_lettura(ultimi, 3))
 
-      # da vicino spostamenti e zoom non ridisegnano niente
-      session$setInputs(
-        mappa_zoom = 17,
-        mappa_bounds = list(north = 45.8, south = 45.7, east = 11.8, west = 11.7)
-      )
-      session$elapse(400)
-      expect_identical(vista()$tipo, "tutti")
-      expect_identical(vista()$zoom, 15)
+      # filtri nuovi: bolle, bidoni e inquadratura
+      dati(ultimi[1:40, ])
+      session$flushReact()
+      expect_identical(tipi_messaggi(registro)[5:7], c("bolle", "dati", "inquadra"))
+      expect_length(registro$messaggi[[6]]$dati$punti$x, 40)
+      expect_equal(sum(registro$messaggi[[5]]$dati$bolle_cantiere$n), 40)
 
-      # tornando lontano tornano le bolle, subito
-      session$setInputs(mappa_zoom = 11)
-      expect_identical(vista()$tipo, "cantiere")
-      expect_null(disegnati())
-      # un click su una bolla non seleziona un bidone, con o senza l'area
-      # inquadrata comunicata dal browser
-      session$setInputs(mappa_marker_click = list(id = "bolla-2"))
-      expect_identical(selezione()$rfid, ultimi$RFID[3])
-      session$setInputs(
-        mappa_bounds = list(north = 46.1, south = 45.2, east = 12.2, west = 11.2)
-      )
-      session$setInputs(mappa_marker_click = list(id = "bolla-3"))
-      expect_identical(selezione()$rfid, ultimi$RFID[3])
-      expect_identical(vista()$tipo, "cantiere")
+      # mentre la scheda è nascosta gli aggiornamenti aspettano
+      attiva(FALSE)
+      dati(ultimi[1:10, ])
+      session$flushReact()
+      expect_length(registro$messaggi, 7)
+      attiva(TRUE)
+      session$flushReact()
+      expect_length(registro$messaggi[[9]]$dati$punti$x, 10)
+
+      # nessun bidone: una mappa vuota, senza bolle e senza inquadratura
+      dati(ultimi[0, ])
+      session$flushReact()
+      ultimi_due <- utils::tail(registro$messaggi, 2)
+      expect_identical(tipi_messaggi(list(messaggi = ultimi_due)), c("bolle", "dati"))
+      expect_length(ultimi_due[[1]]$dati$bolle_cantiere$n, 0)
+      expect_false(ultimi_due[[1]]$dati$territorio)
+      expect_length(ultimi_due[[2]]$dati$punti$x, 0)
+      expect_identical(output$riepilogo, "")
     }
   )
 })
 
 test_that("la ricerca RFID disegna al massimo le letture previste dal limite", {
   withr::local_options(trackerfid.max_letture_ricerca = 5)
-  trovate <- cerca_per_rfid(dati_esempio(), "RFD20250901001")
+  registro <- registra_messaggi()
+  trovate <- cerca_per_rfid(seleziona_periodo(archivio_esempio()), "RFD20250901001")
   dati <- shiny::reactiveVal(trovate)
   shiny::testServer(
     mod_mappa_server,
     args = list(dati = dati, modalita = "rfid"),
     {
       selezione <- session$getReturned()
-      session$setInputs(mappa_zoom = 11)
+      session$flushReact()
       expect_equal(nrow(disegnati()), 5)
       expect_identical(attr(disegnati(), "totale"), nrow(trovate))
+      # i riquadri coprono tutte le letture trovate
+      expect_identical(registro$messaggi[[1]]$dati$riquadri, riquadri_rfid(trovate))
       expect_match(
         output$riepilogo,
         sprintf("%d letture di 1 RFID", nrow(trovate))
@@ -1223,7 +1087,7 @@ test_that("la ricerca RFID disegna al massimo le letture previste dal limite", {
       expect_match(output$riepilogo, "sulla mappa le 5 più recenti")
       # la prima riga disegnata è l'ultima lettura dell'RFID
       expect_true(disegnati()$is_ultimo[1])
-      session$setInputs(mappa_marker_click = list(id = "1"))
+      session$setInputs(mappa_clic = list(i = 0, nonce = 1))
       expect_identical(selezione()$rfid, "RFD20250901001")
     }
   )
@@ -1236,15 +1100,17 @@ test_that("l'interfaccia ha i filtri geografici e le sole quattro schede previst
     "Coerenza comune",
     "Coerenza servizio",
     "Tutti i comuni",
-    "CSV, CSV.GZ o Parquet"
+    "CSV, CSV.GZ, Parquet o DuckDB"
   )) {
     expect_match(html, testo, fixed = TRUE)
   }
   # l'elenco dei comuni permette più scelte; senza scelte vale per tutti
   expect_match(html, '<select[^>]*id="filtri-comuni"[^>]*multiple')
   expect_match(html, '"placeholder":"Tutti i comuni"', fixed = TRUE)
-  # i campi di caricamento accettano i tre formati
-  expect_match(html, 'accept=".csv,.txt,.gz,.parquet', fixed = TRUE)
+  # un solo campo di caricamento, che accetta anche l'archivio DuckDB
+  expect_match(html, 'accept=".csv,.txt,.gz,.parquet,.duckdb', fixed = TRUE)
+  expect_length(gregexpr('type="file"', html, fixed = TRUE)[[1]], 1)
+  expect_no_match(html, "storic", fixed = TRUE)
   # le schede sono le tre mappe, la ricerca dei giri e l'analisi dei cluster,
   # con le sue tre viste
   schede <- regmatches(
@@ -1286,9 +1152,7 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
       atteso = "SECCO PAP"
     )
   )
-  dati <- shiny::reactiveVal(
-    aggiungi_servizio_icona(validate_dataset(grezzi)$dati)
-  )
+  dati <- shiny::reactiveVal(selezione_di(grezzi))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
@@ -1327,9 +1191,9 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
 })
 
 test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spuntate", {
-  dati <- shiny::reactiveVal(
-    aggiungi_servizio_icona(filtra_periodo(dati_esempio(), periodo_anno(2025)))
-  )
+  selezione <- seleziona_periodo(archivio_esempio(), periodo_anno(2025))
+  dati <- shiny::reactiveVal(selezione)
+  letture <- letture_periodo(selezione)
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
@@ -1360,7 +1224,7 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
     expect_true(all(filtrati()$coerenza_comune == "Fuori giro"))
     expect_equal(
       nrow(filtrati()),
-      dplyr::n_distinct(dati()$RFID[dati()$coerenza_comune == "Fuori giro"])
+      dplyr::n_distinct(letture$RFID[letture$coerenza_comune == "Fuori giro"])
     )
     expect_equal(nrow(filtrati()), 36)
     expect_true("RFD20241001301" %in% filtrati()$RFID)
@@ -1389,7 +1253,7 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
 })
 
 test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, giorni e filtri", {
-  dati <- shiny::reactiveVal(filtra_periodo(dati_esempio(), periodo_anno(2025)))
+  dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio(), periodo_anno(2025)))
   shiny::testServer(mod_giro_server, args = list(dati = dati), {
     restituito <- session$getReturned()
     session$flushReact()
@@ -1470,7 +1334,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_match(restituito$messaggio(), "Nessuna lettura")
 
     # un nuovo periodo riporta la ricerca ai valori predefiniti
-    dati(filtra_periodo(dati_esempio(), periodo_anno(2024)))
+    dati(seleziona_periodo(archivio_esempio(), periodo_anno(2024)))
     session$flushReact()
     expect_identical(stato$mezzo, "")
     expect_identical(stato$solo, character(0))
@@ -1486,17 +1350,22 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
 })
 
 test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
-  letture <- cerca_giri(dati_esempio(), "VEH001", "2025-09-22", "2025-09-28")
+  registro <- registra_messaggi()
+  letture <- cerca_giri(seleziona_periodo(archivio_esempio()), "VEH001", "2025-09-22", "2025-09-28")
   dati <- shiny::reactiveVal(letture)
   shiny::testServer(
     mod_mappa_server,
-    args = list(dati = dati, modalita = "giro"),
+    args = list(dati = dati, modalita = "giro", dati_vista = reactive(area_giri(dati()))),
     {
       selezione <- session$getReturned()
-      session$setInputs(mappa_zoom = 11)
-      # nessuna bolla: tutte le letture, a qualsiasi zoom
-      expect_identical(vista()$tipo, "tutti")
+      session$flushReact()
+      # tutte le letture, con il contorno dei comuni dei giri
       expect_equal(nrow(disegnati()), nrow(letture))
+      inviati <- registro$messaggi[[1]]$dati
+      expect_length(inviati$punti$x, nrow(letture))
+      expect_identical(inviati$comuni_giro, contorni_comuni_giro(letture$comune_giro))
+      # la vista comprende i comuni dei giri
+      expect_identical(registro$messaggi[[2]]$riquadro, riquadro_vista(area_giri(letture)))
       expect_match(
         output$riepilogo,
         sprintf("^%d letture di %d bidoni", nrow(letture), dplyr::n_distinct(letture$RFID))
@@ -1508,7 +1377,7 @@ test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
         fixed = TRUE
       )
       expect_equal(fuori_giro, 6)
-      session$setInputs(mappa_marker_click = list(id = "4"))
+      session$setInputs(mappa_clic = list(i = 3, nonce = 1))
       expect_identical(selezione()$rfid, letture$RFID[4])
     }
   )
@@ -1518,7 +1387,7 @@ test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
     mod_mappa_server,
     args = list(dati = dati, modalita = "giro"),
     {
-      session$setInputs(mappa_zoom = 11)
+      session$flushReact()
       expect_equal(nrow(disegnati()), 12)
       expect_equal(sum(disegnati()$coerenza_comune == "Fuori giro"), 6)
       expect_match(output$riepilogo, "sulla mappa 12 letture")

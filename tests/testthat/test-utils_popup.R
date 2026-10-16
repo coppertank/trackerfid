@@ -35,6 +35,13 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
   expect_match(popup[5], "<b>Servizio Atteso:</b> SECCO", fixed = TRUE)
   expect_match(popup[6], "<b>Servizio Atteso:</b> N/A", fixed = TRUE)
   expect_match(popup[5], "<b>Utenza:</b> Non Censito", fixed = TRUE)
+  # un censito senza utenza, come un sacchetto, non è un non censito
+  sacchetto <- create_popup_html(
+    "00BD00000000000000000001", "SECCO", "AB123CD", "VEH001",
+    d$giorno_lettura[1], NA_character_, c("Presente", "Non Presente")
+  )
+  expect_match(sacchetto[1], "<b>Utenza:</b> N/A", fixed = TRUE)
+  expect_match(sacchetto[2], "<b>Utenza:</b> Non Censito", fixed = TRUE)
 
   # le righe geografiche compaiono solo nelle letture che hanno il dato
   expect_no_match(popup[1], "Comune", fixed = TRUE)
@@ -138,62 +145,8 @@ test_that("il pannello di dettaglio sceglie il messaggio giusto", {
   expect_no_match(senza_stima, "Stima Predittiva", fixed = TRUE)
 })
 
-test_that("l'istogramma mostra una colonna per anno e mette in evidenza gli anni vuoti", {
-  andamento <- dplyr::tibble(
-    anno = 2021:2025,
-    storico = c(4L, 0L, 8L, 6L, 0L),
-    antenne = c(0L, 0L, 0L, 4L, 20L)
-  )
-  html <- as.character(istogramma_annuale(andamento))
-  expect_match(html, "LETTURE PER ANNO", fixed = TRUE)
-  expect_equal(lengths(regmatches(html, gregexpr("anni-colonna", html))), 5)
-  expect_match(
-    html,
-    '<span class="anni-valore anni-zero">0</span>',
-    fixed = TRUE
-  )
-  expect_equal(lengths(regmatches(html, gregexpr("anni-zero", html))), 1)
-  # l'altezza è in proporzione all'anno con più letture: 20 nel 2025
-  expect_match(
-    html,
-    'class="anni-segmento anni-antenne" style="height: 100.0%;"',
-    fixed = TRUE
-  )
-  expect_match(
-    html,
-    'class="anni-segmento anni-storico" style="height: 40.0%;"',
-    fixed = TRUE
-  )
-  # nel 2024 le due fonti stanno nella stessa colonna
-  expect_match(html, "height: 20.0%;.*height: 30.0%;")
-  expect_match(html, "Sistema precedente", fixed = TRUE)
-
-  solo_antenne <- as.character(istogramma_annuale(
-    dplyr::tibble(anno = 2024:2025, storico = c(0L, 0L), antenne = c(5L, 22L))
-  ))
-  expect_no_match(solo_antenne, "Sistema precedente", fixed = TRUE)
-  expect_null(istogramma_annuale(andamento[0, ]))
-  expect_null(istogramma_annuale(NULL))
-
-  # nel pannello di dettaglio l'istogramma segue gli altri blocchi
-  d <- letture_test()
-  pannello <- as.character(crea_info_panel(
-    analizza_rfid(d[d$RFID == "B", ]),
-    andamento
-  ))
-  expect_lt(
-    regexpr("TRANSPONDER CENSITO", pannello),
-    regexpr("LETTURE PER ANNO", pannello)
-  )
-  expect_no_match(
-    as.character(crea_info_panel(analizza_rfid(d[d$RFID == "B", ]))),
-    "LETTURE PER ANNO"
-  )
-})
-
 test_that("il riquadro statistiche riporta i conteggi", {
-  esempio <- aggiungi_servizio_icona(dati_esempio())
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(esempio))
+  stat <- calcola_statistiche(ultime_esempio())
   html <- as.character(crea_box_statistiche(stat))
   expect_match(html, "STATISTICHE FILTRATE", fixed = TRUE)
   expect_match(html, "TOTALE RFID (Ultimo):", fixed = TRUE)
@@ -237,21 +190,23 @@ test_that("il riquadro statistiche riporta i conteggi", {
 
   # con le letture filtrate compaiono RFID e letture di ogni cantiere
   expect_match(html, "RFID per Cantiere:", fixed = TRUE)
+  tutte <- seleziona_periodo(archivio_esempio())
   con_letture <- as.character(crea_box_statistiche(calcola_statistiche(
-    deduplica_ultimo_rfid(esempio),
-    esempio$cantiere
+    ultime_letture(tutte),
+    conteggi_cantieri(tutte)
   )))
   expect_match(con_letture, "RFID e letture per Cantiere:", fixed = TRUE)
   expect_match(con_letture, "<span>ASIAGO:</span>\\s*<b>33</b>")
   expect_match(con_letture, "691 letture", fixed = TRUE)
   # nel dataset di esempio ogni lettura ha un cantiere
   expect_no_match(con_letture, "Non assegnato:", fixed = TRUE)
-  senza_alcune <- esempio
+  senza_alcune <- dati_esempio()
   senza_alcune$cantiere[senza_alcune$RFID == "RFD20241001301"] <- NA
+  selezione <- selezione_di(senza_alcune)
   expect_match(
     as.character(crea_box_statistiche(calcola_statistiche(
-      deduplica_ultimo_rfid(senza_alcune),
-      senza_alcune$cantiere
+      ultime_letture(selezione),
+      conteggi_cantieri(selezione)
     ))),
     "Non assegnato:",
     fixed = TRUE
@@ -269,9 +224,10 @@ test_that("il riquadro statistiche riporta i conteggi", {
 
   # soli non censiti con la stima incerta: sotto il servizio atteso resta la
   # loro riga, senza la voce "nessuno"
+  esempio <- dati_esempio()
   incerti <- esempio[esempio$RFID == "RFD20250920250", ]
   solo_incerti <- as.character(crea_box_statistiche(calcola_statistiche(
-    deduplica_ultimo_rfid(incerti)
+    ultime_di(incerti)
   )))
   expect_match(solo_incerti, "Stima incerta:</span>\\s*<b>1</b>")
   expect_equal(lengths(regmatches(solo_incerti, gregexpr("nessuno", solo_incerti))), 1)
@@ -391,7 +347,7 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
   expect_null(blocco_coerenza_comune(NULL, 3))
 
   # statistiche: tre righe, anche a zero
-  stat <- calcola_statistiche(deduplica_ultimo_rfid(aggiungi_servizio_icona(d)))
+  stat <- calcola_statistiche(ultime_esempio())
   html <- as.character(crea_box_statistiche(stat))
   expect_match(html, "Coerenza del comune:", fixed = TRUE)
   expect_match(
@@ -500,10 +456,8 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
 })
 
 test_that("sulla mappa il popup riceve i servizi dalle letture", {
-  esempio <- deduplica_ultimo_rfid(aggiungi_servizio_icona(dati_esempio()))
-  righe <- esempio[1:60, ]
-  marker <- aggiungi_marker(leaflet::leaflet(), righe)
-  testo <- marker$x$calls[[1]]$args[[7]]
+  righe <- ultime_esempio()[1:60, ]
+  testo <- vapply(seq_len(nrow(righe)), function(i) popup_lettura(righe, i), character(1))
   con_database <- !is.na(righe$servizio_transponder)
   expect_true(any(con_database) && any(!con_database))
   expect_identical(

@@ -442,109 +442,6 @@ uri_svg <- function(svg) {
   )
 }
 
-#' Genera icone Leaflet per servizio e stato a database
-#'
-#' @param servizio Vettore di servizi, vedi `servizio_mostrato()`.
-#' @param presente Vettore di `presente_a_database`.
-#' @param stile Stile del bordo, vedi `svg_marker()`.
-#' @return Oggetto icone di Leaflet, un'icona per elemento.
-#' @noRd
-get_leaflet_icon <- function(
-  servizio,
-  presente,
-  stile = "normale",
-  fuori_comune = FALSE,
-  fuori_giro = FALSE
-) {
-  n <- length(servizio)
-  presente <- rep_len(presente, n)
-  stile <- rep_len(stile, n)
-  fuori_comune <- rep_len(fuori_comune %in% TRUE, n)
-  fuori_giro <- rep_len(fuori_giro %in% TRUE, n)
-
-  # Ogni combinazione viene disegnata una sola volta.
-  chiave <- paste(
-    servizio,
-    presente,
-    stile,
-    fuori_comune,
-    fuori_giro,
-    sep = "|"
-  )
-  uniche <- !duplicated(chiave)
-  uri <- purrr::pmap_chr(
-    list(
-      servizio[uniche],
-      presente[uniche],
-      stile[uniche],
-      fuori_comune[uniche],
-      fuori_giro[uniche]
-    ),
-    function(s, p, st, fc, fg) {
-      uri_svg(svg_marker(s, p, st, fuori_comune = fc, fuori_giro = fg))
-    }
-  )
-
-  leaflet::icons(
-    iconUrl = uri[match(chiave, chiave[uniche])],
-    iconWidth = 36,
-    iconHeight = 48,
-    iconAnchorX = 18,
-    iconAnchorY = 46,
-    popupAnchorX = 1,
-    popupAnchorY = -40
-  )
-}
-
-#' Funzione JavaScript che disegna l'icona di un cluster
-#'
-#' Il colore segue la percentuale di contenitori censiti nel cluster con la
-#' stessa interpolazione di `genera_colore_cluster()`. Ogni marker porta
-#' l'opzione `censito`, impostata in `aggiungi_marker()`.
-#' @noRd
-js_icona_cluster <- function() {
-  colori <- colori_stato()
-  canali <- function(hex) {
-    paste0("[", paste(grDevices::col2rgb(hex)[, 1], collapse = ","), "]")
-  }
-  paste0(
-    "function(cluster) {
-      var figli = cluster.getAllChildMarkers();
-      var n = figli.length, censiti = 0;
-      for (var i = 0; i < n; i++) { if (figli[i].options.censito) censiti++; }
-      var pct = n > 0 ? censiti / n : 0;
-      var rosso = ",
-    canali(colori$non_presente),
-    ", giallo = ",
-    canali(colori$misto),
-    ", verde = ",
-    canali(colori$presente),
-    ";
-      var da = pct < 0.5 ? rosso : giallo, a = pct < 0.5 ? giallo : verde;
-      var ratio = pct < 0.5 ? pct * 2 : (pct - 0.5) * 2;
-      var c = [0, 1, 2].map(function(k) { return Math.round(da[k] + (a[k] - da[k]) * ratio); });
-      var lato = n < 10 ? 40 : (n < 100 ? 46 : 54);
-      var pctTesto = Math.round(pct * 100) + '%';
-      var stile = 'width:' + lato + 'px;height:' + lato + 'px;border-radius:50%;' +
-        'background-color:rgb(' + c.join(',') + ');border:3px solid rgba(255,255,255,0.9);' +
-        'box-shadow:0 1px 5px rgba(0,0,0,0.45);box-sizing:border-box;display:flex;' +
-        'flex-direction:column;align-items:center;justify-content:center;' +
-        'color:",
-    colori$bordo,
-    ";font-family:Arial,sans-serif;line-height:1.05;' +
-        'text-shadow:0 0 3px rgba(255,255,255,0.8);';
-      return L.divIcon({
-        html: '<div class=\"cluster-rfid-interno\" style=\"' + stile + '\" title=\"' + censiti +
-          ' censiti su ' + n + ' (' + pctTesto + ')\">' +
-          '<span style=\"font-size:13px;font-weight:700;\">' + n + '</span>' +
-          '<span style=\"font-size:9px;font-weight:600;\">' + pctTesto + '</span></div>',
-        className: 'cluster-rfid',
-        iconSize: L.point(lato, lato)
-      });
-    }"
-  )
-}
-
 #' Lato in pixel della bolla di un gruppo di bidoni
 #'
 #' Cresce con il numero dei bidoni, come i cluster disegnati dal browser.
@@ -556,56 +453,6 @@ lato_bolla <- function(n) {
     n < 1000 ~ 54,
     n < 10000 ~ 62,
     .default = 72
-  )
-}
-
-#' Bolla SVG di un gruppo di bidoni
-#'
-#' Ha lo stesso aspetto dei cluster di marker disegnati dal browser: colore
-#' secondo la quota di censiti, numero dei bidoni e percentuale. Serve alla
-#' vista aggregata, dove i gruppi sono calcolati dal server.
-#'
-#' @param n Numero di bidoni del gruppo.
-#' @param censiti Numero di bidoni censiti.
-#' @return Testo SVG, un elemento per gruppo.
-#' @noRd
-svg_bolla <- function(n, censiti) {
-  quota <- ifelse(n > 0, censiti / n, 0)
-  lato <- lato_bolla(n)
-  sprintf(
-    paste0(
-      "<svg xmlns='http://www.w3.org/2000/svg' width='%1$d' height='%1$d' viewBox='0 0 %1$d %1$d'>",
-      "<circle cx='%2$s' cy='%2$s' r='%3$s' fill='%4$s' stroke='#ffffff' stroke-opacity='0.92' stroke-width='3'/>",
-      "<circle cx='%2$s' cy='%2$s' r='%5$s' fill='none' stroke='#000000' stroke-opacity='0.22' stroke-width='1'/>",
-      "<text x='%2$s' y='%6$s' text-anchor='middle' font-family='Arial,sans-serif' font-size='13' font-weight='700' fill='%7$s'>%8$s</text>",
-      "<text x='%2$s' y='%9$s' text-anchor='middle' font-family='Arial,sans-serif' font-size='9' font-weight='600' fill='%7$s'>%10$d%%</text>",
-      "</svg>"
-    ),
-    as.integer(lato),
-    lato / 2,
-    lato / 2 - 2.5,
-    genera_colore_cluster(quota),
-    lato / 2 - 0.5,
-    lato / 2 + 2,
-    colori_stato()$bordo,
-    formatta_numero(n),
-    lato / 2 + 13,
-    as.integer(round(100 * quota))
-  )
-}
-
-#' Icone Leaflet delle bolle della vista aggregata
-#'
-#' @param n,censiti Bidoni e bidoni censiti di ogni gruppo.
-#' @noRd
-icone_bolle <- function(n, censiti) {
-  lato <- lato_bolla(n)
-  leaflet::icons(
-    iconUrl = uri_svg(svg_bolla(n, censiti)),
-    iconWidth = lato,
-    iconHeight = lato,
-    iconAnchorX = lato / 2,
-    iconAnchorY = lato / 2
   )
 }
 
@@ -718,9 +565,16 @@ html_legenda <- function(modalita = "cluster") {
     )
   })
 
+  # La legenda si chiude con un click sull'intestazione: `script.js` ricorda
+  # la scelta nel browser e la applica a tutte le mappe.
   as.character(tags$details(
     open = NA,
-    tags$summary("Legenda"),
+    class = "legenda-dettagli",
+    tags$summary(
+      class = "legenda-intestazione",
+      title = "Mostra o nascondi la legenda",
+      "Legenda"
+    ),
     tags$div(class = "legenda-titolo", "Stato a database"),
     voce(
       immagine(svg_marker(NA, "Presente", glifo = FALSE), 15, 20),

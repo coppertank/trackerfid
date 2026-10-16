@@ -1,6 +1,6 @@
 default:
   golem_name: trackerfid
-  golem_version: 0.0.0.9000
+  golem_version: 0.2.0
   app_prod: no
 
 production:

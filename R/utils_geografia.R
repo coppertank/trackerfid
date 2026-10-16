@@ -399,7 +399,7 @@ cantiere_di_comune <- function(comune) {
 #' - `coerenza_comune`: il comune di lettura a confronto con quello
 #'   dichiarato, vedi `coerenza_comune()`.
 #'
-#' @param letture Letture con `comune_lettura`, `comune_da_database`,
+#' @param letture Letture con `comune_lettura`, `comune_fornitura`,
 #'   `comune_giro`, `cantiere` e `presente_a_database`. Le colonne dei comuni
 #'   e del cantiere, se assenti, sono trattate come vuote.
 #' @return Le letture con `comune_lettura`, `comune_geografico`,
@@ -416,7 +416,7 @@ aggiungi_geografia <- function(letture) {
   letture$comune_geografico <- tabella[match(letto, tabella)]
   letture$comune_assegnato <- dplyr::coalesce(
     letture$comune_geografico,
-    as.character(letture$comune_da_database)
+    as.character(letture$comune_fornitura)
   )
   letture$cantiere <- dplyr::coalesce(
     cantiere_di_comune(letture$comune_assegnato),
@@ -448,7 +448,7 @@ geografia_per_gruppo <- function(letture, gruppo, n_gruppi = max(gruppo)) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_character_
   }
   comune <- ultimo_valido_per_gruppo(
-    letture$comune_da_database,
+    letture$comune_fornitura,
     gruppo,
     n_gruppi
   )
@@ -465,7 +465,7 @@ geografia_per_gruppo <- function(letture, gruppo, n_gruppi = max(gruppo)) {
     piu_frequente_per_gruppo(letto_a, gruppo, n_gruppi)
   )
   # Il cantiere del file vale per le letture che dichiarano il comune dell'RFID.
-  dichiarato <- as.character(letture$comune_da_database)
+  dichiarato <- as.character(letture$comune_fornitura)
   del_file <- as.character(letture$cantiere)
   altro_comune <- !is.na(comune)[gruppo] &
     (is.na(dichiarato) | dichiarato != comune[gruppo])

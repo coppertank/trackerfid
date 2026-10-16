@@ -9,24 +9,29 @@ Authors@R:
 Description: Applicazione Shiny, costruita con il framework golem, per
     visualizzare, filtrare e analizzare su mappa le letture RFID dei bidoni
     per rifiuti raccolte dai mezzi aziendali. Distingue i contenitori censiti
-    da quelli non censiti, segnala i cambi di servizio e di utenza e permette
-    la ricerca per RFID o per utenza. Include l'analisi dei cluster spaziali
-    delle letture di ogni contenitore, con indicatori e indice di fiducia.
+    da quelli non censiti, segnala i cambi di servizio e di utenza e le
+    letture fuori dal comune dichiarato, e permette la ricerca per RFID, per
+    utenza e per giro dei mezzi. Le letture stanno in DuckDB, le mappe sono
+    disegnate in WebGL. Include l'analisi dei cluster spaziali delle letture
+    di ogni contenitore, con indicatori e indice di fiducia.
 License: What license is it under?
 Depends:
     R (>= 4.1.0)
 Imports: 
     config,
     data.table,
+    DBI,
     dbscan,
     dplyr (>= 1.1.0),
     DT,
+    duckdb (>= 1.5.0),
     fontawesome,
     golem,
     htmltools,
+    htmlwidgets,
     jsonlite,
-    leaflet,
     lubridate,
+    mapgl (>= 0.5.0),
     plotly,
     purrr,
     rlang,

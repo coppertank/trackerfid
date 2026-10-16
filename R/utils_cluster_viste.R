@@ -121,9 +121,10 @@ tabella_cluster_dt <- function(risultato) {
 #' Numero massimo di cluster disegnati nel grafico a dispersione e sulla mappa
 #'
 #' Oltre questi numeri il browser riceverebbe decine di megabyte e
-#' rallenterebbe senza mostrare di più: i punti si sovrappongono.
+#' rallenterebbe senza mostrare di più: i punti si sovrappongono. La mappa,
+#' disegnata in WebGL, ne regge molti più del grafico.
 #' @noRd
-limiti_viste_cluster <- function() list(grafico = 20000, mappa = 5000)
+limiti_viste_cluster <- function() list(grafico = 20000, mappa = 50000)
 
 #' Attesa prima di credere alle righe comunicate dalla tabella, in millisecondi
 #'
@@ -472,107 +473,77 @@ popup_cluster <- function(righe) {
   )
 }
 
-#' Mappa dei cluster: baricentri e cerchi di dispersione
+#' Dati della mappa dei cluster: baricentri e cerchi di dispersione
 #'
 #' Ogni cluster è un punto sul baricentro, circondato da un cerchio il cui
-#' raggio è la dispersione al 90° percentile. Gli indicatori sono livelli
-#' attivabili dal controllo in alto a destra, che fa anche da legenda. Oltre
-#' il limite di `limiti_viste_cluster()` la mappa disegna un campione, vedi
+#' raggio è la dispersione al 90° percentile, in metri. Il raggio viaggia come
+#' raggio in pixel a zoom 22 (`r22`): MapLibre lo dimezza a ogni zoom in meno,
+#' vedi `livelli_mappa()`. Gli indicatori si accendono e spengono dal riquadro
+#' in alto a destra, che fa anche da legenda. Oltre il limite di
+#' `limiti_viste_cluster()` la mappa disegna un campione, vedi
 #' `campiona_cluster()`.
 #'
-#' @param righe Righe dell'analisi da mostrare.
+#' @param righe Righe dell'analisi da mostrare, già campionate.
+#' @return Lista con `punti` (coordinate, colore e nome dell'indicatore,
+#'   `r22` e RFID), `indicatori` (nomi e colori di quelli presenti) e `nota`,
+#'   l'avviso sul campione.
 #' @noRd
-mappa_cluster <- function(righe) {
-  mappa <- leaflet::leaflet(
-    options = leaflet::leafletOptions(preferCanvas = TRUE)
-  ) |>
-    leaflet::addTiles() |>
-    aggiungi_confini() |>
-    leaflet::addScaleBar(
-      position = "bottomleft",
-      options = leaflet::scaleBarOptions(imperial = FALSE)
-    )
+dati_mappa_cluster <- function(righe) {
+  vuoto <- list(
+    punti = list(
+      x = integer(0),
+      y = integer(0),
+      colore = character(0),
+      ind = character(0),
+      r22 = numeric(0),
+      r = character(0)
+    ),
+    indicatori = list(nome = character(0), colore = character(0)),
+    nota = NULL
+  )
   if (is.null(righe) || nrow(righe) == 0) {
-    zona <- riquadro_zona()
-    return(leaflet::fitBounds(
-      mappa,
-      lng1 = zona$lng_min,
-      lat1 = zona$lat_min,
-      lng2 = zona$lng_max,
-      lat2 = zona$lat_max
-    ))
+    return(vuoto)
   }
-
-  # Il numero di riga va assegnato prima del campione: il click sulla mappa
-  # lo usa per risalire al cluster tra le righe ricevute.
-  righe$riga <- seq_len(nrow(righe))
-  righe <- campiona_cluster(righe, limiti_viste_cluster()$mappa)
-  nota <- nota_campione(righe)
-  # Gli indicatori da disegnare sono quelli rimasti dopo il campione.
   config <- indicatori_config()
   config <- config[
     config$indicatore %in% righe$indicatore_cluster,
     ,
     drop = FALSE
   ]
-  config$gruppo <- sprintf(
-    "<span style='color:%s;'>&#9679;</span> %s",
-    config$colore,
-    config$indicatore
+  lat <- righe$lat_baricentro_cluster
+  # Metri per pixel di MapLibre a zoom 0, all'equatore: tessere da 512 pixel.
+  metri_pixel <- 2 * pi * raggio_terra_m() / 512
+  list(
+    punti = list(
+      x = coordinate_intere(righe$lon_baricentro_cluster),
+      y = coordinate_intere(lat),
+      colore = config$colore[match(righe$indicatore_cluster, config$indicatore)],
+      ind = righe$indicatore_cluster,
+      r22 = round(
+        pmax(righe$cluster_dispersione_90th_m, 1) * 2^22 /
+          (metri_pixel * cos(lat * pi / 180)),
+        1
+      ),
+      r = righe$RFID
+    ),
+    indicatori = list(nome = config$indicatore, colore = config$colore),
+    nota = nota_campione(righe)
   )
-  if (!is.null(nota)) {
-    mappa <- leaflet::addControl(
-      mappa,
-      html = htmltools::htmlEscape(nota),
-      position = "topleft",
-      className = "info nota-campione"
-    )
-  }
+}
 
-  for (k in seq_len(nrow(config))) {
-    parte <- righe[
-      righe$indicatore_cluster == config$indicatore[k],
-      ,
-      drop = FALSE
-    ]
-    mappa <- mappa |>
-      leaflet::addCircles(
-        lng = parte$lon_baricentro_cluster,
-        lat = parte$lat_baricentro_cluster,
-        radius = pmax(parte$cluster_dispersione_90th_m, 1),
-        color = config$colore[k],
-        weight = 1,
-        opacity = 0.9,
-        fillOpacity = 0.12,
-        group = config$gruppo[k],
-        options = leaflet::pathOptions(interactive = FALSE)
-      ) |>
-      leaflet::addCircleMarkers(
-        lng = parte$lon_baricentro_cluster,
-        lat = parte$lat_baricentro_cluster,
-        radius = 6,
-        stroke = TRUE,
-        color = "#ffffff",
-        weight = 1.5,
-        opacity = 1,
-        fillColor = config$colore[k],
-        fillOpacity = 0.95,
-        layerId = as.character(parte$riga),
-        label = parte$RFID,
-        popup = popup_cluster(parte),
-        group = config$gruppo[k]
-      )
+#' Riquadro su cui inquadrare la mappa dei cluster
+#'
+#' @param righe Righe dell'analisi disegnate.
+#' @return Vettore con ovest, sud, est e nord; `NULL` senza righe.
+#' @noRd
+riquadro_cluster <- function(righe) {
+  if (is.null(righe) || nrow(righe) == 0) {
+    return(NULL)
   }
-
-  mappa |>
-    leaflet::addLayersControl(
-      overlayGroups = config$gruppo,
-      options = leaflet::layersControlOptions(collapsed = FALSE)
-    ) |>
-    leaflet::fitBounds(
-      lng1 = min(righe$lon_baricentro_cluster) - 0.002,
-      lat1 = min(righe$lat_baricentro_cluster) - 0.002,
-      lng2 = max(righe$lon_baricentro_cluster) + 0.002,
-      lat2 = max(righe$lat_baricentro_cluster) + 0.002
-    )
+  c(
+    min(righe$lon_baricentro_cluster) - 0.002,
+    min(righe$lat_baricentro_cluster) - 0.002,
+    max(righe$lon_baricentro_cluster) + 0.002,
+    max(righe$lat_baricentro_cluster) + 0.002
+  )
 }
