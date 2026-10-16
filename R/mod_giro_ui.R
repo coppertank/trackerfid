@@ -35,8 +35,8 @@ mod_giro_sidebar_ui <- function(id) {
     ),
     p(
       class = "nota-filtro",
-      "Fuori giro: lettura lontana dal comune previsto dal calendario del mezzo.",
-      "Fuori comune: bidone che a database sta in un altro comune."
+      "Fuori giro: non censito letto in un comune diverso da quello del giro.",
+      "Fuori comune: censito letto in un comune diverso da quello del database."
     ),
     uiOutput(ns("esito"))
   )

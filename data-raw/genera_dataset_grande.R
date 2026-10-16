@@ -15,10 +15,12 @@
 # non deve stare sotto git. I dati sono casuali e non hanno casi particolari:
 # servono a misurare i tempi, non a provare le funzioni.
 #
-# Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta e il
-# comune di quel giro: `servizio_giro`, `servizio_atteso` e `comune_giro` non
-# mancano mai. Il giro ha il nome del calendario, il servizio atteso quello del
-# database. Il comune di lettura e la coerenza dei servizi li calcola l'app.
+# Le colonne sono quelle che scrive il passo 3 della preparazione dei dati
+# reali. Ogni lettura ha il giro del mezzo che l'ha fatta e il comune di quel
+# giro: `servizio_giro`, `servizio_atteso` e `comune_giro` non mancano mai. Il
+# giro ha il nome del calendario, il servizio atteso quello del database. Il
+# comune di lettura e' quello del contenitore, come se lo desse il sistema di
+# localizzazione dei mezzi: per misurare i tempi basta.
 
 argomenti <- commandArgs(TRUE)
 if (length(argomenti) < 1) {
@@ -82,25 +84,47 @@ i_giro <- bidoni$i_servizio[k]
 altro_giro <- which(runif(n_letture) < bidoni$rumore[k])
 i_giro[altro_giro] <- sample(6, length(altro_giro), replace = TRUE)
 censito <- bidoni$censito[k]
+del_contenitore <- fifelse(censito, servizi[bidoni$i_servizio[k]], NA_character_)
 letture <- data.table(
   giorno_lettura = format(istante, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+  giorno = format(istante, "%Y-%m-%d", tz = "UTC"),
   targa_veicolo = targhe[i_mezzo],
   matricola_veicolo = mezzi[i_mezzo],
+  # un giro per mezzo e per servizio
+  id_giro = i_mezzo * 10L + i_giro,
+  eseguito = "SI",
   RFID = bidoni$RFID[k],
   presente_a_database = fifelse(censito, "Presente", "Non Presente"),
-  # per un censito il servizio del contenitore a database, per un non censito
-  # quello del giro: i giri sono nello stesso ordine dei servizi del database
-  servizio_atteso = fifelse(censito, servizi[bidoni$i_servizio[k]], servizi[i_giro]),
-  origine_servizio = fifelse(censito, "Database", "Calendario"),
+  servizio_transponder = del_contenitore,
+  # il servizio del giro, con il nome del database: i giri sono nello stesso
+  # ordine dei servizi del database
+  servizio_atteso = servizi[i_giro],
+  coerenza_servizio = fifelse(
+    censito,
+    fifelse(del_contenitore == servizi[i_giro], "SI", "NO"),
+    NA_character_
+  ),
   servizio_giro = giri[i_giro],
-  id_utenza = fifelse(censito, bidoni$utenza[k], NA_character_),
-  latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),
-  longitudine = round(bidoni$lon[k] + rnorm(n_letture, 0, 0.0001), 5),
+  volume = fifelse(censito, volumi[bidoni$i_servizio[k]], NA_real_),
+  frequenza = fifelse(
+    censito,
+    fifelse(bidoni$raccolte[k] == 26, "QUINDICINALE", "MENSILE"),
+    NA_character_
+  ),
+  numero_raccolte_annue = fifelse(censito, bidoni$raccolte[k], NA_real_),
+  codice_categoria = fifelse(censito, "UD", NA_character_),
   comune_da_database = fifelse(censito, bidoni$comune[k], NA_character_),
   comune_giro = bidoni$comune[k],
+  comune_lettura = bidoni$comune[k],
+  # ogni contenitore e' letto nel suo comune, dal giro del suo comune
+  coerenza_comune = "Coerente",
   cantiere = bidoni$cantiere[k],
-  volume_previsto = fifelse(censito, volumi[bidoni$i_servizio[k]], NA_real_),
-  numero_raccolte_annue_previste = fifelse(censito, bidoni$raccolte[k], NA_real_)
+  stato_servizio = fifelse(censito, "ATTIVO", NA_character_),
+  data_attivazione_contenitore = fifelse(censito, "2024-01-01", NA_character_),
+  data_cessazione_contenitore = NA_character_,
+  id_utenza = fifelse(censito, bidoni$utenza[k], NA_character_),
+  latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),
+  longitudine = round(bidoni$lon[k] + rnorm(n_letture, 0, 0.0001), 5)
 )
 setorder(letture, giorno_lettura)
 

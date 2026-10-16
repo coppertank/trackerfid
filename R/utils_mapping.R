@@ -136,6 +136,8 @@ aggiungi_marker <- function(
 ) {
   # Per i non censiti l'icona segue il servizio atteso prevalente dell'RFID.
   servizio <- servizio_mostrato(df)
+  # I bollini C e G: letture fuori comune e fuori giro.
+  incongruenze <- incongruenze_comune(df)
   leaflet::addMarkers(
     map,
     lng = df$longitudine,
@@ -145,8 +147,8 @@ aggiungi_marker <- function(
       servizio,
       df$presente_a_database,
       stile,
-      fuori_comune = df[["fuori_comune"]] %||% FALSE,
-      fuori_giro = df[["fuori_giro"]] %||% FALSE
+      fuori_comune = incongruenze$fuori_comune,
+      fuori_giro = incongruenze$fuori_giro
     ),
     popup = create_popup_html(
       rfid = df$RFID,
@@ -160,12 +162,10 @@ aggiungi_marker <- function(
       comune_lettura = df[["comune_lettura"]],
       comune_giro = df[["comune_giro"]],
       cantiere = df[["cantiere"]],
-      comune_geografico = df[["comune_geografico"]],
-      fuori_comune = df[["fuori_comune"]],
-      fuori_giro = df[["fuori_giro"]],
+      coerenza_comune = df[["coerenza_comune"]],
       servizio_giro = df[["servizio_giro"]],
-      coerenza = df[["coerenza"]],
-      origine_servizio = df[["origine_servizio"]]
+      coerenza_servizio = df[["coerenza_servizio"]],
+      servizio_transponder = df[["servizio_transponder"]]
     ),
     label = df$RFID,
     options = leaflet::markerOptions(

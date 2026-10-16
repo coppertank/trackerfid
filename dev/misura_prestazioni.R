@@ -72,20 +72,20 @@ misura(
     )
   )
 )
-# Il servizio atteso: per i censiti quello della lettura, per i non censiti
-# quello stimato dai giri. Prima le voci dell'elenco, poi un servizio in meno
+# Il servizio: per i censiti quello a database, per i non censiti quello
+# stimato dai giri. Prima le voci dell'elenco, poi un servizio in meno
 # e senza i non censiti con la stima incerta.
 stimati <- misura(
-  "Elenco dei servizi attesi",
+  "Elenco dei servizi",
   ordina_servizi(servizio_mostrato(nel_periodo))
 )
 misura(
-  "Cambio del filtro sul servizio atteso, in tutto",
+  "Cambio del filtro sul servizio, in tutto",
   deduplica_ultimo_rfid(
     nel_periodo,
     maschera_filtri(
       nel_periodo,
-      atteso_esclusi = stimati[1],
+      servizi_esclusi = stimati[1],
       includi_stima_incerta = FALSE
     )
   )

@@ -41,9 +41,9 @@ intestazione_csv <- paste(
   sep = ","
 )
 
-# Intestazione dei file preparati prima della fusione dei due servizi: il
-# servizio del database stava in `servizio_transponder`.
-intestazione_precedente <- sub(
+# Le stesse, con il servizio del contenitore a database prima del servizio
+# atteso, come nel file del passo 3.
+intestazione_transponder <- sub(
   "servizio_atteso",
   "servizio_transponder,servizio_atteso",
   intestazione_csv
@@ -67,8 +67,8 @@ letture_test <- function() {
     matricola_veicolo = "VEH001",
     RFID = c("A", "A", "A", "B", "C", "C"),
     presente_a_database = c(rep("Presente", 4), rep("Non Presente", 2)),
-    servizio_atteso = c("CARTA", "SECCO", "CARTA", "VETRO", "SECCO", NA),
-    origine_servizio = c(rep("Database", 4), "Calendario", NA),
+    servizio_transponder = c("CARTA", "SECCO", "CARTA", "VETRO", NA, NA),
+    servizio_atteso = c(NA, NA, NA, NA, "SECCO", NA),
     id_utenza = c("U1", "U1", "U2", "U1", NA, NA),
     latitudine = c(41.90, 41.91, 41.92, 41.80, 41.70, 41.70),
     longitudine = c(12.40, 12.41, 12.42, 12.30, 12.20, 12.20)
@@ -94,8 +94,8 @@ analisi_esempio <- local({
 gradi_lat <- function(metri) metri / (raggio_terra_m() * pi / 180)
 
 # Letture sintetiche di un RFID: una per data, tutte nello stesso punto. Un
-# censito ha il servizio del database, `servizio`; un non censito quello del
-# calendario, `atteso`.
+# censito ha il servizio del database, `servizio`; `atteso` è il servizio
+# atteso dal giro, per censiti e non censiti.
 letture_rfid <- function(
   rfid,
   date,
@@ -110,19 +110,14 @@ letture_rfid <- function(
 ) {
   n <- length(date)
   censito <- presente == "Presente"
-  servizio_atteso <- rep_len(if (censito) servizio else atteso, n)
   dplyr::tibble(
     giorno_lettura = as.POSIXct(paste(date, "08:00:00"), tz = "UTC"),
     targa_veicolo = "AB123CD",
     matricola_veicolo = "VEH001",
     RFID = rfid,
     presente_a_database = presente,
-    servizio_atteso = servizio_atteso,
-    origine_servizio = ifelse(
-      is.na(servizio_atteso),
-      NA_character_,
-      if (censito) "Database" else "Calendario"
-    ),
+    servizio_transponder = if (censito) rep_len(servizio, n) else NA_character_,
+    servizio_atteso = rep_len(atteso, n),
     id_utenza = if (censito) utenza else NA_character_,
     latitudine = rep_len(lat, n),
     longitudine = rep_len(lon, n),

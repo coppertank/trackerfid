@@ -35,7 +35,7 @@ Per installare il pacchetto: `devtools::install()`, poi `trackerfid::run_app()`.
 
 ## Formato del file
 
-Il file deve contenere 9 campi obbligatori e può contenerne altri facoltativi, segnati nella tabella. L'ordine delle colonne e le maiuscole nei nomi non contano, eventuali altre colonne vengono ignorate.
+Il file è quello che scrive il passo 3 della [preparazione dei dati reali](#preparare-i-dati-reali). Deve contenere 9 campi obbligatori e può contenerne altri facoltativi, segnati nella tabella. L'ordine delle colonne e le maiuscole nei nomi non contano. Le colonne che l'app non usa vengono ignorate: tra quelle del passo 3, `giorno`, `id_giro`, `eseguito`, `frequenza`, `codice_categoria`, `stato_servizio`, `data_attivazione_contenitore` e `data_cessazione_contenitore`.
 
 | Campo | Tipo | Contenuto |
 |---|---|---|
@@ -44,44 +44,34 @@ Il file deve contenere 9 campi obbligatori e può contenerne altri facoltativi, 
 | `matricola_veicolo` | testo | Matricola aziendale del mezzo, in relazione 1:1 con la targa |
 | `RFID` | testo | Identificativo del chip, ripetuto a ogni lettura |
 | `presente_a_database` | testo | `Presente` oppure `Non Presente` |
-| `servizio_atteso` | testo | Servizio del contenitore: una colonna sola, per censiti e non censiti. Per un censito è quello del database (`SECCO`, `CARTA`, `VETRO`, `UMIDO`, `PLASTICA E METALLI`, `VERDE E RAMAGLIE`). Per un non censito viene dai censiti letti dallo stesso mezzo nella mezz'ora attorno e, se sono pochi, dal giro del calendario. Ha sempre i nomi del database: vedi [la tabella di conversione](#tipologie-di-servizio-e-icone). C'è per ogni lettura |
-| `origine_servizio` | testo | Facoltativo. Da dove viene `servizio_atteso`: `Database`, `Censiti` oppure `Calendario`. Vuoto dove manca il servizio. Se il file non lo riporta, l'app sa dire solo che il servizio di un censito viene dal database |
+| `servizio_transponder` | testo | Facoltativo. Servizio del contenitore secondo il database (`SECCO`, `CARTA`, `VETRO`, `UMIDO`, `PLASTICA E METALLI`, `VERDE E RAMAGLIE`), vuoto per i non censiti |
+| `servizio_atteso` | testo | Servizio che il giro del mezzo lasciava aspettare, con il nome del database: il giro `SECCO PAP` dà `SECCO`, vedi [la tabella di conversione](#tipologie-di-servizio-e-icone). Nei giri in cui non è chiaro quale rifiuto si raccolga, come `SERVIZI MERCATI`, è il servizio a database più frequente tra i censiti letti nel giro. C'è per ogni lettura |
 | `servizio_giro` | testo | Facoltativo. Giro che il calendario dava al mezzo, scritto come nel calendario, senza conversioni: `SECCO PAP`, non `SECCO`. Se manca vale `servizio_atteso` |
-| `coerenza` | testo | Facoltativo. `Coerente` se servizio atteso e giro sono dello stesso rifiuto, `Non coerente` altrimenti; vuoto se uno dei due manca. L'app lo ricalcola sempre, anche se il file lo contiene già |
+| `coerenza_servizio` | testo | Facoltativo. `SI` se il servizio a database e quello atteso sono dello stesso rifiuto, `NO` altrimenti; vuoto se uno dei due manca, come per ogni non censito. L'app lo ricalcola sempre, anche se il file lo contiene già |
 | `id_utenza` | testo | Utenza proprietaria, vuoto se non censito |
 | `latitudine` | numero | Latitudine in gradi decimali |
 | `longitudine` | numero | Longitudine in gradi decimali |
-| `volume_previsto` | numero | Facoltativo. Volume del contenitore in litri secondo il database, vuoto se non censito |
-| `numero_raccolte_annue_previste` | numero | Facoltativo. Raccolte previste in un anno, vuoto se non censito |
+| `volume` | numero | Facoltativo. Volume del contenitore in litri secondo il database, vuoto se non censito. Vale anche il nome `volume_previsto` |
+| `numero_raccolte_annue` | numero | Facoltativo. Raccolte previste in un anno, vuoto se non censito. Vale anche il nome `numero_raccolte_annue_previste` |
 | `comune_da_database` | testo | Facoltativo. Comune di servizio secondo il database, vuoto se non censito |
 | `comune_giro` | testo | Facoltativo. Comune in cui il calendario mandava il mezzo che ha fatto la lettura. C'è per ogni lettura |
-| `comune_lettura` | testo | Comune in cui cade il punto della lettura, dalla latitudine e dalla longitudine. Un punto fuori dai comuni serviti, ma entro 100 metri dal confine di uno di essi, prende il comune più vicino; oltre vale `FUORI SERVIZIO AZIENDA`. L'app lo ricalcola sempre dalla posizione, anche se il file lo contiene già |
-| `cantiere` | testo | Facoltativo. Cantiere del comune in cui cade la lettura; fuori dai comuni serviti, quello del comune del database |
+| `comune_lettura` | testo | Facoltativo. Comune in cui è stata fatta la lettura, come lo dà il sistema di localizzazione dei mezzi. Se manca, la lettura non ha un comune: l'app non lo ricava dalle coordinate |
+| `coerenza_comune` | testo | Facoltativo. Il comune di lettura a confronto con quello dichiarato: `Coerente`, `Fuori comune`, `Fuori giro` oppure `Coerenza ignota`, vedi [Comune di lettura](#formato-del-file). L'app lo ricalcola sempre, anche se il file lo contiene già |
+| `cantiere` | testo | Facoltativo. Cantiere del comune di lettura; fuori dai comuni serviti, quello del comune del database |
 
-**Giro e comune del giro.** Una lettura esiste solo se un mezzo passa durante un giro, e dal calendario dei mezzi si ricavano il servizio del giro e il suo comune. Per questo `servizio_giro`, `servizio_atteso` e `comune_giro` sono compilati per ogni lettura, anche per i bidoni censiti. La preparazione dei dati cerca il turno del mezzo in cui cade la lettura; se la lettura è fuori orario prende il turno più vicino di quel mezzo in quel giorno, e un turno che finisce dopo mezzanotte vale anche per il giorno dopo. `servizio_giro` è il giro di quel turno, con il nome del calendario: resta `SECCO PAP`, perché il secco porta a porta va distinto dagli altri giri del secco. `servizio_atteso` è invece il servizio del contenitore: per un censito quello del database; per un non censito lo stesso giro con il nome del database, `SECCO`, salvo quanto segue. Il calendario dice però che cosa era previsto, non che cosa è successo: un mezzo può sostituirne un altro e fare un giro che non era il suo.
+**Giro e comune del giro.** Una lettura esiste solo se un mezzo passa durante un giro, e dal calendario dei mezzi si ricavano il servizio del giro e il suo comune. Per questo `servizio_giro`, `servizio_atteso` e `comune_giro` sono compilati per ogni lettura, anche per i bidoni censiti. La preparazione dei dati cerca il turno del mezzo in cui cade la lettura; se la lettura è fuori orario prende il turno più vicino di quel mezzo in quel giorno, e un turno che finisce dopo mezzanotte vale anche per il giorno dopo. `servizio_giro` è il giro di quel turno, con il nome del calendario: resta `SECCO PAP`, perché il secco porta a porta va distinto dagli altri giri del secco. Il calendario dice però che cosa era previsto, non che cosa è successo: un mezzo può sostituirne un altro e fare un giro che non era il suo.
 
-**Servizio atteso dei non censiti.** Un giro raccoglie un rifiuto solo. Per ogni lettura di un non censito, la preparazione dei dati guarda i contenitori censiti letti dallo stesso mezzo nei 30 minuti prima e dopo: se sono almeno 5, e almeno l'80% ha lo stesso servizio, quello è il servizio atteso della lettura. Altrimenti resta il servizio del calendario: i censiti sono pochi, oppure misti, come vicino al momento in cui il mezzo passa da un giro all'altro. Ogni censito vota una volta al giorno. `servizio_giro` non cambia: resta il giro del calendario, che la scheda «Ricerca Giro» mostra come giro previsto. Per un censito il servizio atteso è sempre quello del database: il voto non lo tocca. Un censito che a database non ha un servizio, come un sacchetto, tiene quello del giro. Le tre soglie sono argomenti di `associa_servizio_atteso_dai_censiti()`, indicati nel passo 3.
+**Tre servizi per ogni lettura.** `servizio_transponder` è il servizio del contenitore secondo il database: c'è solo per i censiti. `servizio_atteso` è il servizio che il giro lasciava aspettare, con il nome del database, e c'è per tutti. `servizio_giro` è il giro com'è scritto nel calendario. Per un bidone non censito il servizio si stima dal servizio atteso delle sue letture: vedi [la mappa principale](#mappa-principale).
 
-**Origine del servizio.** Il servizio del contenitore sta in una colonna sola, `servizio_atteso`, e `origine_servizio` dice quanto fidarsene:
+**Giri dei servizi.** Nei giri `SERVIZI MERCATI` e `SERV.MANIFESTAZIONE` non è chiaro quale rifiuto si raccolga. Un mezzo che non è uno scarrabile ne raccoglie però uno solo alla volta: il servizio atteso di quelle letture è il servizio a database più frequente tra i censiti letti nello stesso giro, nello stesso giorno. Se nessun censito ha un servizio, o due servizi sono ugualmente frequenti, resta il giro, con il nome della tipologia: `SERVIZI`. L'elenco di questi giri sta in `giri_servizio_dai_censiti()`.
 
-| Valore | Da dove viene il servizio atteso |
-|---|---|
-| `Database` | È il servizio del contenitore nel database aziendale: un dato certo. Lo hanno i censiti |
-| `Censiti` | È il servizio dei contenitori censiti letti dallo stesso mezzo nella mezz'ora attorno: una stima che viene da quello che il mezzo ha raccolto davvero |
-| `Calendario` | È il giro che il calendario dava al mezzo, con il nome del database: una stima che viene da quello che il mezzo doveva fare. Lo ha anche un censito senza servizio a database, come un sacchetto |
+**Coerenza.** Il campo `coerenza_servizio` dice se il servizio a database e il servizio atteso di una lettura sono dello stesso rifiuto. Si confrontano le tipologie, non i nomi. Un contenitore della carta letto in un giro del secco non è coerente: è stato letto in mezzo a contenitori di un altro rifiuto, oppure il mezzo non stava facendo il giro del calendario. Un non censito non ha un servizio a database, quindi la sua coerenza manca. I giri che non raccolgono un rifiuto, come `PULIZIA TERRIT.`, fanno tipologia a sé: un contenitore censito letto in uno di quei giri risulta non coerente.
 
-Il servizio del database non ha più una colonna sua: è il servizio atteso delle letture con origine `Database`. La colonna `servizio_transponder` dei file preparati in passato viene ancora letta: per i censiti vale quel servizio, con origine `Database`, e nei dati caricati la colonna non resta. Quei file non dicono però se il servizio di un non censito viene dai censiti o dal calendario: per saperlo vanno rigenerati con il passo 3.
+**Comune di lettura.** Il comune in cui una lettura è stata fatta arriva nel file, dal sistema di localizzazione dei mezzi, ed è già quello esatto del punto: l'app non lo ricalcola dalle coordinate, e una lettura senza comune non ne ha uno. Un comune di lettura che la tabella dei comuni non contiene conta come fuori dai comuni serviti, e l'app lo segnala con un avviso. Per un bidone non censito il comune è quello in cui viene letto più spesso. Per un bidone censito vale il comune del database.
 
-**Coerenza.** Il campo `coerenza` dice se il servizio atteso e il giro di una lettura sono dello stesso rifiuto. Si confrontano le tipologie, non i nomi: un servizio atteso `SECCO` e un giro `SECCO PAP` concordano.
+**Coerenza del comune.** Il campo `coerenza_comune` confronta il comune di lettura con il comune dichiarato. Per un bidone censito il comune dichiarato è quello del database: se il comune di lettura è diverso la lettura è `Fuori comune`, di solito un bidone spostato. Per un non censito è il comune del giro: se il comune di lettura è diverso la lettura è `Fuori giro`, di solito un mezzo che non faceva il giro del calendario. Se i due comuni coincidono la lettura è `Coerente`. Se manca uno dei due la coerenza è `Coerenza ignota`: succede ai sacchetti censiti, che a database non hanno un comune, e alle letture senza comune di lettura. I nomi si confrontano senza badare a maiuscole, accenti e apostrofi. Il confronto non ha tolleranza: una lettura fatta pochi metri oltre il confine del comune del database è fuori comune.
 
-- **Censito.** Il servizio atteso è quello del contenitore. Un contenitore della carta letto in un giro del secco non è coerente: è stato letto in mezzo a contenitori di un altro rifiuto.
-- **Non censito.** Non è coerente la lettura in cui il servizio atteso viene dai censiti letti dallo stesso mezzo ed è diverso dal giro: il mezzo raccoglieva un rifiuto diverso da quello del calendario.
-
-Se manca il servizio atteso o il giro la coerenza non si può dire, e il campo resta vuoto. I giri che non raccolgono un rifiuto, come `PULIZIA TERRIT.`, fanno tipologia a sé: un contenitore censito letto in uno di quei giri risulta non coerente.
-
-**Comune di lettura.** Il comune in cui una lettura è stata fatta viene quindi dalla posizione, non dal calendario. `comune_lettura` è il comune servito il cui confine contiene il punto. Una lettura fatta poco fuori dal territorio, entro 100 metri dal confine di un comune servito, non è una lettura fuori servizio: di solito è l'errore del GPS, o un bidone su una strada di confine, e prende il comune servito più vicino. Le letture più lontane, per un mezzo fuori zona o per una posizione GPS sbagliata, hanno il valore `FUORI SERVIZIO AZIENDA`: basta un filtro su quel valore per toglierle. I 100 metri sono un margine a parte rispetto al chilometro di tolleranza con cui si riconoscono le letture fuori comune e fuori giro. Per un bidone non censito il comune è quello in cui viene letto più spesso. Per un bidone censito vale il comune del database, e la differenza con il comune di lettura è segnalata come «fuori comune».
-
-**Comuni e cantieri.** La tabella `inst/extdata/comuni_cantieri.csv` elenca i 66 comuni serviti e il cantiere di ognuno: `ASIAGO`, `BASSANO`, `CAMPOSAMPIERO`, `RUBANO`. I nomi dei comuni del file sono riportati alla grafia della tabella, senza badare a maiuscole, accenti e apostrofi. Il comune usato da filtri, bolle e statistiche è quello in cui cade il punto della lettura, trovato dai confini dei comuni, con il margine di 100 metri per i punti appena fuori dal territorio; se il punto è più lontano vale quello del database, per i censiti. Un non censito letto fuori dai comuni serviti non ha un comune né un cantiere: nei filtri sta sotto «Non assegnato». I report e la tabella dei cluster danno a ogni bidone un comune solo: quello del database per un censito, quello in cui è letto più spesso per un non censito. Il cantiere viene ricalcolato dal comune secondo la tabella: quello scritto nel file vale solo per i comuni che la tabella non contiene, segnalati con un avviso. La colonna `comune` dei file meno recenti vale come `comune_da_database`.
+**Comuni e cantieri.** La tabella `inst/extdata/comuni_cantieri.csv` elenca i 66 comuni serviti e il cantiere di ognuno: `ASIAGO`, `BASSANO`, `CAMPOSAMPIERO`, `RUBANO`. I nomi sono scritti come nei dati aziendali, con l'accento: `ROSÀ`. I nomi dei comuni del file sono riportati alla grafia della tabella, senza badare a maiuscole, accenti e apostrofi. Il comune usato da filtri, bolle e statistiche è il comune di lettura, se è tra i comuni serviti; altrimenti quello del database, per i censiti. Un non censito letto fuori dai comuni serviti non ha un comune né un cantiere: nei filtri sta sotto «Non assegnato». I report e la tabella dei cluster danno a ogni bidone un comune solo: quello del database per un censito, quello in cui è letto più spesso per un non censito. Il cantiere viene ricalcolato dal comune secondo la tabella: quello scritto nel file vale solo per i comuni che la tabella non contiene, segnalati con un avviso. La colonna `comune` dei file meno recenti vale come `comune_da_database`.
 
 Cosa viene accettato:
 
@@ -98,8 +88,8 @@ RFID e utenze sono sempre letti come testo, quindi gli zeri iniziali si conserva
 
 Al caricamento l'app controlla il file e mostra l'esito sotto il campo di caricamento.
 
-- **Errori, il file viene rifiutato**: colonne mancanti, date non riconoscibili, coordinate non numeriche o fuori scala, valori di `presente_a_database` diversi dai due ammessi, valori di `origine_servizio` diversi dai tre ammessi. Il messaggio indica il campo e le righe del file coinvolte.
-- **Avvisi, il file viene caricato**: righe prive di un campo essenziale (data, RFID, stato, coordinate), che vengono scartate; letture "Non Presente" che riportano comunque il servizio del database o un'utenza; relazione targa/matricola non univoca; colonne facoltative assenti, nel qual caso le informazioni che ne dipendono restano vuote.
+- **Errori, il file viene rifiutato**: colonne mancanti, date non riconoscibili, coordinate non numeriche o fuori scala, valori di `presente_a_database` diversi dai due ammessi. Il messaggio indica il campo e le righe del file coinvolte.
+- **Avvisi, il file viene caricato**: righe prive di un campo essenziale (data, RFID, stato, coordinate), che vengono scartate; letture "Non Presente" che riportano comunque `servizio_transponder` o un'utenza; comuni di lettura, del database o dei giri che la tabella dei comuni non contiene; relazione targa/matricola non univoca; colonne facoltative assenti, nel qual caso le informazioni che ne dipendono restano vuote.
 
 ### Letture storiche
 
@@ -114,7 +104,7 @@ Si carica dal secondo campo della sezione di caricamento. Eventuali altre colonn
 
 ## Come si usa
 
-La barra laterale a sinistra, richiudibile dal pulsante in alto, contiene il caricamento dei file, il periodo di analisi, il dettaglio del bidone selezionato e i controlli della scheda aperta.
+La barra laterale a sinistra, richiudibile dal pulsante in alto, contiene il caricamento dei file, il periodo di analisi, il dettaglio del bidone selezionato e i controlli della scheda aperta. I filtri della mappa principale stanno invece sopra la mappa.
 
 ### Periodo di analisi
 
@@ -135,28 +125,28 @@ Una bolla riporta il numero dei suoi bidoni e la percentuale di censiti, con gli
 
 **Confini dei comuni.** Tutte le mappe disegnano i confini dei comuni serviti, con un bordo tratteggiato e un riempimento appena accennato nel colore del cantiere. La legenda riporta il colore di ogni cantiere. I confini non rispondono al mouse: click e passaggi arrivano alla mappa e ai marker.
 
-I filtri agiscono su cantiere, comune, posizione, stato a database, servizio atteso, giro e coerenza. Vengono applicati prima di scegliere l'ultima lettura. Le voci elencano solo i valori presenti nel periodo. Sotto i filtri, il riquadro delle statistiche si aggiorna a ogni modifica e riporta anche RFID e letture di ogni cantiere.
+**Filtri.** Sopra la mappa, una riga di menu a discesa: Cantiere, Comune, Coerenza comune, Stato database, Servizio, Giro, Coerenza servizio e il pulsante Reset. Un click su un menu apre le sue caselle, che restano visibili mentre si spuntano; un click fuori lo chiude. Quando qualche voce di un menu è tolta, il pulsante diventa verde e dice quante voci restano, ad esempio «Servizio 7/8». I filtri vengono applicati prima di scegliere l'ultima lettura. Le voci elencano solo i valori presenti nel periodo. Il riquadro delle statistiche, nella barra laterale, si aggiorna a ogni modifica e riporta anche RFID e letture di ogni cantiere.
 
-**Stato a database e servizi.** Lo stato a database toglie o rimette tutti i bidoni «Presente» o tutti i «Non Presente», e vale insieme a tutti gli altri filtri: con ogni elenco si possono guardare i soli censiti, i soli non censiti, o tutti. I servizi stanno in due elenchi.
+**Stato a database e servizi.** Lo stato a database toglie o rimette tutti i bidoni «Presente» o tutti i «Non Presente», e vale insieme a tutti gli altri filtri: con ogni elenco si possono guardare i soli censiti, i soli non censiti, o tutti. I servizi stanno in due menu.
 
-- **Servizio atteso**: il servizio del contenitore, lo stesso che dà l'icona al marker. Per un bidone censito è quello del database; per un bidone non censito è il servizio stimato dalle sue letture. Per vedere i contenitori della carta basta la voce `CARTA`; per i soli censiti, in più, lo stato «Presente».
-- **Includi Non Censiti con stima incerta (?)**: riguarda i bidoni non censiti per cui nessuna tipologia di rifiuto raggiunge l'80% delle letture. Sono i marker con il punto di domanda.
-- **Servizio giro**: il giro del calendario dei mezzi, con il suo nome. Per vedere i soli bidoni letti dai giri del secco porta a porta basta «Nessuno» e poi la voce `SECCO PAP`.
+- **Servizio**: il servizio del contenitore, lo stesso che dà l'icona al marker. Per un bidone censito è quello del database, `servizio_transponder`; per un bidone non censito è il servizio stimato dal servizio atteso delle sue letture. Per vedere i contenitori della carta basta la voce `CARTA`; per i soli censiti, in più, lo stato «Presente».
+- **Non censiti con stima incerta (?)**: nello stesso menu, riguarda i bidoni non censiti per cui nessuna tipologia di rifiuto raggiunge l'80% delle letture. Sono i marker con il punto di domanda.
+- **Giro**: il giro del calendario dei mezzi, con il suo nome. Per vedere i soli bidoni letti dai giri del secco porta a porta basta «Nessuno» e poi la voce `SECCO PAP`.
 
-Accanto al titolo di ogni elenco, «Tutti» e «Nessuno» spuntano o tolgono in un colpo tutte le voci: per vedere un solo servizio basta «Nessuno» e poi la voce che interessa. «Nessuno» sul servizio atteso toglie anche i non censiti con la stima incerta. Le statistiche contano con gli stessi criteri: i censiti per servizio atteso, cioè quello del database, i non censiti per servizio stimato e a parte quelli con la stima incerta, poi i bidoni per giro.
+In cima a ogni menu dei servizi, «Tutti» e «Nessuno» spuntano o tolgono in un colpo tutte le voci: per vedere un solo servizio basta «Nessuno» e poi la voce che interessa. «Nessuno» sul servizio toglie anche i non censiti con la stima incerta. Le statistiche contano con gli stessi criteri: i censiti per servizio a database, i non censiti per servizio stimato e a parte quelli con la stima incerta, poi i bidoni per giro.
 
-**Coerenza.** Il «Filtro Coerenza Servizio» ha due voci, «Coerente» e «Non coerente»: per vedere i soli bidoni con letture non coerenti si toglie la prima. Le letture di cui la coerenza non si può dire stanno con quelle coerenti. Le statistiche contano i bidoni non coerenti. Il popup di una lettura non coerente riporta servizio atteso e giro, ad esempio «atteso CARTA, giro SECCO PAP», e il dettaglio del bidone dice quante letture non sono coerenti e quali sono le più recenti. La regola è descritta in [Formato del file](#formato-del-file).
+**Coerenza del servizio.** Il menu «Coerenza servizio» ha due voci, «Coerente» e «Non coerente»: per vedere i soli bidoni con letture non coerenti si toglie la prima. Le letture di cui la coerenza non si può dire, come quelle dei non censiti, stanno con quelle coerenti. Le statistiche contano i bidoni non coerenti. Il popup di una lettura non coerente riporta il servizio a database e quello atteso, ad esempio «a database CARTA, atteso SECCO», e il dettaglio del bidone dice quante letture non sono coerenti e quali sono le più recenti. La regola è descritta in [Formato del file](#formato-del-file).
 
-**Cantiere e comune.** I cantieri si spuntano come i servizi. La voce «Non assegnato» raccoglie le letture senza cantiere. I comuni si scelgono da un elenco, che propone quelli dei cantieri spuntati, divisi per cantiere: se ne possono scegliere più di uno, anche di cantieri diversi. Senza comuni scelti valgono tutti. Un comune scelto si toglie con la crocetta accanto al nome. Vale il comune in cui cade la lettura. Quando si cambiano cantieri o comuni la mappa si sposta sull'area scelta. I due filtri compaiono solo se il file ha le colonne geografiche.
+**Cantiere e comune.** I cantieri si spuntano come i servizi. La voce «Non assegnato» raccoglie le letture senza cantiere. I comuni si scelgono da un elenco a discesa nella stessa riga, che propone quelli dei cantieri spuntati, divisi per cantiere: se ne possono scegliere più di uno, anche di cantieri diversi. Senza comuni scelti valgono tutti. Un comune scelto si toglie con la crocetta accanto al nome. Vale il comune in cui è stata fatta la lettura. Quando si cambiano cantieri o comuni la mappa si sposta sull'area scelta. I due filtri compaiono solo se il file ha le colonne geografiche.
 
 **Con molti bidoni.** Da vicino la mappa riceve tutti i bidoni fino a 10.000. Oltre, per restare veloce, da zoom 15 mostra una bolla per zona e i singoli bidoni solo quando quelli dell'area inquadrata tornano sotto il limite. Le bolle per cantiere e per comune valgono con qualsiasi numero di bidoni.
 
-**Posizione e comuni dichiarati.** Ogni lettura ha una posizione, da cui viene il comune di lettura, e fino a due comuni dichiarati: quello del database, per i censiti, e quello del giro del mezzo, dal calendario. L'app li confronta con la posizione, con una tolleranza di un chilometro dal confine.
+**Coerenza del comune.** Il menu «Coerenza comune» segue il campo `coerenza_comune` e ha quattro voci: «Coerente», «Fuori comune», «Fuori giro» e «Coerenza ignota».
 
-- **Fuori comune**: un censito letto a più di un chilometro dal comune del database. Di solito è un bidone spostato.
-- **Fuori giro**: una lettura a più di un chilometro dal comune del giro. Di solito il mezzo non stava facendo il giro del calendario. Vale per censiti e non censiti.
+- **Fuori comune**: un censito letto in un comune diverso da quello del database. Di solito è un bidone spostato.
+- **Fuori giro**: un non censito letto in un comune diverso da quello del giro. Di solito il mezzo non stava facendo il giro del calendario. Un censito non è mai fuori giro: il suo comune si confronta con quello del database.
 
-Una lettura può essere fuori comune e fuori giro insieme. Il «Filtro Posizione» riguarda la posizione, non i servizi, e ha tre voci, «Regolare», «Fuori comune» e «Fuori giro»: per vedere le sole letture fuori giro si tolgono le altre due. Le statistiche contano i bidoni fuori comune e fuori giro. Sul marker le due incongruenze compaiono come bollini scuri con una lettera, `C` e `G`, e il popup dice dove era dichiarata la lettura e dove è stata fatta.
+Per vedere le sole letture fuori giro si tolgono le altre tre voci. Le statistiche contano i bidoni fuori comune, fuori giro e di coerenza ignota. Sul marker le due incongruenze compaiono come bollini scuri con una lettera, `C` e `G`, e il popup dice dove era dichiarata la lettura e dove è stata fatta.
 
 ### Ricerca RFID
 
@@ -164,12 +154,12 @@ Si inseriscono uno o più RFID, separati da virgola o a capo, e si preme «Cerca
 
 ### Ricerca Giro
 
-Mostra che cosa ha letto un mezzo in un giorno, e dove. Nella barra laterale si scelgono il mezzo, oppure tutti, e un giorno o un intervallo di giorni; all'apertura la ricerca è sull'ultimo giorno con letture. Due caselle restringono la ricerca alle sole letture fuori giro o fuori comune.
+Mostra che cosa ha letto un mezzo in un giorno, e dove. Nella barra laterale si scelgono il mezzo, oppure tutti, e un giorno o un intervallo di giorni; all'apertura la ricerca è sull'ultimo giorno con letture. Due caselle restringono la ricerca alle sole letture fuori giro o fuori comune, secondo il campo `coerenza_comune`.
 
-- **Tabella dei giri.** Una riga per giorno, mezzo, giro previsto e comune del giro: che cosa doveva fare il mezzo secondo il calendario, a che ora ha letto, quante letture e quanti bidoni, quante letture fuori giro e fuori comune, e in quale comune cadono davvero le letture. I giri con più letture fuori giro stanno in cima. Un click su una riga mostra sulla mappa le sole letture di quel giro; un secondo click le rimette tutte.
+- **Tabella dei giri.** Una riga per giorno, mezzo, giro previsto e comune del giro: che cosa doveva fare il mezzo secondo il calendario, a che ora ha letto, quante letture e quanti bidoni, quante letture fuori giro e fuori comune, e in quale comune sono state fatte davvero le letture. I giri con più letture fuori giro stanno in cima. Un click su una riga mostra sulla mappa le sole letture di quel giro; un secondo click le rimette tutte.
 - **Mappa.** Tutte le letture trovate, una per marker, senza cluster. Il confine dei comuni in cui i giri dovevano lavorare è messo in evidenza con un contorno scuro, e la mappa inquadra insieme letture e comuni: se il mezzo ha letto altrove si vede subito. Con più di sei comuni, come in una ricerca su tutti i mezzi, il contorno non viene disegnato. Oltre 3.000 letture la mappa disegna per prime quelle fuori giro o fuori comune.
 
-Per trovare i giri sbagliati di un periodo: «Tutti i mezzi», l'intervallo di giorni, la casella «Fuori giro». Un mezzo che ha fatto un giro diverso dal previsto ha molte letture fuori giro nello stesso giorno. Un click su un marker apre il dettaglio del bidone.
+Per trovare i giri sbagliati di un periodo si confrontano, nella tabella, il comune del giro e quello in cui sono state fatte le letture. La casella «Fuori giro» trova i non censiti letti fuori dal comune del giro: i censiti si confrontano con il comune del database, e un mezzo che ha fatto un giro diverso dal previsto tra contenitori censiti non ha letture fuori giro. Un click su un marker apre il dettaglio del bidone.
 
 ### Ricerca Utenza
 
@@ -187,8 +177,8 @@ Entrambe le ricerche ignorano la differenza tra maiuscole e minuscole.
 | Icona nel marker, bidone non censito | Servizio stimato dai giri: quello prevalente, se almeno l'80% delle letture concorda sulla tipologia. Altrimenti punto di domanda: la stima è incerta. Il marker resta rosso |
 | Colore del cluster | Percentuale di censiti: rosso 0%, giallo 50%, verde 100% |
 | Numeri nel cluster | Bidoni raggruppati e percentuale di censiti |
-| Bollino scuro con `C` | Lettura fuori comune: censito letto a più di un chilometro dal comune del database |
-| Bollino scuro con `G` | Lettura fuori giro: a più di un chilometro dal comune del giro del mezzo |
+| Bollino scuro con `C` | Lettura fuori comune: censito letto in un comune diverso da quello del database |
+| Bollino scuro con `G` | Lettura fuori giro: non censito letto in un comune diverso da quello del giro del mezzo |
 
 Lo stato è indicato sia dal colore sia dalla forma, così resta leggibile anche per chi non distingue rosso e verde.
 
@@ -196,9 +186,9 @@ Per i non censiti la quota dell'80% si calcola per tipologia, su tutte le lettur
 
 ### Tipologie di servizio e icone
 
-Il calendario dei mezzi chiama i giri con nomi suoi (PAP = porta a porta), diversi da quelli del database. La tabella qui sotto è la **tabella di conversione**: con questa la preparazione dei dati ricava dal giro il servizio atteso di un non censito, con il nome del database. Il giro resta in `servizio_giro` con il nome del calendario, senza conversioni. La stessa tabella serve alla coerenza, che confronta le tipologie. I giri che non raccolgono un rifiuto tengono il loro nome.
+Il calendario dei mezzi chiama i giri con nomi suoi (PAP = porta a porta), diversi da quelli del database. La tabella qui sotto è la **tabella di conversione**: con questa la preparazione dei dati ricava dal giro il servizio atteso, con il nome della sua tipologia. Il giro resta in `servizio_giro` con il nome del calendario, senza conversioni. La stessa tabella serve alla coerenza, che confronta le tipologie.
 
-| Tipologia | Icona | Nome uniforme, quello del database | Nomi del calendario convertiti |
+| Tipologia | Icona | Nome uniforme | Nomi convertiti |
 |---|---|---|---|
 | Secco | bidone | `SECCO` | `SECCO PAP`, `SCARICO SECCO`, `SECCO CONT.STRADALI` |
 | Carta | foglio | `CARTA` | `CARTA CONT.STRADALI`, `CARTA/CARTONE PAP`, `SCARICO CARTA-CART.` |
@@ -207,15 +197,14 @@ Il calendario dei mezzi chiama i giri con nomi suoi (PAP = porta a porta), diver
 | Plastica e metalli | riciclo | `PLASTICA E METALLI` | `PLAST.CONT.STRADALI`, `PLASTICA PAP`, `SCARICO PLASTICA` |
 | Verde e ramaglie | albero | `VERDE E RAMAGLIE` | `VERDE PAP`, `SCARICO VERDE` |
 | Sacchetti | sacco | `SACCHETTI`, assegnato dall'app | |
-| Assistente servizi | operatore | `ASSISTENTE SERVIZI` | |
-| Pulizia territorio | scopa | `PULIZIA TERRIT.` | |
-| Servizi mercati | negozio | `SERVIZI MERCATI` | |
+| Pulizia territorio | scopa | `PULIZIA TERRITORIO` | `PULIZIA TERRIT.` |
+| Servizi | negozio | `SERVIZI` | `SERVIZI MERCATI`, `SERV.MANIFESTAZIONE` |
 
-La tabella sta in un punto solo, `tipologie_servizio()` in `R/utils_styling.R`: il nome uniforme di una tipologia è il primo del suo elenco `servizi`, gli altri sono i nomi che vengono convertiti. La restituisce `conversione_servizi()` e la applica `uniforma_servizio()`. Un nome del calendario che la tabella non contiene resta com'è, e la preparazione dei dati lo segnala con un avviso: va aggiunto all'elenco della tipologia giusta. L'app riconosce i nomi del calendario e dà loro l'icona della tipologia.
+La tabella sta in un punto solo, `tipologie_servizio()` in `R/utils_styling.R`: il nome uniforme è il nome della tipologia, in maiuscolo; per le sei tipologie di rifiuto è anche il nome del database. La restituisce `conversione_servizi()` e la applica `uniforma_servizio()`. Un nome del calendario che la tabella non contiene resta com'è, e la preparazione dei dati lo segnala con un avviso: va aggiunto all'elenco della tipologia giusta. L'app riconosce i nomi del calendario e dà loro l'icona della tipologia.
 
-Un nome non previsto viene comunque caricato e mostrato con il punto di domanda.
+Un nome non previsto viene comunque caricato e mostrato con il punto di domanda. È il caso di `ASSISTENTE SERVIZI`, che non ha più una tipologia.
 
-**Sacchetti.** I sacchetti non hanno una tipologia di rifiuto a database. L'app li riconosce dal codice RFID, che ha 24 caratteri e inizia per `00BD`, mentre quello di un bidone ne ha 10, e li mette nella tipologia «Sacchetti», con la sua icona. Nel filtro sul servizio atteso i sacchetti hanno la loro voce, censiti o no: per un sacchetto non viene stimato nessun servizio dai giri. Il dettaglio riporta i giri che lo hanno letto. Un sacchetto è monouso: viene letto una volta sola, quando il mezzo lo raccoglie. Per questo si vede sulla mappa e nelle ricerche, ma resta fuori dall'analisi dei cluster, che riguarda i bidoni. Il dataset di esempio contiene 12 sacchetti.
+**Sacchetti.** I sacchetti non hanno una tipologia di rifiuto a database. L'app li riconosce dal codice RFID, che ha 24 caratteri e inizia per `00BD`, mentre quello di un bidone ne ha 10, e li mette nella tipologia «Sacchetti», con la sua icona. Nel filtro sul servizio i sacchetti hanno la loro voce, censiti o no: per un sacchetto non viene stimato nessun servizio dai giri. Il dettaglio riporta i giri che lo hanno letto. Un sacchetto è monouso: viene letto una volta sola, quando il mezzo lo raccoglie. Per questo si vede sulla mappa e nelle ricerche, ma resta fuori dall'analisi dei cluster, che riguarda i bidoni. Il dataset di esempio contiene 12 sacchetti.
 
 **Aggiungere una tipologia o cambiare un'icona.** Si modifica solo la funzione `tipologie_servizio()` in `R/utils_styling.R`. Per un nuovo nome basta aggiungerlo, in maiuscolo, al vettore `servizi` della tipologia giusta. Per una nuova tipologia si aggiunge una voce con nome, icona [Font Awesome](https://fontawesome.com/icons), colore ed emoji. Marker, legenda, filtri e statistiche si aggiornano da soli.
 
@@ -224,15 +213,15 @@ Un nome non previsto viene comunque caricato e mostrato con il punto di domanda.
 Un click su un marker apre il popup con i dati della lettura e, nella barra laterale, l'analisi di tutta la storia del bidone:
 
 - **censito con servizio stabile**: conferma della tipologia;
-- **cambio di servizio**: cronologia dei passaggi, con il servizio attuale. Contano i servizi del database, cioè le letture con origine `Database`;
-- **non censito**: stima percentuale del servizio, ricavata dal servizio atteso delle sue letture: quello dei contenitori censiti letti dallo stesso mezzo e, dove sono pochi, quello del calendario dei mezzi. Se nessuna lettura ha un servizio atteso, l'indicazione che non ci sono elementi per stimarlo;
+- **cambio di servizio**: cronologia dei passaggi del servizio a database, con il servizio attuale;
+- **non censito**: stima percentuale del servizio, ricavata dal servizio atteso delle sue letture, cioè dai giri che lo hanno letto. Se nessuna lettura ha un servizio atteso, l'indicazione che non ci sono elementi per stimarlo;
 - **cambio di proprietario**: cronologia delle utenze, mostrata in aggiunta ai casi precedenti;
-- **letture non coerenti**: quante letture hanno il servizio atteso diverso dal giro, con le più recenti;
+- **letture non coerenti**: quante letture hanno il servizio a database diverso da quello atteso dal giro, con le più recenti;
 - **letture per anno**: un istogramma con una colonna per anno, dalla prima lettura del bidone all'ultimo anno dei dati. Non dipende dal periodo di analisi. Se sono state caricate le letture storiche, le colonne distinguono il sistema precedente dalle antenne e un anno senza letture resta vuoto, con lo zero in rosso.
 
 Il dettaglio segnala anche le letture fuori dai comuni dichiarati: quante sono fuori dal comune del database e dove sono state fatte, quante sono fuori giro, con le cinque più recenti.
 
-Il popup riporta il servizio atteso con accanto la sua origine, «da database», «dai censiti letti dallo stesso mezzo» oppure «dal calendario dei mezzi», il giro del calendario, il comune a database, per un censito, il comune di lettura, il comune del giro se è diverso da quello di lettura, il cantiere, e una riga per ogni incongruenza: «a database LIMENA, letto a CITTADELLA».
+Il popup riporta il servizio a database, per un censito, il servizio atteso dal giro e il giro del calendario, il comune a database, per un censito, il comune di lettura, il comune del giro se è diverso da quello di lettura, il cantiere, e una riga per ogni incongruenza: «a database LIMENA, letto a CITTADELLA».
 
 ### Analisi Cluster Spaziale
 
@@ -309,7 +298,7 @@ Il CSV con le letture vere si produce dentro il repository, con gli script elenc
 | 3 | `data-raw/03_crea_letture_app.R` | Applica le regole di preparazione e scrive `data-raw/output/letture_app.csv`, da caricare nell'app |
 | 4, facoltativo | `data-raw/04_crea_letture_storiche.R` | Legge le letture precedenti alle antenne da `data-raw/origine/letture_storiche.csv`, porta i codici RFID allo stesso formato del passo 3 e scrive `data-raw/output/letture_storiche.csv` |
 
-Il passo 3 esegue da solo anche il passo 2. Le regole sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune del database arriva dalla colonna `comune_servizio` dell'anagrafica dei contenitori. Il comune del giro, `comune_giro`, arriva dalla colonna `comune` del calendario. Il comune di lettura, `comune_lettura`, non viene dal calendario: è il comune in cui cade il punto della lettura, calcolato con gli stessi confini che usa l'app, oppure `FUORI SERVIZIO AZIENDA`. I nomi dei servizi del calendario sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone). Il servizio atteso dei non censiti viene poi dai censiti letti dallo stesso mezzo, con `associa_servizio_atteso_dai_censiti()`. I nomi dei comuni si correggono nel passo 2: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso. Il cantiere viene dalla tabella dei comuni del pacchetto, per il comune in cui cade la lettura.
+Il passo 3 esegue da solo anche il passo 2. Le regole sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune di lettura arriva con le letture delle antenne: il passo 2 lo ricava dal campo `IndirizzoLocalizzazione` e, con la tabella dei comuni del pacchetto, ne trova il cantiere. Il servizio, l'utenza e gli altri dati del contenitore vengono dall'anagrafica dei contenitori attiva nel giorno della lettura; il comune del database dalla sua colonna `comune_servizio`. Il giro, il suo comune, `comune_giro`, e i campi `id_giro` ed `eseguito` vengono dal turno del calendario in cui cade la lettura. La coerenza del comune, `coerenza_comune`, confronta il comune di lettura con quello del database o del giro, con la stessa funzione che l'app usa al caricamento. I nomi dei giri sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone), e danno il servizio atteso. I nomi dei comuni si correggono nel passo 2: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso.
 
 Il passo 4 va adattato al file di origine: in cima allo script si indicano il nome del file e i nomi delle due colonne. Alla fine riporta quanti RFID delle antenne compaiono anche nelle letture storiche: se sono pochi, i codici dei due file hanno con ogni probabilità formati diversi.
 
@@ -329,7 +318,7 @@ Un anno di letture con le antenne può arrivare a un paio di milioni di righe. L
 
 | Operazione | Tempo |
 |---|---|
-| Lettura e controllo del file, compreso il comune di ogni lettura | circa 6 s, 4 s da Parquet |
+| Lettura e controllo del file, compresa la coerenza del comune di ogni lettura | circa 6 s, 4 s da Parquet |
 | Cambio di un filtro, con la mappa ridisegnata | da 0,3 a 0,5 s |
 | Zoom o spostamento della mappa | da 0,3 a 0,5 s, compreso un quarto di secondo di attesa che il movimento finisca |
 | Dettaglio di un bidone | 0,1 s |
@@ -353,11 +342,11 @@ Per ripetere le misure sul proprio computer: `Rscript dev/misura_prestazioni.R <
 
 `inst/extdata/sample_rfid_dataset.csv` contiene 6.475 letture di 251 RFID, cioè 239 bidoni e 12 sacchetti, da ottobre 2024 a dicembre 2025, con cinque mezzi e 50 utenze. I bidoni stanno nel territorio servito, tra l'Altopiano di Asiago e i Colli Euganei, dentro i confini dei loro comuni. Il 2025 è completo, il 2024 parziale: serve a provare la selezione dell'anno. Ogni bidone viene letto a cadenza fissa dal giro del proprio servizio, come con un calendario di raccolta reale. Ogni giro del calendario, cioè un turno in un giorno della settimana, lavora in un comune, e i suoi bidoni stanno lì.
 
-Come nei dati reali, ogni lettura ha il servizio del giro del mezzo che l'ha fatta, con il nome del database, e il comune di quel giro, `comune_giro`. Il comune di lettura, `comune_lettura`, viene dalla posizione: nell'esempio nessuna lettura è fuori dai comuni serviti, e una su cinque è fatta in un comune diverso da quello del giro, quasi sempre per i due tag anomali. I bidoni censiti hanno anche il comune del database, e il cantiere segue dal comune in cui cade la lettura. I comuni in cui lavorano i giri sono 32, nei quattro cantieri. I bidoni non censiti sono 37: nel 2025, 18 hanno una stima netta del servizio e 19 una stima incerta, con il punto di domanda sulla mappa.
+Le colonne sono le 27 che scrive il passo 3 della preparazione dei dati reali; quelle del contenitore che l'app non usa, come frequenza, categoria e stato del servizio, hanno valori inventati. Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta, con il suo numero, `id_giro`, il servizio atteso dal giro, con il nome del database, e il comune del giro, `comune_giro`. I bidoni censiti hanno il servizio a database, `servizio_transponder`: 23 letture di quattro censiti, letti nei giri del secco porta a porta, non sono coerenti. Il comune di lettura, `comune_lettura`, è quello il cui confine contiene il punto: nell'esempio nessuna lettura è fuori dai comuni serviti, e una su cinque è fatta in un comune diverso da quello del giro, quasi sempre per i due tag anomali. I bidoni censiti hanno anche il comune del database, e il cantiere segue dal comune di lettura. Per coerenza del comune le letture sono 5.460 coerenti, 389 fuori comune, 618 fuori giro e 8 di coerenza ignota, quelle dei sacchetti censiti. I comuni in cui lavorano i giri sono 32, nei quattro cantieri. I bidoni non censiti sono 37: nel 2025, 18 hanno una stima netta del servizio e 19 una stima incerta, con il punto di domanda sulla mappa.
 
-Le incongruenze dell'esempio: il contenitore `RFD20250905100` è registrato a LIMENA e letto a CITTADELLA, quindi fuori comune; il tag fermo in deposito e quello rimasto su un mezzo sono letti da giri di ogni comune, quindi fuori giro; mercoledì 24 settembre 2025 il mezzo `VEH001` doveva lavorare a LIMENA e ha letto dieci bidoni a BORGORICCO, tutti fuori giro. È il giro da cercare nella scheda «Ricerca Giro».
+Le incongruenze dell'esempio: il contenitore `RFD20250905100` è registrato a LIMENA e letto a CITTADELLA, quindi fuori comune; il tag rimasto su un mezzo, censito a MAROSTICA, è fuori comune nelle letture fatte a NOVE e a BASSANO DEL GRAPPA; il tag fermo in deposito, non censito, è letto da giri di ogni comune, quindi fuori giro. Qualche censito letto appena oltre il confine del suo comune risulta fuori comune. Mercoledì 24 settembre 2025 il mezzo `VEH001` doveva lavorare a LIMENA e ha letto dieci bidoni a BORGORICCO: nella scheda «Ricerca Giro» il comune del giro e quello di lettura sono diversi, ma è fuori giro solo il non censito, perché i nove censiti sono nel comune del loro database.
 
-I sacchetti servono a vedere come l'app li tratta: nei dati reali, oggi, la preparazione dei dati li scarta. Sono 12: 8 censiti, di quattro utenze da `SAC001` a `SAC004`, e 4 non censiti. Un sacchetto è monouso, quindi ognuno ha una lettura sola: quella della raccolta. Hanno il codice di 24 caratteri che inizia per `00BD`, da `00BD00000000000000000001` in su i censiti e da `00BD00000000000000000101` i non censiti. Come nei dati reali, a database un sacchetto ha solo l'utenza: niente servizio, volume, raccolte previste o comune. Li leggono i giri del secco, nel comune del giro. Due sono letti solo nel 2024, gli altri dieci nel 2025.
+I sacchetti servono a vedere come l'app li tratta: nei dati reali, oggi, la preparazione dei dati li scarta. Sono 12: 8 censiti, di quattro utenze da `SAC001` a `SAC004`, e 4 non censiti. Un sacchetto è monouso, quindi ognuno ha una lettura sola: quella della raccolta. Hanno il codice di 24 caratteri che inizia per `00BD`, da `00BD00000000000000000001` in su i censiti e da `00BD00000000000000000101` i non censiti. Come nei dati reali, a database un sacchetto ha solo l'utenza: niente servizio, volume, raccolte previste o comune. Il suo servizio atteso è quello del giro che lo ha letto. Li leggono i giri del secco, nel comune del giro. Due sono letti solo nel 2024, gli altri dieci nel 2025.
 
 `inst/extdata/sample_letture_storiche.csv` contiene le letture del sistema precedente alle antenne: 6.855 letture di 222 RFID, da gennaio 2020 a settembre 2024, con le sole colonne `RFID` e `giorno_lettura`. Servono all'istogramma per anno del dettaglio di un bidone. Il sistema precedente registra solo una parte dei passaggi, in misura diversa da cantiere a cantiere e da un anno all'altro, e lascia anni interi senza letture. Dei 222 RFID, 179 sono letti anche dalle antenne e 43 no: contenitori ritirati, oppure non ancora raggiunti. Altri 72 RFID sono letti solo dalle antenne: 60 bidoni e i 12 sacchetti.
 
@@ -385,7 +374,7 @@ R/
   run_app.R, app_config.R       avvio e configurazione golem
   mod_caricamento_*.R           caricamento e validazione del CSV
   mod_periodo_*.R               anno o periodo personalizzato, valido per tutta l'app
-  mod_filtri_*.R                filtri laterali e statistiche
+  mod_filtri_*.R                filtri sopra la mappa principale e statistiche
   mod_mappa_*.R                 mappa Leaflet, usata dalle tre schede con mappa
   mod_ricerca_*.R               ricerca per RFID e per utenza
   mod_giro_*.R                  ricerca dei giri di un mezzo
@@ -401,7 +390,6 @@ R/
   utils_geografia.R             comuni, cantieri e confini del territorio servito
   utils_gruppi.R                calcoli per gruppo senza cicli, per i dataset grandi
   utils_mappa_aggregata.R       vista della mappa principale secondo lo zoom
-  utils_comune_geografico.R     comune in cui cade una lettura, letture fuori comune e fuori giro
   utils_giri.R                  giri dei mezzi: ricerca e riepilogo
   generate_cluster_analysis.R   funzioni esportate per l'analisi senza app
   fct_preparazione_letture.R    regole che trasformano i dati aziendali nel CSV dell'app
@@ -452,7 +440,7 @@ Specifica delle correzioni e dell'analisi dei cluster:
 
 - **Dataset di esempio su base annuale.** La prima versione copriva 30 giorni, con una o due letture per la maggior parte dei bidoni. Raccolte annue e soglie dell'analisi dei cluster non erano dimostrabili su quei dati. I casi speciali della prima versione sono rimasti. Il file ha mantenuto il nome `sample_rfid_dataset.csv`.
 - **Periodo valido per tutta l'app.** La selezione dell'anno e il periodo personalizzato stanno in un solo controllo nella barra laterale, usato anche dall'analisi dei cluster.
-- **Colonne dell'output.** La specifica parlava di 25 campi e ne definiva 22. Sono stati aggiunti `presente_a_database`, la cronologia dei cambi di servizio e la composizione del servizio stimato. Il servizio sta oggi in una colonna sola, `servizio_atteso`, con `origine_servizio`, `servizio_atteso_cronologia` e `servizio_atteso_dettaglio`: vedi più sotto.
+- **Colonne dell'output.** La specifica parlava di 25 campi e ne definiva 22. Sono stati aggiunti `presente_a_database`, la cronologia dei cambi di servizio e la composizione del servizio stimato. Le colonne del servizio sono `servizio_transponder`, con la sua cronologia `servizio_transponder_cronologia`, e, per i non censiti, `servizio_atteso` con la composizione `servizio_atteso_dettaglio`.
 - **Classificazione.** Tre correzioni alle regole, descritte in [docs/analisi_cluster.md](docs/analisi_cluster.md).
 - **Distanze per DBSCAN.** Proiezione locale in metri al posto della matrice di Haversine, per reggere tag con migliaia di letture. I cluster coincidono.
 - **Script autonomo.** Le funzioni stanno nel pacchetto, lo script in `inst/scripts` le richiama. Un file con codice duplicato sarebbe rimasto disallineato alla prima modifica.
@@ -461,9 +449,9 @@ Specifica su geografia e prestazioni:
 
 - **Nell'app solo i filtri.** L'app non ha schede di analisi per territorio, cantiere e comune.
 - **Comuni e cantieri.** Il file dei comuni ne elenca 66 in quattro cantieri: il testo della specifica parlava di 55 comuni e cinque cantieri. Le coordinate indicate per i cantieri erano approssimative: quelle usate sono i centri dei comuni, da fonti aperte.
-- **Colonne geografiche.** Sono `comune_da_database`, `comune_giro`, `comune_lettura` e `cantiere`. Il comune di lettura e il comune assegnato a una lettura li calcola l'app, dalla posizione.
+- **Colonne geografiche.** Sono `comune_da_database`, `comune_giro`, `comune_lettura` e `cantiere`. Il comune di lettura arriva nel file; il comune assegnato e la coerenza del comune li calcola l'app.
 - **Dataset di esempio.** Copre un anno e tre mesi, con 6.475 letture: le analisi annuali richiedono un anno completo. I bidoni sono stati spostati nel territorio servito e sono stati aggiunti 12 sacchetti, il resto non è cambiato.
-- **Posizione e comuni dichiarati.** Il comune di una lettura viene dalla sua posizione, non dalle colonne del file. Le letture lontane più di un chilometro dal comune del database o da quello del giro sono segnalate, e una quinta scheda, «Ricerca Giro», mostra che cosa ha letto ogni mezzo in ogni giorno.
+- **Comune di lettura e comuni dichiarati.** Il comune di lettura si confronta con quello del database, per i censiti, e con quello del giro, per i non censiti: le letture in un comune diverso sono segnalate, e una quinta scheda, «Ricerca Giro», mostra che cosa ha letto ogni mezzo in ogni giorno.
 - **Gruppi per territorio.** Sulla mappa principale i gruppi seguono il territorio: una bolla per cantiere da lontano, una per comune avvicinandosi, i singoli bidoni da vicino. I confini dei comuni sono disegnati su tutte le mappe, colorati per cantiere.
 - **Mappa con molti bidoni.** Al posto del campionamento dei marker o di una mappa di calore, il server raggruppa i bidoni per cantiere, comune o zona secondo lo zoom. Nessun bidone viene escluso dai conteggi, e il browser riceve poche centinaia di elementi.
 - **Niente database.** Le letture restano in memoria: su 2 milioni di righe ogni filtro richiede decimi di secondo, quindi un database o un indice spaziale non darebbero vantaggi.
@@ -471,14 +459,16 @@ Specifica su geografia e prestazioni:
 Correzioni alla logica dei non censiti:
 
 - **Giro su ogni lettura.** `servizio_atteso` e `comune_giro` ci sono per ogni lettura, non solo per i non censiti: così è nei dati reali, e così è ora il dataset di esempio. La prima specifica li voleva vuoti per i censiti.
-- **Comune dalla posizione, non dal calendario.** Il calendario dice dove un mezzo doveva andare, non dove è andato: un mezzo può sostituirne un altro. `comune_lettura` è quindi il comune in cui cade il punto della lettura, e il comune del calendario sta in una colonna sua, `comune_giro`, che serve solo a riconoscere le letture fuori giro. Un file preparato prima di questa modifica non ha `comune_giro`: va rigenerato con il passo 3, altrimenti le letture fuori giro non si possono riconoscere.
+- **Comune dalla posizione, non dal calendario.** Il calendario dice dove un mezzo doveva andare, non dove è andato: un mezzo può sostituirne un altro. `comune_lettura` è quindi il comune in cui è stata fatta la lettura, e il comune del calendario sta in una colonna sua, `comune_giro`, che serve solo a riconoscere le letture fuori giro. Un file preparato prima di questa modifica non ha `comune_giro`: va rigenerato con il passo 3, altrimenti le letture fuori giro non si possono riconoscere.
 - **Giro con il nome del calendario, servizio atteso con quello del database.** `servizio_giro` resta scritto come nel calendario dei mezzi, così il secco porta a porta, `SECCO PAP`, si distingue dagli altri giri del secco. `servizio_atteso` ne è la versione con il nome del database, ricavata con una tabella di conversione nella preparazione dei dati.
-- **Servizio dei non censiti dai censiti dello stesso giro.** Il servizio atteso di un non censito non viene più dal solo calendario: se il mezzo ha letto abbastanza censiti nella mezz'ora attorno, vale il loro servizio. Il giro del calendario resta in `servizio_giro`.
-- **Filtri su servizio atteso, giro e coerenza.** Il filtro sul servizio transponder è stato sostituito dal servizio atteso, che per un censito è il servizio del database e per un non censito quello stimato. Si aggiungono un elenco sul giro del calendario e un filtro sulla coerenza. Tutti valgono per censiti e non censiti: lo stato a database si sceglie a parte. La casella «Includi Non Censiti» è stata tolta: era un doppione dello stato «Non Presente».
-- **Servizio atteso come stima del bidone, per i non censiti.** Per un non censito il filtro non guarda il servizio atteso della singola lettura, ma il servizio stimato del bidone, lo stesso dell'icona: sta quindi sotto una voce sola, il suo servizio stimato oppure la stima incerta. Per un censito vale il servizio atteso di ogni lettura.
-- **Coerenza accanto alla provenienza.** La colonna `origine_servizio_atteso` era stata sostituita da `coerenza`, che dice se il servizio atteso e il giro sono dello stesso rifiuto. La provenienza è poi tornata, con un altro nome e un valore in più: vedi il punto seguente.
-- **Una colonna sola per il servizio, con la sua origine.** `servizio_transponder` e `servizio_atteso` sono state fuse in `servizio_atteso`: per un censito è il servizio del database, per un non censito quello stimato. La nuova colonna `origine_servizio` dice da dove viene: `Database`, `Censiti` o `Calendario`. Il servizio del database è il servizio atteso con origine `Database`. Nell'analisi dei cluster le colonne `servizio_transponder` e `servizio_transponder_cronologia` sono diventate `servizio_atteso`, con `origine_servizio`, e `servizio_atteso_cronologia`: le colonne restano 30. I file con la colonna `servizio_transponder` si caricano ancora.
-- **«Coerenza» solo per i servizi.** Nel filtro sulla posizione la voce «Coerente» è diventata «Regolare»; nell'indice di fiducia dei cluster la verifica «Coerenza» è diventata «Stabilità del servizio».
+- **Tre servizi per ogni lettura.** Il servizio a database, `servizio_transponder`, il servizio atteso dal giro, `servizio_atteso`, con il nome del database, e il giro del calendario, `servizio_giro`. La coerenza, `coerenza_servizio`, confronta i primi due, con `SI` e `NO`. Per due giorni, a ottobre 2026, servizio a database e servizio atteso sono stati una colonna sola, con un campo sulla sua origine, e il servizio atteso dei non censiti veniva dai censiti letti dallo stesso mezzo: il proprietario del progetto ha poi riscritto la preparazione dei dati con le tre colonne separate. I file di quei giorni, con la colonna `origine_servizio`, si caricano ancora.
+- **Giri dei servizi.** Nei giri in cui non è chiaro quale rifiuto si raccolga, come `SERVIZI MERCATI`, il servizio atteso è il servizio a database più frequente tra i censiti letti nel giro.
+- **Filtri su servizio, giro e coerenza.** Il filtro sul servizio riguarda il servizio del contenitore: per un censito quello a database, per un non censito quello stimato. Si aggiungono un elenco sul giro del calendario e un filtro sulla coerenza. Tutti valgono per censiti e non censiti: lo stato a database si sceglie a parte. La casella «Includi Non Censiti» è stata tolta: era un doppione dello stato «Non Presente».
+- **Servizio stimato del bidone, per i non censiti.** Per un non censito il filtro non guarda il servizio atteso della singola lettura, ma il servizio stimato del bidone, lo stesso dell'icona: sta quindi sotto una voce sola, il suo servizio stimato oppure la stima incerta.
+- **Filtri sopra la mappa.** I filtri della mappa principale sono menu a discesa in una riga sopra la mappa, non più elenchi nella barra laterale, dove restano le statistiche.
+- **Comune di lettura dal file.** Il comune in cui è stata fatta una lettura arriva con le letture, dal sistema di localizzazione dei mezzi: l'app lo usa così com'è e non lo ricava mai dalla posizione.
+- **Coerenza del comune al posto delle distanze.** Fuori comune e fuori giro si misuravano dalla posizione, con una tolleranza di un chilometro dal confine del comune dichiarato, e i punti appena fuori dal territorio prendevano il comune servito più vicino entro 100 metri. Ora il campo `coerenza_comune` confronta i nomi: comune di lettura contro comune del database per i censiti, contro comune del giro per i non censiti. Un censito non è più fuori giro, e la tabella dei cluster non ha più la distanza dal comune dichiarato.
+- **Due coerenze.** La coerenza del servizio confronta il servizio a database e quello atteso, la coerenza del comune il comune di lettura e quello dichiarato: hanno un menu ciascuno, «Coerenza servizio» e «Coerenza comune». Nell'indice di fiducia dei cluster la verifica sul servizio si chiama «Stabilità del servizio».
 - **Tipologia dei sacchetti.** I sacchetti censiti arrivavano senza servizio, e sulla mappa avevano il punto di domanda. Ora hanno una tipologia e un'icona loro, riconosciuti dal codice RFID.
 - **Stima incerta al posto di «senza stima».** La casella riguardava i non censiti senza nessun giro, che nei dati reali non esistono. Ora riguarda quelli sotto l'80%, cioè i marker con il punto di domanda.
 

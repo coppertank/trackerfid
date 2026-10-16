@@ -27,3 +27,22 @@ $(document).on("shown.bs.tab", function () {
     }
   });
 });
+
+// I menu dei filtri sopra la mappa principale restano aperti mentre si
+// spuntano le voci: un click dentro il riquadro non arriva al documento, che
+// chiuderebbe il menu.
+$(document).on("click", ".filtro-menu", function (evento) {
+  evento.stopPropagation();
+});
+
+// Un menu con qualche voce tolta lo dice sul pulsante, con il numero delle
+// voci rimaste. Shiny lancia "change" anche quando il server aggiorna le voci.
+$(document).on("change", ".filtro-mappa", function () {
+  var caselle = $(this).find(".filtro-menu input[type=checkbox]");
+  var spuntate = caselle.filter(":checked").length;
+  var attivo = caselle.length > 0 && spuntate < caselle.length;
+  $(this).toggleClass("filtro-attivo", attivo);
+  $(this)
+    .find(".filtro-conteggio")
+    .text(attivo ? spuntate + "/" + caselle.length : "");
+});

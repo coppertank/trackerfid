@@ -27,15 +27,14 @@ lettura appartiene a un cluster; con valori maggiori le letture isolate
 finiscono nel cluster 0.}
 }
 \value{
-Un tibble con 30 colonne, una riga per cluster di ogni RFID:
+Un tibble con 29 colonne, una riga per cluster di ogni RFID:
 identificazione (\code{RFID}, \code{cluster_id}, \code{globale_conteggio_cluster}),
 tempi globali e del cluster, \code{presente_a_database}, \code{cantiere} e
-\code{comune} dell'RFID, \code{comune_geografico} in cui cade il cluster,
-\code{incongruenza_comune} e \code{distanza_comune_m} rispetto al comune dichiarato,
-\code{servizio_atteso} con la sua \code{origine_servizio} (per un censito il
-servizio del database, con la cronologia dei cambi; per un non censito
-il servizio prevalente, con la composizione), volumi, periodo di analisi,
-raccolte annue previste e
+\code{comune} dell'RFID, \code{comune_geografico} in cui è letto il cluster,
+\code{incongruenza_comune} rispetto al comune dichiarato,
+servizio transponder
+(attuale e cronologia dei cambi), servizio atteso (prevalente e
+composizione), volumi, periodo di analisi, raccolte annue previste e
 presunte, numero di letture, baricentro, \code{cluster_dispersione_90th_m},
 \code{cluster_indice_fiducia} e \code{indicatore_cluster}.
 }

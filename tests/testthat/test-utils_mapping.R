@@ -314,7 +314,7 @@ test_that("il popup dei marker riporta comune e cantiere della lettura", {
       popup,
       fixed = TRUE
     )),
-    sum(spostato$fuori_comune)
+    sum(spostato$coerenza_comune == "Fuori comune")
   )
   expect_false(any(grepl("Fuori giro", popup, fixed = TRUE)))
   icone <- chiamata(
@@ -323,8 +323,9 @@ test_that("il popup dei marker riporta comune e cantiere della lettura", {
   )$args[[3]]$iconUrl
   # due disegni: senza segnale e con il segnale del fuori comune
   expect_length(icone$data, 2)
-  coerente <- icone$index[!spostato$fuori_comune][1]
-  expect_identical(icone$index != coerente, spostato$fuori_comune)
+  fuori <- spostato$coerenza_comune == "Fuori comune"
+  coerente <- icone$index[!fuori][1]
+  expect_identical(icone$index != coerente, fuori)
 })
 
 test_that("la mappa dei giri disegna le letture e mette in evidenza i comuni dei giri", {

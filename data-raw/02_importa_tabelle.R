@@ -14,20 +14,32 @@ test_mezzi <- readRDS(file = "data-raw/intermedi/test_mezzi.rds")
 
 
 # test_mezzi <- read_delim(
-#   "data-raw/origine/AppSheet.ViewData.2026-10-08.csv",
+#   "data-raw/origine/AppSheet.ViewData.2026-10-13.csv",
 #   delim = ';',
 #   col_types = cols(.default = col_character()),
 #   na = c("", "NA", "-")
 # ) |>
-#   mutate(data_test = as_date(ymd_hm(ULTIMA DATA VERBALE SEZIONE B))) |>
+#   mutate(
+#     `ULTIMA DATA VERBALE SEZIONE B` = str_replace_all(
+#       `ULTIMA DATA VERBALE SEZIONE B`,
+#       "\\.",
+#       ":"
+#     ),
+#     data_test = as_date(ymd_hm(`ULTIMA DATA VERBALE SEZIONE B`))
+#   ) |>
 #   rename(
-#     esito = ESITO TEST SEZIONE B,
-#     targa_veicolo = TARGA_VEICOLO,
-#     matricola_veicolo = MATRICOLA_VEICOLO
+#     esito = `ESITO TEST SEZIONE B`,
+#     targa_veicolo = "TARGA_VEICOLO",
+#     matricola_veicolo = "MATRICOLA_VEICOLO"
 #   ) |>
 #   select(targa_veicolo, matricola_veicolo, esito, data_test)
 
 # saveRDS(test_mezzi, file = "data-raw/intermedi/test_mezzi.rds")
+
+# COMUNI - CANTIERI ------------------------------------------------------
+
+# comuni_cantieri <- read_csv("inst/extdata/comuni_cantieri.csv", col_types = cols()) |>
+#   select(comune, cantiere)
 
 # LETTURE ----------------------------------------------------------------
 
@@ -39,21 +51,40 @@ letture <- readRDS(file = "data-raw/intermedi/letture.rds")
 #   delim = ';',
 #   col_types = cols(.default = col_character())
 # ) |>
+#   separate(
+#     col = IndirizzoLocalizzazione,
+#     into = c("indirizzo_lettura", "comune_lettura"),
+#     sep = ",\\s*",
+#     remove = FALSE
+#   ) |> # remove = FALSE conserva la colonna originale
 #   mutate(
 #     giorno = as_date(dmy_hms(DataeOraPrimaLettura)),
 #     DataeOraPrimaLettura = as.POSIXct(
 #       DataeOraPrimaLettura,
 #       format = "%d/%m/%Y %H.%M.%S"
-#     )
+#     ),
+#     Latitudine = as.numeric(stringr::str_replace_all(
+#       .data$Latitudine,
+#       ",",
+#       "."
+#     )),
+#     Longitudine = as.numeric(stringr::str_replace_all(
+#       .data$Longitudine,
+#       ",",
+#       "."
+#     )),
+#     comune_lettura = toupper(comune_lettura)
 #   ) |>
 #   rename(
 #     giorno_lettura = DataeOraPrimaLettura,
-#     RFID = RFID(EPC),
+#     RFID = "RFID(EPC)",
 #     targa_veicolo = Targa,
 #     latitudine = Latitudine,
 #     longitudine = Longitudine
 #   ) |>
-#   filter(latitudine != 0)
+#   select(-c(IndirizzoLocalizzazione, indirizzo_lettura)) |>
+#   filter(latitudine != 0, comune_lettura != "") |>
+#   left_join(comuni_cantieri, by = c("comune_lettura" = "comune"))
 
 # saveRDS(letture, file = "data-raw/intermedi/letture.rds")
 
@@ -72,7 +103,6 @@ associazione_contenitori <- readRDS(
 #   filter(!is.na(codice_transponder)) |>
 #   select(
 #     codice_transponder,
-#     # codice_rifiuto,
 #     descrizione_rifiuto,
 #     volume,
 #     frequenza,
@@ -81,7 +111,8 @@ associazione_contenitori <- readRDS(
 #     data_cessazione_contenitore,
 #     stato_servizio,
 #     id_utenza,
-#     comune_servizio
+#     comune_servizio,
+#     codice_categoria
 #   ) |>
 #   mutate(
 #     data_attivazione_contenitore = as_date(data_attivazione_contenitore),
@@ -94,8 +125,10 @@ associazione_contenitori <- readRDS(
 #       comune_servizio == "LUSINA CONCO" ~ "LUSIANA CONCO",
 #       comune_servizio == "VALSTAGNA" ~ "VALBRENTA",
 #       TRUE ~ comune_servizio # Mantiene il valore originale per tutti gli altri
-#     )
-#   )
+#     ),
+#     codice_categoria = as.factor(codice_categoria)
+#   ) |>
+#   rename(servizio_transponder = descrizione_rifiuto)
 
 # saveRDS(associazione_contenitori, file = "data-raw/intermedi/associazione_contenitori.rds")
 
@@ -171,7 +204,12 @@ calendario_servizio_rifiuti <- readRDS(
 #   mutate(
 #     # togli le lettere iniziali dai valori della matricola del mezzo
 #     matricola_mezzo = str_remove(matricola_mezzo, "^[A-Za-z]"),
-#     giorno = as_date(giorno)
-#   )
+#     giorno = as_date(giorno),
+#     comune = dplyr::case_when(
+#       comune == "ROSA'" ~ "ROSÀ",
+#       .default = comune
+#     )
+#   ) |>
+#   rename(comune_giro = comune)
 
 # saveRDS(calendario_servizio_rifiuti, file = "data-raw/intermedi/calendario_servizio_rifiuti.rds")

@@ -127,7 +127,8 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
 
 /* ---------- Filtri dei servizi: titolo con le scelte rapide ---------- */
 /* A destra del titolo di ogni elenco stanno "Tutti" e "Nessuno". Sotto, una
-   riga dice a quali bidoni si applica l'elenco. */
+   riga dice a quali bidoni si applica l'elenco. Gli elenchi stanno nei menu
+   sopra la mappa principale, vedi più sotto. */
 .titolo-filtro {
   display: flex;
   justify-content: space-between;
@@ -148,20 +149,125 @@ section.sidebar .shiny-input-container:has(.shiny-file-input-progress) {
   font-size: 12px;
 }
 
-/* Titolo, elenco e casella della stima incerta formano un blocco solo: lo
-   spazio sta sotto il blocco, non tra le sue parti. */
-.gruppo-servizi {
-  margin-bottom: 12px;
+/* ---------- Filtri sopra la mappa principale ---------- */
+/* Una riga di menu a discesa: ogni menu apre le caselle del suo filtro. La
+   riga sta sopra la mappa, e i riquadri aperti coprono la mappa: per questo
+   la riga ha uno z-index più alto dei controlli di Leaflet. */
+.barra-filtri {
+  position: relative;
+  z-index: 1050;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
-section.sidebar .gruppo-servizi .shiny-input-container {
+.gruppo-filtri {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.barra-filtri .suggerimento {
+  padding: 7px 0;
+}
+
+.filtro-mappa .dropdown-toggle,
+.barra-filtri .filtro-reset {
+  height: 34px;
+  border-radius: 0;
+  color: #44515e;
+  font-size: 13px;
+}
+
+.filtro-mappa .dropdown-toggle .fa,
+.filtro-mappa .dropdown-toggle .fas,
+.filtro-mappa .dropdown-toggle svg {
+  margin-right: 5px;
+  color: #7b8a8b;
+}
+
+.filtro-mappa .caret {
+  margin-left: 6px;
+}
+
+/* Un filtro con qualche voce tolta: il pulsante lo dice, con le voci rimaste. */
+.filtro-mappa.filtro-attivo .dropdown-toggle {
+  border-color: #00703c;
+  background: #eaf5ee;
+  color: #00703c;
+  font-weight: 600;
+}
+
+.filtro-conteggio:not(:empty) {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #00703c;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.filtro-menu {
+  min-width: 250px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 0;
+  font-size: 13px;
+}
+
+.filtro-menu .shiny-input-container {
+  width: 100%;
   margin-bottom: 0;
 }
 
-/* L'elenco non ha un'etichetta sua. Senza questa regola Shiny lo accosta a
-   un'etichetta che non c'è, e le voci salgono sopra la riga della nota. */
-section.sidebar .gruppo-servizi .shiny-options-group {
+.filtro-menu .form-group {
+  margin-bottom: 4px;
+}
+
+.filtro-menu .checkbox {
+  margin-top: 3px;
+  margin-bottom: 3px;
+}
+
+/* Gli elenchi non hanno un'etichetta loro. Shiny lascia un'etichetta
+   nascosta e alza le voci di 10 pixel, sopra la nota: la regola deve essere
+   più specifica della sua. */
+.filtro-menu .shiny-input-checkboxgroup label ~ .shiny-options-group {
   margin-top: 0;
+}
+
+.filtro-menu .control-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.filtro-menu .nota-filtro {
+  margin-top: 6px;
+}
+
+.filtro-menu .intestazione-filtro .nota-filtro {
+  margin-top: 0;
+}
+
+/* Stretto quanto basta perché la riga, con le due coerenze, stia su una riga
+   sola in una finestra di 1500 pixel con la barra laterale aperta. */
+.filtro-comuni {
+  width: 200px;
+}
+
+.filtro-comuni .form-group {
+  margin-bottom: 0;
+}
+
+/* La riga dei filtri toglie spazio alla mappa. */
+.scheda-mappa .mappa-contenitore {
+  height: calc(100vh - 216px);
 }
 
 /* ---------- Esiti di caricamento e ricerca ---------- */
@@ -711,10 +817,11 @@ details.parametri-dbscan summary {
   font-size: 12px;
 }
 
-/* ---------- Elenchi a discesa della barra laterale ---------- */
-/* L'elenco dell'anno di analisi e quello dei comuni hanno lo stesso riquadro,
-   lo stesso testo e la stessa freccia, qualunque sia il browser. Il primo è
-   un elenco del browser, il secondo permette più scelte. */
+/* ---------- Elenchi a discesa ---------- */
+/* L'elenco dell'anno di analisi, nella barra laterale, e quello dei comuni,
+   sopra la mappa, hanno lo stesso riquadro, lo stesso testo e la stessa
+   freccia, qualunque sia il browser. Il primo è un elenco del browser, il
+   secondo permette più scelte. */
 .main-sidebar select.form-control,
 .elenco-comuni .selectize-control .selectize-input {
   min-height: 34px;
@@ -791,12 +898,6 @@ details.parametri-dbscan summary {
 /* ---------- Incongruenze tra posizione e comuni dichiarati ---------- */
 .popup-incongruenza {
   color: #b03a2e;
-}
-
-/* Origine del servizio atteso, accanto al servizio */
-.popup-origine {
-  color: #5f6b76;
-  font-size: 11px;
 }
 
 .info-nota {

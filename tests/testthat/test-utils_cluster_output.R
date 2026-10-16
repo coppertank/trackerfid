@@ -94,7 +94,7 @@ test_that("l'indice di fiducia è tra 0 e 1 e premia i cluster affidabili", {
   expect_false(anyNA(tutti))
 })
 
-test_that("la tabella ha 30 colonne e una riga per cluster", {
+test_that("la tabella ha 29 colonne e una riga per cluster", {
   letture <- dplyr::bind_rows(
     letture_rfid("FERMO", date_2025(26)),
     letture_rfid(
@@ -113,7 +113,7 @@ test_that("la tabella ha 30 colonne e una riga per cluster", {
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
 
   expect_identical(names(analisi), colonne_analisi_cluster())
-  expect_length(names(analisi), 30)
+  expect_length(names(analisi), 29)
   expect_equal(nrow(analisi), 5)
   expect_identical(analisi$RFID, c("FERMO", "IGNOTO", "MOSSO", "MOSSO", "RARO"))
   expect_identical(analisi$cluster_id, c(1L, 1L, 1L, 2L, 1L))
@@ -152,13 +152,11 @@ test_that("la tabella ha 30 colonne e una riga per cluster", {
   expect_true(all(analisi$analisi_al == as.Date("2025-12-31")))
   expect_identical(analisi$volume_atteso, analisi$volume_previsto)
 
-  # il servizio è una colonna sola, con la sua origine: per un censito quello
-  # del database, per gli altri il prevalente tra le letture del cluster
+  # servizio, volume e raccolte previste: transponder per i censiti, atteso per gli altri
   ignoto <- analisi[analisi$RFID == "IGNOTO", ]
   expect_identical(ignoto$presente_a_database, "Non Presente")
+  expect_true(is.na(ignoto$servizio_transponder))
   expect_identical(ignoto$servizio_atteso, "SECCO PAP")
-  expect_identical(ignoto$origine_servizio, "Calendario")
-  expect_true(is.na(ignoto$servizio_atteso_cronologia))
   expect_identical(
     ignoto$servizio_atteso_dettaglio,
     "SECCO PAP (90%); VETRO PAP (10%)"
@@ -166,39 +164,9 @@ test_that("la tabella ha 30 colonne e una riga per cluster", {
   expect_true(is.na(ignoto$volume_previsto))
   expect_true(is.na(ignoto$numero_raccolte_annue_previste))
   censiti <- analisi[analisi$RFID != "IGNOTO", ]
-  expect_true(all(censiti$servizio_atteso == "CARTA"))
-  expect_true(all(censiti$origine_servizio == "Database"))
+  expect_true(all(censiti$servizio_transponder == "CARTA"))
+  expect_true(all(is.na(censiti$servizio_atteso)))
   expect_true(all(is.na(censiti$servizio_atteso_dettaglio)))
-
-  # l'origine di un servizio stimato è la più frequente tra le letture del
-  # cluster che lo riportano
-  votato <- letture_rfid(
-    "VOTATO",
-    date_2025(10),
-    presente = "Non Presente",
-    atteso = c(rep("SECCO", 9), "VETRO")
-  )
-  votato$origine_servizio <- c(rep("Censiti", 6), rep("Calendario", 4))
-  expect_identical(
-    calcola_analisi_cluster(votato, "2025-01-01", "2025-12-31")$origine_servizio,
-    "Censiti"
-  )
-  # senza la colonna dell'origine si sa solo quali servizi vengono dal
-  # database: il resto della tabella non cambia
-  senza_origine <- calcola_analisi_cluster(
-    letture[setdiff(names(letture), "origine_servizio")],
-    "2025-01-01",
-    "2025-12-31"
-  )
-  expect_identical(
-    senza_origine$origine_servizio,
-    ifelse(analisi$RFID == "IGNOTO", NA, "Database")
-  )
-  quali <- setdiff(names(analisi), "origine_servizio")
-  expect_identical(
-    as.data.frame(senza_origine[quali]),
-    as.data.frame(analisi[quali])
-  )
   expect_true(all(censiti$volume_previsto == 240))
   expect_true(all(censiti$numero_raccolte_annue_previste == 26))
 
@@ -220,8 +188,6 @@ test_that("il servizio atteso sotto l'80% resta vuoto ma la composizione è ripo
   )
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
   expect_true(is.na(analisi$servizio_atteso))
-  # senza servizio non c'è un'origine
-  expect_true(is.na(analisi$origine_servizio))
   expect_identical(
     analisi$servizio_atteso_dettaglio,
     "CARTA CONT.STRADALI (40%); SECCO PAP (35%); UMIDO PAP (25%)"
@@ -240,10 +206,9 @@ test_that("il cambio di servizio riporta il servizio attuale e la cronologia", {
     servizio = c(rep("CARTA", 3), rep("SECCO", 3), rep("CARTA", 3))
   )
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
-  expect_identical(analisi$servizio_atteso, "CARTA")
-  expect_identical(analisi$origine_servizio, "Database")
+  expect_identical(analisi$servizio_transponder, "CARTA")
   expect_identical(
-    analisi$servizio_atteso_cronologia,
+    analisi$servizio_transponder_cronologia,
     "CARTA > SECCO > CARTA"
   )
 
@@ -252,48 +217,17 @@ test_that("il cambio di servizio riporta il servizio attuale e la cronologia", {
     "2025-01-01",
     "2025-12-31"
   )
-  expect_true(is.na(stabile$servizio_atteso_cronologia))
+  expect_true(is.na(stabile$servizio_transponder_cronologia))
   # il cambio di servizio abbassa la fiducia
   expect_lt(analisi$cluster_indice_fiducia, stabile$cluster_indice_fiducia)
-
-  # un contenitore censito a metà periodo: il servizio di quando non era
-  # censito veniva dal calendario, e non conta tra i cambi di servizio
-  date <- date_2025(9)
-  censito_dopo <- calcola_analisi_cluster(
-    dplyr::bind_rows(
-      letture_rfid(
-        "NUOVO",
-        date[1:4],
-        presente = "Non Presente",
-        atteso = "SECCO"
-      ),
-      letture_rfid("NUOVO", date[5:9])
-    ),
-    "2025-01-01",
-    "2025-12-31"
-  )
-  expect_identical(censito_dopo$servizio_atteso, "CARTA")
-  expect_identical(censito_dopo$origine_servizio, "Database")
-  expect_true(is.na(censito_dopo$servizio_atteso_cronologia))
-  expect_identical(
-    censito_dopo$cluster_indice_fiducia,
-    stabile$cluster_indice_fiducia
-  )
 
   esempio <- analisi_esempio()
   speciale <- esempio[esempio$RFID == "RFD20250901001", ]
   expect_identical(
-    speciale$servizio_atteso_cronologia,
+    speciale$servizio_transponder_cronologia,
     "CARTA > SECCO > CARTA"
   )
-  expect_identical(speciale$servizio_atteso, "CARTA")
-  # nell'esempio il servizio viene dal database, per i censiti, o dal
-  # calendario; i non censiti con la stima incerta non ne hanno
-  expect_identical(
-    as.integer(table(esempio$origine_servizio, useNA = "ifany")),
-    c(18L, 226L, 19L)
-  )
-  expect_identical(is.na(esempio$servizio_atteso), is.na(esempio$origine_servizio))
+  expect_identical(speciale$servizio_transponder, "CARTA")
 })
 
 test_that("le raccolte annue presunte seguono la formula e non divergono", {
@@ -388,7 +322,7 @@ test_that("i sacchetti restano fuori dall'analisi", {
     letture_rfid(
       sprintf("00BD%020d", 1),
       "2025-01-02",
-      servizio = "SECCO",
+      servizio = servizio_sacchetti(),
       volume = NA,
       raccolte = NA
     ),
@@ -436,13 +370,11 @@ test_that("l'analisi funziona senza le colonne facoltative e con contenitori inc
   letture$volume_previsto <- NULL
   letture$numero_raccolte_annue_previste <- NULL
   # censito ma senza servizio a database
-  letture$servizio_atteso <- NA_character_
-  letture$origine_servizio <- NA_character_
+  letture$servizio_transponder <- NA_character_
   analisi <- calcola_analisi_cluster(letture, "2025-01-01", "2025-12-31")
   expect_true(is.na(analisi$volume_previsto))
   expect_true(is.na(analisi$numero_raccolte_annue_previste))
-  expect_true(is.na(analisi$servizio_atteso))
-  expect_true(is.na(analisi$origine_servizio))
+  expect_true(is.na(analisi$servizio_transponder))
   expect_false(is.na(analisi$cluster_indice_fiducia))
   expect_identical(analisi$indicatore_cluster, "VALID_TARGET")
 })
@@ -504,61 +436,53 @@ test_that("l'esportazione scrive date leggibili e celle vuote per i mancanti", {
   )
 })
 
-test_that("ogni cluster riporta il comune in cui cade e le incongruenze", {
-  comuni <- comuni_cantieri()
-  centro <- function(comune) comuni[comuni$comune == comune, ]
-  posizione <- posizione_cluster(
-    lat = c(
-      centro("LIMENA")$latitudine,
-      centro("CITTADELLA")$latitudine,
-      centro("CITTADELLA")$latitudine,
-      centro("CITTADELLA")$latitudine,
-      41.9
+test_that("ogni cluster riporta il comune di lettura e le incongruenze", {
+  dati <- dplyr::tibble(
+    comune_lettura = c(
+      "LIMENA",
+      "LIMENA",
+      "Cittadella",
+      "CITTADELLA",
+      "LIMENA",
+      "ASIAGO",
+      "ASIAGO",
+      "ROMA",
+      NA
     ),
-    lon = c(
-      centro("LIMENA")$longitudine,
-      centro("CITTADELLA")$longitudine,
-      centro("CITTADELLA")$longitudine,
-      centro("CITTADELLA")$longitudine,
-      12.5
-    ),
-    censito = c(TRUE, TRUE, FALSE, TRUE, FALSE),
-    comune_database = c("LIMENA", "LIMENA", "CITTADELLA", "LIMENA", NA),
-    comune_giro = c("LIMENA", "CITTADELLA", "ASIAGO", "ASIAGO", NA)
+    coerenza_comune = c(
+      "Coerente",
+      "Coerente",
+      "Fuori comune",
+      "Fuori comune",
+      "Coerente",
+      "Fuori giro",
+      "Fuori giro",
+      "Fuori giro",
+      "Coerenza ignota"
+    )
   )
+  cluster <- c(1L, 1L, 2L, 2L, 2L, 3L, 3L, 4L, 5L)
+  comune <- comune_cluster(dati, cluster, 5L)
+  # il comune più frequente tra le letture del cluster, se è tra i comuni
+  # serviti, nella grafia della tabella
   expect_identical(
-    posizione$comune_geografico,
-    c("LIMENA", "CITTADELLA", "CITTADELLA", "CITTADELLA", NA)
+    comune$comune_geografico,
+    c("LIMENA", "CITTADELLA", "ASIAGO", NA, NA)
   )
+  # la coerenza più frequente tra le letture del cluster
   expect_identical(
-    posizione$incongruenza_comune,
-    c(NA, "FUORI_COMUNE", "FUORI_GIRO", "FUORI_COMUNE, FUORI_GIRO", NA)
+    comune$incongruenza_comune,
+    c(NA, "FUORI_COMUNE", "FUORI_GIRO", "FUORI_GIRO", NA)
   )
-  # distanza dal comune dichiarato: del database per i censiti, del giro per
-  # i non censiti
-  expect_identical(posizione$distanza_comune_m[1], 0)
-  expect_gt(posizione$distanza_comune_m[2], 10000)
-  expect_gt(posizione$distanza_comune_m[3], 20000)
-  expect_identical(posizione$distanza_comune_m[4], posizione$distanza_comune_m[2])
-  expect_true(is.na(posizione$distanza_comune_m[5]))
-  # un non censito non \u00e8 mai fuori comune: il database non lo conosce
-  expect_no_match(posizione$incongruenza_comune[3], "FUORI_COMUNE", fixed = TRUE)
-
-  # un baricentro appena fuori dai comuni serviti prende il comune pi\u00f9
-  # vicino, come le letture; la distanza dal comune dichiarato resta quella
-  # vera, misurata dal confine
-  confini <- poligoni_comuni()
-  nord <- confini[which.max(confini$latitudine), ]
-  al_margine <- posizione_cluster(
-    lat = nord$latitudine + gradi_lat(c(50, 150)),
-    lon = rep(nord$longitudine, 2),
-    censito = c(TRUE, TRUE),
-    comune_database = rep(nord$comune, 2),
-    comune_giro = rep(nord$comune, 2)
+  # con il comune geografico già calcolato vale quello
+  dati$comune_geografico <- c(rep("RUBANO", 8), NA)
+  expect_identical(
+    comune_cluster(dati, cluster, 5L)$comune_geografico,
+    c(rep("RUBANO", 4), NA)
   )
-  expect_identical(al_margine$comune_geografico, c(nord$comune, NA))
-  expect_equal(al_margine$distanza_comune_m, c(50, 150), tolerance = 0.05)
-  expect_true(all(is.na(al_margine$incongruenza_comune)))
+  # senza la coerenza del comune nessun cluster è incongruente
+  senza <- comune_cluster(dati[, "comune_lettura"], cluster, 5L)
+  expect_true(all(is.na(senza$incongruenza_comune)))
 
   # sul dataset di esempio: il contenitore spostato, nel suo secondo luogo
   analisi <- analisi_esempio()
@@ -566,11 +490,10 @@ test_that("ogni cluster riporta il comune in cui cade e le incongruenze", {
   expect_identical(spostato$comune, c("LIMENA", "LIMENA"))
   expect_identical(spostato$comune_geografico, c("LIMENA", "CITTADELLA"))
   expect_identical(spostato$incongruenza_comune, c(NA, "FUORI_COMUNE"))
-  expect_identical(spostato$distanza_comune_m[1], 0)
-  expect_equal(spostato$distanza_comune_m[2], 16600, tolerance = 0.02)
+  expect_false("distanza_comune_m" %in% names(analisi))
   expect_identical(
     as.integer(table(analisi$incongruenza_comune)[c("FUORI_COMUNE", "FUORI_GIRO")]),
-    c(1L, 17L)
+    c(4L, 20L)
   )
   # ogni cluster dell'esempio cade in un comune servito
   expect_false(anyNA(analisi$comune_geografico))

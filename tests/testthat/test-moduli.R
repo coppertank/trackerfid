@@ -213,8 +213,8 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
     # il servizio atteso vale per i censiti e per i non censiti: per i primi
     # quello della lettura, per i secondi quello stimato
     session$setInputs(presente_filter = c("Presente", "Non Presente"))
-    session$setInputs(servizio_atteso_check = c("SECCO", "CARTA"))
-    expect_setequal(stato$atteso_esclusi, setdiff(scelte_atteso(), c("SECCO", "CARTA")))
+    session$setInputs(servizio_check = c("SECCO", "CARTA"))
+    expect_setequal(stato$servizi_esclusi, setdiff(scelte_servizio(), c("SECCO", "CARTA")))
     censiti <- filtrati()$presente_a_database == "Presente"
     expect_setequal(
       unique(filtrati()$servizio_atteso[censiti]),
@@ -232,7 +232,7 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
 
     session$setInputs(reset = 1)
     expect_equal(nrow(filtrati()), nrow(ultimi))
-    expect_length(stato$atteso_esclusi, 0)
+    expect_length(stato$servizi_esclusi, 0)
   })
 })
 
@@ -287,7 +287,7 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
       filtrati()$RFID,
       c("RFD20241007190", "RFD20241011121", "RFD20250901001", "RFD20250905100")
     )
-    expect_true(all(filtrati()$coerenza == "Non coerente"))
+    expect_true(all(filtrati()$coerenza_servizio == "NO"))
     expect_match(
       as.character(output$stat_box$html),
       "Non coerenti:</span>\\s*<b>4</b>"
@@ -297,7 +297,7 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
     session$setInputs(coerenza_check = "coerente")
     expect_identical(stato$coerenza_escluse, "non_coerente")
     expect_equal(nrow(filtrati()), n_rfid)
-    expect_false(any(filtrati()$coerenza %in% "Non coerente"))
+    expect_false(any(filtrati()$coerenza_servizio %in% "NO"))
     # nessuna voce: nessuna lettura
     session$setInputs(coerenza_check = character(0))
     expect_equal(nrow(filtrati()), 0)
@@ -332,14 +332,14 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     }
     session$flushReact()
 
-    # un elenco solo: il servizio atteso delle letture dei censiti e il
+    # un elenco solo: il servizio a database delle letture dei censiti e il
     # servizio stimato dei non censiti
     expect_identical(
-      scelte_atteso(),
+      scelte_servizio(),
       ordina_servizi(servizio_mostrato(esempio))
     )
     expect_identical(
-      scelte_atteso(),
+      scelte_servizio(),
       c(
         "SECCO",
         "CARTA",
@@ -350,14 +350,14 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
         servizio_sacchetti()
       )
     )
-    # un giro che non è né il servizio atteso di un censito né la stima di un
-    # non censito non è tra le voci
-    expect_false("SERVIZI MERCATI" %in% scelte_atteso())
-    expect_true("SERVIZI MERCATI" %in% esempio$servizio_atteso)
+    # un servizio atteso che non è né il servizio a database di un censito né
+    # la stima di un non censito non è tra le voci
+    expect_false("SERVIZI" %in% scelte_servizio())
+    expect_true("SERVIZI" %in% esempio$servizio_atteso)
 
     # "Nessuno" toglie tutte le voci e anche i non censiti con la stima incerta
-    session$setInputs(atteso_nessuno = 1)
-    expect_true(all(scelte_atteso() %in% stato$atteso_esclusi))
+    session$setInputs(servizio_nessuno = 1)
+    expect_true(all(scelte_servizio() %in% stato$servizi_esclusi))
     expect_false(stato$includi_stima_incerta)
     expect_equal(nrow(filtrati()), 0)
 
@@ -376,14 +376,13 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     # stimati secco
     session$setInputs(
       includi_stima_incerta = FALSE,
-      servizio_atteso_check = "SECCO"
+      servizio_check = "SECCO"
     )
     expect_equal(nrow(filtrati()), 87)
     expect_equal(nrow(non_censiti()), 5)
     # per i censiti è il servizio del contenitore a database
     censiti <- filtrati()[filtrati()$presente_a_database == "Presente", ]
-    expect_true(all(censiti$servizio_atteso == "SECCO"))
-    expect_true(all(censiti$origine_servizio == "Database"))
+    expect_true(all(censiti$servizio_transponder == "SECCO"))
     expect_true(all(servizio_mostrato(filtrati()) == "SECCO"))
     expect_true("RFD20250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
@@ -393,31 +392,31 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     session$setInputs(presente_filter = c("Presente", "Non Presente"))
 
     # "Tutti": di nuovo tutti, incerti compresi
-    session$setInputs(atteso_tutti = 1)
-    expect_length(stato$atteso_esclusi, 0)
+    session$setInputs(servizio_tutti = 1)
+    expect_length(stato$servizi_esclusi, 0)
     expect_true(stato$includi_stima_incerta)
     expect_equal(nrow(filtrati()), nrow(ultimi))
 
     # "Nessuno" resta tale anche in un periodo con un elenco diverso: nel
     # 2024 tra i servizi attesi c'è un giro che nel 2025 non compare
-    voci_2025 <- scelte_atteso()
-    session$setInputs(atteso_nessuno = 2)
+    voci_2025 <- scelte_servizio()
+    session$setInputs(servizio_nessuno = 2)
     expect_equal(nrow(filtrati()), 0)
     dati(aggiungi_servizio_icona(
       filtra_periodo(dati_esempio(), periodo_anno(2024))
     ))
     session$flushReact()
-    expect_gt(length(setdiff(scelte_atteso(), voci_2025)), 0)
+    expect_gt(length(setdiff(scelte_servizio(), voci_2025)), 0)
     expect_equal(nrow(filtrati()), 0)
     # e una voce spuntata vale solo per sé
-    session$setInputs(servizio_atteso_check = "SECCO")
+    session$setInputs(servizio_check = "SECCO")
     expect_gt(nrow(filtrati()), 0)
     expect_true(all(servizio_mostrato(filtrati()) == "SECCO"))
 
     # il reset riporta tutto ai valori predefiniti
     session$setInputs(reset = 1)
     expect_true(stato$includi_stima_incerta)
-    expect_length(stato$atteso_esclusi, 0)
+    expect_length(stato$servizi_esclusi, 0)
     expect_equal(
       nrow(filtrati()),
       dplyr::n_distinct(filtra_periodo(dati_esempio(), periodo_anno(2024))$RFID)
@@ -670,20 +669,20 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
     "Caricamento Dati",
     "Seleziona Anno di Analisi",
     "Periodo personalizzato",
-    "Filtro Stato Database",
-    "Filtro Servizio Atteso",
-    "Filtro Servizio Giro",
-    "Filtro Coerenza Servizio",
-    "Includi Non Censiti con stima incerta (?)",
+    "Stato database",
+    "Servizio del contenitore",
+    "Giro del calendario",
+    "Coerenza",
+    "Non censiti con stima incerta (?)",
     "Tutti",
     "Nessuno",
-    "filtri-atteso_tutti",
-    "filtri-atteso_nessuno",
+    "filtri-servizio_tutti",
+    "filtri-servizio_nessuno",
     "filtri-giro_tutti",
     "filtri-giro_nessuno",
     "filtri-servizio_giro_check",
     "filtri-coerenza_check",
-    "Reset Filtri",
+    "filtri-reset",
     "Pulisci Ricerca",
     "Cerca RFID",
     "Cerca Utenza",
@@ -704,6 +703,41 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
   # lo slider del periodo è stato sostituito dalla selezione dell'anno
   expect_no_match(html, "Filtro Periodo", fixed = TRUE)
   expect_no_match(html, "js-range-slider", fixed = TRUE)
+
+  # i filtri della mappa principale stanno sopra la mappa, in menu a
+  # discesa; nella barra laterale restano le statistiche
+  barra <- regmatches(
+    html,
+    regexpr("(?s)<aside[^>]*main-sidebar.*?</aside>", html, perl = TRUE)
+  )
+  expect_match(barra, "filtri-stat_box", fixed = TRUE)
+  expect_no_match(barra, "filtri-cantiere_check", fixed = TRUE)
+  expect_no_match(barra, "filtri-servizio_check", fixed = TRUE)
+  expect_lt(
+    regexpr("barra-filtri", html, fixed = TRUE),
+    regexpr("mappa_principale-mappa", html, fixed = TRUE)
+  )
+  menu <- as.character(mod_filtri_ui("x"))
+  expect_equal(
+    lengths(regmatches(menu, gregexpr("data-toggle=\"dropdown\"", menu))),
+    6
+  )
+  for (filtro in c(
+    "x-cantiere_check",
+    "x-comuni",
+    "x-coerenza_comune_check",
+    "x-presente_filter",
+    "x-servizio_check",
+    "x-includi_stima_incerta",
+    "x-servizio_giro_check",
+    "x-coerenza_check",
+    "x-reset"
+  )) {
+    expect_match(menu, filtro, fixed = TRUE)
+  }
+  # le voci della coerenza hanno parole, non i valori del file
+  expect_match(menu, ">Non coerente<", fixed = TRUE)
+  expect_match(menu, 'value="non_coerente"', fixed = TRUE)
 })
 
 test_that("la pagina ha come favicon il simbolo aziendale", {
@@ -911,7 +945,7 @@ test_that("le letture senza cantiere hanno una voce tra i cantieri", {
   # Nel dataset di esempio ogni lettura ha un cantiere: in un file può mancare.
   tutte <- dati_esempio()
   vuote <- tutte$RFID == "RFD20241001301"
-  tutte$comune_lettura[vuote] <- fuori_servizio()
+  tutte$comune_lettura[vuote] <- NA
   tutte$comune_geografico[vuote] <- NA
   tutte$comune_assegnato[vuote] <- NA
   tutte$cantiere[vuote] <- NA
@@ -1198,8 +1232,9 @@ test_that("la ricerca RFID disegna al massimo le letture previste dal limite", {
 test_that("l'interfaccia ha i filtri geografici e le sole quattro schede previste", {
   html <- as.character(app_ui(NULL))
   for (testo in c(
-    "Filtro Cantiere",
-    "Filtro Comune",
+    "Cantiere",
+    "Coerenza comune",
+    "Coerenza servizio",
     "Tutti i comuni",
     "CSV, CSV.GZ o Parquet"
   )) {
@@ -1261,7 +1296,7 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
     # quella dei sacchetti. Il censito della carta sta sotto il servizio del
     # suo contenitore, non sotto il giro che lo ha letto
     expect_identical(
-      scelte_atteso(),
+      scelte_servizio(),
       c("SECCO PAP", "CARTA", servizio_sacchetti())
     )
     expect_equal(nrow(filtrati()), 4)
@@ -1273,25 +1308,25 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
 
     # tolta la voce dei sacchetti escono tutti e due, censito e non censito
     session$setInputs(
-      servizio_atteso_check = c("SECCO PAP", "CARTA")
+      servizio_check = c("SECCO PAP", "CARTA")
     )
     expect_setequal(filtrati()$RFID, c("0000ABC123", "0000ABC124"))
     # la sola voce dei sacchetti
-    session$setInputs(servizio_atteso_check = servizio_sacchetti())
+    session$setInputs(servizio_check = servizio_sacchetti())
     expect_setequal(filtrati()$RFID, c(sacchetto(1), sacchetto(2)))
     # con lo stato a database: il solo sacchetto non censito
     session$setInputs(presente_filter = "Non Presente")
     expect_identical(filtrati()$RFID, sacchetto(2))
     session$setInputs(presente_filter = c("Presente", "Non Presente"))
     # "Nessuno" toglie anche i sacchetti, "Tutti" li rimette
-    session$setInputs(atteso_nessuno = 1)
+    session$setInputs(servizio_nessuno = 1)
     expect_equal(nrow(filtrati()), 0)
-    session$setInputs(atteso_tutti = 1)
+    session$setInputs(servizio_tutti = 1)
     expect_equal(nrow(filtrati()), 4)
   })
 })
 
-test_that("il filtro sulla posizione restringe la mappa alle letture fuori comune o fuori giro", {
+test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spuntate", {
   dati <- shiny::reactiveVal(
     aggiungi_servizio_icona(filtra_periodo(dati_esempio(), periodo_anno(2025)))
   )
@@ -1301,30 +1336,51 @@ test_that("il filtro sulla posizione restringe la mappa alle letture fuori comun
     tutti <- nrow(filtrati())
     expect_equal(tutti, 248)
 
-    # solo le letture fuori comune: il contenitore spostato e il tag sul mezzo
-    session$setInputs(posizione_check = "fuori_comune")
-    expect_setequal(filtrati()$RFID, c("RFD20250905100", "RFD20250203302"))
-    expect_true(all(filtrati()$fuori_comune))
+    # solo le letture fuori comune: il contenitore spostato, il tag sul mezzo
+    # e tre censiti letti appena oltre il confine del loro comune
+    session$setInputs(coerenza_comune_check = "fuori_comune")
+    expect_setequal(
+      filtrati()$RFID,
+      c(
+        "RFD20250905100",
+        "RFD20250203302",
+        "RFD20241007067",
+        "RFD20241017188",
+        "RFD20241009045"
+      )
+    )
+    expect_true(all(filtrati()$coerenza_comune == "Fuori comune"))
     expect_match(
       as.character(output$stat_box$html),
-      "Fuori comune:</span>\\s*<b>2</b>"
+      "Fuori comune:</span>\\s*<b>5</b>"
     )
 
     # solo fuori giro: la mappa mostra l'ultima lettura fuori giro di ogni RFID
-    session$setInputs(posizione_check = "fuori_giro")
-    expect_true(all(filtrati()$fuori_giro))
+    session$setInputs(coerenza_comune_check = "fuori_giro")
+    expect_true(all(filtrati()$coerenza_comune == "Fuori giro"))
     expect_equal(
       nrow(filtrati()),
-      dplyr::n_distinct(dati()$RFID[dati()$fuori_giro])
+      dplyr::n_distinct(dati()$RFID[dati()$coerenza_comune == "Fuori giro"])
     )
-    expect_gt(nrow(filtrati()), 30)
-    expect_true(all(c("RFD20241001301", "RFD20250203302") %in% filtrati()$RFID))
+    expect_equal(nrow(filtrati()), 36)
+    expect_true("RFD20241001301" %in% filtrati()$RFID)
+    # un censito non è mai fuori giro
+    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+
+    # solo la coerenza ignota: i sacchetti censiti, senza comune a database
+    session$setInputs(coerenza_comune_check = "ignota")
+    expect_true(all(rfid_sacchetto(filtrati()$RFID)))
+    expect_equal(nrow(filtrati()), 7)
+    expect_match(
+      as.character(output$stat_box$html),
+      "Coerenza ignota:</span>\\s*<b>7</b>"
+    )
 
     # solo le letture coerenti
-    session$setInputs(posizione_check = "regolare")
-    expect_false(any(filtrati()$fuori_comune | filtrati()$fuori_giro))
+    session$setInputs(coerenza_comune_check = "coerente")
+    expect_true(all(filtrati()$coerenza_comune == "Coerente"))
     # nessuna voce: nessun bidone
-    session$setInputs(posizione_check = NULL)
+    session$setInputs(coerenza_comune_check = NULL)
     expect_equal(nrow(filtrati()), 0)
     # il reset rimette tutte le voci
     session$setInputs(reset = 1)
@@ -1356,7 +1412,8 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     giri <- restituito$riepilogo()
     expect_equal(nrow(giri), 1)
     expect_identical(giri$comune_giro, "LIMENA")
-    expect_identical(giri$fuori_giro, 10L)
+    # fuori giro c'è solo il non censito: i censiti sono nel loro comune
+    expect_identical(giri$fuori_giro, 1L)
     expect_match(as.character(output$esito$html), "1 giro \u00b7 10 letture")
     expect_match(as.character(output$esito$html), "1 giro con letture fuori giro")
 
@@ -1367,7 +1424,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
       solo = "fuori_giro"
     )
     settimana <- restituito$risultati()
-    expect_true(all(settimana$fuori_giro))
+    expect_true(all(settimana$coerenza_comune == "Fuori giro"))
     expect_gt(dplyr::n_distinct(settimana$matricola_veicolo), 1)
     expect_true(all(
       settimana$giorno >= as.Date("2025-09-22") &
@@ -1377,9 +1434,13 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_true(all(giri$fuori_giro > 0))
 
     # un click su una riga della tabella: le sole letture di quel giro
-    riga <- which(giri$matricola_veicolo == "VEH001" & giri$fuori_giro == 10)
+    riga <- which(
+      giri$matricola_veicolo == "VEH001" &
+        giri$giorno == as.Date("2025-09-24")
+    )
+    expect_identical(giri$comune_giro[riga], "LIMENA")
     session$setInputs(tabella_rows_selected = riga)
-    expect_equal(nrow(restituito$risultati()), 10)
+    expect_equal(nrow(restituito$risultati()), 1)
     expect_true(all(restituito$risultati()$comune_giro == "LIMENA"))
     expect_true(all(restituito$risultati()$comune_lettura == "BORGORICCO"))
     # tolta la selezione tornano tutte
@@ -1440,12 +1501,13 @@ test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
         output$riepilogo,
         sprintf("^%d letture di %d bidoni", nrow(letture), dplyr::n_distinct(letture$RFID))
       )
+      fuori_giro <- sum(letture$coerenza_comune == "Fuori giro")
       expect_match(
         output$riepilogo,
-        sprintf("%d fuori giro", sum(letture$fuori_giro)),
+        sprintf("%d fuori giro", fuori_giro),
         fixed = TRUE
       )
-      expect_gte(sum(letture$fuori_giro), 10)
+      expect_equal(fuori_giro, 6)
       session$setInputs(mappa_marker_click = list(id = "4"))
       expect_identical(selezione()$rfid, letture$RFID[4])
     }
@@ -1458,13 +1520,13 @@ test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
     {
       session$setInputs(mappa_zoom = 11)
       expect_equal(nrow(disegnati()), 12)
-      expect_gte(sum(disegnati()$fuori_giro), 10)
+      expect_equal(sum(disegnati()$coerenza_comune == "Fuori giro"), 6)
       expect_match(output$riepilogo, "sulla mappa 12 letture")
     }
   )
 })
 
-test_that("l'interfaccia ha la scheda dei giri, il suo pannello e il filtro sulla posizione", {
+test_that("l'interfaccia ha la scheda dei giri, il suo pannello e il filtro sulla coerenza del comune", {
   html <- as.character(app_ui(NULL))
   expect_match(html, "Ricerca Giro", fixed = TRUE)
   expect_match(html, 'id="giro-mezzo"', fixed = TRUE)
@@ -1483,12 +1545,12 @@ test_that("l'interfaccia ha la scheda dei giri, il suo pannello e il filtro sull
     regexpr('data-value="giro"', html, fixed = TRUE),
     regexpr('data-value="utenza"', html, fixed = TRUE)
   )
-  # il filtro sulla posizione, con le tre voci spuntate
-  expect_match(html, 'id="filtri-posizione_check"', fixed = TRUE)
-  for (voce in names(stati_posizione())) {
+  # il filtro sulla coerenza del comune, con le quattro voci spuntate
+  expect_match(html, 'id="filtri-coerenza_comune_check"', fixed = TRUE)
+  for (voce in names(stati_coerenza_comune())) {
     expect_match(
       html,
-      sprintf('name="filtri-posizione_check" value="%s" checked', voce),
+      sprintf('name="filtri-coerenza_comune_check" value="%s" checked', voce),
       fixed = TRUE
     )
   }

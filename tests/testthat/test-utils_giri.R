@@ -17,9 +17,16 @@ letture_giri <- function() {
     presente_a_database = "Presente",
     servizio_atteso = c(rep("SECCO PAP", 3), "CARTA/CARTONE PAP", "VETRO PAP", "SECCO PAP", NA),
     comune_giro = c(rep("ASIAGO", 3), "GALLIO", "ROANA", "ASIAGO", NA),
-    comune_geografico = c("ASIAGO", "ASIAGO", "ROANA", "GALLIO", "ROANA", "FOZA", NA),
-    fuori_comune = c(FALSE, TRUE, FALSE, FALSE, FALSE, FALSE, FALSE),
-    fuori_giro = c(FALSE, FALSE, TRUE, FALSE, FALSE, TRUE, FALSE),
+    comune_lettura = c("ASIAGO", "ASIAGO", "ROANA", "GALLIO", "ROANA", "FOZA", NA),
+    coerenza_comune = c(
+      "Coerente",
+      "Fuori comune",
+      "Fuori giro",
+      "Coerente",
+      "Coerente",
+      "Fuori giro",
+      "Coerenza ignota"
+    ),
     latitudine = 45.87,
     longitudine = 11.51
   )
@@ -93,10 +100,10 @@ test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del gir
     c("06:10", "14:20")
   )
   expect_identical(format(giri$ultima_lettura[1], "%H:%M", tz = "UTC"), "07:05")
-  # dove cadono le letture del giro
+  # in quali comuni sono state fatte le letture del giro
   expect_identical(
     giri$letto_in,
-    c("ASIAGO e un altro comune", "GALLIO", "ROANA", "FOZA", "fuori dai comuni serviti")
+    c("ASIAGO e un altro comune", "GALLIO", "ROANA", "FOZA", "comune sconosciuto")
   )
   # il riepilogo si calcola anche sulle letture non ancora ordinate
   expect_identical(riepilogo_giri(d[nrow(d):1, ]), giri)
@@ -128,7 +135,10 @@ test_that("frase, limite e tabella dei giri", {
   expect_equal(nrow(poche), 4)
   expect_identical(attr(poche, "totale"), 7L)
   expect_true(all(c("R2") %in% poche$RFID))
-  expect_equal(sum(poche$fuori_giro | poche$fuori_comune), 3)
+  expect_equal(
+    sum(poche$coerenza_comune %in% c("Fuori giro", "Fuori comune")),
+    3
+  )
   expect_false(is.unsorted(poche$giorno_lettura))
   tutte <- limita_letture_giro(d, 100)
   expect_equal(nrow(tutte), 7)
@@ -224,23 +234,26 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   expect_equal(sum(giri$letture), sum(lubridate::year(d$giorno_lettura) == 2025))
 
   # mercoled\u00ec 24 settembre 2025 il mezzo VEH001 doveva lavorare a Limena e
-  # ha letto a Borgoricco: tutte le letture sono fuori giro
+  # ha letto a Borgoricco. I censiti sono nel loro comune: fuori giro resta il
+  # solo non censito
   sbagliato <- cerca_giri(d, "VEH001", "2025-09-24", "2025-09-24")
   riga <- riepilogo_giri(sbagliato)
   expect_equal(nrow(riga), 1)
   # il giro ha il nome del calendario
   expect_identical(riga$servizio_giro, "SECCO PAP")
   expect_identical(riga$comune_giro, "LIMENA")
-  # il comune di lettura viene dalla posizione, non dal calendario
+  # il comune di lettura non viene dal calendario
   expect_identical(unique(sbagliato$comune_lettura), "BORGORICCO")
   expect_identical(unique(sbagliato$comune_giro), "LIMENA")
   expect_identical(riga$letture, 10L)
-  expect_identical(riga$fuori_giro, 10L)
+  expect_identical(riga$fuori_giro, 1L)
   expect_identical(riga$fuori_comune, 0L)
   expect_identical(riga$letto_in, "BORGORICCO")
-  # \u00e8 il giro con pi\u00f9 letture fuori giro dell'anno
-  expect_identical(max(giri$fuori_giro), 10L)
-  # la settimana prima lo stesso giro era a posto
+  expect_identical(
+    sbagliato$RFID[sbagliato$coerenza_comune == "Fuori giro"],
+    "RFD20241009227"
+  )
+  # la settimana prima lo stesso giro era a Borgoricco
   prima <- riepilogo_giri(cerca_giri(d, "VEH001", "2025-09-17", "2025-09-17"))
   expect_identical(prima$comune_giro, "BORGORICCO")
   expect_lte(prima$fuori_giro, 1)

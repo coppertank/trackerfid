@@ -2,7 +2,8 @@
 #'
 #' Layout a dashboard: barra laterale (collassabile) con caricamento, periodo
 #' di analisi, dettaglio del bidone e controlli della scheda attiva; corpo con
-#' le tre mappe e l'analisi dei cluster spaziali.
+#' le mappe e l'analisi dei cluster spaziali. I filtri della mappa principale
+#' stanno sopra la mappa, le sue statistiche nella barra laterale.
 #'
 #' @param request Internal parameter for `{shiny}`.
 #'     DO NOT REMOVE.
@@ -25,10 +26,11 @@ app_ui <- function(request) {
         mod_caricamento_ui("caricamento"),
         mod_periodo_ui("periodo"),
         div(id = "pannello_info", uiOutput("info_panel")),
-        # I controlli seguono la scheda attiva: filtri oppure ricerche.
+        # I controlli seguono la scheda attiva: statistiche della mappa
+        # principale, i cui filtri stanno sopra la mappa, oppure ricerche.
         conditionalPanel(
           "input.scheda_attiva == 'mappa'",
-          mod_filtri_ui("filtri")
+          mod_filtri_sidebar_ui("filtri")
         ),
         conditionalPanel(
           "input.scheda_attiva == 'rfid'",
@@ -55,7 +57,11 @@ app_ui <- function(request) {
             tabPanel(
               title = tagList(icon("map-location-dot"), "Mappa Principale"),
               value = "mappa",
-              mod_mappa_ui("mappa_principale", "cluster")
+              div(
+                class = "scheda-mappa",
+                mod_filtri_ui("filtri"),
+                mod_mappa_ui("mappa_principale", "cluster")
+              )
             ),
             tabPanel(
               title = tagList(icon("barcode"), "Ricerca RFID"),

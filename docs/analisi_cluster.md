@@ -19,7 +19,7 @@ Le quantità annue non usano la lunghezza del periodo, ma i **giorni osservati**
 
 ## La tabella di output
 
-Una riga per ogni cluster di ogni RFID, 30 campi. La specifica parlava di 25 campi ma ne definiva 22. Due di quelli, il servizio transponder e il servizio atteso, sono oggi una colonna sola, `servizio_atteso`: il proprietario del progetto ha voluto che il servizio del contenitore stesse in un campo unico, con accanto la sua origine. I nove campi aggiunti sono segnati con un asterisco.
+Una riga per ogni cluster di ogni RFID, 29 campi. La specifica parlava di 25 campi ma ne definiva 22: i sette aggiunti sono segnati con un asterisco.
 
 | Campo | Contenuto |
 |---|---|
@@ -29,13 +29,12 @@ Una riga per ogni cluster di ogni RFID, 30 campi. La specifica parlava di 25 cam
 | `globale_prima_lettura`, `globale_ultima_lettura` | Prima e ultima lettura dell'RFID nel periodo |
 | `cluster_prima_lettura`, `cluster_ultima_lettura` | Prima e ultima lettura del cluster |
 | `presente_a_database` * | Stato dell'ultima lettura del periodo. Stabilisce quali campi sono compilati |
-| `cantiere` *, `comune` * | Comune dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello in cui cade il maggior numero delle sue letture, secondo la posizione. Il calendario dei mezzi non conta. Il cantiere è quello del comune. Sono uguali per tutti i cluster dell'RFID |
-| `comune_geografico` * | Comune servito in cui cade il baricentro del cluster, trovato dai confini dei comuni. Un baricentro fuori da tutti i comuni serviti, ma entro 100 metri dal confine di uno di essi, prende il comune più vicino. Vuoto se è più lontano |
-| `incongruenza_comune` * | `FUORI_COMUNE` se il cluster è di un censito e il baricentro sta a più di un chilometro dal confine del comune del database: il contenitore è stato letto lontano da dove risulta. `FUORI_GIRO` se il baricentro sta a più di un chilometro dal comune del giro che ha letto il cluster più spesso. Le due voci possono comparire insieme, separate da una virgola. Vuoto se la posizione del cluster è regolare |
-| `distanza_comune_m` * | Distanza in metri del baricentro dal confine del comune dichiarato: quello del database per un censito, quello del giro prevalente per un non censito. Zero se il baricentro è dentro il comune |
-| `servizio_atteso` | Servizio del contenitore, in una colonna sola. Per un censito è quello del database, all'ultima lettura del periodo che lo riporta. Per un non censito è il servizio atteso prevalente tra le letture del cluster, se copre almeno l'80%, altrimenti vuoto: il servizio atteso di una lettura viene dai censiti letti dallo stesso mezzo nella mezz'ora attorno o, se sono pochi, dal calendario |
-| `origine_servizio` * | Da dove viene `servizio_atteso`. `Database` per un censito. Per un non censito l'origine più frequente tra le letture del cluster che riportano il servizio prevalente: `Censiti` se viene soprattutto dai censiti letti dallo stesso mezzo, `Calendario` se viene soprattutto dal calendario dei mezzi. Vuoto dove manca il servizio |
-| `servizio_atteso_cronologia` * | Solo per i censiti: sequenza dei servizi del database quando è cambiato, ad esempio `CARTA > SECCO > CARTA`. Vuoto se non è cambiato |
+| `cantiere` *, `comune` * | Comune dell'RFID: l'ultimo indicato dal database, oppure, per un non censito, quello in cui è stato fatto il maggior numero delle sue letture, secondo il comune di lettura. Il calendario dei mezzi non conta. Il cantiere è quello del comune. Sono uguali per tutti i cluster dell'RFID |
+| `comune_geografico` * | Comune di lettura più frequente tra le letture del cluster, se è tra i comuni serviti. Vuoto altrimenti |
+| `incongruenza_comune` * | Coerenza del comune più frequente tra le letture del cluster, vedi `coerenza_comune` nel README. `FUORI_COMUNE` per un censito letto in un comune diverso da quello del database: il contenitore è stato letto lontano da dove risulta. `FUORI_GIRO` per un non censito letto in un comune diverso da quello del giro. Vuoto se il cluster è coerente o se la coerenza è ignota |
+| `servizio_transponder` | Servizio dell'ultima lettura del periodo. Vuoto per i non censiti |
+| `servizio_transponder_cronologia` * | Sequenza dei servizi quando è cambiato, ad esempio `CARTA > SECCO > CARTA`. Vuoto se non è cambiato |
+| `servizio_atteso` | Solo per i non censiti: il servizio atteso prevalente tra le letture del cluster, se copre almeno l'80%, altrimenti vuoto. Il servizio atteso di una lettura è quello del giro che l'ha fatta, con il nome del database; nei giri dei servizi, come `SERVIZI MERCATI`, quello dei censiti letti nel giro |
 | `servizio_atteso_dettaglio` * | Solo per i non censiti: composizione completa, ad esempio `CARTA (40%); SECCO (35%); UMIDO (25%)` |
 | `volume_previsto` | Volume a database, solo per i censiti |
 | `volume_atteso` | Copia di `volume_previsto`, riservata a sviluppi futuri |
@@ -119,9 +118,9 @@ Attenzione a un dettaglio del codice proposto nella specifica: `dbscan::dbscan()
 
 Risposte alle richieste di consiglio della specifica. Per ognuna: cosa è stato fatto, perché, e cosa si potrebbe fare in più.
 
-### Servizio a database quando cambia nell'anno
+### Servizio transponder quando cambia nell'anno
 
-**Fatto.** Per un censito `servizio_atteso` riporta il servizio del database all'ultima lettura. La colonna aggiuntiva `servizio_atteso_cronologia` riporta la sequenza dei cambi. Contano le sole letture con il servizio del database, cioè con origine `Database`: se un contenitore viene censito a metà periodo, il servizio stimato delle letture precedenti non è un cambio di servizio.
+**Fatto.** `servizio_transponder` riporta il servizio dell'ultima lettura. La colonna aggiuntiva `servizio_transponder_cronologia` riporta la sequenza dei cambi.
 
 **Perché.** L'ultimo valore è lo stato attuale del database, quello con cui confrontarsi. La moda nasconderebbe un cambio recente, il primo valore descriverebbe una situazione superata. La cronologia in una colonna a parte tiene pulito il campo principale e permette di filtrare con un solo criterio tutti i contenitori che hanno cambiato servizio. Il cambio abbassa anche l'indice di fiducia.
 
@@ -129,7 +128,7 @@ Risposte alle richieste di consiglio della specifica. Per ognuna: cosa è stato 
 
 ### Servizio atteso quando le letture non concordano
 
-**Fatto.** Per un non censito, sotto l'80% `servizio_atteso` resta vuoto, e con lui `origine_servizio`. `servizio_atteso_dettaglio` riporta sempre la composizione completa.
+**Fatto.** Sotto l'80% `servizio_atteso` resta vuoto. `servizio_atteso_dettaglio` riporta sempre la composizione completa.
 
 **Perché.** Il campo principale contiene solo valori affidabili, quindi si presta a filtri e tabelle pivot. L'informazione non va persa perché è nella colonna di dettaglio. Con 50% e 50%, o con 40%, 35% e 25%, il campo resta vuoto.
 
@@ -137,9 +136,7 @@ Risposte alle richieste di consiglio della specifica. Per ognuna: cosa è stato 
 
 **Una differenza da conoscere.** Per l'icona sulla mappa la quota si calcola per tipologia; nella tabella dei cluster sul nome esatto scritto nel file. Con un file preparato oggi i due conti coincidono: la preparazione dei dati riporta i nomi dei giri a quelli del database, e `CARTA CONT.STRADALI` e `CARTA/CARTONE PAP` arrivano entrambi come `CARTA`. Con un file preparato in passato, che ha ancora i nomi del calendario, nella tabella dei cluster stradale e porta a porta restano distinti.
 
-**Quali letture contano.** Il servizio atteso c'è su ogni lettura, anche su quelle dei contenitori censiti, per i quali è il servizio del database. Per la composizione contano le sole letture «Non Presente», come per l'icona sulla mappa e per i filtri dell'app.
-
-**L'origine dice quanto vale la stima.** Per un non censito `origine_servizio` è l'origine più frequente tra le letture del cluster che riportano il servizio prevalente. `Censiti` vuol dire che il servizio viene soprattutto da quello che i mezzi hanno raccolto attorno a quel contenitore; `Calendario` che viene soprattutto da quello che i mezzi dovevano fare. La prima stima regge anche quando un mezzo ne sostituisce un altro, la seconda no. Con un file che non riporta l'origine il campo resta vuoto per i non censiti.
+**Quali letture contano.** Il servizio atteso c'è su ogni lettura, anche su quelle dei contenitori censiti: ogni lettura è fatta da un mezzo durante un giro. Per la composizione contano le sole letture «Non Presente», come per l'icona sulla mappa e per i filtri dell'app. I giri che non raccolgono un rifiuto compaiono con il nome della loro tipologia, ad esempio `SERVIZI` e `PULIZIA TERRITORIO`.
 
 ### Periodo di analisi
 
@@ -160,13 +157,13 @@ Le tre correzioni applicate sono descritte sopra. Restano alcuni punti deboli, l
 - **Soglia dei 50 m.** È realistica per il GPS di bordo, che sbaglia di 5-15 m. Un contenitore stradale letto dai due lati della strada, o in vie strette tra edifici alti, può arrivare a 50-80 m.
 - **Letture o raccolte.** Due letture nello stesso giorno contano come due. Contare i giorni distinti di lettura darebbe una stima più fedele delle raccolte.
 
-### Posizione e comuni dichiarati
+### Comune di lettura e comuni dichiarati
 
-Ogni cluster ha due comuni dichiarati: quello del database, se l'RFID è censito, e quello in cui il calendario mandava i mezzi che lo hanno letto, cioè il comune del giro. Il campo `comune_geografico` dice invece dove sta davvero il cluster. Il confronto usa la stessa tolleranza dell'app, un chilometro dal confine: un contenitore su una strada di confine, o letto con un GPS poco preciso, non viene segnalato.
+Ogni cluster ha due comuni dichiarati: quello del database, se l'RFID è censito, e quello in cui il calendario mandava i mezzi che lo hanno letto, cioè il comune del giro. Il campo `comune_geografico` dice invece dove sta davvero il cluster, secondo il comune di lettura. Il confronto è quello del campo `coerenza_comune` delle letture, senza distanze né tolleranza: un contenitore letto pochi metri oltre il confine del suo comune risulta fuori comune.
 
 - **`FUORI_COMUNE` e `RELOCATED_BIN` dicono cose diverse.** `RELOCATED_BIN` guarda le letture: due o tre luoghi distinti nello stesso periodo. `FUORI_COMUNE` guarda il database: il luogo sta in un comune diverso da quello dell'anagrafica. Un contenitore spostato da tempo ha un cluster solo, regolare, ma fuori comune: è l'anagrafica da correggere.
-- **`FUORI_GIRO` riguarda il mezzo più del contenitore.** Vuol dire che i mezzi che hanno letto quel luogo dovevano lavorare altrove. Per capire quale mezzo e in quale giorno serve la scheda «Ricerca Giro» dell'app.
-- **Gli indicatori e l'indice di fiducia non cambiano.** I tre campi si aggiungono alla tabella: non entrano nelle regole di classificazione né nei pesi.
+- **`FUORI_GIRO` riguarda il mezzo più del contenitore.** Vale solo per i non censiti, e vuol dire che i mezzi che hanno letto quel luogo dovevano lavorare altrove. Per capire quale mezzo e in quale giorno serve la scheda «Ricerca Giro» dell'app.
+- **Gli indicatori e l'indice di fiducia non cambiano.** I due campi si aggiungono alla tabella: non entrano nelle regole di classificazione né nei pesi.
 
 ### Casi limite
 
@@ -176,7 +173,7 @@ Ogni cluster ha due comuni dichiarati: quello del database, se l'RFID è censito
 | Letture senza coordinate | Scartate al caricamento del file, con avviso |
 | RFID letto solo a inizio e fine anno | La durata del cluster copre l'anno, la stima resta bassa |
 | Dataset di pochi mesi | Frequenze e raccolte rapportate ai giorni osservati |
-| Censito senza servizio a database | Analizzato normalmente, `servizio_atteso` e `origine_servizio` vuoti, punto di domanda sulla mappa |
+| Censito senza servizio a database | Analizzato normalmente, `servizio_transponder` vuoto, punto di domanda sulla mappa |
 | Sacchetto | Escluso dall'analisi. È monouso, con una lettura sola, e l'analisi riguarda i contenitori. Il risultato, giorni osservati compresi, è quello di un file senza sacchetti |
 | Stato a database che cambia nel periodo | Vale lo stato dell'ultima lettura |
 | Periodo senza letture | Tabella vuota e messaggio nell'app |

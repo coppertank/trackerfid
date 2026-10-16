@@ -62,8 +62,8 @@ cerca_giri <- function(dati, mezzo = NULL, dal, al, solo = character(0)) {
   }
   solo <- intersect(solo, c("fuori_giro", "fuori_comune"))
   if (length(solo) > 0) {
-    posizione <- posizione_letture(dati)
-    tieni <- tieni & Reduce(`|`, posizione[solo])
+    incongruenze <- incongruenze_comune(dati)
+    tieni <- tieni & Reduce(`|`, incongruenze[solo])
   }
   trovate <- dati[which(tieni), , drop = FALSE]
   trovate <- trovate[
@@ -112,13 +112,13 @@ colonne_riepilogo_giri <- function() {
 #'
 #' Di ogni giro dice che cosa il mezzo doveva fare, cioè servizio atteso e
 #' comune del calendario, e che cosa ha fatto: quante letture, di quanti
-#' bidoni, quante lontane dal comune del giro, quante di bidoni che a database
-#' stanno in un altro comune, e in quali comuni cadono le letture.
+#' bidoni, quante fuori giro e quante fuori comune, vedi `coerenza_comune()`,
+#' e in quali comuni sono state fatte le letture.
 #'
 #' @param letture Letture trovate da `cerca_giri()`.
 #' @return Tibble con le colonne di `colonne_riepilogo_giri()`, in ordine di
-#'   giorno, mezzo e prima lettura. `letto_in` riporta il comune in cui cade
-#'   la gran parte delle letture e quanti altri comuni compaiono.
+#'   giorno, mezzo e prima lettura. `letto_in` riporta il comune di lettura
+#'   della gran parte delle letture e quanti altri comuni compaiono.
 #' @noRd
 riepilogo_giri <- function(letture) {
   if (is.null(letture) || nrow(letture) == 0) {
@@ -151,14 +151,14 @@ riepilogo_giri <- function(letture) {
     sep = "\r"
   ))
   n <- max(gruppo)
-  posizione <- posizione_letture(letture)
-  geografico <- as.character(
-    letture[["comune_geografico"]] %||% rep(NA_character_, nrow(letture))
+  incongruenze <- incongruenze_comune(letture)
+  letto <- as.character(
+    letture[["comune_lettura"]] %||% rep(NA_character_, nrow(letture))
   )
-  comune_prevalente <- piu_frequente_per_gruppo(geografico, gruppo, n)
-  altri_comuni <- n_distinti_per_gruppo(geografico, gruppo, n) - 1L
+  comune_prevalente <- piu_frequente_per_gruppo(letto, gruppo, n)
+  altri_comuni <- n_distinti_per_gruppo(letto, gruppo, n) - 1L
   letto_in <- dplyr::case_when(
-    is.na(comune_prevalente) ~ "fuori dai comuni serviti",
+    is.na(comune_prevalente) ~ "comune sconosciuto",
     altri_comuni == 1 ~ paste(comune_prevalente, "e un altro comune"),
     altri_comuni > 1 ~ paste(comune_prevalente, "e altri", altri_comuni, "comuni"),
     .default = comune_prevalente
@@ -176,9 +176,11 @@ riepilogo_giri <- function(letture) {
     # le letture.
     bidoni = bidoni,
     letture = tabulate(gruppo, n),
-    fuori_giro = as.integer(somma_per_gruppo(posizione$fuori_giro, gruppo, n)),
+    fuori_giro = as.integer(
+      somma_per_gruppo(incongruenze$fuori_giro, gruppo, n)
+    ),
     fuori_comune = as.integer(
-      somma_per_gruppo(posizione$fuori_comune, gruppo, n)
+      somma_per_gruppo(incongruenze$fuori_comune, gruppo, n)
     ),
     letto_in = letto_in
   )
@@ -262,8 +264,9 @@ limita_letture_giro <- function(df, massimo = limiti_mappa()$letture_ricerca) {
   }
   totale <- nrow(df)
   if (totale > massimo) {
+    incongruenze <- incongruenze_comune(df)
     ordine <- order(
-      posizione_letture(df)$regolare,
+      !(incongruenze$fuori_giro | incongruenze$fuori_comune),
       -as.numeric(df$giorno_lettura),
       method = "radix"
     )
@@ -281,15 +284,15 @@ descrizione_giri <- function(letture) {
   if (is.null(letture) || nrow(letture) == 0) {
     return("")
   }
-  posizione <- posizione_letture(letture)
+  incongruenze <- incongruenze_comune(letture)
   paste0(
     conta(nrow(letture), "lettura", "letture"),
     " di ",
     conta(dplyr::n_distinct(letture$RFID), "bidone", "bidoni"),
     " \u00b7 ",
-    formatta_numero(sum(posizione$fuori_giro)),
+    formatta_numero(sum(incongruenze$fuori_giro)),
     " fuori giro \u00b7 ",
-    formatta_numero(sum(posizione$fuori_comune)),
+    formatta_numero(sum(incongruenze$fuori_comune)),
     " fuori comune"
   )
 }

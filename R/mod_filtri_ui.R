@@ -1,146 +1,198 @@
-#' Modulo filtri laterali: interfaccia
+#' Modulo filtri della mappa principale: barra sopra la mappa
 #'
-#' Filtri per cantiere, comune, stato a database e servizio, pulsante di reset
-#' e riquadro con le statistiche del dataset filtrato. Il periodo si sceglie
-#' nel modulo dedicato.
+#' Una riga di menu a discesa sopra la mappa principale: cantiere, comune,
+#' coerenza del comune, stato a database, servizio, giro e coerenza dei
+#' servizi, più il pulsante di reset. Ogni menu contiene le caselle del suo filtro; il comune
+#' si sceglie da un elenco a scelta multipla, che è già un menu a discesa. Le
+#' statistiche stanno nella barra laterale, vedi `mod_filtri_sidebar_ui()`.
 #'
-#' L'elenco dei comuni permette più scelte. Il foglio di stile gli dà lo
-#' stesso aspetto dell'elenco dell'anno di analisi: vedi `elenco-comuni`.
+#' I servizi stanno in due menu, che valgono per i bidoni di tutti e due gli
+#' stati a database: il servizio del contenitore, cioè quello a database per
+#' un censito e quello stimato per un non censito, e il giro del calendario,
+#' con il suo nome. Ogni menu ha le scelte rapide "Tutti" e "Nessuno". Un
+#' terzo menu riguarda la coerenza tra servizio a database e servizio atteso
+#' dal giro. Lo stato a database si sceglie a parte.
 #'
-#' I servizi stanno in due elenchi, che valgono per i bidoni di tutti e due
-#' gli stati a database: il servizio atteso, cioè quello del contenitore, e
-#' il giro del calendario, con il suo nome. Ogni elenco ha le scelte rapide
-#' "Tutti" e "Nessuno". Un terzo filtro riguarda la coerenza tra servizio
-#' atteso e giro. Lo stato a database si sceglie a parte.
-#'
-#' Il filtro sulla posizione, con le voci di `stati_posizione()`, è un'altra
-#' cosa: riguarda le letture fuori comune e fuori giro.
+#' Il filtro sulla coerenza del comune, con le voci di
+#' `stati_coerenza_comune()`, è un'altra cosa: riguarda il comune di lettura a
+#' confronto con quello dichiarato.
 #'
 #' @param id Identificativo del modulo.
 #' @noRd
 mod_filtri_ui <- function(id) {
   ns <- NS(id)
-  tagList(
-    sezione_sidebar(
-      "Filtri",
-      "filter",
-      conditionalPanel(
-        "!output.caricato",
-        ns = ns,
-        p(class = "suggerimento", "Carica un file CSV per attivare i filtri.")
-      ),
-      conditionalPanel(
-        "output.caricato",
-        ns = ns,
-        # I filtri geografici compaiono solo se il dataset ha cantieri.
-        conditionalPanel(
-          "output.con_geografia",
-          ns = ns,
-          checkboxGroupInput(
-            ns("cantiere_check"),
-            "Filtro Cantiere",
-            choices = character(0),
-            inline = FALSE
-          ),
-          # Più comuni, anche di cantieri diversi. Nessuna scelta: tutti.
-          div(
-            class = "elenco-comuni",
-            selectizeInput(
-              ns("comuni"),
-              "Filtro Comune",
-              choices = NULL,
-              multiple = TRUE,
-              width = "100%",
-              options = list(
-                placeholder = "Tutti i comuni",
-                plugins = list("remove_button")
-              )
-            )
-          ),
-          # Posizione delle letture a confronto con i comuni dichiarati.
-          checkboxGroupInput(
-            ns("posizione_check"),
-            "Filtro Posizione",
-            choiceNames = unname(stati_posizione()),
-            choiceValues = names(stati_posizione()),
-            selected = names(stati_posizione()),
-            inline = FALSE
-          ),
-          p(
-            class = "nota-filtro",
-            "Fuori comune: censito letto lontano dal comune del database.",
-            "Fuori giro: lettura lontana dal comune del giro del mezzo."
-          )
-        ),
-        checkboxGroupInput(
-          ns("presente_filter"),
-          "Filtro Stato Database",
-          choices = stati_database(),
-          selected = stati_database(),
-          inline = FALSE
-        ),
-        div(
-          class = "gruppo-servizi",
-          intestazione_filtro(
-            ns,
-            "atteso",
-            "Filtro Servizio Atteso",
-            "Censiti: servizio a database. Non censiti: servizio stimato"
-          ),
-          checkboxGroupInput(
-            ns("servizio_atteso_check"),
-            NULL,
-            choices = character(0),
-            inline = FALSE
-          ),
-          # I non censiti che sulla mappa hanno il punto di domanda.
-          checkboxInput(
-            ns("includi_stima_incerta"),
-            "Includi Non Censiti con stima incerta (?)",
-            value = TRUE
-          )
-        ),
-        div(
-          class = "gruppo-servizi",
-          intestazione_filtro(
-            ns,
-            "giro",
-            "Filtro Servizio Giro",
-            "Giro del calendario dei mezzi, con il suo nome"
-          ),
-          checkboxGroupInput(
-            ns("servizio_giro_check"),
-            NULL,
-            choices = character(0),
-            inline = FALSE
-          )
-        ),
-        # Servizio atteso e giro a confronto.
-        checkboxGroupInput(
-          ns("coerenza_check"),
-          "Filtro Coerenza Servizio",
-          choiceNames = unname(stati_coerenza()),
-          choiceValues = names(stati_coerenza()),
-          selected = names(stati_coerenza()),
-          inline = FALSE
-        ),
-        p(
-          class = "nota-filtro",
-          "Non coerente: il servizio atteso e il giro non sono dello stesso",
-          "rifiuto."
-        ),
-        actionButton(
-          ns("reset"),
-          "\U0001F504 Reset Filtri",
-          class = "btn-block"
-        )
-      )
+  div(
+    class = "barra-filtri",
+    conditionalPanel(
+      "!output.caricato",
+      ns = ns,
+      p(class = "suggerimento", "Carica un file CSV per attivare i filtri.")
     ),
     conditionalPanel(
       "output.caricato",
       ns = ns,
-      sezione_sidebar("Statistiche", "chart-simple", uiOutput(ns("stat_box")))
+      class = "gruppo-filtri",
+      # I filtri geografici compaiono solo se il dataset ha cantieri.
+      conditionalPanel(
+        "output.con_geografia",
+        ns = ns,
+        class = "gruppo-filtri",
+        menu_filtro(
+          "Cantiere",
+          "city",
+          checkboxGroupInput(
+            ns("cantiere_check"),
+            NULL,
+            choices = character(0)
+          )
+        ),
+        # Più comuni, anche di cantieri diversi. Nessuna scelta: tutti.
+        div(
+          class = "elenco-comuni filtro-comuni",
+          selectizeInput(
+            ns("comuni"),
+            NULL,
+            choices = NULL,
+            multiple = TRUE,
+            width = "100%",
+            options = list(
+              placeholder = "Tutti i comuni",
+              plugins = list("remove_button")
+            )
+          )
+        ),
+        # Comune di lettura a confronto con il comune dichiarato.
+        menu_filtro(
+          "Coerenza comune",
+          "location-dot",
+          checkboxGroupInput(
+            ns("coerenza_comune_check"),
+            NULL,
+            choiceNames = unname(stati_coerenza_comune()),
+            choiceValues = names(stati_coerenza_comune()),
+            selected = names(stati_coerenza_comune())
+          ),
+          p(
+            class = "nota-filtro",
+            "Fuori comune: censito letto in un comune diverso da quello del",
+            "database. Fuori giro: non censito letto in un comune diverso da",
+            "quello del giro."
+          )
+        )
+      ),
+      menu_filtro(
+        "Stato database",
+        "database",
+        checkboxGroupInput(
+          ns("presente_filter"),
+          NULL,
+          choices = stati_database(),
+          selected = stati_database()
+        )
+      ),
+      menu_filtro(
+        "Servizio",
+        "trash-can",
+        intestazione_filtro(
+          ns,
+          "servizio",
+          "Servizio del contenitore",
+          "Censiti: servizio a database. Non censiti: servizio stimato dai giri"
+        ),
+        checkboxGroupInput(
+          ns("servizio_check"),
+          NULL,
+          choices = character(0)
+        ),
+        # I non censiti che sulla mappa hanno il punto di domanda.
+        checkboxInput(
+          ns("includi_stima_incerta"),
+          "Non censiti con stima incerta (?)",
+          value = TRUE
+        )
+      ),
+      menu_filtro(
+        "Giro",
+        "truck",
+        intestazione_filtro(
+          ns,
+          "giro",
+          "Giro del calendario",
+          "Con il nome del calendario dei mezzi"
+        ),
+        checkboxGroupInput(
+          ns("servizio_giro_check"),
+          NULL,
+          choices = character(0)
+        )
+      ),
+      # Servizio a database e servizio atteso dal giro a confronto.
+      menu_filtro(
+        "Coerenza servizio",
+        "triangle-exclamation",
+        checkboxGroupInput(
+          ns("coerenza_check"),
+          NULL,
+          choiceNames = unname(etichette_coerenza()),
+          choiceValues = names(stati_coerenza()),
+          selected = names(stati_coerenza())
+        ),
+        p(
+          class = "nota-filtro",
+          "Non coerente: il servizio a database e quello atteso dal giro non",
+          "sono dello stesso rifiuto."
+        )
+      ),
+      actionButton(
+        ns("reset"),
+        "Reset",
+        icon = icon("rotate-left"),
+        class = "filtro-reset",
+        title = "Riporta tutti i filtri ai valori iniziali"
+      )
     )
+  )
+}
+
+#' Modulo filtri della mappa principale: statistiche nella barra laterale
+#'
+#' @param id Identificativo del modulo: lo stesso di `mod_filtri_ui()`.
+#' @noRd
+mod_filtri_sidebar_ui <- function(id) {
+  ns <- NS(id)
+  conditionalPanel(
+    "output.caricato",
+    ns = ns,
+    sezione_sidebar("Statistiche", "chart-simple", uiOutput(ns("stat_box")))
+  )
+}
+
+#' Menu a discesa di un filtro della barra sopra la mappa
+#'
+#' Un pulsante con il nome del filtro apre un riquadro con le sue caselle. Il
+#' riquadro resta aperto mentre si spuntano le voci, e si chiude con un click
+#' fuori. Quando qualche voce è tolta il pulsante lo segnala, con il numero
+#' delle voci rimaste: lo scrive `script.js`.
+#'
+#' @param etichetta Nome del filtro, sul pulsante.
+#' @param icona Nome dell'icona Font Awesome.
+#' @param ... Contenuto del riquadro.
+#' @noRd
+menu_filtro <- function(etichetta, icona, ...) {
+  div(
+    class = "dropdown filtro-mappa",
+    tags$button(
+      type = "button",
+      class = "btn btn-default dropdown-toggle",
+      `data-toggle` = "dropdown",
+      `aria-haspopup` = "true",
+      `aria-expanded` = "false",
+      icon(icona),
+      span(class = "filtro-etichetta", etichetta),
+      span(class = "filtro-conteggio"),
+      span(class = "caret")
+    ),
+    div(class = "dropdown-menu filtro-menu", ...)
   )
 }
 

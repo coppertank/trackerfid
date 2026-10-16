@@ -65,14 +65,18 @@ stile_confini <- function() {
 #'
 #' PUNTO UNICO DA MODIFICARE per aggiungere servizi o cambiare icone.
 #' Ogni tipologia raggruppa i nomi che condividono la stessa icona: i nomi
-#' del database, usati in `servizio_atteso`, e i nomi dei giri del calendario,
-#' usati in `servizio_giro` (PAP = porta a porta). I sacchetti hanno una
+#' del database, usati in `servizio_transponder`, e i nomi dei giri del
+#' calendario, usati in `servizio_giro` (PAP = porta a porta). Il nome della
+#' tipologia, in maiuscolo, è il nome uniforme a cui la tabella di conversione
+#' riporta tutti gli altri, vedi `conversione_servizi()`: è quello di
+#' `servizio_atteso`, ed è sempre un nome riconosciuto. I sacchetti hanno una
 #' tipologia loro: non hanno un servizio a database, e l'app li riconosce dal
-#' codice RFID, vedi `rfid_sacchetto()`. Per un nuovo nome basta aggiungerlo al vettore
-#' `servizi` della tipologia giusta; per una nuova tipologia si aggiunge una
-#' voce alla lista. I nomi vanno scritti in maiuscolo, come dopo il caricamento
-#' del CSV. Le icone sono nomi Font Awesome (https://fontawesome.com/icons).
-#' L'ordine qui è anche l'ordine di filtri, statistiche e legenda.
+#' codice RFID, vedi `rfid_sacchetto()`. Per un nuovo nome basta aggiungerlo
+#' al vettore `servizi` della tipologia giusta; per una nuova tipologia si
+#' aggiunge una voce alla lista. I nomi vanno scritti in maiuscolo, come dopo
+#' il caricamento del CSV. Le icone sono nomi Font Awesome
+#' (https://fontawesome.com/icons). L'ordine qui è anche l'ordine di filtri,
+#' statistiche e legenda.
 #' @noRd
 tipologie_servizio <- function() {
   list(
@@ -136,13 +140,6 @@ tipologie_servizio <- function() {
       servizi = servizio_sacchetti()
     ),
     list(
-      tipologia = "Assistente servizi",
-      icona = "user-gear",
-      colore = "#5d6d7e",
-      emoji = "\U0001F6E0\ufe0f",
-      servizi = "ASSISTENTE SERVIZI"
-    ),
-    list(
       tipologia = "Pulizia territorio",
       icona = "broom",
       colore = "#b9770e",
@@ -150,23 +147,25 @@ tipologie_servizio <- function() {
       servizi = "PULIZIA TERRIT."
     ),
     list(
-      tipologia = "Servizi mercati",
+      tipologia = "Servizi",
       icona = "store",
       colore = "#884ea0",
       emoji = "\U0001F3EA",
-      servizi = "SERVIZI MERCATI"
+      servizi = c("SERVIZI MERCATI", "SERV.MANIFESTAZIONE")
     )
   )
 }
 
 #' Configurazione dei servizi: una riga per nome di servizio
 #'
-#' Tabella derivata da `tipologie_servizio()`.
+#' Tabella derivata da `tipologie_servizio()`. Il nome uniforme di una
+#' tipologia, cioè il suo nome in maiuscolo, è sempre tra i nomi: è quello
+#' del servizio atteso, vedi `conversione_servizi()`.
 #' @noRd
 servizi_config <- function() {
   righe <- purrr::map(tipologie_servizio(), function(tp) {
     data.frame(
-      servizio = tp$servizi,
+      servizio = union(tp$servizi, stringr::str_to_upper(tp$tipologia)),
       tipologia = tp$tipologia,
       icona = tp$icona,
       colore = tp$colore,
@@ -212,23 +211,24 @@ tipologia_servizio <- function(servizio) {
 #'
 #' Il calendario dei mezzi chiama i giri con nomi suoi, ad esempio
 #' `CARTA/CARTONE PAP` e `CARTA CONT.STRADALI`. Il database chiama il rifiuto
-#' in un modo solo: `CARTA`. La tabella riporta ogni nome a quello del
-#' database, così il servizio di un giro e quello di un contenitore si
+#' in un modo solo: `CARTA`. La tabella riporta ogni nome a quello della sua
+#' tipologia, così il servizio di un giro e quello di un contenitore si
 #' confrontano senza passaggi.
 #'
-#' Viene da `tipologie_servizio()`: il nome uniforme di una tipologia è il
-#' primo dei suoi `servizi`. Per aggiungere un nome del calendario basta
-#' aggiungerlo lì, dopo il primo. I giri che non raccolgono un rifiuto, come
-#' `SERVIZI MERCATI`, restano con il loro nome.
+#' Viene da `tipologie_servizio()`: il nome uniforme è il nome della
+#' tipologia, in maiuscolo. Per le sei tipologie di rifiuto è anche il nome
+#' del database; i giri che non raccolgono un rifiuto diventano ad esempio
+#' `PULIZIA TERRITORIO` e `SERVIZI`. Per aggiungere un nome del calendario
+#' basta aggiungerlo ai `servizi` della sua tipologia.
 #'
-#' @return Tibble con `servizio_calendario`, il nome da convertire, `servizio`,
-#'   il nome uniforme, e `tipologia`.
+#' @return Tibble con `servizio_calendario`, il nome da convertire,
+#'   `servizio`, il nome uniforme, e `tipologia`.
 #' @noRd
 conversione_servizi <- function() {
   righe <- purrr::map(tipologie_servizio(), function(tp) {
     dplyr::tibble(
       servizio_calendario = tp$servizi,
-      servizio = tp$servizi[1],
+      servizio = stringr::str_to_upper(tp$tipologia),
       tipologia = tp$tipologia
     )
   })
@@ -682,14 +682,20 @@ html_legenda <- function(modalita = "cluster") {
     ),
     NULL
   )
-  # Segnali sui marker: posizione lontana dal comune dichiarato.
+  # Segnali sui marker: comune di lettura diverso da quello dichiarato.
   segnale <- function(...) {
     immagine(svg_marker(NA, "Presente", glifo = FALSE, ...), 15, 20)
   }
-  voci_posizione <- list(
-    tags$div(class = "legenda-titolo", "Posizione"),
-    voce(segnale(fuori_comune = TRUE), "C: fuori dal comune del database"),
-    voce(segnale(fuori_giro = TRUE), "G: fuori dal comune del giro")
+  voci_coerenza_comune <- list(
+    tags$div(class = "legenda-titolo", "Coerenza comune"),
+    voce(
+      segnale(fuori_comune = TRUE),
+      "C: censito fuori dal comune del database"
+    ),
+    voce(
+      segnale(fuori_giro = TRUE),
+      "G: non censito fuori dal comune del giro"
+    )
   )
 
   # Una voce per cantiere, con il colore dei confini dei suoi comuni.
@@ -726,7 +732,7 @@ html_legenda <- function(modalita = "cluster") {
     ),
     tags$div(class = "legenda-titolo", "Servizio"),
     voci_servizio,
-    voci_posizione,
+    voci_coerenza_comune,
     extra,
     tags$div(class = "legenda-titolo", "Confini dei comuni: cantiere"),
     unname(voci_cantiere)

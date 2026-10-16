@@ -32,20 +32,27 @@ conta <- function(n, singolare, plurale) {
 #' provenienti dal file vengono sempre sottoposti a escape HTML.
 #'
 #' @param rfid Character
-#' @param servizio_atteso Character: servizio del contenitore.
+#' @param servizio_atteso Character: servizio atteso dal giro, con il nome del
+#'   database.
 #' @param targa Character
 #' @param matricola Character
 #' @param giorno_lettura POSIXct
 #' @param id_utenza Character
 #' @param presente Character
 #' @param comune Character, facoltativo: comune del database.
-#' @param comune_lettura Character, facoltativo: comune in cui cade il punto
-#'   della lettura, oppure `fuori_servizio()`.
+#' @param comune_lettura Character, facoltativo: comune in cui è stata fatta
+#'   la lettura.
 #' @param comune_giro Character, facoltativo: comune in cui il calendario
 #'   mandava il mezzo. Compare solo se è diverso dal comune di lettura.
 #' @param cantiere Character, facoltativo.
-#' @param origine_servizio Character, facoltativo: da dove viene il servizio
-#'   atteso, vedi `origini_servizio()`. Compare accanto al servizio.
+#' @param coerenza_comune Character, facoltativo: valori di
+#'   `stati_coerenza_comune()`. Una lettura fuori comune o fuori giro ha una
+#'   riga che dice dove era dichiarata e dove è stata fatta.
+#' @param servizio_transponder Character, facoltativo: servizio del contenitore
+#'   a database. Compare solo se c'è.
+#' @param servizio_giro Character, facoltativo: giro del calendario.
+#' @param coerenza_servizio Character, facoltativo: valori di
+#'   `stati_coerenza()`. Una lettura non coerente ha una riga sua.
 #' @return HTML string
 #' @noRd
 create_popup_html <- function(
@@ -60,12 +67,10 @@ create_popup_html <- function(
   comune_lettura = NULL,
   comune_giro = NULL,
   cantiere = NULL,
-  comune_geografico = NULL,
-  fuori_comune = NULL,
-  fuori_giro = NULL,
+  coerenza_comune = NULL,
   servizio_giro = NULL,
-  coerenza = NULL,
-  origine_servizio = NULL
+  coerenza_servizio = NULL,
+  servizio_transponder = NULL
 ) {
   testo <- function(x, se_mancante = "N/A") {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
@@ -96,20 +101,20 @@ create_popup_html <- function(
     )
   )
   riga_cantiere <- riga_facoltativa("Cantiere", cantiere)
-  # Le incongruenze tra la posizione e i comuni dichiarati hanno una riga loro,
-  # che dice dove sta il punto.
-  riga_incongruenza <- function(etichetta, attiva, dichiarato) {
+  # Una lettura fuori comune o fuori giro ha una riga sua, che dice dove era
+  # dichiarata e dove è stata fatta.
+  riga_incongruenza <- function(etichetta, dichiarato) {
     n <- length(rfid)
-    if (is.null(attiva)) {
+    if (is.null(coerenza_comune)) {
       return(rep("", n))
     }
-    dove <- if (is.null(comune_geografico)) {
+    dove <- if (is.null(comune_lettura)) {
       rep(NA_character_, n)
     } else {
-      as.character(comune_geografico)
+      as.character(comune_lettura)
     }
     ifelse(
-      attiva %in% TRUE,
+      coerenza_comune %in% etichetta,
       paste0(
         "<b class='popup-incongruenza'>\u26a0 ",
         etichetta,
@@ -118,43 +123,41 @@ create_popup_html <- function(
         " ",
         testo(rep_len(dichiarato_da(etichetta), n)),
         ", letto ",
-        ifelse(
-          is.na(dove),
-          "fuori dai comuni serviti",
-          paste("a", testo(dove))
-        ),
+        ifelse(is.na(dove), "in un comune sconosciuto", paste("a", testo(dove))),
         "<br>"
       ),
       ""
     )
   }
   dichiarato_da <- function(etichetta) {
-    valori <- if (etichetta == "Fuori comune") comune else comune_giro
+    valori <- if (etichetta == stati_coerenza_comune()[["fuori_comune"]]) {
+      comune
+    } else {
+      comune_giro
+    }
     if (is.null(valori)) NA_character_ else valori
   }
-  riga_fuori_comune <- riga_incongruenza("Fuori comune", fuori_comune, "a database")
-  riga_fuori_giro <- riga_incongruenza("Fuori giro", fuori_giro, "giro a")
+  stati_comune <- stati_coerenza_comune()
+  riga_fuori_comune <- riga_incongruenza(
+    stati_comune[["fuori_comune"]],
+    "a database"
+  )
+  riga_fuori_giro <- riga_incongruenza(stati_comune[["fuori_giro"]], "giro a")
+  riga_database <- riga_facoltativa("Servizio a Database", servizio_transponder)
   riga_giro <- riga_facoltativa("Servizio Giro", servizio_giro)
-  # L'origine dice quanto fidarsi del servizio atteso: sta sulla stessa riga.
-  nota_origine <- if (is.null(origine_servizio)) {
-    ""
-  } else {
-    descrizione <- descrivi_origine(origine_servizio)
-    ifelse(
-      is.na(descrizione) | is.na(servizio_atteso),
-      "",
-      paste0(" <span class='popup-origine'>(", descrizione, ")</span>")
-    )
-  }
-  # I servizi che non concordano hanno una riga loro, che li riporta tutti.
-  riga_coerenza <- if (is.null(coerenza)) {
+  # Il servizio del contenitore e quello atteso dal giro che non concordano
+  # hanno una riga loro, che li riporta tutti e due.
+  riga_coerenza <- if (is.null(coerenza_servizio)) {
     ""
   } else {
     ifelse(
-      coerenza %in% stati_coerenza()[["non_coerente"]],
+      coerenza_servizio %in% stati_coerenza()[["non_coerente"]],
       paste0(
-        "<b class='popup-incongruenza'>\u26a0 Servizi non coerenti:</b> ",
-        htmltools::htmlEscape(descrivi_servizi(servizio_atteso, servizio_giro)),
+        "<b class='popup-incongruenza'>\u26a0 Servizio non coerente:</b> ",
+        htmltools::htmlEscape(descrivi_servizi(
+          database = servizio_transponder,
+          atteso = servizio_atteso
+        )),
         "<br>"
       ),
       ""
@@ -166,9 +169,9 @@ create_popup_html <- function(
     "<b>RFID:</b> ",
     testo(rfid),
     "<br>",
+    riga_database,
     "<b>Servizio Atteso:</b> ",
     testo(servizio_atteso),
-    nota_origine,
     "<br>",
     riga_giro,
     "<b>Targa:</b> ",
@@ -196,40 +199,30 @@ create_popup_html <- function(
   )
 }
 
-#' Origine del servizio atteso, in parole
+#' Servizi di una lettura, per popup e dettaglio
 #'
-#' @param origine Valori di `origine_servizio`, vedi `origini_servizio()`.
-#' @return Un testo per valore, ad esempio `"da database"`; mancante per
-#'   un'origine mancante o sconosciuta.
+#' @param database Servizio del contenitore a database.
+#' @param atteso Servizio atteso dal giro.
+#' @param giro Giro del calendario.
+#' @return Un testo per lettura, ad esempio
+#'   `"a database CARTA, atteso SECCO, giro SECCO PAP"`. Le parti che mancano
+#'   non vengono scritte.
 #' @noRd
-descrivi_origine <- function(origine) {
-  origini <- origini_servizio()
-  testi <- c(
-    database = "da database",
-    censiti = "dai censiti letti dallo stesso mezzo",
-    calendario = "dal calendario dei mezzi"
+descrivi_servizi <- function(database = NULL, atteso = NULL, giro = NULL) {
+  parti <- list(
+    "a database" = database,
+    "atteso" = atteso,
+    "giro" = giro
   )
-  unname(testi[names(origini)[match(as.character(origine), origini)]])
-}
-
-#' Servizio atteso e giro di una lettura, per popup e dettaglio
-#'
-#' @param atteso,giro Servizio atteso e giro del calendario. Uno che manca non
-#'   viene scritto.
-#' @return Un testo per lettura, ad esempio `"atteso CARTA, giro SECCO PAP"`.
-#' @noRd
-descrivi_servizi <- function(atteso, giro) {
-  n <- max(length(atteso), length(giro))
-  parte <- function(etichetta, valori) {
+  n <- max(lengths(parti))
+  testi <- purrr::imap(parti, function(valori, etichetta) {
     valori <- rep_len(as.character(valori %||% NA_character_), n)
     ifelse(is.na(valori), NA_character_, paste(etichetta, valori))
-  }
-  del_atteso <- parte("atteso", atteso)
-  del_giro <- parte("giro", giro)
-  ifelse(
-    is.na(del_atteso),
-    dplyr::coalesce(del_giro, ""),
-    ifelse(is.na(del_giro), del_atteso, paste0(del_atteso, ", ", del_giro))
+  })
+  apply(
+    do.call(cbind, testi),
+    1,
+    function(riga) paste(riga[!is.na(riga)], collapse = ", ")
   )
 }
 
@@ -390,7 +383,7 @@ blocco_bidone <- function(analisi) {
       barre_stima(analisi$stima),
       tags$p(
         class = "info-avvertenza",
-        "Nota: la stima viene dai contenitori censiti letti dallo stesso mezzo e, dove sono pochi, dal calendario dei mezzi. Potrebbe non corrispondere alla realt\u00e0."
+        "Nota: la stima viene dal servizio atteso dei giri che lo hanno letto. Potrebbe non corrispondere alla realt\u00e0."
       )
     ),
     non_censito_senza_stima = blocco_info(
@@ -489,8 +482,8 @@ crea_info_panel <- function(analisi, andamento = NULL) {
       }
     ),
     corpo,
-    blocco_posizione(analisi$posizione, analisi$n_letture),
-    blocco_coerenza(analisi$coerenza, analisi$n_letture, analisi$censito),
+    blocco_coerenza_comune(analisi$coerenza_comune, analisi$n_letture),
+    blocco_coerenza(analisi$coerenza, analisi$n_letture),
     utenza,
     istogramma_annuale(andamento)
   )
@@ -498,13 +491,13 @@ crea_info_panel <- function(analisi, andamento = NULL) {
 
 #' Blocchi del dettaglio sulle letture fuori dai comuni dichiarati
 #'
-#' @param posizione Risultato di `posizione_rfid()`.
+#' @param coerenza Risultato di `coerenza_comune_rfid()`.
 #' @param n_letture Letture dell'RFID nel periodo.
 #' @return Elenco di blocchi, vuoto se tutte le letture sono coerenti.
 #' @noRd
-blocco_posizione <- function(posizione, n_letture) {
+blocco_coerenza_comune <- function(coerenza, n_letture) {
   tags <- htmltools::tags
-  if (is.null(posizione)) {
+  if (is.null(coerenza)) {
     return(NULL)
   }
   quante <- function(n) {
@@ -514,12 +507,11 @@ blocco_posizione <- function(posizione, n_letture) {
       formatta_numero(n_letture)
     )
   }
-  distanza <- formatta_numero(tolleranza_confine_m() / 1000)
   elenco <- function(comuni) {
     paste(utils::head(comuni, 3), collapse = ", ")
   }
   blocchi <- list()
-  fuori_comune <- posizione$fuori_comune
+  fuori_comune <- coerenza$fuori_comune
   if (isTRUE(fuori_comune$n > 0)) {
     blocchi$comune <- blocco_info(
       "attenzione",
@@ -529,14 +521,14 @@ blocco_posizione <- function(posizione, n_letture) {
         tags$b(elenco(fuori_comune$dichiarati)),
         ". ",
         quante(fuori_comune$n),
-        sprintf(" a pi\u00f9 di %s km dal confine: ", distanza),
+        " in un altro comune: ",
         tags$b(elenco(fuori_comune$letti)),
         "."
       ),
       tags$p(class = "info-nota", "Probabile contenitore spostato.")
     )
   }
-  fuori_giro <- posizione$fuori_giro
+  fuori_giro <- coerenza$fuori_giro
   if (isTRUE(fuori_giro$n > 0)) {
     righe <- fuori_giro$letture
     blocchi$giro <- blocco_info(
@@ -544,21 +536,18 @@ blocco_posizione <- function(posizione, n_letture) {
       "\u26a0\ufe0f LETTO FUORI DAL GIRO DEL MEZZO",
       tags$p(
         quante(fuori_giro$n),
-        sprintf(
-          " a pi\u00f9 di %s km dal comune del giro. Le pi\u00f9 recenti:",
-          distanza
-        )
+        " in un comune diverso da quello del giro. Le pi\u00f9 recenti:"
       ),
       tags$ul(
         class = "info-cronologia",
         lapply(seq_len(nrow(righe)), function(i) {
-          letto <- righe$comune_geografico[i]
+          letto <- righe$comune_lettura[i]
           tags$li(sprintf(
             "%s \u00b7 %s \u00b7 giro a %s, letto %s",
             formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
             righe$matricola_veicolo[i],
             righe$comune_giro[i],
-            if (is.na(letto)) "fuori dai comuni serviti" else paste("a", letto)
+            if (is.na(letto)) "in un comune sconosciuto" else paste("a", letto)
           ))
         })
       ),
@@ -575,10 +564,9 @@ blocco_posizione <- function(posizione, n_letture) {
 #'
 #' @param coerenza Risultato di `coerenza_rfid()`.
 #' @param n_letture Numero delle letture dell'RFID.
-#' @param censito Vero se l'RFID è a database: cambia la spiegazione.
 #' @return Un blocco, oppure `NULL` se tutte le letture sono coerenti.
 #' @noRd
-blocco_coerenza <- function(coerenza, n_letture, censito = TRUE) {
+blocco_coerenza <- function(coerenza, n_letture) {
   tags <- htmltools::tags
   if (is.null(coerenza) || !isTRUE(coerenza$n > 0)) {
     return(NULL)
@@ -593,7 +581,8 @@ blocco_coerenza <- function(coerenza, n_letture, censito = TRUE) {
         conta(coerenza$n, "lettura", "letture"),
         formatta_numero(n_letture)
       ),
-      " con il servizio atteso diverso dal giro. Le pi\u00f9 recenti:"
+      " con il servizio a database diverso da quello atteso dal giro.",
+      " Le pi\u00f9 recenti:"
     ),
     tags$ul(
       class = "info-cronologia",
@@ -603,19 +592,17 @@ blocco_coerenza <- function(coerenza, n_letture, censito = TRUE) {
           formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
           righe$matricola_veicolo[i],
           descrivi_servizi(
-            righe[["servizio_atteso"]][i],
-            righe[["servizio_giro"]][i]
+            database = righe[["servizio_transponder"]][i],
+            atteso = righe[["servizio_atteso"]][i],
+            giro = righe[["servizio_giro"]][i]
           )
         ))
       })
     ),
     tags$p(
       class = "info-nota",
-      if (isTRUE(censito)) {
-        "Il contenitore \u00e8 stato letto in un giro di un altro rifiuto."
-      } else {
-        "Il mezzo raccoglieva un rifiuto diverso da quello del calendario."
-      }
+      "Il contenitore \u00e8 stato letto in un giro di un altro rifiuto,",
+      "oppure il mezzo non stava facendo il giro del calendario."
     )
   )
 }
@@ -679,7 +666,7 @@ righe_cantieri <- function(rfid, letture = NULL) {
 
 #' Riquadro con le statistiche del dataset filtrato
 #'
-#' Il servizio atteso conta i censiti con il servizio del database, e i non
+#' Il servizio conta i censiti con il servizio del database, e i non
 #' censiti: una riga per servizio stimato e, in fondo, quelli con la stima
 #' incerta, che sulla mappa hanno il punto di domanda.
 #'
@@ -708,12 +695,12 @@ crea_box_statistiche <- function(stat) {
       tags$span("\u2717 Non Presente:"),
       tags$b(formatta_numero(stat$non_presente))
     ),
-    tags$div(class = "stat-gruppo", "Servizio Atteso, censiti:"),
-    righe_servizi(stat$atteso_censiti),
-    tags$div(class = "stat-gruppo", "Servizio Atteso, non censiti:"),
+    tags$div(class = "stat-gruppo", "Servizio a database, censiti:"),
+    righe_servizi(stat$servizio_censiti),
+    tags$div(class = "stat-gruppo", "Servizio stimato, non censiti:"),
     # Senza servizi stimati resta "nessuno" solo se mancano anche gli incerti.
-    if (length(stat$atteso) > 0 || stat$stima_incerta == 0) {
-      righe_servizi(stat$atteso)
+    if (length(stat$servizio_stimato) > 0 || stat$stima_incerta == 0) {
+      righe_servizi(stat$servizio_stimato)
     },
     if (stat$stima_incerta > 0) {
       tags$div(
@@ -724,15 +711,15 @@ crea_box_statistiche <- function(stat) {
     },
     tags$div(class = "stat-gruppo", "Giro del calendario:"),
     righe_servizi(stat$giri),
-    # Servizi dell'ultima lettura: contenitore, servizio atteso e giro.
+    # Servizio a database e servizio atteso dal giro dell'ultima lettura.
     tags$div(class = "stat-gruppo", "Coerenza dei servizi:"),
     tags$div(
       class = "stat-riga",
       tags$span("\u26a0 Non coerenti:"),
       tags$b(formatta_numero(stat$non_coerenti %||% 0))
     ),
-    # Posizione dell'ultima lettura a confronto con i comuni dichiarati.
-    tags$div(class = "stat-gruppo", "Posizione e comuni dichiarati:"),
+    # Comune dell'ultima lettura a confronto con quello dichiarato.
+    tags$div(class = "stat-gruppo", "Coerenza del comune:"),
     tags$div(
       class = "stat-riga",
       tags$span("\u26a0 Fuori comune:"),
@@ -742,6 +729,11 @@ crea_box_statistiche <- function(stat) {
       class = "stat-riga",
       tags$span("\u26a0 Fuori giro:"),
       tags$b(formatta_numero(stat$fuori_giro %||% 0))
+    ),
+    tags$div(
+      class = "stat-riga",
+      tags$span("\u2753 Coerenza ignota:"),
+      tags$b(formatta_numero(stat$coerenza_comune_ignota %||% 0))
     )
   )
 }

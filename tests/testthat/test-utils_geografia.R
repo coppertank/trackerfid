@@ -87,7 +87,7 @@ test_that("i confini hanno un comune per ogni riga della tabella dei comuni", {
     character(1)
   )
   expect_identical(chiave_comune(nomi_istat), chiave_comune(comuni$comune))
-  expect_identical(nomi_istat[comuni$comune == "ROSA'"], "Rosà")
+  expect_identical(nomi_istat[comuni$comune == "ROSÀ"], "Rosà")
   expect_identical(
     nomi_istat[comuni$comune == "ROMANO D'EZZELINO"],
     "Romano d'Ezzelino"
@@ -343,7 +343,7 @@ test_that("i nomi dei comuni si confrontano senza accenti e apostrofi", {
   # i nomi tornano alla grafia della tabella; quelli ignoti restano, in maiuscolo
   expect_identical(
     normalizza_comune(c("Rosà", "romano d'ezzelino", "Paese Ignoto", NA)),
-    c("ROSA'", "ROMANO D'EZZELINO", "PAESE IGNOTO", NA)
+    c("ROSÀ", "ROMANO D'EZZELINO", "PAESE IGNOTO", NA)
   )
   expect_identical(
     cantiere_di_comune(c("Rosà", "limena", "Cittadella", "Paese Ignoto", NA)),
@@ -353,7 +353,7 @@ test_that("i nomi dei comuni si confrontano senza accenti e apostrofi", {
   expect_identical(cantiere_di_comune(character(0)), character(0))
 })
 
-test_that("senza posizione il comune assegnato è quello del database", {
+test_that("senza comune di lettura il comune assegnato è quello del database", {
   letture <- dplyr::tibble(
     comune_da_database = c("LIMENA", NA, NA, "PAESE IGNOTO", NA),
     comune_giro = c(
@@ -379,19 +379,121 @@ test_that("senza posizione il comune assegnato è quello del database", {
     c("RUBANO", NA, "ASIAGO", "ALTROVE", NA)
   )
 
-  # senza colonne geografiche le colonne vengono create vuote. Le letture di
-  # prova sono lontane dai comuni serviti
+  # senza colonne geografiche le colonne vengono create vuote
   senza <- aggiungi_geografia(letture_test())
   # tra le colonne calcolate dalla validazione la coerenza dei servizi non è
   # geografia: la compila `coerenza_servizio()`
   expect_true(all(
-    c(colonne_geografiche(), setdiff(colonne_derivate(), "coerenza")) %in%
+    c(colonne_geografiche(), setdiff(colonne_derivate(), "coerenza_servizio")) %in%
       names(senza)
   ))
   expect_true(all(is.na(senza$comune_assegnato)))
   expect_true(all(is.na(senza$cantiere)))
-  expect_identical(senza$comune_lettura, rep(fuori_servizio(), nrow(senza)))
+  expect_true(all(is.na(senza$comune_lettura)))
+  expect_true(all(senza$coerenza_comune == "Coerenza ignota"))
   expect_equal(nrow(senza), nrow(letture_test()))
+})
+
+test_that("la geografia di una lettura parte dal comune di lettura", {
+  letture <- dplyr::tibble(
+    RFID = c("A", "B", "C", "D", "E", "F"),
+    presente_a_database = c(
+      "Presente",
+      "Presente",
+      "Non Presente",
+      "Non Presente",
+      "Presente",
+      "Non Presente"
+    ),
+    comune_da_database = c("Bassano del Grappa", "LIMENA", NA, NA, "MILANO", NA),
+    comune_giro = c(
+      "BASSANO DEL GRAPPA",
+      "CITTADELLA",
+      "CITTADELLA",
+      "ASIAGO",
+      "ASIAGO",
+      NA
+    ),
+    comune_lettura = c(
+      "bassano del grappa",
+      "Cittadella",
+      "CITTADELLA",
+      "CITTADELLA",
+      "ROMA",
+      ""
+    ),
+    cantiere = c(NA, NA, NA, NA, "FUORI ZONA", NA),
+    # le coordinate non contano: il comune è già quello del punto
+    latitudine = 41.9,
+    longitudine = 12.5
+  )
+  esito <- aggiungi_geografia(letture)
+  # il comune di lettura è quello del file, nella grafia della tabella; un
+  # comune fuori tabella resta, in maiuscolo; una stringa vuota è un comune
+  # mancante
+  expect_identical(
+    esito$comune_lettura,
+    c("BASSANO DEL GRAPPA", rep("CITTADELLA", 3), "ROMA", NA)
+  )
+  expect_identical(
+    esito$comune_geografico,
+    c("BASSANO DEL GRAPPA", rep("CITTADELLA", 3), NA, NA)
+  )
+  # il comune assegnato è quello di lettura; fuori dai comuni serviti vale
+  # quello del database, mai quello del giro
+  expect_identical(
+    esito$comune_assegnato,
+    c("BASSANO DEL GRAPPA", rep("CITTADELLA", 3), "MILANO", NA)
+  )
+  expect_identical(
+    esito$cantiere,
+    c("BASSANO", rep("CAMPOSAMPIERO", 3), "FUORI ZONA", NA)
+  )
+  # B: censito a Limena e letto a Cittadella. D: non censito letto a
+  # Cittadella da un giro di Asiago. E: censito a Milano e letto a Roma.
+  # F: senza comune di lettura
+  expect_identical(
+    esito$coerenza_comune,
+    c(
+      "Coerente",
+      "Fuori comune",
+      "Coerente",
+      "Fuori giro",
+      "Fuori comune",
+      "Coerenza ignota"
+    )
+  )
+  # il comune di un RFID: quello del database per un censito, quello in cui
+  # è letto per un non censito. D è a Cittadella anche se il calendario
+  # mandava il mezzo ad Asiago
+  per_rfid <- geografia_per_gruppo(esito, indice_gruppi(esito$RFID))
+  expect_identical(
+    per_rfid$comune,
+    c("Bassano del Grappa", "LIMENA", "CITTADELLA", "CITTADELLA", "MILANO", NA)
+  )
+  expect_identical(
+    per_rfid$cantiere,
+    c("BASSANO", "RUBANO", "CAMPOSAMPIERO", "CAMPOSAMPIERO", "FUORI ZONA", NA)
+  )
+})
+
+test_that("i confini dei comuni sono pronti per il disegno", {
+  lati <- lati_comuni()
+  expect_length(lati, nrow(comuni_cantieri()))
+  limena <- lati[[indice_comune("Limena")]]
+  expect_named(
+    limena,
+    c("x", "y", "anello", "x_min", "x_max", "y_min", "y_max")
+  )
+  expect_identical(limena$x_min, min(limena$x))
+  expect_identical(limena$y_max, max(limena$y))
+  # Valbrenta ha due poligoni, quindi almeno due anelli
+  valbrenta <- lati[[indice_comune("VALBRENTA")]]
+  expect_gte(max(valbrenta$anello), 2)
+  # i nomi si trovano senza badare ad accenti e apostrofi
+  expect_identical(indice_comune(c("Rosa'", "ROSÀ")), rep(indice_comune("rosà"), 2))
+  expect_true(is.na(indice_comune("PAESE IGNOTO")))
+  expect_true(is.na(indice_comune(NA)))
 })
 
 test_that("ogni RFID ha il comune del database o quello in cui è letto più spesso", {
@@ -409,7 +511,7 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
       NA,
       NA
     ),
-    # il comune in cui cade il punto di ogni lettura
+    # il comune di lettura, se è tra i comuni serviti
     comune_geografico = c(
       "CITTADELLA",
       "CITTADELLA",
@@ -443,23 +545,21 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
     c("RUBANO", "ASIAGO", NA, "ALTROVE", "ASIAGO")
   )
 
-  # senza la colonna del comune geografico vale la posizione
-  comuni <- comuni_cantieri()
-  gallio <- comuni[comuni$comune == "GALLIO", ]
+  # senza la colonna del comune geografico vale il comune di lettura, se è
+  # tra i comuni serviti
   posizioni <- dplyr::tibble(
     RFID = c("B", "B", "B", "C"),
     comune_da_database = NA_character_,
     comune_giro = "ROANA",
-    latitudine = c(gallio$latitudine, gallio$latitudine, 41.9, 41.9),
-    longitudine = c(gallio$longitudine, gallio$longitudine, 12.5, 12.5)
+    comune_lettura = c("Gallio", "GALLIO", "ROMA", "ROMA")
   )
-  dalla_posizione <- geografia_per_gruppo(
+  dalla_lettura <- geografia_per_gruppo(
     posizioni,
     indice_gruppi(posizioni$RFID)
   )
   # C è letto solo fuori dai comuni serviti: non ha un comune
-  expect_identical(dalla_posizione$comune, c("GALLIO", NA))
-  expect_identical(dalla_posizione$cantiere, c("ASIAGO", NA))
+  expect_identical(dalla_lettura$comune, c("GALLIO", NA))
+  expect_identical(dalla_lettura$cantiere, c("ASIAGO", NA))
 
   vuota <- geografia_per_gruppo(dati_esempio()[0, ], integer(0), 0)
   expect_equal(nrow(vuota), 0)

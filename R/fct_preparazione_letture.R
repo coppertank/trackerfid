@@ -9,7 +9,11 @@
 #' Un mezzo conta solo se il test delle antenne ha esito "POSITIVO", e solo
 #' per le letture fatte nei giorni dopo la data del test.
 #'
-#' @param df_letture Letture, con `targa_veicolo` e `giorno`.
+#' @param df_letture Letture, con `giorno_lettura`, `giorno`,
+#'   `targa_veicolo`, `RFID`, `comune_lettura`, `cantiere`, `NumeroLetture`,
+#'   `latitudine` e `longitudine`. Il comune di lettura arriva dal sistema di
+#'   localizzazione dei mezzi, il cantiere dalla tabella dei comuni: vedi il
+#'   passo 2.
 #' @param df_test_mezzi Test dei mezzi, con `targa_veicolo`,
 #'   `matricola_veicolo`, `esito` e `data_test`.
 #' @return Le letture valide, con la matricola del mezzo.
@@ -29,10 +33,11 @@ filtra_letture_post_test <- function(df_letture, df_test_mezzi) {
       "targa_veicolo",
       "matricola_veicolo",
       "RFID",
+      "comune_lettura",
+      "cantiere",
+      "NumeroLetture",
       "latitudine",
-      "longitudine",
-      "IndirizzoLocalizzazione",
-      "NumeroLetture"
+      "longitudine"
     )))
 }
 
@@ -96,23 +101,24 @@ formatta_rfid <- function(df) {
 #' Cerca il contenitore con lo stesso codice transponder, attivo nel giorno
 #' della lettura. Se non lo trova, cerca il codice tra i sacchetti e ne usa il
 #' servizio come utenza. La lettura è "Presente" a database se alla fine ha
-#' un'utenza. Converte anche le coordinate in numeri.
+#' un'utenza.
 #'
-#' @param df_letture Letture con `RFID`, `giorno`, `latitudine`, `longitudine`.
+#' @param df_letture Letture con `RFID` e `giorno`.
 #' @param df_associazione_contenitori Associazioni dei contenitori, con
-#'   `codice_transponder`, il periodo di validità, i dati del servizio e
-#'   `comune_servizio`.
-#' @param df_tag Anagrafica dei tag, con `codice_transponder`.
+#'   `codice_transponder`, il periodo di validità
+#'   (`data_attivazione_contenitore` e `data_cessazione_contenitore`), i dati
+#'   del contenitore (`servizio_transponder`, `volume`, `frequenza`,
+#'   `numero_raccolte_annue`, `stato_servizio`, `codice_categoria`),
+#'   `id_utenza` e `comune_servizio`.
 #' @param df_associazione_sacchetti Associazioni dei sacchetti, con
 #'   `codice_uhf` e `id_servizio`.
-#' @return Le letture con i dati del contenitore, `comune_da_database`, cioè
-#'   il comune di servizio dell'anagrafica, `presente_a_database` e
-#'   `presente_in_tag_contenitori`.
+#' @return Le letture con i dati del contenitore, `id_utenza`,
+#'   `presente_a_database` e `comune_da_database`, cioè il comune di servizio
+#'   dell'anagrafica. Per un non censito i dati del contenitore mancano.
 #' @noRd
 associa_servizio <- function(
   df_letture,
   df_associazione_contenitori,
-  df_tag,
   df_associazione_sacchetti
 ) {
   df_letture |>
@@ -131,26 +137,9 @@ associa_servizio <- function(
     ) |>
     dplyr::mutate(
       id_utenza = dplyr::coalesce(.data$id_utenza, .data$id_servizio),
-      # Sostituisce eventuali virgole con il punto decimale
-      latitudine = as.numeric(stringr::str_replace_all(
-        .data$latitudine,
-        ",",
-        "."
-      )),
-      longitudine = as.numeric(stringr::str_replace_all(
-        .data$longitudine,
-        ",",
-        "."
-      )),
-
       # Presente a database se una delle due ricerche ha trovato un'utenza
       presente_a_database = dplyr::if_else(
         !is.na(.data$id_utenza),
-        "Presente",
-        "Non Presente"
-      ),
-      presente_in_tag_contenitori = dplyr::if_else(
-        .data$RFID %in% df_tag$codice_transponder,
         "Presente",
         "Non Presente"
       )
@@ -159,322 +148,233 @@ associa_servizio <- function(
     dplyr::rename(comune_da_database = "comune_servizio")
 }
 
-#' Associa a ogni lettura il giro del calendario dei mezzi
+#' Associa a ogni lettura il giro del calendario e il servizio atteso
 #'
 #' Per ogni lettura considera i turni svolti dallo stesso mezzo nello stesso
 #' giorno e sceglie quello in cui la lettura cade. Se non cade in nessun
-#' turno, sceglie quello più vicino nel tempo. Senza turni il giro e il
-#' servizio atteso restano vuoti. Vale per ogni lettura, di un censito o no.
+#' turno, sceglie quello più vicino nel tempo; a parità di distanza, il primo
+#' del calendario. Un turno che finisce dopo la mezzanotte vale per due
+#' giorni: quello in cui inizia e il successivo. Senza turni il giro e il
+#' servizio atteso restano vuoti.
 #'
-#' Un turno che finisce dopo la mezzanotte vale per due giorni: quello in cui
-#' inizia e il successivo. Così una lettura fatta dopo mezzanotte ritrova il
-#' turno iniziato la sera prima.
+#' Dal turno vengono:
+#' - `id_giro` ed `eseguito`, come li scrive il calendario;
+#' - `servizio_giro`: il giro così come lo scrive il calendario, senza
+#'   conversioni. `SECCO PAP` resta `SECCO PAP`, perché il secco porta a
+#'   porta va distinto dagli altri giri del secco;
+#' - `comune_giro`: il comune in cui il calendario mandava il mezzo.
 #'
-#' Dal turno viene `servizio_giro`: il giro così come lo scrive il
-#' calendario, senza conversioni. `SECCO PAP` resta `SECCO PAP`, perché il
-#' secco porta a porta va distinto dagli altri giri del secco.
+#' `servizio_atteso` è il servizio che il giro lascia aspettare, con il nome
+#' del database, vedi `servizio_atteso_dal_giro()`: di norma il giro stesso,
+#' `SECCO PAP` diventa `SECCO`; nei giri in cui non è chiaro quale rifiuto si
+#' raccolga, il servizio dei censiti letti nel giro. Vale per ogni lettura, di
+#' un censito o no.
 #'
-#' `servizio_atteso` è il servizio del contenitore. Per un censito è quello
-#' del database. Per un non censito, e per un censito che a database non ha
-#' un servizio, come un sacchetto, è il giro con il nome del database, vedi
-#' `servizio_da_giro()`: `associa_servizio_atteso_dai_censiti()` lo affina poi
-#' con i censiti letti dallo stesso mezzo. `origine_servizio` dice quale dei
-#' due vale: `Database` oppure `Calendario`, vedi `origini_servizio()`. Il
-#' servizio del database non ha una colonna sua.
+#' `coerenza_servizio` dice se il servizio del contenitore a database e il
+#' servizio atteso sono dello stesso rifiuto, vedi `coerenza_servizio()`:
+#' `SI`, `NO`, oppure mancante per un non censito o una lettura senza giro.
 #'
-#' Restituisce le colonne con i nomi che l'app si aspetta, comprese quelle
-#' geografiche:
-#' - `comune_da_database` è quello già scritto da `associa_servizio()`;
-#' - `comune_giro` viene dalla colonna `comune` del calendario, cioè il
-#'   comune in cui il calendario mandava il mezzo;
-#' - `comune_lettura` viene dalla posizione della lettura: è il comune in cui
-#'   cade il punto, oppure `fuori_servizio()` fuori dai comuni serviti. Il
-#'   calendario non conta: un mezzo può sostituirne un altro;
-#' - `cantiere` dalla tabella dei comuni, per il comune in cui cade il punto;
-#'   fuori dai comuni serviti, per il comune del database.
-#'
-#' Se un giro compare nel calendario con più comuni, alla lettura va il primo.
+#' Il comune di lettura e il cantiere arrivano già con le letture: vedi
+#' `filtra_letture_post_test()`. `coerenza_comune` confronta il comune di
+#' lettura con quello dichiarato, vedi `coerenza_comune()`: per un censito il
+#' comune del database, e se differisce la lettura è `Fuori comune`; per un
+#' non censito il comune del giro, e se differisce la lettura è `Fuori giro`.
+#' Se i due comuni coincidono la lettura è `Coerente`; se manca uno dei due,
+#' `Coerenza ignota`.
 #'
 #' @param df_letture Letture prodotte da `associa_servizio()`.
 #' @param df_calendario Calendario dei giri, con `giorno`, `ora_inizio`,
-#'   `ora_fine`, `matricola_mezzo`, `descrizione_servizio` e `comune`.
+#'   `ora_fine`, `matricola_mezzo`, `id_giro`, `eseguito`,
+#'   `descrizione_servizio` e `comune_giro`. Gli orari sono testi del tipo
+#'   `"08:00:00"` o `"08:00"`.
+#' @param servizi_applica_moda Giri del calendario, con il loro nome, per cui
+#'   il servizio atteso viene dai censiti letti nel giro: vedi
+#'   `giri_servizio_dai_censiti()`.
 #' @return Una riga per lettura, con le colonne del CSV dell'app.
 #' @noRd
 associa_servizio_atteso_da_calendario <- function(
   df_letture,
-  df_calendario
+  df_calendario,
+  servizi_applica_moda = giri_servizio_dai_censiti()
 ) {
-  # 1. Preparazione delle letture
-  df_letture_clean <- dplyr::mutate(
-    df_letture,
-    id_lettura = dplyr::row_number()
-  )
-
-  # 2. Preparazione del calendario
-  df_calendario_clean <- df_calendario |>
-    dplyr::select(
-      "giorno",
-      "ora_inizio",
-      "ora_fine",
-      "matricola_mezzo",
-      "descrizione_servizio",
-      "comune"
-    ) |>
-    dplyr::distinct() |>
+  # 1. Turni del calendario, con inizio e fine come data e ora. Un turno a
+  # cavallo della mezzanotte (inizio 22:00, fine 04:00) finisce il giorno
+  # dopo, e viene ripetuto anche sotto quel giorno: altrimenti le letture
+  # dopo mezzanotte non lo troverebbero.
+  turni <- df_calendario |>
     dplyr::mutate(
-      # Data e ora di inizio e fine turno
-      # (ora_inizio e ora_fine sono testi del tipo "08:00:00" o "08:00")
-      datetime_inizio = as.POSIXct(paste(.data$giorno, .data$ora_inizio)),
-      datetime_fine = as.POSIXct(paste(.data$giorno, .data$ora_fine)),
-
-      # Turni a cavallo della mezzanotte (inizio 22:00, fine 04:00): se la
-      # fine precede l'inizio si aggiunge un giorno (86400 secondi)
-      oltre_mezzanotte = .data$datetime_fine < .data$datetime_inizio,
-      datetime_fine = dplyr::if_else(
+      inizio_turno = as.POSIXct(paste(.data$giorno, .data$ora_inizio)),
+      fine_turno = as.POSIXct(paste(.data$giorno, .data$ora_fine)),
+      oltre_mezzanotte = .data$fine_turno < .data$inizio_turno,
+      fine_turno = dplyr::if_else(
         .data$oltre_mezzanotte,
-        .data$datetime_fine + 86400,
-        .data$datetime_fine
+        .data$fine_turno + 86400,
+        .data$fine_turno
       )
     )
-
-  # Letture e turni si abbinano per giorno. Un turno a cavallo della
-  # mezzanotte viene quindi ripetuto anche sotto il giorno successivo, con gli
-  # stessi orari: altrimenti le letture dopo mezzanotte non lo troverebbero.
-  turni_del_giorno_prima <- df_calendario_clean |>
-    dplyr::filter(.data$oltre_mezzanotte) |>
-    dplyr::mutate(giorno = .data$giorno + 1)
-  df_calendario_clean <- dplyr::bind_rows(
-    df_calendario_clean,
-    turni_del_giorno_prima
+  turni <- dplyr::bind_rows(
+    turni,
+    turni |>
+      dplyr::filter(.data$oltre_mezzanotte) |>
+      dplyr::mutate(giorno = .data$giorno + 1)
   )
 
-  # 3. Join "totale": tutti i turni del mezzo in quel giorno
-  df_join <- dplyr::left_join(
-    df_letture_clean,
-    df_calendario_clean,
-    by = c("giorno", "matricola_veicolo" = "matricola_mezzo"),
-    relationship = "many-to-many"
-  )
-
-  # 4. Calcolo della vicinanza e scelta del turno
-  df_join |>
+  # 2. Tutti i turni del mezzo in quel giorno, e per ogni lettura quello più
+  # vicino. Ordinare e tenere la prima riga di ogni lettura dà lo stesso
+  # risultato di una scelta fatta lettura per lettura, che con milioni di
+  # letture costa minuti.
+  letture <- df_letture |>
+    dplyr::mutate(id_lettura = dplyr::row_number()) |>
+    dplyr::left_join(
+      turni,
+      by = c("matricola_veicolo" = "matricola_mezzo", "giorno"),
+      relationship = "many-to-many"
+    ) |>
     dplyr::mutate(
-      # La lettura è avvenuta dentro il turno?
-      dentro_orario = .data$giorno_lettura >= .data$datetime_inizio &
-        .data$giorno_lettura <= .data$datetime_fine,
-
-      # Distanza in minuti dall'inizio e dalla fine del turno
-      distanza_inizio = abs(as.numeric(
-        difftime(.data$giorno_lettura, .data$datetime_inizio, units = "mins")
-      )),
-      distanza_fine = abs(as.numeric(
-        difftime(.data$giorno_lettura, .data$datetime_fine, units = "mins")
-      )),
-
-      # 0 se è dentro l'orario o se non c'è nessun turno, altrimenti la
-      # distanza più piccola tra inizio e fine
-      distanza_minima = dplyr::case_when(
-        is.na(.data$datetime_inizio) ~ 0,
-        .data$dentro_orario ~ 0,
-        TRUE ~ pmin(.data$distanza_inizio, .data$distanza_fine, na.rm = TRUE)
+      # Secondi tra la lettura e il turno: 0 dentro il turno o senza turni.
+      # Un turno con orari illeggibili viene dopo tutti gli altri.
+      distanza = dplyr::case_when(
+        is.na(.data$id_giro) ~ 0,
+        is.na(.data$inizio_turno) | is.na(.data$fine_turno) ~ NA_real_,
+        .data$giorno_lettura < .data$inizio_turno ~ as.numeric(difftime(
+          .data$inizio_turno,
+          .data$giorno_lettura,
+          units = "secs"
+        )),
+        .data$giorno_lettura > .data$fine_turno ~ as.numeric(difftime(
+          .data$giorno_lettura,
+          .data$fine_turno,
+          units = "secs"
+        )),
+        TRUE ~ 0
       )
     ) |>
-    # Per ogni lettura resta il turno con la distanza più bassa: a parità di
-    # distanza, il primo. Ordinare e tenere la prima riga di ogni lettura dà
-    # lo stesso risultato di una scelta fatta lettura per lettura, che con
-    # milioni di letture costa minuti.
-    dplyr::arrange(.data$id_lettura, .data$distanza_minima) |>
+    dplyr::arrange(.data$id_lettura, .data$distanza) |>
     dplyr::filter(!duplicated(.data$id_lettura)) |>
-    dplyr::rename(
-      servizio_giro = "descrizione_servizio",
-      volume_previsto = "volume",
-      numero_raccolte_annue_previste = "numero_raccolte_annue",
-      comune_giro = "comune"
-    ) |>
-    # Il giro resta com'è nel calendario. Il servizio atteso è quello del
-    # contenitore a database; dove manca, il giro con il nome del database.
-    # L'origine dice quale dei due vale.
-    dplyr::mutate(
-      del_database = as.character(.data$descrizione_rifiuto),
-      del_giro = servizio_da_giro(.data$servizio_giro),
-      servizio_atteso = dplyr::coalesce(.data$del_database, .data$del_giro),
-      origine_servizio = dplyr::case_when(
-        !is.na(.data$del_database) ~ origini_servizio()[["database"]],
-        !is.na(.data$del_giro) ~ origini_servizio()[["calendario"]],
-        TRUE ~ NA_character_
-      )
-    ) |>
-    completa_geografia() |>
-    # Solo le colonne del CSV dell'app
-    dplyr::select(
-      dplyr::all_of(c(
-        "giorno_lettura",
-        "targa_veicolo",
-        "matricola_veicolo",
-        "RFID",
-        "presente_a_database",
-        "servizio_atteso",
-        "origine_servizio",
-        "servizio_giro",
-        "volume_previsto",
-        "numero_raccolte_annue_previste",
-        "id_utenza",
-        "latitudine",
-        "longitudine",
-        "comune_da_database",
-        "comune_giro",
-        "comune_lettura",
-        "cantiere"
-      ))
-    )
-}
+    dplyr::rename(servizio_giro = "descrizione_servizio")
 
-#' Stima il servizio atteso dei non censiti dai censiti letti dallo stesso mezzo
-#'
-#' Il calendario dice che cosa un mezzo doveva fare, non che cosa ha fatto: un
-#' mezzo può sostituirne un altro e raccogliere un rifiuto diverso da quello
-#' del suo giro. Un giro raccoglie però un rifiuto solo, quindi i contenitori
-#' censiti letti dallo stesso mezzo, poco prima e poco dopo, dicono quale.
-#'
-#' Per ogni lettura di un non censito votano i censiti letti dallo stesso
-#' mezzo nei `minuti` precedenti e successivi. Ogni censito vota una volta al
-#' giorno, con la sua prima lettura, e solo se a database ha un servizio. Se i
-#' voti sono almeno `minimo_censiti` e almeno la quota `soglia` è per lo
-#' stesso servizio, quello è il servizio atteso della lettura. Altrimenti
-#' resta il servizio del calendario, con il nome del database: i censiti sono
-#' pochi, oppure sono misti, come vicino al momento in cui il mezzo passa da un
-#' giro all'altro.
-#'
-#' Gli orari del calendario non servono a delimitare il giro: nei casi in cui
-#' il mezzo sostituisce un altro sono proprio quelli a essere sbagliati.
-#'
-#' Il servizio atteso di un censito è quello del suo contenitore a database:
-#' il voto non lo tocca. Un censito senza servizio a database, come un
-#' sacchetto, tiene quello del calendario.
-#'
-#' Chi ha il servizio del database lo dice `origine_servizio`: votano le
-#' letture dei censiti con origine `Database`, e il loro servizio non cambia.
-#' Le altre letture escono con origine `Censiti`, se vale il voto, oppure
-#' `Calendario`. Se le letture non hanno la colonna vale `origine_dedotta()`.
-#'
-#' `servizio_giro` non cambia mai: è il giro del calendario, con il suo nome.
-#' La colonna `coerenza` dice se servizio atteso e giro sono dello stesso
-#' rifiuto, vedi `coerenza_servizio()`.
-#'
-#' @param df_letture Letture prodotte da
-#'   `associa_servizio_atteso_da_calendario()`.
-#' @param minuti Minuti prima e dopo la lettura entro cui un censito vota.
-#' @param minimo_censiti Numero minimo di censiti perché il voto valga.
-#' @param soglia Quota minima dei voti per lo stesso servizio.
-#' @return Le letture, con `servizio_atteso` e `origine_servizio` aggiornati
-#'   per i non censiti e la colonna `coerenza`: `"Coerente"`,
-#'   `"Non coerente"` o mancante. Se le letture non hanno `servizio_giro`, la
-#'   colonna viene creata con il servizio atteso ricevuto. Applicata due volte
-#'   dà lo stesso risultato.
-#' @noRd
-associa_servizio_atteso_dai_censiti <- function(
-  df_letture,
-  minuti = 30,
-  minimo_censiti = 5,
-  soglia = 0.8
-) {
-  n <- nrow(df_letture)
-  # Il giro del calendario resta in una colonna sua, con il suo nome. Il
-  # ripiego per il servizio atteso è lo stesso giro, con il nome del database.
-  if (is.null(df_letture[["servizio_giro"]])) {
-    df_letture$servizio_giro <- df_letture$servizio_atteso
-  }
-  calendario <- uniforma_servizio(df_letture$servizio_giro)
-  istante <- as.numeric(df_letture$giorno_lettura)
-  con_mezzo <- !is.na(df_letture$matricola_veicolo) & !is.na(istante)
-  censita <- df_letture$presente_a_database %in% "Presente"
-  mezzo <- indice_gruppi(df_letture$matricola_veicolo)
-  stimato <- rep(NA_character_, n)
-  # Il servizio del contenitore a database: quello dei censiti con origine
-  # `Database`. Gli altri servizi ricevuti si ricalcolano da capo.
-  origini <- origini_servizio()
-  del_contenitore <- servizio_a_database(df_letture)
-  del_contenitore[!censita] <- NA_character_
+  # 3. Servizio atteso e coerenza con il servizio del contenitore.
+  letture$servizio_atteso <- servizio_atteso_dal_giro(
+    letture,
+    servizi_applica_moda
+  )
+  letture$coerenza_servizio <- coerenza_servizio(letture)
 
-  votanti <- which(con_mezzo & !is.na(del_contenitore))
-  # Un voto al giorno per contenitore e per mezzo: la prima lettura.
-  votanti <- votanti[order(istante[votanti], method = "radix")]
-  votanti <- votanti[
-    !duplicated(paste(
-      mezzo[votanti],
-      istante[votanti] %/% 86400,
-      df_letture$RFID[votanti],
-      sep = "\r"
+  # 4. Comune di lettura a confronto con il comune dichiarato.
+  letture$coerenza_comune <- coerenza_comune(letture)
+
+  # Solo le colonne del CSV dell'app
+  dplyr::select(
+    letture,
+    dplyr::all_of(c(
+      "giorno_lettura",
+      "giorno",
+      "targa_veicolo",
+      "matricola_veicolo",
+      "id_giro",
+      "eseguito",
+      "RFID",
+      "presente_a_database",
+      "servizio_transponder",
+      "servizio_atteso",
+      "coerenza_servizio",
+      "servizio_giro",
+      "volume",
+      "frequenza",
+      "numero_raccolte_annue",
+      "codice_categoria",
+      "comune_da_database",
+      "comune_giro",
+      "comune_lettura",
+      "coerenza_comune",
+      "cantiere",
+      "stato_servizio",
+      "data_attivazione_contenitore",
+      "data_cessazione_contenitore",
+      "id_utenza",
+      "latitudine",
+      "longitudine"
     ))
-  ]
-  da_stimare <- which(con_mezzo & !censita)
-  if (length(votanti) > 0 && length(da_stimare) > 0) {
-    # Mezzo e istante in un numero solo: i voti di un mezzo stanno in un
-    # intervallo che non tocca quelli degli altri.
-    posizione <- function(righe) mezzo[righe] * 1e10 + istante[righe]
-    finestra <- 60 * minuti
-    centro <- posizione(da_stimare)
-    servizi <- unique(del_contenitore[votanti])
-    # Voti per ogni servizio nella finestra di ogni lettura da stimare.
-    voti <- vapply(
-      servizi,
-      function(servizio) {
-        del_servizio <- sort(posizione(
-          votanti[del_contenitore[votanti] == servizio]
-        ))
-        findInterval(centro + finestra, del_servizio) -
-          findInterval(centro - finestra, del_servizio, left.open = TRUE)
-      },
-      numeric(length(da_stimare))
-    )
-    dim(voti) <- c(length(da_stimare), length(servizi))
-    totale <- rowSums(voti)
-    primo <- max.col(voti, ties.method = "first")
-    del_primo <- voti[cbind(seq_along(primo), primo)]
-    valido <- totale >= minimo_censiti & del_primo >= soglia * totale
-    stimato[da_stimare[valido]] <- servizi[primo[valido]]
-  }
-
-  # Per un censito vale il servizio del contenitore a database; per un non
-  # censito il voto dei censiti; in mancanza, il giro del calendario.
-  df_letture$servizio_atteso <- dplyr::coalesce(
-    del_contenitore,
-    stimato,
-    calendario
-  )
-  df_letture$origine_servizio <- dplyr::case_when(
-    !is.na(del_contenitore) ~ origini[["database"]],
-    !is.na(stimato) ~ origini[["censiti"]],
-    !is.na(calendario) ~ origini[["calendario"]],
-    TRUE ~ NA_character_
-  )
-  df_letture$coerenza <- coerenza_servizio(df_letture)
-  dplyr::relocate(
-    df_letture,
-    dplyr::all_of(c("origine_servizio", "servizio_giro", "coerenza")),
-    .after = dplyr::all_of("servizio_atteso")
   )
 }
 
-#' Aggiunge alle letture il comune in cui sono state fatte e il cantiere
+#' Giri in cui non è chiaro quale rifiuto si raccolga
 #'
-#' Applica `aggiungi_geografia()`, la stessa regola dell'app: il comune di
-#' lettura viene dalla posizione. Le coordinate possono essere ancora testo,
-#' con la virgola decimale: per il conto vengono lette come numeri, nel
-#' risultato restano come sono.
+#' In questi giri il servizio atteso viene dai censiti letti nel giro, vedi
+#' `servizio_atteso_dal_giro()`. L'elenco è destinato a crescere: un nome nuovo
+#' va aggiunto qui e, per l'icona, alla tipologia «Servizi» di
+#' `tipologie_servizio()`.
 #'
-#' @param df Letture con `latitudine`, `longitudine`, `comune_da_database` e
-#'   `comune_giro`.
-#' @return Le letture con `comune_lettura` e `cantiere`.
+#' @return I nomi dei giri, come li scrive il calendario.
 #' @noRd
-completa_geografia <- function(df) {
-  posizioni <- df
-  posizioni$latitudine <- converti_numero(df$latitudine)
-  posizioni$longitudine <- converti_numero(df$longitudine)
-  geografia <- aggiungi_geografia(posizioni)
-  df$comune_lettura <- geografia$comune_lettura
-  df$cantiere <- geografia$cantiere
-  df
+giri_servizio_dai_censiti <- function() {
+  c("SERVIZI MERCATI", "SERV.MANIFESTAZIONE")
+}
+
+#' Servizio atteso di ogni lettura, dal suo giro
+#'
+#' Di norma è il giro, con il nome del database: `SECCO PAP` diventa `SECCO`,
+#' vedi `servizio_da_giro()`. Nei giri di `servizi_applica_moda` non è chiaro
+#' quale rifiuto si raccolga; un mezzo che non è uno scarrabile ne raccoglie
+#' però uno solo alla volta. Il servizio atteso è allora il servizio a
+#' database più frequente tra le letture di quel giro in quel giorno, cioè tra
+#' quelle dei censiti. Se nessun censito ha un servizio, o due servizi sono
+#' ugualmente frequenti, resta il giro.
+#'
+#' La usano `associa_servizio_atteso_da_calendario()` e lo script del dataset
+#' di esempio.
+#'
+#' @param letture Letture con `giorno`, `id_giro`, `servizio_giro` e
+#'   `servizio_transponder`.
+#' @param servizi_applica_moda Giri, con il nome del calendario, in cui il
+#'   servizio atteso viene dai censiti.
+#' @return Il servizio atteso, uno per lettura, con il nome del database.
+#'   Manca se manca il giro.
+#' @noRd
+servizio_atteso_dal_giro <- function(
+  letture,
+  servizi_applica_moda = giri_servizio_dai_censiti()
+) {
+  atteso <- as.character(letture$servizio_giro)
+  speciali <- which(
+    !is.na(letture$id_giro) & atteso %in% servizi_applica_moda
+  )
+  if (length(speciali) > 0) {
+    moda <- moda_unica_per_gruppo(
+      as.character(letture$servizio_transponder[speciali]),
+      paste(letture$giorno[speciali], letture$id_giro[speciali], sep = "\r")
+    )
+    atteso[speciali] <- dplyr::coalesce(moda, atteso[speciali])
+  }
+  servizio_da_giro(atteso)
+}
+
+#' Valore più frequente di ogni gruppo, se è uno solo
+#'
+#' I mancanti e i testi vuoti non contano. Se due valori sono ugualmente
+#' frequenti, o il gruppo non ha valori, il risultato manca.
+#'
+#' @param valori Vettore di testo.
+#' @param gruppo Gruppo di ogni valore.
+#' @return Un valore per elemento di `valori`: quello del suo gruppo.
+#' @noRd
+moda_unica_per_gruppo <- function(valori, gruppo) {
+  validi <- !is.na(valori) & nzchar(valori)
+  conteggi <- dplyr::count(
+    dplyr::tibble(gruppo = gruppo[validi], valore = valori[validi]),
+    .data$gruppo,
+    .data$valore,
+    name = "n"
+  )
+  conteggi <- conteggi[order(conteggi$gruppo, -conteggi$n), ]
+  primo <- !duplicated(conteggi$gruppo)
+  # Il primo valore di un gruppo vale se il secondo è meno frequente.
+  secondo <- c(primo[-1], TRUE) | c(
+    conteggi$n[-1] < conteggi$n[-nrow(conteggi)],
+    TRUE
+  )
+  unici <- conteggi[primo & secondo, ]
+  unici$valore[match(gruppo, unici$gruppo)]
 }
 
 #' Servizio atteso di un giro del calendario

@@ -53,7 +53,7 @@ test_that("ogni servizio ha la sua icona, con ripiego per i non censiti", {
     "PLAST.CONT.STRADALI",
     "PLASTICA PAP",
     "VERDE PAP",
-    "ASSISTENTE SERVIZI",
+    "SERV.MANIFESTAZIONE",
     "PULIZIA TERRIT.",
     "SERVIZI MERCATI"
   ))
@@ -69,7 +69,7 @@ test_that("ogni servizio ha la sua icona, con ripiego per i non censiti", {
       "recycle",
       "recycle",
       "tree",
-      "user-gear",
+      "store",
       "broom",
       "store"
     )
@@ -189,8 +189,17 @@ test_that("i segnali sul marker dicono fuori comune e fuori giro", {
   # contorno del comune del giro
   for (modalita in c("cluster", "rfid", "utenza", "giro")) {
     legenda <- html_legenda(modalita)
-    expect_match(legenda, "C: fuori dal comune del database", fixed = TRUE)
-    expect_match(legenda, "G: fuori dal comune del giro", fixed = TRUE)
+    expect_match(legenda, "Coerenza comune", fixed = TRUE)
+    expect_match(
+      legenda,
+      "C: censito fuori dal comune del database",
+      fixed = TRUE
+    )
+    expect_match(
+      legenda,
+      "G: non censito fuori dal comune del giro",
+      fixed = TRUE
+    )
   }
   expect_match(html_legenda("giro"), "Comune del giro", fixed = TRUE)
   expect_no_match(html_legenda("cluster"), "legenda-comune-giro", fixed = TRUE)
@@ -261,9 +270,16 @@ test_that("le bolle della vista aggregata crescono con i bidoni e si colorano co
 test_that("la tabella di conversione riporta i giri ai servizi del database", {
   tabella <- conversione_servizi()
   expect_named(tabella, c("servizio_calendario", "servizio", "tipologia"))
-  # una riga per ogni nome noto, senza doppioni
-  expect_identical(tabella$servizio_calendario, servizi_config()$servizio)
+  # una riga per ogni nome delle tipologie, senza doppioni
+  expect_identical(
+    tabella$servizio_calendario,
+    unlist(lapply(tipologie_servizio(), `[[`, "servizi"))
+  )
   expect_equal(anyDuplicated(tabella$servizio_calendario), 0)
+  # il nome uniforme è quello della tipologia, in maiuscolo, ed è un nome
+  # riconosciuto, con l'icona della tipologia
+  expect_identical(tabella$servizio, toupper(tabella$tipologia))
+  expect_true(all(tabella$servizio %in% servizi_config()$servizio))
   # i sei servizi del database sono i nomi uniformi dei giri che raccolgono
   # un rifiuto
   del_database <- c(
@@ -277,7 +293,7 @@ test_that("la tabella di conversione riporta i giri ai servizi del database", {
   expect_true(all(del_database %in% tabella$servizio))
   # ogni nome uniforme converte in se stesso
   expect_identical(
-    tabella$servizio[match(unique(tabella$servizio), tabella$servizio_calendario)],
+    uniforma_servizio(unique(tabella$servizio)),
     unique(tabella$servizio)
   )
   converte <- function(nome) tabella$servizio[tabella$servizio_calendario == nome]
@@ -289,9 +305,10 @@ test_that("la tabella di conversione riporta i giri ai servizi del database", {
   expect_identical(converte("PLAST.CONT.STRADALI"), "PLASTICA E METALLI")
   expect_identical(converte("PLASTICA PAP"), "PLASTICA E METALLI")
   expect_identical(converte("VERDE PAP"), "VERDE E RAMAGLIE")
-  # i giri che non raccolgono un rifiuto tengono il loro nome
-  expect_identical(converte("SERVIZI MERCATI"), "SERVIZI MERCATI")
-  expect_identical(converte("PULIZIA TERRIT."), "PULIZIA TERRIT.")
+  # i giri che non raccolgono un rifiuto prendono il nome della loro tipologia
+  expect_identical(converte("SERVIZI MERCATI"), "SERVIZI")
+  expect_identical(converte("SERV.MANIFESTAZIONE"), "SERVIZI")
+  expect_identical(converte("PULIZIA TERRIT."), "PULIZIA TERRITORIO")
   # la conversione non cambia la tipologia, quindi nemmeno icona e colore
   expect_identical(
     tipologia_servizio(tabella$servizio),
@@ -311,7 +328,7 @@ test_that("i nomi dei servizi si uniformano senza badare a maiuscole e spazi", {
       "GIRO NUOVO",
       NA
     )),
-    c("CARTA", "CARTA", "SECCO", "SECCO", "SERVIZI MERCATI", "GIRO NUOVO", NA)
+    c("CARTA", "CARTA", "SECCO", "SECCO", "SERVIZI", "GIRO NUOVO", NA)
   )
   # applicata due volte dà lo stesso risultato
   nomi <- servizi_config()$servizio

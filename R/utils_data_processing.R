@@ -25,74 +25,33 @@ colonne_facoltative <- function() {
   c(colonne_quantita(), colonne_geografiche())
 }
 
-#' Campo facoltativo del CSV con l'origine del servizio atteso
+#' Campo facoltativo del CSV con il servizio del contenitore a database
 #'
-#' `servizio_atteso` è il servizio del contenitore, una colonna sola per
-#' censiti e non censiti. `origine_servizio` dice da dove viene, con i valori
-#' di `origini_servizio()`. Il servizio del database non ha più una colonna
-#' sua: è il servizio atteso delle letture con origine `Database`, vedi
-#' `servizio_a_database()`.
+#' `servizio_transponder` è il servizio del contenitore secondo il database,
+#' vuoto per i non censiti e per i sacchetti. `servizio_atteso` è invece il
+#' servizio che il giro del mezzo lasciava aspettare, con il nome del
+#' database, vedi `associa_servizio_atteso_da_calendario()`. Il confronto tra
+#' i due è la coerenza, vedi `coerenza_servizio()`.
 #' @noRd
-colonne_origine <- function() "origine_servizio"
+colonne_contenitore <- function() "servizio_transponder"
 
-#' Valori della colonna `origine_servizio`
+#' Nomi alternativi delle colonne del file
 #'
-#' - `Database`: il servizio è quello del contenitore nel database aziendale.
-#' - `Censiti`: il servizio viene dai contenitori censiti letti dallo stesso
-#'   mezzo nei minuti attorno, vedi `associa_servizio_atteso_dai_censiti()`.
-#' - `Calendario`: il servizio è il giro che il calendario dava al mezzo, con
-#'   il nome del database.
+#' Il passo 3 della preparazione dei dati scrive `volume` e
+#' `numero_raccolte_annue`, come l'anagrafica dei contenitori; l'app li chiama
+#' come la tabella dell'analisi dei cluster. La colonna `comune` dei file meno
+#' recenti vale come `comune_da_database`. Un nome alternativo vale solo se il
+#' file non ha già la colonna con il nome dell'app.
 #'
-#' L'origine manca dove manca il servizio atteso, e nei file che non la
-#' riportano per le letture il cui servizio non viene dal database.
-#'
-#' @return Vettore con le etichette: i nomi sono quelli usati nel codice.
+#' @return Vettore con nome: i nomi sono quelli del file, i valori quelli
+#'   dell'app.
 #' @noRd
-origini_servizio <- function() {
-  c(database = "Database", censiti = "Censiti", calendario = "Calendario")
-}
-
-#' Origine del servizio atteso in un file che non la riporta
-#'
-#' Si può dire solo quali servizi vengono dal database: quelli dei censiti,
-#' esclusi i sacchetti, che a database non hanno un servizio. Per le altre
-#' letture l'origine resta mancante: dal file non si distingue il servizio
-#' preso dai censiti da quello del calendario.
-#'
-#' @param data Letture con `RFID`, `presente_a_database` e `servizio_atteso`.
-#' @return Vettore di testo, un valore per lettura.
-#' @noRd
-origine_dedotta <- function(data) {
-  origine <- rep(NA_character_, nrow(data))
-  servizio <- data[["servizio_atteso"]]
-  if (is.null(servizio)) {
-    return(origine)
-  }
-  dal_database <- data$presente_a_database %in%
-    "Presente" &
-    !is.na(servizio) &
-    !per_valori_distinti(as.character(data$RFID), rfid_sacchetto)
-  origine[dal_database] <- origini_servizio()[["database"]]
-  origine
-}
-
-#' Servizio del contenitore secondo il database, per ogni lettura
-#'
-#' È il servizio atteso delle letture con origine `Database`, mancante per le
-#' altre: serve dove conta solo quello che dice l'anagrafica, come la
-#' cronologia dei cambi di servizio di un contenitore. Se le letture non hanno
-#' la colonna `origine_servizio` vale `origine_dedotta()`.
-#'
-#' @param data Letture.
-#' @return Vettore di testo, un valore per lettura.
-#' @noRd
-servizio_a_database <- function(data) {
-  servizio <- as.character(
-    data[["servizio_atteso"]] %||% rep(NA_character_, nrow(data))
+alias_colonne <- function() {
+  c(
+    volume = "volume_previsto",
+    numero_raccolte_annue = "numero_raccolte_annue_previste",
+    comune = "comune_da_database"
   )
-  origine <- data[["origine_servizio"]] %||% origine_dedotta(data)
-  servizio[!origine %in% origini_servizio()[["database"]]] <- NA_character_
-  servizio
 }
 
 #' Campo facoltativo del CSV con il servizio del giro secondo il calendario
@@ -114,53 +73,42 @@ colonne_quantita <- function() {
 #'
 #' `comune_da_database` è il comune dell'anagrafica, vuoto per i non censiti.
 #' `comune_giro` è il comune in cui il calendario mandava il mezzo che ha
-#' fatto la lettura. `cantiere` è il cantiere del comune assegnato, vedi
-#' `colonne_derivate()`.
+#' fatto la lettura. `comune_lettura` è il comune in cui è stata fatta la
+#' lettura, come lo dà il sistema di localizzazione dei mezzi. `cantiere` è il
+#' cantiere del comune assegnato, vedi `colonne_derivate()`.
 #' @noRd
 colonne_geografiche <- function() {
-  c("comune_da_database", "comune_giro", "cantiere")
+  c("comune_da_database", "comune_giro", "comune_lettura", "cantiere")
 }
 
 #' Campi calcolati dalla validazione
 #'
-#' Li compila `aggiungi_geografia()`, dalla posizione di ogni lettura.
-#' `comune_lettura` è il comune in cui cade il punto, oppure
-#' `fuori_servizio()` fuori dai comuni serviti: se il file ha già questa
-#' colonna, viene ricalcolata. `comune_geografico` è lo stesso comune, ma
-#' mancante fuori dai comuni serviti: lo usano i conti. `comune_assegnato` è
-#' il comune geografico oppure, fuori dai comuni serviti, quello del database:
-#' è il comune usato da filtri, bolle e statistiche. `fuori_comune` e
-#' `fuori_giro` dicono se la lettura sta oltre la tolleranza dal comune del
-#' database e da quello del giro.
+#' Li compila `aggiungi_geografia()`, dal comune di lettura e dai comuni
+#' dichiarati. `comune_geografico` è il comune di lettura, mancante se non è
+#' tra i comuni serviti: lo usano i conti. `comune_assegnato` è il comune
+#' geografico oppure, fuori dai comuni serviti, quello del database: è il
+#' comune usato da filtri, bolle e statistiche. `coerenza_comune` confronta il
+#' comune di lettura con quello dichiarato, vedi `coerenza_comune()`.
 #'
-#' `coerenza` la compila `coerenza_servizio()`, dai servizi della lettura:
-#' anche questa viene ricalcolata se il file la contiene già.
+#' `coerenza_servizio` la compila `coerenza_servizio()`, dai servizi della
+#' lettura. Le due coerenze vengono ricalcolate anche se il file le contiene
+#' già.
 #' @noRd
 colonne_derivate <- function() {
   c(
-    "comune_lettura",
     "comune_assegnato",
     "comune_geografico",
-    "fuori_comune",
-    "fuori_giro",
-    "coerenza"
+    "coerenza_comune",
+    "coerenza_servizio"
   )
 }
-
-#' Valore di `comune_lettura` per le letture fuori dai comuni serviti
-#'
-#' Lo hanno le letture il cui punto non cade in nessun comune servito: un
-#' mezzo fuori zona, oppure una posizione GPS sbagliata. Un valore solo, facile
-#' da filtrare.
-#' @noRd
-fuori_servizio <- function() "FUORI SERVIZIO AZIENDA"
 
 #' Tutte le colonne del dataset validato, nell'ordine in cui compaiono
 #' @noRd
 colonne_dataset <- function() {
   c(
     colonne_obbligatorie(),
-    colonne_origine(),
+    colonne_contenitore(),
     colonne_facoltative(),
     colonne_calendario(),
     colonne_derivate()
@@ -171,79 +119,129 @@ colonne_dataset <- function() {
 #' @noRd
 stati_database <- function() c("Presente", "Non Presente")
 
-#' Voci del filtro sulla posizione delle letture
+#' Valori della colonna `coerenza_comune`
 #'
-#' La posizione di una lettura è regolare se non è né fuori comune né fuori
-#' giro, vedi `aggiungi_geografia()`. Può essere fuori comune e fuori giro
-#' insieme. La coerenza è un'altra cosa: riguarda i servizi, vedi
-#' `stati_coerenza()`.
+#' Sono anche le voci del filtro sulla coerenza del comune. La coerenza dei
+#' servizi è un'altra cosa, vedi `stati_coerenza()`.
 #'
-#' @return Vettore con le etichette: i nomi sono i valori usati dai filtri.
+#' @return Vettore con i valori: i nomi sono quelli usati dai filtri.
 #' @noRd
-stati_posizione <- function() {
+stati_coerenza_comune <- function() {
   c(
-    regolare = "Regolare",
+    coerente = "Coerente",
     fuori_comune = "Fuori comune",
-    fuori_giro = "Fuori giro"
+    fuori_giro = "Fuori giro",
+    ignota = "Coerenza ignota"
   )
 }
 
-#' Posizione di ogni lettura a confronto con i comuni dichiarati
+#' Coerenza tra il comune di lettura e il comune dichiarato
 #'
-#' @param data Letture. Senza le colonne `fuori_comune` e `fuori_giro` sono
-#'   tutte regolari.
-#' @return Lista con i vettori logici `fuori_comune`, `fuori_giro` e
-#'   `regolare`, un valore per lettura.
+#' Il comune di lettura è quello esatto in cui è stata fatta la lettura, e il
+#' più aggiornato. Lo si confronta con il comune dichiarato:
+#'
+#' - per un censito il comune del database: se differisce, la lettura è
+#'   `Fuori comune`, di solito un bidone spostato;
+#' - per un non censito il comune del giro: se differisce, la lettura è
+#'   `Fuori giro`, di solito un mezzo che non faceva il giro del calendario.
+#'
+#' Se i due comuni coincidono la lettura è `Coerente`. Se manca il comune
+#' dichiarato, o il comune di lettura, la coerenza è `Coerenza ignota`: ad
+#' esempio per un sacchetto censito, che a database non ha un comune. I nomi
+#' si confrontano senza badare a maiuscole, accenti e apostrofi, vedi
+#' `chiave_comune()`.
+#'
+#' La usano la preparazione dei dati e la validazione dell'app: il CSV
+#' riporta gli stessi valori che l'app ricalcola al caricamento.
+#'
+#' @param data Letture con `presente_a_database`, `comune_lettura`,
+#'   `comune_da_database` e `comune_giro`. Una colonna che manca vale come
+#'   vuota.
+#' @return Vettore di testo, un valore di `stati_coerenza_comune()` per
+#'   lettura.
 #' @noRd
-posizione_letture <- function(data) {
+coerenza_comune <- function(data) {
   n <- nrow(data)
-  fuori_comune <- if (is.null(data[["fuori_comune"]])) {
-    rep(FALSE, n)
-  } else {
-    data$fuori_comune %in% TRUE
+  chiave <- function(nome) {
+    valori <- data[[nome]]
+    if (is.null(valori)) {
+      return(rep(NA_character_, n))
+    }
+    per_valori_distinti(as.character(valori), function(nomi) {
+      chiavi <- chiave_comune(nomi)
+      chiavi[!is.na(chiavi) & !nzchar(chiavi)] <- NA_character_
+      chiavi
+    })
   }
-  fuori_giro <- if (is.null(data[["fuori_giro"]])) {
-    rep(FALSE, n)
-  } else {
-    data$fuori_giro %in% TRUE
-  }
+  lettura <- chiave("comune_lettura")
+  censito <- data[["presente_a_database"]] %in% "Presente"
+  dichiarato <- chiave("comune_giro")
+  dichiarato[censito] <- chiave("comune_da_database")[censito]
+  stati <- stati_coerenza_comune()
+  esito <- rep(stati[["ignota"]], n)
+  noto <- !is.na(lettura) & !is.na(dichiarato)
+  uguale <- noto & lettura == dichiarato
+  esito[uguale] <- stati[["coerente"]]
+  esito[noto & !uguale & censito] <- stati[["fuori_comune"]]
+  esito[noto & !uguale & !censito] <- stati[["fuori_giro"]]
+  unname(esito)
+}
+
+#' Letture fuori comune e fuori giro
+#'
+#' @param data Letture. Senza la colonna `coerenza_comune` nessuna lettura è
+#'   fuori comune o fuori giro.
+#' @return Lista con i vettori logici `fuori_comune` e `fuori_giro`, un valore
+#'   per lettura.
+#' @noRd
+incongruenze_comune <- function(data) {
+  stati <- stati_coerenza_comune()
+  valori <- data[["coerenza_comune"]] %||% rep(NA_character_, nrow(data))
   list(
-    fuori_comune = fuori_comune,
-    fuori_giro = fuori_giro,
-    regolare = !fuori_comune & !fuori_giro
+    fuori_comune = valori %in% stati[["fuori_comune"]],
+    fuori_giro = valori %in% stati[["fuori_giro"]]
   )
 }
 
-#' Valori della colonna `coerenza`
+#' Valori della colonna `coerenza_servizio`
 #'
-#' @return Vettore con le etichette: i nomi sono i valori usati dai filtri.
+#' Sono quelli che scrive la preparazione dei dati: `SI` e `NO`. Filtri,
+#' popup e statistiche li mostrano con le parole di `etichette_coerenza()`.
+#'
+#' @return Vettore con i valori: i nomi sono quelli usati dai filtri.
 #' @noRd
 stati_coerenza <- function() {
+  c(coerente = "SI", non_coerente = "NO")
+}
+
+#' Parole con cui l'app mostra i valori di `coerenza_servizio`
+#'
+#' @return Vettore con le etichette, con gli stessi nomi di `stati_coerenza()`.
+#' @noRd
+etichette_coerenza <- function() {
   c(coerente = "Coerente", non_coerente = "Non coerente")
 }
 
-#' Coerenza tra i servizi di ogni lettura
+#' Coerenza tra il servizio del contenitore e quello atteso dal giro
 #'
-#' Una lettura è coerente se il servizio atteso e il giro del calendario sono
-#' della stessa tipologia, vedi `tipologia_servizio()`: un servizio atteso
-#' `SECCO` e un giro `SECCO PAP` concordano, un servizio atteso `CARTA` e un
-#' giro del secco no.
+#' Una lettura è coerente se il servizio del contenitore a database,
+#' `servizio_transponder`, e il servizio atteso dal giro, `servizio_atteso`,
+#' sono della stessa tipologia, vedi `tipologia_servizio()`. Un contenitore
+#' della carta letto in un giro del secco non è coerente: è stato letto in
+#' mezzo a contenitori di un altro rifiuto, oppure il mezzo non stava facendo
+#' il giro del calendario.
 #'
-#' - Per un censito il servizio atteso è quello del contenitore a database:
-#'   una lettura non coerente è un contenitore letto in mezzo a quelli di un
-#'   altro rifiuto.
-#' - Per un non censito il servizio atteso può venire dai censiti letti dallo
-#'   stesso mezzo: se è diverso dal giro, il mezzo raccoglieva un rifiuto
-#'   diverso da quello del calendario.
+#' Un non censito non ha un servizio a database: la sua coerenza manca. Manca
+#' anche se manca il servizio atteso, ad esempio perché il mezzo quel giorno
+#' non aveva giri. Un nome che `tipologie_servizio()` non conosce fa tipologia
+#' a sé: un censito letto in un giro che non raccoglie rifiuti, come
+#' `PULIZIA TERRIT.`, non è coerente.
 #'
-#' Un nome che `tipologie_servizio()` non conosce fa tipologia a sé. Se manca
-#' uno dei due servizi la coerenza non si può dire, e manca.
+#' La usano la preparazione dei dati e la validazione dell'app: il CSV riporta
+#' gli stessi valori che l'app ricalcola al caricamento.
 #'
-#' La usano la validazione dell'app e la preparazione dei dati: il CSV
-#' riporta gli stessi valori che l'app ricalcola al caricamento.
-#'
-#' @param data Letture con `servizio_atteso` e `servizio_giro`. Una colonna
-#'   che manca vale come vuota.
+#' @param data Letture con `servizio_transponder` e `servizio_atteso`. Una
+#'   colonna che manca vale come vuota.
 #' @return Vettore di testo, un valore per lettura: quelli di
 #'   `stati_coerenza()`, oppure mancante.
 #' @noRd
@@ -260,13 +258,13 @@ coerenza_servizio <- function(data) {
       tipologia_servizio(puliti)
     })
   }
+  del_contenitore <- tipologia_di("servizio_transponder")
   atteso <- tipologia_di("servizio_atteso")
-  giro <- tipologia_di("servizio_giro")
   stati <- stati_coerenza()
   esito <- rep(NA_character_, n)
-  noti <- !is.na(atteso) & !is.na(giro)
+  noti <- !is.na(del_contenitore) & !is.na(atteso)
   esito[noti] <- ifelse(
-    atteso[noti] == giro[noti],
+    del_contenitore[noti] == atteso[noti],
     stati[["coerente"]],
     stati[["non_coerente"]]
   )
@@ -569,10 +567,11 @@ elenco_righe <- function(indici, massimo = 5) {
 #' `numero_raccolte_annue_previste`) vengono convertiti se presenti. I nomi dei
 #' comuni sono riportati alla grafia della tabella dei comuni. Se un campo
 #' facoltativo manca, la colonna è creata vuota e la mancanza è segnalata tra
-#' gli avvisi. La colonna `comune` dei file meno recenti vale come
-#' `comune_da_database`.
+#' gli avvisi. Alcune colonne possono avere un altro nome, vedi
+#' `alias_colonne()`. Le colonne che l'app non usa vengono ignorate.
 #'
-#' Il comune assegnato e il cantiere sono completati da `aggiungi_geografia()`.
+#' Comune di lettura, comune assegnato e cantiere sono completati da
+#' `aggiungi_geografia()`; la coerenza dei servizi da `coerenza_servizio()`.
 #'
 #' @param data Data frame letto da `leggi_tabella()`.
 #' @return Lista con `dati` (tibble validato) e `avvisi` (vettore di testo).
@@ -580,9 +579,12 @@ elenco_righe <- function(indici, massimo = 5) {
 validate_dataset <- function(data) {
   attese <- colonne_obbligatorie()
   nomi <- stringr::str_trim(names(data))
-  # Nome usato dai file meno recenti per il comune del database.
-  if (!"comune_da_database" %in% tolower(nomi)) {
-    nomi[tolower(nomi) == "comune"] <- "comune_da_database"
+  # Nomi alternativi: valgono se il file non ha la colonna con il nome dell'app.
+  alias <- alias_colonne()
+  for (alternativo in names(alias)) {
+    if (!alias[[alternativo]] %in% tolower(nomi)) {
+      nomi[tolower(nomi) == alternativo] <- alias[[alternativo]]
+    }
   }
   posizione <- match(tolower(attese), tolower(nomi))
   mancanti <- attese[is.na(posizione)]
@@ -606,23 +608,22 @@ validate_dataset <- function(data) {
       originale[[posizione_facoltative[i]]]
     }
   }
-  # L'origine del servizio atteso: se il file non la riporta viene dedotta
-  # più sotto.
-  posizione_origine <- match(colonne_origine(), tolower(nomi))
-  con_origine <- !is.na(posizione_origine)
-  data[[colonne_origine()]] <- if (con_origine) {
-    originale[[posizione_origine]]
+  # Il servizio del contenitore a database, vuoto per i non censiti.
+  posizione_contenitore <- match(colonne_contenitore(), tolower(nomi))
+  con_contenitore <- !is.na(posizione_contenitore)
+  data[[colonne_contenitore()]] <- if (con_contenitore) {
+    originale[[posizione_contenitore]]
   } else {
     rep(NA_character_, nrow(data))
   }
-  # Nei file preparati prima della fusione dei due servizi il servizio del
-  # database stava in una colonna sua, `servizio_transponder`. Resta in una
-  # colonna di passaggio, che il risultato non riporta.
-  precedente <- "servizio_transponder"
-  posizione_precedente <- match(precedente, tolower(nomi))
-  con_precedente <- !is.na(posizione_precedente)
-  if (con_precedente) {
-    data[[precedente]] <- originale[[posizione_precedente]]
+  # I file preparati tra il 13 e il 15 ottobre 2026 non hanno
+  # `servizio_transponder`: il servizio del database stava nel servizio
+  # atteso, con `origine_servizio` uguale a "Database". Resta in una colonna
+  # di passaggio, che il risultato non riporta.
+  posizione_origine <- match("origine_servizio", tolower(nomi))
+  con_origine <- !con_contenitore && !is.na(posizione_origine)
+  if (con_origine) {
+    data$origine_servizio <- originale[[posizione_origine]]
   }
   # Il servizio del calendario: nei file che non lo riportano è quello atteso.
   posizione_giro <- match(colonne_calendario(), tolower(nomi))
@@ -726,26 +727,6 @@ validate_dataset <- function(data) {
     )
   }
 
-  origini <- origini_servizio()
-  origine <- per_valori_distinti(data$origine_servizio, function(valori) {
-    unname(origini)[match(tolower(valori), tolower(origini))]
-  })
-  non_validi <- which(!is.na(data$origine_servizio) & is.na(origine))
-  if (length(non_validi) > 0) {
-    errori <- c(
-      errori,
-      sprintf(
-        "origine_servizio: valori non ammessi (%s). Sono accettati solo %s. Righe del file: %s.",
-        paste(
-          utils::head(unique(data$origine_servizio[non_validi]), 3),
-          collapse = ", "
-        ),
-        paste0('"', origini, '"', collapse = ", "),
-        elenco_righe(non_validi)
-      )
-    )
-  }
-
   quantita <- purrr::map(
     stats::setNames(colonne_quantita(), colonne_quantita()),
     function(campo) {
@@ -791,40 +772,26 @@ validate_dataset <- function(data) {
   data$numero_raccolte_annue_previste <- quantita$numero_raccolte_annue_previste$valori
   data$giorno_lettura <- giorno
   data$presente_a_database <- stato
+  data$servizio_transponder <- maiuscolo(data$servizio_transponder)
   data$servizio_atteso <- maiuscolo(data$servizio_atteso)
   data$servizio_giro <- maiuscolo(data$servizio_giro)
-  # Il servizio atteso di un censito è quello del contenitore a database, e
-  # la sua origine è `Database`. Un sacchetto non ha un servizio a database:
-  # il suo servizio atteso resta quello del giro.
-  censito <- stato %in% "Presente"
-  sacchetto <- per_valori_distinti(data$RFID, rfid_sacchetto)
-  # Dal file, quando non è passato dalla regola di oggi, risulta solo se un
-  # contenitore censito ha il servizio del database.
-  del_database <- rep(FALSE, nrow(data))
-  if (con_precedente) {
-    # File con le due colonne: per i censiti vale il servizio del database,
-    # anche se il servizio atteso veniva dal calendario.
-    del_contenitore <- maiuscolo(data[[precedente]])
-    del_database <- censito &
-      !sacchetto &
-      !is.na(del_contenitore) &
-      del_contenitore != servizio_sacchetti()
-    data$servizio_atteso[del_database] <- del_contenitore[del_database]
-  } else if (!con_origine) {
-    del_database <- censito & !sacchetto & !is.na(data$servizio_atteso)
+  # Un file con l'origine del servizio: il servizio del database torna nella
+  # sua colonna, e il servizio atteso torna quello del giro.
+  if (con_origine) {
+    dal_database <- which(
+      stato %in% "Presente" & toupper(data$origine_servizio) %in% "DATABASE"
+    )
+    data$servizio_transponder[dal_database] <- data$servizio_atteso[
+      dal_database
+    ]
+    data$servizio_atteso[dal_database] <- uniforma_servizio(
+      data$servizio_giro[dal_database]
+    )
   }
-  # Un non censito con il servizio del database: lo segnala un avviso.
-  senza_stato <- !censito & origine %in% origini[["database"]]
-  if (con_precedente) {
-    senza_stato <- senza_stato | (!censito & !is.na(data[[precedente]]))
-  }
-  origine[del_database] <- origini[["database"]]
-  # Un'origine senza servizio non dice niente.
-  origine[is.na(data$servizio_atteso)] <- NA_character_
-  data$origine_servizio <- origine
-  data$coerenza <- coerenza_servizio(data)
+  data$coerenza_servizio <- coerenza_servizio(data)
   data$comune_da_database <- normalizza_comune(data$comune_da_database)
   data$comune_giro <- normalizza_comune(data$comune_giro)
+  data$comune_lettura <- normalizza_comune(data$comune_lettura)
   data$cantiere <- maiuscolo(data$cantiere)
   data$latitudine <- numeri$latitudine$valori
   data$longitudine <- numeri$longitudine$valori
@@ -847,7 +814,6 @@ validate_dataset <- function(data) {
   }
   if (n_scartate > 0) {
     data <- data[complete, , drop = FALSE]
-    senza_stato <- senza_stato[complete]
     avvisi <- c(
       avvisi,
       sprintf(
@@ -861,13 +827,13 @@ validate_dataset <- function(data) {
   # --- Controlli di coerenza (non bloccanti) ----------------------------------
   incoerenti <- sum(
     data$presente_a_database == "Non Presente" &
-      (senza_stato | !is.na(data$id_utenza))
+      (!is.na(data$servizio_transponder) | !is.na(data$id_utenza))
   )
   if (incoerenti > 0) {
     avvisi <- c(
       avvisi,
       sprintf(
-        "%d letture \"Non Presente\" riportano comunque il servizio del database o id_utenza.",
+        "%d letture \"Non Presente\" riportano comunque servizio_transponder o id_utenza.",
         incoerenti
       )
     )
@@ -885,6 +851,20 @@ validate_dataset <- function(data) {
 
   # --- Comune assegnato e cantiere ----------------------------------------------
   data <- aggiungi_geografia(data)
+  # Un comune di lettura del file che la tabella non contiene: la lettura
+  # conta come fatta fuori dai comuni serviti.
+  letti <- unique(data$comune_lettura)
+  letti_ignoti <- sort(letti[!is.na(letti) & is.na(cantiere_di_comune(letti))])
+  if (length(letti_ignoti) > 0) {
+    avvisi <- c(
+      avvisi,
+      sprintf(
+        "Comuni di lettura assenti dalla tabella dei comuni: %s%s. Le letture fatte l\u00ec contano come fatte fuori dai comuni serviti.",
+        paste(utils::head(letti_ignoti, 5), collapse = ", "),
+        if (length(letti_ignoti) > 5) ", \u2026" else ""
+      )
+    )
+  }
   comuni <- unique(data$comune_assegnato)
   ignoti <- sort(comuni[!is.na(comuni) & is.na(cantiere_di_comune(comuni))])
   if (length(ignoti) > 0) {
@@ -898,7 +878,8 @@ validate_dataset <- function(data) {
     )
   }
 
-  # Senza il confine del comune del giro una lettura non si può confrontare.
+  # Un comune del giro con un nome che la tabella non conosce: forse scritto
+  # male, e allora non coincide con il comune di lettura.
   dei_giri <- unique(data$comune_giro)
   giri_ignoti <- sort(
     dei_giri[!is.na(dei_giri) & is.na(cantiere_di_comune(dei_giri))]
@@ -907,7 +888,7 @@ validate_dataset <- function(data) {
     avvisi <- c(
       avvisi,
       sprintf(
-        "Comuni dei giri assenti dalla tabella dei comuni: %s%s. Le letture di quei giri non possono risultare fuori giro.",
+        "Comuni dei giri assenti dalla tabella dei comuni: %s%s. Se il nome \u00e8 sbagliato, i non censiti letti in quei giri risultano fuori giro.",
         paste(utils::head(giri_ignoti, 5), collapse = ", "),
         if (length(giri_ignoti) > 5) ", \u2026" else ""
       )
@@ -1100,17 +1081,18 @@ servizio_prevalente_non_censiti <- function(data, soglia = 0.8) {
 
 #' Aggiunge alle letture il servizio da rappresentare con l'icona
 #'
-#' La colonna `servizio_icona` vale `servizio_atteso` per le letture censite:
-#' è il servizio del contenitore a database. Per quelle non censite vale il
-#' servizio stimato dell'RFID, cioè il suo servizio atteso prevalente: manca se
-#' nessuna tipologia raggiunge la soglia, e in quel caso il marker mostra il
-#' punto di domanda. Un non censito sta così sotto una voce sola.
+#' La colonna `servizio_icona` vale `servizio_transponder` per le letture
+#' censite: è il servizio del contenitore a database. Per quelle non censite
+#' vale il servizio stimato dell'RFID, cioè il servizio atteso prevalente
+#' tra le sue letture, quello dei giri che lo hanno letto: manca se nessuna
+#' tipologia raggiunge la soglia, e in quel caso il marker mostra il punto di
+#' domanda. Un non censito sta così sotto una voce sola.
 #'
 #' Un sacchetto si riconosce dal codice e non ha una tipologia di rifiuto: ha
 #' sempre il servizio dei sacchetti, censito o no.
 #'
 #' La stessa colonna dà la voce con cui una lettura compare nel filtro sul
-#' servizio atteso e nelle statistiche: icone, filtri e conteggi coincidono.
+#' servizio e nelle statistiche: icone, filtri e conteggi coincidono.
 #'
 #' @param letture Letture da completare.
 #' @param riferimento Letture su cui calcolare il servizio prevalente.
@@ -1127,9 +1109,11 @@ aggiungi_servizio_icona <- function(
     prevalenti$RFID
   )]
   censita <- letture$presente_a_database == "Presente"
+  del_contenitore <- letture[["servizio_transponder"]] %||%
+    rep(NA_character_, nrow(letture))
   letture$servizio_icona <- ifelse(
     censita,
-    as.character(letture$servizio_atteso),
+    as.character(del_contenitore),
     stimato
   )
   letture$servizio_icona[
@@ -1141,7 +1125,7 @@ aggiungi_servizio_icona <- function(
 #' Servizio con cui una lettura compare su marker, filtri e statistiche
 #'
 #' È la colonna `servizio_icona`, vedi `aggiungi_servizio_icona()`: per un
-#' censito il servizio atteso della lettura, per un non censito il servizio
+#' censito il servizio a database della lettura, per un non censito il servizio
 #' stimato dell'RFID, per un sacchetto il servizio dei sacchetti. Se la colonna
 #' manca viene calcolata sulle letture ricevute: chi passa solo una parte
 #' delle letture, ad esempio una riga per RFID, deve quindi averla aggiunta
@@ -1182,7 +1166,7 @@ ordina_cantieri <- function(valori) {
 #' Letture che superano i filtri laterali
 #'
 #' I servizi si filtrano per esclusione. Una lettura passa se il suo servizio
-#' atteso non è tra quelli deselezionati: per un censito è il servizio del
+#' non è tra quelli deselezionati: per un censito è il servizio del
 #' contenitore a database, per un non censito il servizio stimato dell'RFID,
 #' vedi `servizio_mostrato()`. Gli RFID non censiti con la stima incerta, quelli
 #' che sulla mappa hanno il punto di domanda, passano solo con
@@ -1193,56 +1177,60 @@ ordina_cantieri <- function(valori) {
 #' voce diversa da `SECCO CONT.STRADALI`. Vale per ogni lettura, di un censito
 #' o no. Una lettura senza giro non è mai tra quelle deselezionate.
 #'
-#' La coerenza è la colonna `coerenza`: servizio atteso e giro dello stesso
-#' rifiuto, vedi `coerenza_servizio()`. Una lettura di cui non si può dire sta
-#' con quelle coerenti. La posizione è un'altra cosa: fuori comune e fuori
-#' giro, vedi `posizione_letture()`.
+#' La coerenza è la colonna `coerenza_servizio`: servizio a database e
+#' servizio atteso dal giro dello stesso rifiuto, vedi `coerenza_servizio()`.
+#' Una lettura di cui non si può dire, come quella di un non censito, sta
+#' con quelle coerenti.
+#'
+#' La coerenza del comune è la colonna `coerenza_comune`, con le voci di
+#' `stati_coerenza_comune()`: passano le letture la cui voce non è tra quelle
+#' deselezionate.
 #'
 #' Anche i cantieri si filtrano per esclusione; le letture senza cantiere
 #' corrispondono alla voce `senza_cantiere()`. I comuni si scelgono: passano
 #' le letture il cui comune assegnato è tra quelli indicati, anche se
 #' appartengono a cantieri diversi.
 #'
-#' @param data Dataframe con letture. Per il filtro sul servizio atteso serve
-#'   la colonna `servizio_icona`: vedi `servizio_mostrato()`.
+#' @param data Dataframe con letture. Per il filtro sul servizio serve la
+#'   colonna `servizio_icona`: vedi `servizio_mostrato()`.
 #' @param stato_db Valori di `presente_a_database` da mantenere.
-#' @param atteso_esclusi Servizi attesi deselezionati.
+#' @param servizi_esclusi Servizi deselezionati.
 #' @param includi_stima_incerta Mantiene le letture degli RFID non censiti
 #'   senza un servizio stimato.
 #' @param giri_esclusi Giri deselezionati, con il nome del calendario.
 #' @param coerenza_escluse Voci di `stati_coerenza()` deselezionate.
 #' @param cantieri_esclusi Cantieri deselezionati.
 #' @param comuni Comuni da mantenere. Tutti, se il vettore è vuoto.
-#' @param posizione_escluse Voci di `stati_posizione()` deselezionate: riguardano
-#'   la posizione.
+#' @param coerenza_comune_escluse Voci di `stati_coerenza_comune()`
+#'   deselezionate.
 #' @return Vettore logico, un valore per lettura.
 #' @noRd
 maschera_filtri <- function(
   data,
   stato_db = stati_database(),
-  atteso_esclusi = character(0),
+  servizi_esclusi = character(0),
   includi_stima_incerta = TRUE,
   giri_esclusi = character(0),
   coerenza_escluse = character(0),
   cantieri_esclusi = character(0),
   comuni = character(0),
-  posizione_escluse = character(0)
+  coerenza_comune_escluse = character(0)
 ) {
   # Ogni filtro passa su tutte le letture solo se è attivo: con milioni di
   # righe un confronto in meno si sente. Un servizio mancante non è mai tra
   # quelli deselezionati.
-  atteso_esclusi <- atteso_esclusi[!is.na(atteso_esclusi)]
+  servizi_esclusi <- servizi_esclusi[!is.na(servizi_esclusi)]
   giri_esclusi <- giri_esclusi[!is.na(giri_esclusi)]
   tieni <- data$presente_a_database %in% stato_db
   senza_incerti <- !isTRUE(includi_stima_incerta)
-  if (length(atteso_esclusi) > 0 || senza_incerti) {
-    atteso <- servizio_mostrato(data)
-    if (length(atteso_esclusi) > 0) {
-      tieni <- tieni & !(atteso %in% atteso_esclusi)
+  if (length(servizi_esclusi) > 0 || senza_incerti) {
+    servizio <- servizio_mostrato(data)
+    if (length(servizi_esclusi) > 0) {
+      tieni <- tieni & !(servizio %in% servizi_esclusi)
     }
     if (senza_incerti) {
       tieni <- tieni &
-        !(data$presente_a_database == "Non Presente" & is.na(atteso))
+        !(data$presente_a_database == "Non Presente" & is.na(servizio))
     }
   }
   if (length(giri_esclusi) > 0 && "servizio_giro" %in% names(data)) {
@@ -1253,10 +1241,10 @@ maschera_filtri <- function(
   stati <- stati_coerenza()
   coerenza_escluse <- intersect(coerenza_escluse, names(stati))
   if (length(coerenza_escluse) > 0) {
-    non_coerente <- if (is.null(data[["coerenza"]])) {
+    non_coerente <- if (is.null(data[["coerenza_servizio"]])) {
       rep(FALSE, nrow(data))
     } else {
-      data$coerenza %in% stati[["non_coerente"]]
+      data$coerenza_servizio %in% stati[["non_coerente"]]
     }
     if ("coerente" %in% coerenza_escluse) {
       tieni <- tieni & non_coerente
@@ -1276,17 +1264,13 @@ maschera_filtri <- function(
   if (length(comuni) > 0 && "comune_assegnato" %in% names(data)) {
     tieni <- tieni & data$comune_assegnato %in% comuni
   }
-  # Posizione e comuni dichiarati: una lettura fuori comune e fuori giro
-  # insieme resta se è spuntata almeno una delle due voci.
-  posizione_escluse <- intersect(posizione_escluse, names(stati_posizione()))
-  if (length(posizione_escluse) > 0) {
-    posizione <- posizione_letture(data)
-    tieni <- tieni &
-      Reduce(
-        `|`,
-        posizione[setdiff(names(stati_posizione()), posizione_escluse)],
-        rep(FALSE, nrow(data))
-      )
+  # Coerenza del comune: comune di lettura contro comune dichiarato.
+  voci <- stati_coerenza_comune()
+  coerenza_comune_escluse <- intersect(coerenza_comune_escluse, names(voci))
+  if (
+    length(coerenza_comune_escluse) > 0 && "coerenza_comune" %in% names(data)
+  ) {
+    tieni <- tieni & !(data$coerenza_comune %in% voci[coerenza_comune_escluse])
   }
   tieni
 }
@@ -1328,29 +1312,33 @@ conta_cantieri <- function(valori) {
 #' @param cantieri_letture Colonna `cantiere` di tutte le letture che
 #'   superano i filtri, per contare le letture di ogni cantiere. Facoltativa.
 #' @return Lista con totale, conteggi per stato database, per servizio e per
-#'   cantiere: `atteso_censiti` conta i censiti per servizio atteso, `atteso`
-#'   i non censiti con un servizio stimato, `stima_incerta` quelli senza;
+#'   cantiere: `servizio_censiti` conta i censiti per servizio a database,
+#'   `servizio_stimato` i non censiti con un servizio stimato,
+#'   `stima_incerta` quelli senza;
 #'   `giri` conta gli RFID per giro del calendario; `non_coerenti` quelli con
 #'   i servizi che non concordano. `rfid_cantieri` conta gli RFID,
 #'   `letture_cantieri` le letture.
 #' @noRd
 calcola_statistiche <- function(data, cantieri_letture = NULL) {
   censiti <- data$presente_a_database == "Presente"
-  atteso <- servizio_mostrato(data)
-  posizione <- posizione_letture(data)
+  servizio <- servizio_mostrato(data)
+  incongruenze <- incongruenze_comune(data)
   list(
     totale = nrow(data),
     presente = sum(censiti),
     non_presente = sum(!censiti),
-    atteso_censiti = conta_servizi(atteso[censiti]),
-    atteso = conta_servizi(atteso[!censiti]),
-    stima_incerta = sum(!censiti & is.na(atteso)),
+    servizio_censiti = conta_servizi(servizio[censiti]),
+    servizio_stimato = conta_servizi(servizio[!censiti]),
+    stima_incerta = sum(!censiti & is.na(servizio)),
     giri = conta_servizi(data[["servizio_giro"]]),
     non_coerenti = sum(
-      data[["coerenza"]] %in% stati_coerenza()[["non_coerente"]]
+      data[["coerenza_servizio"]] %in% stati_coerenza()[["non_coerente"]]
     ),
-    fuori_comune = sum(posizione$fuori_comune),
-    fuori_giro = sum(posizione$fuori_giro),
+    fuori_comune = sum(incongruenze$fuori_comune),
+    fuori_giro = sum(incongruenze$fuori_giro),
+    coerenza_comune_ignota = sum(
+      data[["coerenza_comune"]] %in% stati_coerenza_comune()[["ignota"]]
+    ),
     rfid_cantieri = conta_cantieri(data[["cantiere"]]),
     letture_cantieri = conta_cantieri(cantieri_letture)
   )
@@ -1482,12 +1470,13 @@ analizza_rfid <- function(letture) {
   ultima <- letture[nrow(letture), ]
   censito <- identical(ultima$presente_a_database, "Presente")
 
-  # I cambi di servizio sono quelli dell'anagrafica: contano le sole letture
-  # con il servizio del database.
+  # I cambi di servizio sono quelli del database: il servizio atteso viene
+  # dai giri, e cambia con il mezzo che legge il contenitore.
   servizi <- cronologia_transizioni(
     dplyr::tibble(
       giorno_lettura = letture$giorno_lettura,
-      servizio = servizio_a_database(letture)
+      servizio = letture[["servizio_transponder"]] %||%
+        rep(NA_character_, nrow(letture))
     ),
     "servizio"
   )
@@ -1517,38 +1506,41 @@ analizza_rfid <- function(letture) {
     stima = stima,
     cambio_utenza = nrow(utenze) > 1,
     cronologia_utenza = utenze,
-    posizione = posizione_rfid(letture),
+    coerenza_comune = coerenza_comune_rfid(letture),
     coerenza = coerenza_rfid(letture)
   )
 }
 
 #' Letture di un RFID fuori dai comuni dichiarati
 #'
+#' Vedi `coerenza_comune()`: il comune di lettura e quello dichiarato non
+#' coincidono.
+#'
 #' @param letture Letture dell'RFID, in ordine di tempo.
 #' @return Lista con `fuori_comune` e `fuori_giro`. Ognuna ha `n`, il numero
 #'   di letture, e, se ce ne sono, `dichiarati`, i comuni dichiarati di quelle
-#'   letture, e `letti`, i comuni in cui cadono: tutti e due dal più
-#'   frequente. `fuori_giro` ha anche `letture`, le ultime cinque, con data,
-#'   mezzo, comune del giro e comune della posizione.
+#'   letture, e `letti`, i comuni di lettura: tutti e due dal più frequente.
+#'   `fuori_giro` ha anche `letture`, le ultime cinque, con data, mezzo,
+#'   comune del giro e comune di lettura.
 #' @noRd
-posizione_rfid <- function(letture) {
-  posizione <- posizione_letture(letture)
+coerenza_comune_rfid <- function(letture) {
+  incongruenze <- incongruenze_comune(letture)
   per_frequenza <- function(valori) {
     valori <- as.character(valori)
-    valori[is.na(valori)] <- "fuori dai comuni serviti"
+    valori[is.na(valori)] <- "comune sconosciuto"
     names(sort(table(valori), decreasing = TRUE))
   }
   riepilogo <- function(quali, colonna) {
     esito <- list(n = sum(quali))
     if (esito$n > 0) {
       esito$dichiarati <- per_frequenza(letture[[colonna]][quali])
-      esito$letti <- per_frequenza(letture[["comune_geografico"]][quali])
+      esito$letti <- per_frequenza(letture[["comune_lettura"]][quali])
     }
     esito
   }
-  fuori_giro <- riepilogo(posizione$fuori_giro, "comune_giro")
+  fuori_giro <- riepilogo(incongruenze$fuori_giro, "comune_giro")
   if (fuori_giro$n > 0) {
-    ultime <- utils::tail(letture[posizione$fuori_giro, , drop = FALSE], 5)
+    ultime <- utils::tail(letture[incongruenze$fuori_giro, , drop = FALSE], 5)
     fuori_giro$letture <- ultime[
       rev(seq_len(nrow(ultime))),
       intersect(
@@ -1556,7 +1548,7 @@ posizione_rfid <- function(letture) {
           "giorno_lettura",
           "matricola_veicolo",
           "comune_giro",
-          "comune_geografico"
+          "comune_lettura"
         ),
         names(ultime)
       ),
@@ -1564,24 +1556,25 @@ posizione_rfid <- function(letture) {
     ]
   }
   list(
-    fuori_comune = riepilogo(posizione$fuori_comune, "comune_da_database"),
+    fuori_comune = riepilogo(incongruenze$fuori_comune, "comune_da_database"),
     fuori_giro = fuori_giro
   )
 }
 
 #' Letture di un RFID con i servizi che non concordano
 #'
-#' Vedi `coerenza_servizio()`: il servizio atteso e il giro non sono dello
-#' stesso rifiuto.
+#' Vedi `coerenza_servizio()`: il servizio a database e quello atteso dal
+#' giro non sono dello stesso rifiuto.
 #'
 #' @param letture Letture di un RFID, in ordine di tempo, con la colonna
-#'   `coerenza`. Senza la colonna nessuna lettura risulta non coerente.
+#'   `coerenza_servizio`. Senza la colonna nessuna lettura risulta non
+#'   coerente.
 #' @return Lista con `n`, il numero delle letture non coerenti, e `letture`,
-#'   le cinque più recenti, dalla più recente: giorno, mezzo, servizio atteso
-#'   e giro.
+#'   le cinque più recenti, dalla più recente: giorno, mezzo, servizio a
+#'   database, servizio atteso e giro.
 #' @noRd
 coerenza_rfid <- function(letture) {
-  non_coerenti <- letture[["coerenza"]] %in%
+  non_coerenti <- letture[["coerenza_servizio"]] %in%
     stati_coerenza()[["non_coerente"]]
   esito <- list(n = sum(non_coerenti))
   if (esito$n > 0) {
@@ -1592,6 +1585,7 @@ coerenza_rfid <- function(letture) {
         c(
           "giorno_lettura",
           "matricola_veicolo",
+          "servizio_transponder",
           "servizio_atteso",
           "servizio_giro"
         ),

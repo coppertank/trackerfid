@@ -1,4 +1,4 @@
-#' Modulo filtri laterali: logica
+#' Modulo filtri della mappa principale: logica
 #'
 #' Lo stato dei filtri vive sul server e viene riallineato agli input: al
 #' caricamento di un nuovo dataset i filtri tornano subito ai valori
@@ -10,14 +10,15 @@
 #' anche di cantieri diversi. Nessuna scelta vale per tutti i comuni.
 #'
 #' I servizi stanno in due elenchi, che valgono per i bidoni di tutti e due
-#' gli stati a database. Il primo riporta i servizi attesi: per un censito il
-#' servizio del contenitore a database, per un non censito il servizio
-#' stimato. Sono gli stessi che danno l'icona ai marker. I non censiti con la
-#' stima incerta, che sulla mappa hanno il punto di domanda, hanno una casella
-#' a parte. Il secondo riporta i giri del calendario, con il loro nome.
-#' "Tutti" e "Nessuno" spuntano o tolgono in un colpo tutte le voci di un
-#' elenco. Un terzo filtro riguarda la coerenza tra servizio atteso e giro; un
-#' quarto, tra quelli geografici, la posizione delle letture.
+#' gli stati a database. Il primo riporta il servizio del contenitore: per un
+#' censito quello a database, per un non censito quello stimato. Sono gli
+#' stessi che danno l'icona ai marker. I non censiti con la stima incerta, che
+#' sulla mappa hanno il punto di domanda, hanno una casella a parte. Il
+#' secondo riporta i giri del calendario, con il loro nome. "Tutti" e
+#' "Nessuno" spuntano o tolgono in un colpo tutte le voci di un elenco. Un
+#' terzo filtro riguarda la coerenza tra servizio a database e servizio
+#' atteso dal giro; un quarto, tra quelli geografici, la coerenza tra il
+#' comune di lettura e il comune dichiarato.
 #'
 #' @param id Identificativo del modulo.
 #' @param dati Reactive con le letture del periodo di analisi (o `NULL`).
@@ -31,13 +32,13 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
   moduleServer(id, function(input, output, session) {
     stato <- reactiveValues(
       stato_db = stati_database(),
-      atteso_esclusi = character(0),
+      servizi_esclusi = character(0),
       includi_stima_incerta = TRUE,
       giri_esclusi = character(0),
       coerenza_escluse = character(0),
       cantieri_esclusi = character(0),
       comuni = character(0),
-      posizione_escluse = character(0),
+      coerenza_comune_escluse = character(0),
       reimpostazioni = 0L
     )
 
@@ -47,13 +48,13 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     # --- Valori predefiniti: nuovo dataset o pulsante "Reset Filtri" -----------
     reimposta <- function() {
       stato$stato_db <- stati_database()
-      stato$atteso_esclusi <- character(0)
+      stato$servizi_esclusi <- character(0)
       stato$includi_stima_incerta <- TRUE
       stato$giri_esclusi <- character(0)
       stato$coerenza_escluse <- character(0)
       stato$cantieri_esclusi <- character(0)
       stato$comuni <- character(0)
-      stato$posizione_escluse <- character(0)
+      stato$coerenza_comune_escluse <- character(0)
       stato$reimpostazioni <- stato$reimpostazioni + 1L
       updateCheckboxGroupInput(
         session,
@@ -62,8 +63,8 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       )
       updateCheckboxGroupInput(
         session,
-        "posizione_check",
-        selected = names(stati_posizione())
+        "coerenza_comune_check",
+        selected = names(stati_coerenza_comune())
       )
       updateCheckboxGroupInput(
         session,
@@ -76,10 +77,9 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     observeEvent(input$reset, reimposta(), priority = 100)
 
     # --- Scelte dinamiche dei servizi: valori presenti nel periodo -------------
-    # Il servizio atteso: per i censiti quello del contenitore a database, per
-    # i non censiti quello stimato. Il giro: quello del calendario, con il suo
-    # nome.
-    scelte_atteso <- reactive({
+    # Il servizio: per i censiti quello del contenitore a database, per i non
+    # censiti quello stimato. Il giro: quello del calendario, con il suo nome.
+    scelte_servizio <- reactive({
       d <- dati()
       if (is.null(d)) {
         return(character(0))
@@ -100,9 +100,9 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     observe({
       stato$reimpostazioni
       aggiorna_gruppo(
-        "servizio_atteso_check",
-        scelte_atteso(),
-        isolate(stato$atteso_esclusi)
+        "servizio_check",
+        scelte_servizio(),
+        isolate(stato$servizi_esclusi)
       )
     })
     observe({
@@ -219,12 +219,12 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ignoreInit = TRUE
     )
     observeEvent(
-      input$servizio_atteso_check,
+      input$servizio_check,
       {
-        stato$atteso_esclusi <- aggiorna_esclusi(
-          stato$atteso_esclusi,
-          scelte_atteso(),
-          input$servizio_atteso_check
+        stato$servizi_esclusi <- aggiorna_esclusi(
+          stato$servizi_esclusi,
+          scelte_servizio(),
+          input$servizio_check
         )
       },
       ignoreNULL = FALSE,
@@ -247,19 +247,19 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
         selected = if (tutti) scelte else character(0)
       )
     }
-    # L'elenco dei servizi attesi comprende la casella della stima incerta.
-    spunta_attesi <- function(tutti) {
+    # L'elenco dei servizi comprende la casella della stima incerta.
+    spunta_servizi <- function(tutti) {
       spunta_elenco(
-        "atteso_esclusi",
-        "servizio_atteso_check",
-        scelte_atteso(),
+        "servizi_esclusi",
+        "servizio_check",
+        scelte_servizio(),
         tutti
       )
       stato$includi_stima_incerta <- tutti
       updateCheckboxInput(session, "includi_stima_incerta", value = tutti)
     }
-    observeEvent(input$atteso_tutti, spunta_attesi(TRUE))
-    observeEvent(input$atteso_nessuno, spunta_attesi(FALSE))
+    observeEvent(input$servizio_tutti, spunta_servizi(TRUE))
+    observeEvent(input$servizio_nessuno, spunta_servizi(FALSE))
     observeEvent(input$giro_tutti, {
       spunta_elenco("giri_esclusi", "servizio_giro_check", scelte_giro(), TRUE)
     })
@@ -280,11 +280,11 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ignoreInit = TRUE
     )
     observeEvent(
-      input$posizione_check,
+      input$coerenza_comune_check,
       {
-        stato$posizione_escluse <- setdiff(
-          names(stati_posizione()),
-          input$posizione_check %||% character(0)
+        stato$coerenza_comune_escluse <- setdiff(
+          names(stati_coerenza_comune()),
+          input$coerenza_comune_check %||% character(0)
         )
       },
       ignoreNULL = FALSE,
@@ -311,13 +311,13 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       maschera_filtri(
         d,
         stato_db = stato$stato_db,
-        atteso_esclusi = stato$atteso_esclusi,
+        servizi_esclusi = stato$servizi_esclusi,
         includi_stima_incerta = stato$includi_stima_incerta,
         giri_esclusi = stato$giri_esclusi,
         coerenza_escluse = stato$coerenza_escluse,
         cantieri_esclusi = stato$cantieri_esclusi,
         comuni = stato$comuni,
-        posizione_escluse = stato$posizione_escluse
+        coerenza_comune_escluse = stato$coerenza_comune_escluse
       )
     })
 
