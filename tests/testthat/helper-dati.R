@@ -163,3 +163,85 @@ letture_rfid <- function(
 date_2025 <- function(n) {
   format(seq(as.Date("2025-01-10"), as.Date("2025-12-20"), length.out = n))
 }
+
+# --- Archivio da un data frame -------------------------------------------------
+#
+# L'app legge sempre un file; i test costruiscono le letture in un data frame e
+# le portano in un archivio DuckDB con queste funzioni.
+
+# Tipo SQL di ogni colonna della tabella delle letture
+tipi_archivio <- function() {
+  tipi <- stats::setNames(rep("VARCHAR", length(colonne_archivio())), colonne_archivio())
+  tipi[["giorno_lettura"]] <- "TIMESTAMP"
+  tipi[c("latitudine", "longitudine", colonne_quantita())] <- "DOUBLE"
+  tipi[["riga"]] <- "BIGINT"
+  tipi
+}
+
+# Converte un vettore in data e ora (POSIXct, UTC)
+#
+# Il formato atteso è `YYYY-MM-DD HH:MM:SS`; sono accettate anche le varianti
+# senza secondi, con data italiana (`DD/MM/YYYY`) o con la sola data. Una
+# colonna già di tipo data conserva l'ora che mostra, senza conversioni di
+# fuso.
+converti_data_ora <- function(x) {
+  if (inherits(x, "POSIXct")) {
+    return(lubridate::force_tz(x, "UTC"))
+  }
+  if (inherits(x, "Date")) {
+    return(as.POSIXct(format(x), tz = "UTC"))
+  }
+  lubridate::parse_date_time(
+    x,
+    orders = c("Ymd HMS", "Ymd HM", "dmY HMS", "dmY HM", "Ymd", "dmY"),
+    tz = "UTC",
+    quiet = TRUE
+  )
+}
+
+# Porta in un archivio letture già validate
+#
+# Le colonne di `colonne_dataset()` che mancano vengono create vuote, con il
+# tipo giusto; le altre vengono ignorate. Come nella validazione, senza
+# `servizio_giro` il giro è il servizio atteso. Le colonne derivate non
+# vengono ricalcolate: le letture vanno in archivio così come sono.
+#
+# @param letture Data frame di letture validate.
+# @param origine Nome da mostrare come origine delle letture.
+# @return Archivio, vedi `nuovo_archivio()`.
+archivio_da_letture <- function(letture, origine = "letture") {
+  if (is.null(letture[[colonne_calendario()]])) {
+    letture[[colonne_calendario()]] <- letture[["servizio_atteso"]]
+  }
+  tipi <- tipi_archivio()
+  n <- nrow(letture)
+  tabella <- lapply(stats::setNames(names(tipi), names(tipi)), function(campo) {
+    valori <- letture[[campo]]
+    switch(
+      tipi[[campo]],
+      TIMESTAMP = if (is.null(valori)) {
+        as.POSIXct(rep(NA_real_, n), tz = "UTC")
+      } else {
+        converti_data_ora(valori)
+      },
+      DOUBLE = if (is.null(valori)) rep(NA_real_, n) else as.numeric(valori),
+      BIGINT = seq_len(n),
+      if (is.null(valori)) rep(NA_character_, n) else as.character(valori)
+    )
+  })
+  con <- connessione_duckdb()
+  DBI::dbWriteTable(con, "letture", as.data.frame(tabella, stringsAsFactors = FALSE))
+  nuovo_archivio(con, "letture", origine = origine)
+}
+
+# Dati e attributi di una tabella reactable, come li riceve il browser.
+dati_reactable <- function(widget) {
+  as.data.frame(
+    jsonlite::fromJSON(as.character(widget$x$tag$attribs$data)),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+}
+attributi_reactable <- function(widget) {
+  widget$x$tag$attribs
+}

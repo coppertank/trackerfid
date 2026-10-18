@@ -18,7 +18,6 @@ License: What license is it under?
 Depends:
     R (>= 4.1.0)
 Imports: 
-    config,
     data.table,
     DBI,
     dbscan,
@@ -34,6 +33,7 @@ Imports:
     mapgl (>= 0.5.0),
     plotly,
     purrr,
+    reactable (>= 0.4.0),
     rlang,
     shiny,
     shinydashboard,
@@ -46,6 +46,7 @@ Suggests:
     nanoparquet,
     pkgload,
     rmarkdown,
+    sf,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

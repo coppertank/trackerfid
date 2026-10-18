@@ -72,10 +72,10 @@ test_that("i confini hanno un comune per ogni riga della tabella dei comuni", {
   expect_identical(per_comune$comune, comuni$comune)
   expect_identical(per_comune$cantiere, comuni$cantiere)
 
-  # il file dice da dove vengono i confini e di quale rilascio sono
-  expect_identical(attr(poligoni, "origine"), origine_confini()$raccolta)
+  # il file dice da dove vengono i confini e la data dello shapefile
+  expect_identical(attr(poligoni, "origine"), origine_confini()$fonte)
   expect_match(attr(poligoni, "versione"), "^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-  # nel file ogni comune porta anche il nome e il codice dell'ISTAT
+  # nel file ogni comune porta anche il nome della Regione e il codice ISTAT
   geojson <- jsonlite::fromJSON(
     percorso_confini_comuni(),
     simplifyVector = FALSE
@@ -87,7 +87,9 @@ test_that("i confini hanno un comune per ogni riga della tabella dei comuni", {
     character(1)
   )
   expect_identical(chiave_comune(nomi_istat), chiave_comune(comuni$comune))
-  expect_identical(nomi_istat[comuni$comune == "ROSÀ"], "Rosà")
+  # la Regione scrive l'accento come apostrofo
+  expect_identical(nomi_istat[comuni$comune == "ROSÀ"], "Rosa'")
+  expect_identical(nomi_istat[comuni$comune == "SAN PIETRO IN GU"], "San Pietro in Gu'")
   expect_identical(
     nomi_istat[comuni$comune == "ROMANO D'EZZELINO"],
     "Romano d'Ezzelino"
@@ -487,9 +489,20 @@ test_that("i confini dei comuni sono pronti per il disegno", {
   )
   expect_identical(limena$x_min, min(limena$x))
   expect_identical(limena$y_max, max(limena$y))
-  # Valbrenta ha due poligoni, quindi almeno due anelli
-  valbrenta <- lati[[indice_comune("VALBRENTA")]]
-  expect_gte(max(valbrenta$anello), 2)
+  # nei confini della Regione ogni comune è un poligono solo; un comune con
+  # due poligoni, come era VALBRENTA nei confini dell'ISTAT, ha un anello per
+  # parte
+  expect_true(all(vapply(lati, function(l) max(l$anello), numeric(1)) >= 1))
+  vecchi <- memoria_geografia$lati
+  memoria_geografia$lati <- NULL
+  withr::defer(memoria_geografia$lati <- vecchi)
+  veri <- poligoni_comuni()
+  seconda <- veri[veri$comune == "LIMENA", ]
+  seconda$poligono <- "LIMENA seconda parte"
+  seconda$longitudine <- seconda$longitudine + 0.1
+  local_mocked_bindings(poligoni_comuni = function() rbind(veri, seconda))
+  divisa <- lati_comuni()[[indice_comune("LIMENA")]]
+  expect_identical(max(divisa$anello), max(limena$anello) + 1L)
   # i nomi si trovano senza badare ad accenti e apostrofi
   expect_identical(indice_comune(c("Rosa'", "ROSÀ")), rep(indice_comune("rosà"), 2))
   expect_true(is.na(indice_comune("PAESE IGNOTO")))

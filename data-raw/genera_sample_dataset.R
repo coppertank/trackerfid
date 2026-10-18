@@ -410,6 +410,18 @@ comune_del_punto <- function(lat, lng) {
   esito
 }
 
+# Il punto ha attorno, a circa 50 metri, solo comuni serviti? Il rumore del GPS
+# e l'arrotondamento a quattro decimali spostano le letture di qualche metro:
+# un contenitore troppo vicino al confine del territorio avrebbe letture fuori
+# dai comuni serviti. Vicino al confine tra due comuni serviti invece puo'
+# stare, ed e' voluto: le sue letture possono cadere nel comune accanto.
+nel_territorio <- function(lat, lng, margine = 0.0005) {
+  !anyNA(comune_del_punto(
+    lat + c(-1, 1, 0, 0) * margine,
+    lng + c(0, 0, -1, 1) * margine
+  ))
+}
+
 # Giri del calendario: una riga per turno e giorno della settimana.
 giri <- do.call(rbind, lapply(seq_along(turni), function(indice) {
   data.frame(turno = indice, giorno = turni[[indice]]$giorni)
@@ -476,13 +488,15 @@ bidoni$cantiere <- comuni$cantiere[match(bidoni$comune, comuni$comune)]
 
 # Lo scarto dal centro astratto piu' vicino, limitato a 1,5 km circa, viene
 # riportato attorno al centro del comune. Se porta il contenitore fuori dal
-# confine comunale si dimezza, finche' il punto rientra.
+# confine comunale, o troppo vicino al confine del territorio servito, si
+# dimezza, finche' il punto rientra.
 for (i in seq_len(nrow(bidoni))) {
   zona <- which.min((zone$lat - bidoni$lat[i])^2 + (zone$lng - bidoni$lng[i])^2)
   scarto <- c(bidoni$lat[i] - zone$lat[zona], bidoni$lng[i] - zone$lng[zona])
   scarto <- scarto * min(1, 0.015 / sqrt(sum(scarto^2)))
   centro <- centro_comune(bidoni$comune[i])
-  while (!nel_comune(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2], bidoni$comune[i])) {
+  while (!(nel_comune(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2], bidoni$comune[i]) &&
+    nel_territorio(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2]))) {
     scarto <- scarto / 2
   }
   bidoni$lat[i] <- centro[["lat"]] + scarto[1]
@@ -764,7 +778,8 @@ porte <- con_seme(2028, {
   for (i in seq_len(nrow(porte))) {
     centro <- centro_comune(porte$comune[i])
     scarto <- stats::rnorm(2, 0, 0.004)
-    while (!nel_comune(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2], porte$comune[i])) {
+    while (!(nel_comune(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2], porte$comune[i]) &&
+      nel_territorio(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2]))) {
       scarto <- scarto / 2
     }
     porte$lat[i] <- centro[["lat"]] + scarto[1]
@@ -970,6 +985,72 @@ letture$data_attivazione_contenitore <- ifelse(
 )
 letture$data_cessazione_contenitore <- NA_character_
 
+# Nucleo familiare, categoria e manovra sociale della fornitura, come li
+# aggiunge il passo 3 con associa_nucleo_e_manovra(): valgono per le
+# forniture dei contenitori. Hanno un seme a parte: le letture non cambiano.
+# Le forniture non domestiche, come nei dati aziendali, non hanno un nucleo.
+# Per provare i valori "al momento della lettura" una fornitura domestica del
+# secco cambia nucleo il primo luglio 2025 e un'altra ottiene la manovra
+# sociale per i neonati il primo giugno 2025.
+forniture_nucleo <- con_seme(2031, {
+  elenco <- sort(unique(stats::na.omit(letture$id_fornitura[con_contenitore])))
+  categoria_fornitura <- letture$codice_categoria[con_contenitore][
+    match(elenco, letture$id_fornitura[con_contenitore])
+  ]
+  domestica <- categoria_fornitura == "UD"
+  n <- length(elenco)
+  residenti <- sample(0:6, n, replace = TRUE, prob = c(0.04, 0.28, 0.28, 0.18, 0.14, 0.05, 0.03))
+  non_residenti <- ifelse(
+    residenti == 0,
+    sample(1:3, n, replace = TRUE),
+    ifelse(stats::runif(n) < 0.1, sample(1:2, n, replace = TRUE), 0L)
+  )
+  manovra <- ifelse(
+    domestica & stats::runif(n) < 0.15,
+    sample(
+      c("MANOVRA SOCIALE NEONATI", "MANOVRA SOCIALE ANZIANI", "MANOVRA SOCIALE DISABILI"),
+      n,
+      replace = TRUE
+    ),
+    NA_character_
+  )
+  data.frame(
+    id_fornitura = elenco,
+    nucleo_residenti = ifelse(domestica, residenti, NA_integer_),
+    nucleo_non_residenti = ifelse(domestica, non_residenti, NA_integer_),
+    tipo_categoria = ifelse(domestica, "DOMESTICA", "NON DOMESTICA"),
+    categoria = ifelse(
+      domestica,
+      "ABITAZIONE",
+      sample(c("UFFICI", "NEGOZI", "BAR E RISTORANTI"), n, replace = TRUE)
+    ),
+    sottocategoria = ifelse(
+      domestica,
+      ifelse(residenti > 0, "RESIDENTE", "NON RESIDENTE"),
+      "ATTIVITA"
+    ),
+    manovra_sociale = manovra,
+    stringsAsFactors = FALSE
+  )
+})
+riga_fornitura <- match(letture$id_fornitura, forniture_nucleo$id_fornitura)
+for (campo in c("nucleo_residenti", "nucleo_non_residenti", "tipo_categoria", "categoria", "sottocategoria", "manovra_sociale")) {
+  letture[[campo]] <- forniture_nucleo[[campo]][riga_fornitura]
+}
+# Le due forniture del secco che cambiano: le prime domestiche, senza
+# manovra, lette sia prima sia dopo l'estate del 2025.
+secco_2025 <- con_contenitore & letture$servizio_database %in% "SECCO" &
+  format(giorno, "%Y") == "2025" & letture$tipo_categoria %in% "DOMESTICA" &
+  is.na(letture$manovra_sociale)
+prima_estate <- unique(letture$id_fornitura[secco_2025 & giorno < as.Date("2025-06-01")])
+dopo_estate <- unique(letture$id_fornitura[secco_2025 & giorno >= as.Date("2025-07-01")])
+che_cambiano <- utils::head(sort(intersect(prima_estate, dopo_estate)), 2)
+cambia_nucleo <- letture$id_fornitura %in% che_cambiano[1] & giorno >= as.Date("2025-07-01")
+letture$nucleo_residenti[cambia_nucleo] <- letture$nucleo_residenti[cambia_nucleo] + 1L
+nuova_manovra <- letture$id_fornitura %in% che_cambiano[2] & giorno >= as.Date("2025-06-01")
+letture$manovra_sociale[nuova_manovra] <- "MANOVRA SOCIALE NEONATI"
+letture$nucleo_totale <- letture$nucleo_residenti + letture$nucleo_non_residenti
+
 finale <- data.frame(
   giorno_lettura = format(letture$giorno_lettura, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
   giorno = format(giorno),
@@ -999,6 +1080,13 @@ finale <- data.frame(
   id_utenza = letture$id_utenza,
   latitudine = sprintf("%.4f", letture$latitudine),
   longitudine = sprintf("%.4f", letture$longitudine),
+  nucleo_residenti = letture$nucleo_residenti,
+  nucleo_non_residenti = letture$nucleo_non_residenti,
+  nucleo_totale = letture$nucleo_totale,
+  tipo_categoria = letture$tipo_categoria,
+  categoria = letture$categoria,
+  sottocategoria = letture$sottocategoria,
+  manovra_sociale = letture$manovra_sociale,
   stringsAsFactors = FALSE
 )
 
@@ -1128,6 +1216,15 @@ stopifnot(
   nrow(unique(finale[, c("targa_veicolo", "matricola_veicolo")])) == 5,
   length(unique(stats::na.omit(finale$id_utenza[!sacchetto]))) == 50,
   !anyNA(finale$latitudine), !anyNA(finale$longitudine),
+  # nucleo, categoria e manovra: solo per le forniture dei contenitori; il
+  # nucleo solo per quelle domestiche
+  identical(names(finale)[29:35], colonne_nucleo_manovra()),
+  all(is.na(finale$tipo_categoria) == (non_presente | sacchetto)),
+  all(is.na(finale$nucleo_residenti) == (is.na(finale$tipo_categoria) | finale$tipo_categoria == "NON DOMESTICA")),
+  all(finale$nucleo_totale == finale$nucleo_residenti + finale$nucleo_non_residenti, na.rm = TRUE),
+  all(stats::na.omit(finale$manovra_sociale) %in% manovre_potenziamento()),
+  all(is.na(finale$manovra_sociale[finale$tipo_categoria %in% "NON DOMESTICA"])),
+  length(che_cambiano) == 2,
   # esempi per l'analisi dei cluster: oltre 300 letture nel 2025
   sum(nel_2025 & finale$RFID == bidoni$RFID[k_deposito]) > 300,
   sum(nel_2025 & finale$RFID == bidoni$RFID[k_camion]) > 300

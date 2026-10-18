@@ -6,10 +6,16 @@
 #'
 #' @param id Identificativo del modulo.
 #' @param dati Reactive con le letture del periodo di analisi (o `NULL`).
+#' La mappa disegna le sole letture del giro scelto nella tabella: senza una
+#' scelta non riceve nessun marker, così una ricerca di molti giri non manda
+#' al browser migliaia di letture che nessuno guarda. Inquadra intanto la zona
+#' di tutti i giri trovati.
+#'
 #' @return Lista di reactive: `risultati`, le letture da disegnare sulla
-#'   mappa, cioè quelle trovate o quelle del giro scelto in tabella;
+#'   mappa, cioè quelle del giro scelto in tabella, `NULL` senza una scelta;
 #'   `riepilogo`, la tabella dei giri; `messaggio`, l'avviso da mostrare sulla
-#'   mappa quando non c'è niente da disegnare.
+#'   mappa quando non c'è niente da disegnare; `vista`, i punti su cui
+#'   inquadrare la mappa, vedi `area_giri()`.
 #' @noRd
 mod_giro_server <- function(id, dati) {
   moduleServer(id, function(input, output, session) {
@@ -96,18 +102,16 @@ mod_giro_server <- function(id, dati) {
     output$con_giri <- reactive(!is.null(trovate()) && nrow(trovate()) > 0)
     outputOptions(output, "con_giri", suspendWhenHidden = FALSE)
 
-    output$tabella <- DT::renderDT(
-      tabella_giri_dt(riepilogo()),
-      server = TRUE
-    )
+    output$tabella <- reactable::renderReactable(tabella_giri(riepilogo()))
 
-    # Giro scelto in tabella: la riga vale finché la ricerca non cambia.
+    # Giro scelto in tabella: la riga vale finché la ricerca non cambia. Una
+    # tabella nuova nasce senza righe scelte, e reactable lo comunica.
     giro_scelto <- reactiveVal(NULL)
     observeEvent(trovate(), giro_scelto(NULL), ignoreNULL = FALSE, priority = 10)
     observeEvent(
-      input$tabella_rows_selected,
+      reactable::getReactableState("tabella", "selected"),
       {
-        riga <- input$tabella_rows_selected
+        riga <- reactable::getReactableState("tabella", "selected")
         giri <- riepilogo()
         giro_scelto(
           if (length(riga) == 1 && riga >= 1 && riga <= nrow(giri)) {
@@ -123,9 +127,15 @@ mod_giro_server <- function(id, dati) {
       letture <- trovate()
       giro <- giro_scelto()
       if (is.null(letture) || is.null(giro)) {
-        return(letture)
+        return(NULL)
       }
       letture_del_giro(letture, giro)
+    })
+
+    # Con un giro scelto la mappa inquadra le sue letture e il suo comune;
+    # senza, la zona di tutti i giri trovati.
+    vista <- reactive({
+      area_giri(risultati() %||% trovate())
     })
 
     output$esito <- renderUI({
@@ -152,11 +162,22 @@ mod_giro_server <- function(id, dati) {
 
     messaggio <- reactive({
       letture <- trovate()
-      if (!is.null(letture) && nrow(letture) == 0) {
-        "Nessuna lettura per il mezzo e i giorni scelti."
+      if (is.null(letture)) {
+        return(NULL)
+      }
+      if (nrow(letture) == 0) {
+        return("Nessuna lettura per il mezzo e i giorni scelti.")
+      }
+      if (is.null(giro_scelto())) {
+        "Scegli un giro nella tabella per vederne le letture sulla mappa."
       }
     })
 
-    list(risultati = risultati, riepilogo = riepilogo, messaggio = messaggio)
+    list(
+      risultati = risultati,
+      riepilogo = riepilogo,
+      messaggio = messaggio,
+      vista = vista
+    )
   })
 }

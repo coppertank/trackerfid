@@ -5,19 +5,25 @@
 # una riga per comune, con il cantiere e le coordinate del centro abitato. Per
 # aggiungere un comune si scrive la sua riga, poi si riesegue questo script.
 #
-# I confini vengono dall'ultimo rilascio della raccolta guglielmo/geojson-italy,
-# che ripubblica quelli dell'ISTAT con licenza CC-BY 4.0. Li scarica e li
-# sceglie la funzione scarica_confini_comuni(), in R/fct_confini_comuni.R. La
-# funzione si ferma, senza scrivere niente, se anche un solo comune della
-# tabella non trova il suo confine o se il centro abitato cade fuori dal
-# confine trovato: i nomi si confrontano senza badare a maiuscole, accenti e
-# apostrofi.
+# I confini vengono dallo strato dei comuni del geoportale della Regione del
+# Veneto (licenza IODL 2.0), scaricato come shapefile nella cartella
+# data-raw/rvccomuni/. La richiesta usata per scaricarlo sta in
+# data-raw/rvccomuni/wfsrequest.txt. Quando la Regione pubblica confini nuovi
+# basta sostituire il contenuto della cartella, con un solo file .shp, e
+# rieseguire lo script: il nome del file .shp non conta.
 #
-# Serve la connessione a internet. Eseguire dalla radice del pacchetto:
+# Le funzioni stanno in R/fct_preparazione_comuni.R. Lo script si ferma, senza
+# scrivere niente, se anche un solo comune della tabella non trova il suo
+# confine o se il centro abitato cade fuori dal confine trovato: i nomi si
+# confrontano senza badare a maiuscole, accenti e apostrofi, quindi ROSA' della
+# Regione trova ROSÀ della tabella.
+#
+# Serve il pacchetto sf. Eseguire dalla radice del pacchetto:
 #   Rscript data-raw/prepara_comuni.R
 #
 # Dopo aver cambiato i confini va rigenerato anche il dataset di esempio, che
-# mette i contenitori dentro il confine del loro comune:
+# mette i contenitori dentro il confine del loro comune, e con lui l'analisi
+# dei cluster di esempio:
 #   Rscript data-raw/genera_sample_dataset.R
 
 suppressMessages(pkgload::load_all(".", quiet = TRUE))
@@ -32,4 +38,4 @@ if (length(senza_centro) > 0) {
   )
 }
 
-scarica_confini_comuni()
+prepara_confini_comuni(cartella = file.path("data-raw", "rvccomuni"))

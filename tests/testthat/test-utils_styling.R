@@ -211,6 +211,11 @@ test_that("i segnali sul marker dicono fuori comune e fuori giro", {
 test_that("la legenda cambia con la modalita", {
   expect_match(html_legenda("cluster"), "Cluster: % censiti", fixed = TRUE)
   expect_match(html_legenda("rfid"), "Ultima lettura", fixed = TRUE)
+  expect_match(
+    html_legenda("rfid"),
+    "Sulla mappa le ultime 10 letture di ogni RFID",
+    fixed = TRUE
+  )
   expect_no_match(html_legenda("utenza"), "Cluster", fixed = TRUE)
   for (tipologia in unique(servizi_config()$tipologia)) {
     expect_match(html_legenda("utenza"), tipologia, fixed = TRUE)
@@ -310,8 +315,9 @@ test_that("i nomi dei servizi si uniformano senza badare a maiuscole e spazi", {
 test_that("la legenda si apre e si chiude dalla sua intestazione", {
   for (modalita in c("cluster", "rfid", "utenza", "giro")) {
     legenda <- html_legenda(modalita)
-    # aperta all'avvio; `script.js` applica poi la scelta ricordata
-    expect_match(legenda, '^<details open class="legenda-dettagli">')
+    # chiusa a ogni avvio: si apre con un click sull'intestazione
+    expect_match(legenda, '^<details class="legenda-dettagli">')
+    expect_no_match(legenda, "<details open", fixed = TRUE)
     expect_match(
       legenda,
       '<summary class="legenda-intestazione" title="Mostra o nascondi la legenda">Legenda</summary>',

@@ -117,7 +117,7 @@ app_server <- function(input, output, session) {
     dati = giri$risultati,
     modalita = "giro",
     # La vista comprende i comuni in cui i giri dovevano lavorare.
-    dati_vista = reactive(area_giri(giri$risultati())),
+    dati_vista = giri$vista,
     attiva = scheda_attiva("giro"),
     messaggio = reactive(senza_dati() %||% giri$messaggio())
   )

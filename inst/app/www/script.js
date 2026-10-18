@@ -41,40 +41,13 @@ $(document).on("change", ".filtro-mappa", function () {
     .text(attivo ? spuntate + "/" + caselle.length : "");
 });
 
-// La legenda delle mappe si chiude con un click sull'intestazione. La scelta
-// vale per tutte le mappe e il browser la ricorda: chi l'ha chiusa la ritrova
-// chiusa. Si salva solo al click, non all'evento "toggle": il browser lo
-// lancia anche quando legge una legenda nata aperta.
-(function () {
-  var chiave = "trackerfid-legenda-aperta";
-  var applica = function (aperta) {
-    document.querySelectorAll(".legenda-dettagli").forEach(function (d) {
-      if (d.open !== aperta) {
-        d.open = aperta;
-      }
-    });
-  };
-  var ripristina = function () {
-    var salvata = null;
-    try {
-      salvata = window.localStorage.getItem(chiave);
-    } catch (e) {}
-    if (salvata !== null) {
-      applica(salvata === "1");
-    }
-  };
-  // Lo script può arrivare a pagina già pronta.
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", ripristina);
-  } else {
-    ripristina();
-  }
-  $(document).on("click", ".legenda-intestazione", function (evento) {
-    evento.preventDefault();
-    var aperta = !this.parentNode.open;
-    applica(aperta);
-    try {
-      window.localStorage.setItem(chiave, aperta ? "1" : "0");
-    } catch (e) {}
+// La legenda delle mappe nasce chiusa a ogni avvio e si apre con un click
+// sull'intestazione. La scelta vale per tutte le mappe della pagina, ma non
+// viene ricordata: al prossimo avvio la legenda è di nuovo chiusa.
+$(document).on("click", ".legenda-intestazione", function (evento) {
+  evento.preventDefault();
+  var aperta = !this.parentNode.open;
+  document.querySelectorAll(".legenda-dettagli").forEach(function (d) {
+    d.open = aperta;
   });
-})();
+});

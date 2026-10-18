@@ -48,44 +48,31 @@ test_that("se lo sfondo non si scarica la mappa ha uno sfondo di ripiego", {
 })
 
 test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
-  testo <- geojson_confini()
-  expect_type(testo, "character")
-  expect_length(testo, 1)
-  # pochi dati per il browser
-  expect_lt(nchar(testo), 200000)
-  # preparati una volta sola
-  expect_identical(geojson_confini(), testo)
+  # il browser scarica il file dei confini da sé, dalla risorsa statica: non
+  # viaggia nella configurazione di ogni mappa
+  indirizzo <- indirizzo_confini()
+  expect_match(
+    indirizzo,
+    paste0("^", risorsa_confini(), "/comuni_confini\\.geojson\\?v=[0-9]{14}$")
+  )
+  expect_identical(configurazione_mappa("rfid")$confini, indirizzo)
+  expect_lt(nchar(jsonlite::toJSON(configurazione_mappa("cluster"), auto_unbox = TRUE)), 300000)
+  # la risorsa statica è la cartella del file
+  pagina <- htmltools::renderTags(app_ui(NULL))
+  expect_true(risorsa_confini() %in% names(shiny::resourcePaths()))
+  expect_identical(
+    normalizePath(shiny::resourcePaths()[[risorsa_confini()]]),
+    normalizePath(dirname(percorso_confini_comuni()))
+  )
 
-  confini <- jsonlite::fromJSON(testo, simplifyVector = FALSE)
-  expect_identical(confini$type, "FeatureCollection")
-  comuni <- comuni_cantieri()
-  proprieta <- lapply(confini$features, function(elemento) elemento$properties)
-  expect_identical(
-    vapply(proprieta, function(p) p$comune, character(1)),
-    comuni$comune
-  )
-  expect_identical(
-    vapply(proprieta, function(p) p$cantiere, character(1)),
-    comuni$cantiere
-  )
-  expect_identical(
-    vapply(proprieta, function(p) p$colore, character(1)),
-    colore_cantiere(comuni$cantiere)
-  )
-  tipi <- vapply(
-    confini$features,
-    function(elemento) elemento$geometry$type,
-    character(1)
-  )
-  expect_true(all(tipi %in% c("Polygon", "MultiPolygon")))
-  # coordinate con cinque decimali, dentro la zona servita
-  coordinate <- unlist(lapply(confini$features, function(elemento) {
-    elemento$geometry$coordinates
-  }))
-  expect_equal(coordinate, round(coordinate, 5))
-  zona <- riquadro_zona()
-  expect_gte(min(coordinate), zona$lng_min - 1e-5)
-  expect_lte(max(coordinate), zona$lat_max + 1e-5)
+  # il colore viene dal cantiere, con i colori di colori_cantieri(); un
+  # cantiere sconosciuto è grigio
+  colore <- espressione_colore_cantiere()
+  expect_identical(colore[1:2], list("match", list("get", "cantiere")))
+  coppie <- unlist(colore[3:(length(colore) - 1)])
+  expect_identical(coppie[c(TRUE, FALSE)], names(colori_cantieri()))
+  expect_identical(coppie[c(FALSE, TRUE)], unname(colori_cantieri()))
+  expect_identical(colore[[length(colore)]], colore_cantiere(NA))
 
   # su ogni mappa: riempimento e bordo tratteggiato, sotto le etichette dello
   # sfondo, colorati per cantiere, e nessuno dei due risponde al mouse
@@ -93,6 +80,7 @@ test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
   for (modalita in c("cluster", "rfid", "utenza", "giro", "analisi")) {
     config <- livelli_mappa(modalita)
     expect_identical(config$sorgenti$confini$data, "confini")
+    expect_match(config$sorgenti$confini$attribution, "Regione del Veneto", fixed = TRUE)
     primi <- config$livelli[1:2]
     expect_identical(identificativi(primi), c("confini-riempimento", "confini-bordo"))
     expect_true(all(vapply(primi, function(l) isTRUE(l$sotto_etichette), logical(1))))
@@ -101,15 +89,14 @@ test_that("i confini dei comuni sono colorati per cantiere e non disturbano", {
   config <- livelli_mappa("cluster")
   riempimento <- livello(config$livelli, "confini-riempimento")
   bordo <- livello(config$livelli, "confini-bordo")
-  expect_identical(riempimento$paint[["fill-color"]], list("get", "colore"))
+  expect_identical(riempimento$paint[["fill-color"]], espressione_colore_cantiere())
+  expect_identical(bordo$paint[["line-color"]], espressione_colore_cantiere())
   expect_identical(riempimento$paint[["fill-opacity"]], stile$fillOpacity)
   expect_identical(bordo$paint[["line-width"]], stile$weight)
   expect_identical(bordo$paint[["line-dasharray"]], list(5 / 1.5, 4 / 1.5))
   # appena accennati: bordo sottile, riempimento molto trasparente
   expect_lte(stile$weight, 2)
   expect_lte(stile$fillOpacity, 0.15)
-  # la configurazione porta il GeoJSON dei confini così com'è
-  expect_s3_class(configurazione_mappa("rfid")$confini, "json")
 })
 
 test_that("ogni combinazione di marker ha un'icona", {
@@ -326,12 +313,19 @@ test_that("la mappa dei giri riceve il contorno dei comuni dei giri", {
   expect_length(contorni_comuni_giro(comuni_cantieri()$comune), 0)
   expect_length(contorni_comuni_giro(c("MILANO", NA)), 0)
   expect_length(contorni_comuni_giro(NULL), 0)
-  # Valbrenta ha due poligoni: restano due anelli separati
+  # un comune con due poligoni, come era VALBRENTA nei confini dell'ISTAT:
+  # restano due anelli separati
+  veri <- lati_comuni()
+  k <- indice_comune("VALBRENTA")
+  finti <- veri
+  finti[[k]]$x <- c(veri[[k]]$x, veri[[k]]$x + 0.1)
+  finti[[k]]$y <- c(veri[[k]]$y, veri[[k]]$y)
+  finti[[k]]$anello <- c(veri[[k]]$anello, veri[[k]]$anello + max(veri[[k]]$anello))
+  local_mocked_bindings(lati_comuni = function() finti)
   due <- contorni_comuni_giro(c("Valbrenta", "ASIAGO", "ASIAGO"))
-  valbrenta <- lati_comuni()[[indice_comune("VALBRENTA")]]
-  asiago <- lati_comuni()[[indice_comune("ASIAGO")]]
-  expect_length(due, max(valbrenta$anello) + max(asiago$anello))
-  expect_gte(max(valbrenta$anello), 2)
+  asiago <- finti[[indice_comune("ASIAGO")]]
+  expect_length(due, max(finti[[k]]$anello) + max(asiago$anello))
+  expect_gte(max(finti[[k]]$anello), 2)
 })
 
 test_that("la vista si adatta ai punti", {

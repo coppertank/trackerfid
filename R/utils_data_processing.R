@@ -351,54 +351,6 @@ formati_file <- function() {
   )
 }
 
-#' Decomprime un file gzip in un file temporaneo
-#'
-#' Legge e scrive a blocchi, così la memoria usata non dipende dalla
-#' dimensione del file. Serve a `scarica_confini_comuni()`.
-#'
-#' @param path Percorso del file compresso.
-#' @return Percorso del file decompresso, da eliminare dopo l'uso.
-#' @noRd
-decomprimi_gz <- function(path) {
-  destinazione <- tempfile(fileext = ".csv")
-  ingresso <- gzfile(path, open = "rb")
-  uscita <- file(destinazione, open = "wb")
-  on.exit({
-    close(ingresso)
-    close(uscita)
-  })
-  repeat {
-    blocco <- readBin(ingresso, what = "raw", n = 32 * 1024^2)
-    if (length(blocco) == 0) {
-      break
-    }
-    writeBin(blocco, uscita)
-  }
-  destinazione
-}
-
-#' Converte un vettore in data e ora (POSIXct, UTC)
-#'
-#' Il formato atteso è `YYYY-MM-DD HH:MM:SS`; sono accettate anche le varianti
-#' senza secondi, con data italiana (`DD/MM/YYYY`) o con la sola data. Una
-#' colonna già di tipo data conserva l'ora che mostra, senza conversioni di
-#' fuso.
-#' @noRd
-converti_data_ora <- function(x) {
-  if (inherits(x, "POSIXct")) {
-    return(lubridate::force_tz(x, "UTC"))
-  }
-  if (inherits(x, "Date")) {
-    return(as.POSIXct(format(x), tz = "UTC"))
-  }
-  lubridate::parse_date_time(
-    x,
-    orders = c("Ymd HMS", "Ymd HM", "dmY HMS", "dmY HM", "Ymd", "dmY"),
-    tz = "UTC",
-    quiet = TRUE
-  )
-}
-
 #' Elenca le prime righe del file che presentano un problema
 #' @noRd
 elenco_righe <- function(indici, massimo = 5) {

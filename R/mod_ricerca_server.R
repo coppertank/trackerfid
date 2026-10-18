@@ -1,6 +1,7 @@
 #' Modulo ricerca avanzata (RFID o utenza): logica
 #'
-#' - `"rfid"`: restituisce tutte le letture degli RFID cercati.
+#' - `"rfid"`: restituisce tutte le letture degli RFID cercati, e le mostra
+#'   nella tabella di `mod_ricerca_tabella_ui()`.
 #' - `"utenza"`: restituisce l'ultima lettura degli RFID la cui utenza
 #'   *attuale* è tra quelle cercate. Un bidone passato a un'altra utenza non
 #'   compare cercando il vecchio proprietario.
@@ -39,6 +40,29 @@ mod_ricerca_server <- function(id, dati, tipo = c("rfid", "utenza")) {
         filtra_ultimo_per_utenza(d, cercati)
       }
     })
+
+    # Tabella delle letture, sopra la mappa: solo per la ricerca RFID.
+    if (tipo == "rfid") {
+      output$con_letture <- reactive({
+        trovati <- risultati()
+        !is.null(trovati) && nrow(trovati) > 0
+      })
+      outputOptions(output, "con_letture", suspendWhenHidden = FALSE)
+      output$letture <- reactable::renderReactable({
+        trovati <- risultati()
+        req(trovati, nrow(trovati) > 0)
+        tabella_letture_rfid(trovati)
+      })
+      output$nota_letture <- renderText({
+        trovati <- risultati()
+        req(trovati)
+        sprintf(
+          "%s nel periodo. Sulla mappa le ultime %d di ogni RFID.",
+          conta(nrow(trovati), "lettura", "letture"),
+          limiti_mappa()$letture_per_rfid
+        )
+      })
+    }
 
     output$esito <- renderUI({
       cercati <- codici()

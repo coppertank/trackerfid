@@ -1,4 +1,4 @@
-# Passo 3 di 3: crea il CSV delle letture da caricare nell'app.
+# Passo 3: crea il CSV delle letture da caricare nell'app.
 #
 # Usa le funzioni di R/fct_preparazione_letture.R e le tabelle caricate dal
 # passo 2. Scrive data-raw/output/letture_app.csv, con le colonne che l'app
@@ -24,8 +24,19 @@ servizio_atteso <- associa_servizio_atteso_da_calendario(
   calendario_servizio_rifiuti
 )
 
+# Nucleo familiare, categoria e manovra sociale della fornitura in vigore al
+# momento della lettura: sette colonne in coda, che l'app non usa e che
+# servono all'analisi dei conferimenti del secco (passo 5). Se la tabella
+# delle manovre ha più colonne con valori "MANOVRA SOCIALE ...", indicare
+# quella giusta con colonna_manovra = "nome".
+con_nucleo <- associa_nucleo_e_manovra(
+  servizio_atteso,
+  associazione_componenti,
+  manovra_sociale
+)
+
 # RIMUOVE I SACCHETTI ("00BD") ED EVENTUALI RFID NON VALIDI ("0000000000")
-letture_app <- servizio_atteso |>
+letture_app <- con_nucleo |>
   dplyr::filter(
     !stringr::str_starts(RFID, "00BD"),
     !stringr::str_starts(RFID, "0000000000")

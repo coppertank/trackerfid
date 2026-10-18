@@ -1,6 +1,12 @@
 /* Stili della Dashboard RFID Bidoni Rifiuti */
 
 /* ---------- Intestazione ---------- */
+/* La barra in alto, con il periodo di analisi, sta sopra la riga dei filtri
+   della mappa principale, che ha 1050. */
+.main-header {
+  z-index: 1060;
+}
+
 .skin-green .main-header .logo {
   font-size: 15px;
   font-weight: 700;
@@ -68,6 +74,123 @@ section.sidebar {
 
 .titolo-sezione i {
   margin-right: 6px;
+}
+
+/* Sezione collassabile, come il caricamento dei dati: un click sul titolo
+   la chiude, e chiusa occupa una riga con il nome del file caricato. */
+.sezione-collassabile > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sezione-collassabile > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Aperta la freccia punta in su, chiusa in giù: il contrario della legenda,
+   che sta in fondo alla mappa e si apre verso l'alto. */
+.sezione-collassabile > summary::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 3px 2px 0 10px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-135deg);
+  transition: transform 0.15s;
+}
+
+.sezione-collassabile:not([open]) > summary::after {
+  margin-top: -3px;
+  transform: rotate(45deg);
+}
+
+.sezione-collassabile:not([open]) > summary {
+  margin-bottom: 0;
+}
+
+.titolo-sezione-testo {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.riassunto-sezione {
+  display: none;
+  margin-left: 8px;
+  color: #5f6b76;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.sezione-collassabile:not([open]) .riassunto-sezione {
+  display: inline;
+}
+
+/* ---------- Periodo di analisi, nella barra verde in alto ---------- */
+.main-header .navbar-custom-menu > .navbar-nav > li.periodo-intestazione {
+  height: 50px;
+}
+
+.periodo-controlli {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 50px;
+  padding: 0 15px;
+  color: #ffffff;
+}
+
+.periodo-controlli > .fa,
+.periodo-controlli > .fas,
+.periodo-controlli > svg {
+  font-size: 16px;
+}
+
+.periodo-controlli .form-group {
+  margin: 0;
+}
+
+.periodo-etichetta {
+  margin: 0;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.periodo-controlli .input-daterange input,
+.periodo-controlli .input-daterange .input-group-addon {
+  height: 34px;
+  font-size: 13px;
+}
+
+.periodo-riepilogo {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.95;
+}
+
+/* Il calendario delle date si apre attaccato al documento, con uno z-index
+   preso dalla barra in alto: starebbe sotto la riga dei filtri della mappa,
+   che ha 1050. Deve stare sopra tutto. */
+.datepicker.dropdown-menu {
+  z-index: 2000 !important;
+}
+
+.periodo-riepilogo.periodo-avviso {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #fff3cd;
+  color: #7a5b00;
+  opacity: 1;
 }
 
 /* shinydashboard assume una barra scura e input a tutta larghezza */
@@ -595,12 +718,15 @@ p.info-avvertenza {
 }
 
 /* ---------- Legenda ---------- */
-.legenda-mappa {
+/* La legenda, in basso a destra, e le tabelle delle ricerche, in basso a
+   sinistra, sono riquadri sopra la mappa con lo stesso aspetto. Stanno sopra
+   l'attribuzione e la scala della mappa. */
+.legenda-mappa,
+.tabella-mappa {
   position: absolute;
-  right: 10px;
-  bottom: 30px;
+  bottom: 34px;
   z-index: 2;
-  max-height: calc(100% - 60px);
+  max-height: calc(100% - 64px);
   overflow-y: auto;
   padding: 6px 9px;
   background: rgba(255, 255, 255, 0.93);
@@ -611,15 +737,21 @@ p.info-avvertenza {
   line-height: 1.3;
 }
 
-.legenda-mappa summary {
+.legenda-mappa {
+  right: 10px;
+}
+
+.legenda-mappa summary,
+.tabella-mappa summary {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
 
-/* Intestazione della legenda: un click la chiude o la apre. Chiusa, la
-   legenda è un piccolo pulsante nell'angolo della mappa. */
-.legenda-intestazione {
+/* Intestazione: un click chiude o apre il riquadro. Chiuso, il riquadro è
+   un piccolo pulsante nell'angolo della mappa. */
+.legenda-intestazione,
+.tabella-intestazione {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -628,11 +760,13 @@ p.info-avvertenza {
   user-select: none;
 }
 
-.legenda-intestazione::-webkit-details-marker {
+.legenda-intestazione::-webkit-details-marker,
+.tabella-intestazione::-webkit-details-marker {
   display: none;
 }
 
-.legenda-intestazione::after {
+.legenda-intestazione::after,
+.tabella-intestazione::after {
   content: "";
   width: 6px;
   height: 6px;
@@ -643,17 +777,46 @@ p.info-avvertenza {
   transition: transform 0.15s;
 }
 
-.legenda-dettagli:not([open]) > .legenda-intestazione::after {
+.legenda-dettagli:not([open]) > .legenda-intestazione::after,
+.tabella-dettagli:not([open]) > .tabella-intestazione::after {
   margin-top: 3px;
   transform: rotate(-135deg);
 }
 
-.legenda-mappa:has(> .legenda-dettagli:not([open])) {
+.legenda-mappa:has(> .legenda-dettagli:not([open])),
+.tabella-mappa:has(> .tabella-dettagli:not([open])) {
   padding: 4px 9px;
 }
 
-.legenda-dettagli[open] > .legenda-intestazione {
+.legenda-dettagli[open] > .legenda-intestazione,
+.tabella-dettagli[open] > .tabella-intestazione {
   margin-bottom: 2px;
+}
+
+/* ---------- Tabelle delle ricerche sopra la mappa ---------- */
+/* Aperta, la tabella lascia libero l'angolo della legenda chiusa; chiusa,
+   è larga quanto la sua intestazione. */
+.tabella-mappa {
+  left: 10px;
+  max-height: 55%;
+}
+
+.tabella-letture:has(> .tabella-dettagli[open]) {
+  width: min(640px, calc(100% - 130px));
+}
+
+.tabella-giri:has(> .tabella-dettagli[open]) {
+  width: min(980px, calc(100% - 130px));
+}
+
+.tabella-nota {
+  margin: 2px 0 4px;
+  color: #5f6b76;
+  font-size: 10.5px;
+}
+
+.tabella-mappa .ReactTable {
+  margin-top: 2px;
 }
 
 .legenda-titolo {
@@ -719,7 +882,7 @@ p.info-avvertenza {
   font-size: 10px;
 }
 
-/* ---------- Periodo di analisi ---------- */
+/* ---------- Intervalli di date nella barra laterale: ricerca dei giri ---------- */
 section.sidebar .input-daterange input {
   font-size: 13px;
 }
@@ -814,7 +977,7 @@ details.parametri-dbscan summary {
 }
 
 /* ---------- Elenchi a discesa ---------- */
-/* L'elenco dell'anno di analisi, nella barra laterale, e quello dei comuni,
+/* L'elenco del mezzo, nella barra laterale della ricerca dei giri, e quello dei comuni,
    sopra la mappa, hanno lo stesso riquadro, lo stesso testo e la stessa
    freccia, qualunque sia il browser. Il primo è un elenco del browser, il
    secondo permette più scelte. */
@@ -907,22 +1070,3 @@ details.parametri-dbscan summary {
   background: #37474f;
 }
 
-.tabella-giri {
-  margin-bottom: 8px;
-  font-size: 12px;
-}
-
-.titolo-giri {
-  margin-bottom: 4px;
-  color: #5f6b76;
-}
-
-.tabella-giri table.dataTable tbody tr {
-  cursor: pointer;
-}
-
-/* La tabella dei giri sta sopra la mappa: la mappa è più bassa. */
-.scheda-giro .mappa-contenitore {
-  height: calc(100vh - 470px);
-  min-height: 360px;
-}

@@ -22,7 +22,8 @@ tabelle <- c(
   "dv_cnt_letture",
   "dv_cnt_tag_contenitori",
   "dv_cnt_gruppi_sacchetti",
-  "dv_cnt_gruppi_sacchetti_servizi"
+  "dv_cnt_gruppi_sacchetti_servizi",
+  "dv_associazione_componenti"
 )
 
 

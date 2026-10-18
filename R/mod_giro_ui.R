@@ -44,8 +44,11 @@ mod_giro_sidebar_ui <- function(id) {
 
 #' Ricerca dei giri: tabella dei giri trovati
 #'
-#' Sta sopra la mappa della scheda. Un click su una riga mostra sulla mappa
-#' le sole letture di quel giro.
+#' Sta sopra la mappa della scheda, in basso a sinistra, in un riquadro che
+#' si chiude come la legenda: va passata come `sovrapposto` a
+#' `mod_mappa_ui()`. Un click su una riga mostra sulla mappa le letture di
+#' quel giro: senza una scelta la mappa non ha marker. Ogni colonna ha il suo
+#' filtro.
 #'
 #' @param id Identificativo del modulo.
 #' @noRd
@@ -54,14 +57,16 @@ mod_giro_ui <- function(id) {
   conditionalPanel(
     "output.con_giri",
     ns = ns,
-    div(
-      class = "tabella-giri",
-      div(
-        class = "titolo-giri",
-        "Giri trovati: che cosa doveva fare il mezzo e che cosa ha letto.",
-        "Un click su una riga mostra sulla mappa le sole letture di quel giro."
+    riquadro_tabella_mappa(
+      "Giri trovati",
+      reactable::reactableOutput(ns("tabella")),
+      nota = paste(
+        "Che cosa doveva fare il mezzo e che cosa ha letto.",
+        "Un click su una riga mostra sulla mappa le letture di quel giro.",
+        "Sotto i titoli si filtra ogni colonna; nei numeri si pu\u00f2 scrivere",
+        "un valore, oppure >0, <5, >=2."
       ),
-      DT::DTOutput(ns("tabella"))
+      classe = "tabella-giri"
     )
   )
 }

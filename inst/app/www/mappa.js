@@ -75,8 +75,9 @@
     var config = stato.config;
     Object.keys(config.sorgenti).forEach(function (nome) {
       var sorgente = Object.assign({}, config.sorgenti[nome]);
+      // I confini li scarica MapLibre, una volta, dall'indirizzo del server.
       if (sorgente.data === "confini") {
-        sorgente.data = config.confini;
+        sorgente.data = new URL(config.confini, window.location.href).href;
       }
       map.addSource(nome, sorgente);
     });

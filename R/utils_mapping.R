@@ -59,39 +59,44 @@ stile_ripiego <- function() {
 #' @noRd
 carattere_mappa <- function() list("Noto Sans Bold")
 
-#' Confini dei comuni serviti, pronti per la mappa
+#' Indirizzo da cui il browser scarica i confini dei comuni
 #'
-#' Ogni comune porta il colore del suo cantiere, vedi `colori_cantieri()`. Le
-#' coordinate hanno cinque decimali, circa un metro: il testo pesa poco più
-#' di 100 kB e viene preparato una volta per sessione di R.
+#' I confini sono quelli della Regione, non semplificati: il file pesa più di
+#' un megabyte. Non viaggia dentro la configurazione di ogni mappa, che lo
+#' ripeterebbe per le cinque mappe della pagina: il server lo espone come
+#' risorsa statica, vedi `golem_add_external_resources()`, e MapLibre lo
+#' scarica da sé, una volta, nel suo worker. Il parametro `v` cambia con il
+#' file, così il browser non tiene in memoria confini superati.
 #'
-#' @return Testo GeoJSON: una `FeatureCollection` con un comune per elemento
-#'   e, tra le proprietà, `comune`, `cantiere` e `colore`.
+#' @return Indirizzo relativo alla pagina.
 #' @noRd
-geojson_confini <- function() {
-  if (is.null(memoria_mappa$confini)) {
-    confini <- jsonlite::fromJSON(
-      percorso_confini_comuni(),
-      simplifyVector = FALSE
-    )
-    elementi <- lapply(confini$features, function(elemento) {
-      list(
-        type = "Feature",
-        properties = list(
-          comune = elemento$properties$comune,
-          cantiere = elemento$properties$cantiere,
-          colore = colore_cantiere(elemento$properties$cantiere)
-        ),
-        geometry = elemento$geometry[c("type", "coordinates")]
-      )
-    })
-    memoria_mappa$confini <- as.character(jsonlite::toJSON(
-      list(type = "FeatureCollection", features = elementi),
-      auto_unbox = TRUE,
-      digits = 5
-    ))
-  }
-  memoria_mappa$confini
+indirizzo_confini <- function() {
+  file <- percorso_confini_comuni()
+  sprintf(
+    "%s/%s?v=%s",
+    risorsa_confini(),
+    basename(file),
+    format(file.info(file)$mtime, "%Y%m%d%H%M%S")
+  )
+}
+
+#' Nome della risorsa statica con il file dei confini
+#' @noRd
+risorsa_confini <- function() "trackerfid-confini"
+
+#' Espressione MapLibre con il colore del cantiere di ogni comune
+#'
+#' Il file dei confini dice il cantiere di ogni comune; il colore lo sceglie
+#' la mappa, con i colori di `colori_cantieri()`. Un cantiere senza colore è
+#' grigio, come in `colore_cantiere()`.
+#' @noRd
+espressione_colore_cantiere <- function() {
+  colori <- colori_cantieri()
+  c(
+    list("match", list("get", "cantiere")),
+    as.list(as.vector(rbind(names(colori), unname(colori)))),
+    list(colore_cantiere(NA_character_))
+  )
 }
 
 # --- Icone ----------------------------------------------------------------------
@@ -379,7 +384,7 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
       source = "confini",
       sotto_etichette = TRUE,
       paint = list(
-        "fill-color" = list("get", "colore"),
+        "fill-color" = espressione_colore_cantiere(),
         "fill-opacity" = stile$fillOpacity
       )
     ),
@@ -389,7 +394,7 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
       source = "confini",
       sotto_etichette = TRUE,
       paint = list(
-        "line-color" = list("get", "colore"),
+        "line-color" = espressione_colore_cantiere(),
         "line-width" = stile$weight,
         "line-opacity" = stile$opacity,
         "line-dasharray" = as.list(trattino)
@@ -397,7 +402,13 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
     )
   )
   soglie <- soglie_zoom()
-  sorgenti <- list(confini = list(type = "geojson", data = "confini"))
+  # La licenza dei confini, IODL 2.0, chiede di citare la fonte: la mappa la
+  # scrive nell'attribuzione in basso.
+  sorgenti <- list(confini = list(
+    type = "geojson",
+    data = "confini",
+    attribution = "Confini dei comuni: Regione del Veneto, IODL 2.0"
+  ))
   interattivi <- list()
   livelli <- switch(
     modalita,
@@ -557,7 +568,7 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
 #' @param modalita Modalità della mappa, vedi `livelli_mappa()`.
 #' @return Lista con `modalita`, l'indirizzo dello stile dello sfondo e lo
 #'   sfondo di ripiego, `icone` (identificativi e SVG), sorgenti, livelli e
-#'   livelli interattivi, i confini dei comuni, lo zoom a cui portano i click
+#'   livelli interattivi, l'indirizzo dei confini dei comuni, lo zoom a cui portano i click
 #'   sulle bolle e lo zoom massimo di un inquadramento.
 #' @noRd
 configurazione_mappa <- function(modalita) {
@@ -574,7 +585,7 @@ configurazione_mappa <- function(modalita) {
     sorgenti = livelli$sorgenti,
     livelli = livelli$livelli,
     interattivi = livelli$interattivi,
-    confini = structure(geojson_confini(), class = "json"),
+    confini = indirizzo_confini(),
     zoom_bolle = list(
       cantiere = zoom_minimo_bolla("cantiere"),
       comune = zoom_minimo_bolla("comune")

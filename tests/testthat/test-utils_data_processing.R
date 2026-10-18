@@ -1273,11 +1273,11 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
   stat <- calcola_statistiche(ultimi, conteggi_cantieri(selezione))
   expect_identical(
     stat$rfid_cantieri,
-    c(ASIAGO = 33L, BASSANO = 66L, CAMPOSAMPIERO = 92L, RUBANO = 60L)
+    c(ASIAGO = 33L, BASSANO = 66L, CAMPOSAMPIERO = 93L, RUBANO = 59L)
   )
   expect_identical(
     stat$letture_cantieri,
-    c(ASIAGO = 691L, BASSANO = 1879L, CAMPOSAMPIERO = 2568L, RUBANO = 1337L)
+    c(ASIAGO = 691L, BASSANO = 1879L, CAMPOSAMPIERO = 2585L, RUBANO = 1320L)
   )
   expect_equal(sum(stat$rfid_cantieri), stat$totale)
   expect_equal(sum(stat$letture_cantieri), nrow(dati))
@@ -1617,7 +1617,7 @@ test_that("le statistiche contano i bidoni fuori comune e fuori giro", {
   # sacchetti censiti non hanno un comune a database
   esempio <- calcola_statistiche(ultime_esempio(periodo = periodo_anno(2025)))
   expect_identical(esempio$fuori_comune, 3L)
-  expect_identical(esempio$fuori_giro, 19L)
+  expect_identical(esempio$fuori_giro, 20L)
   expect_identical(esempio$coerenza_comune_ignota, 7L)
 })
 

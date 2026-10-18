@@ -521,7 +521,14 @@ html_legenda <- function(modalita = "cluster") {
         ),
         "Letture precedenti"
       ),
-      voce(tags$span(class = "legenda-riquadro"), "Area di spostamento")
+      voce(tags$span(class = "legenda-riquadro"), "Area di spostamento"),
+      tags$div(
+        class = "legenda-nota",
+        sprintf(
+          "Sulla mappa le ultime %d letture di ogni RFID; l'area le comprende tutte",
+          limiti_mappa()$letture_per_rfid
+        )
+      )
     ),
     giro = list(
       tags$div(class = "legenda-titolo", "Giro"),
@@ -565,10 +572,9 @@ html_legenda <- function(modalita = "cluster") {
     )
   })
 
-  # La legenda si chiude con un click sull'intestazione: `script.js` ricorda
-  # la scelta nel browser e la applica a tutte le mappe.
+  # La legenda nasce chiusa, a ogni avvio dell'app, e si apre con un click
+  # sull'intestazione: `script.js` applica la scelta a tutte le mappe.
   as.character(tags$details(
-    open = NA,
     class = "legenda-dettagli",
     tags$summary(
       class = "legenda-intestazione",

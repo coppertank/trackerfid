@@ -2,6 +2,8 @@
 #'
 #' Pannello per il caricamento del file con le letture RFID: CSV, CSV
 #' compresso con gzip, Parquet o archivio `.duckdb`, vedi `scrivi_archivio()`.
+#' Si chiude con un click sul titolo, una volta caricati i dati: chiuso, il
+#' titolo riporta il nome del file caricato.
 #'
 #' @param id Identificativo del modulo.
 #' @noRd
@@ -10,6 +12,8 @@ mod_caricamento_ui <- function(id) {
   sezione_sidebar(
     "Caricamento Dati",
     "upload",
+    collassabile = TRUE,
+    riassunto = textOutput(ns("riassunto"), inline = TRUE),
     fileInput(
       ns("file_upload"),
       label = "File delle letture RFID (CSV, CSV.GZ, Parquet o DuckDB)",

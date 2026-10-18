@@ -1,8 +1,15 @@
 test_that("il limite delle letture della ricerca si cambia con un'opzione", {
   withr::local_options(trackerfid.max_letture_ricerca = NULL)
-  expect_identical(limiti_mappa(), list(letture_ricerca = 50000))
-  withr::local_options(trackerfid.max_letture_ricerca = 7)
-  expect_identical(limiti_mappa(), list(letture_ricerca = 7))
+  withr::local_options(trackerfid.letture_per_rfid = NULL)
+  expect_identical(
+    limiti_mappa(),
+    list(letture_ricerca = 50000, letture_per_rfid = 10)
+  )
+  withr::local_options(
+    trackerfid.max_letture_ricerca = 7,
+    trackerfid.letture_per_rfid = 3
+  )
+  expect_identical(limiti_mappa(), list(letture_ricerca = 7, letture_per_rfid = 3))
 })
 
 test_that("il livello di aggregazione segue lo zoom di MapLibre", {
@@ -153,15 +160,46 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
   expect_equal(nrow(aggrega_marker(NULL, "cantiere")), 0)
 })
 
+test_that("la ricerca disegna le ultime letture di ogni RFID", {
+  # il tag fermo in deposito ha centinaia di letture, il servizio cambiato 10
+  trovate <- cerca_per_rfid(
+    seleziona_periodo(archivio_esempio()),
+    c("RFD20241001301", "RFD20250901001", "RFD20250905100")
+  )
+  conteggi <- table(trovate$RFID)
+  expect_gt(conteggi[["RFD20241001301"]], 10)
+  disegnate <- limita_letture_ricerca(trovate)
+  expect_identical(attr(disegnate, "totale"), nrow(trovate))
+  expect_equal(
+    as.vector(table(disegnate$RFID)[names(conteggi)]),
+    pmin(as.vector(conteggi), 10)
+  )
+  # di ogni RFID restano le più recenti, compresa l'ultima
+  expect_equal(sum(disegnate$is_ultimo), 3)
+  for (rfid in names(conteggi)) {
+    tutte <- sort(trovate$giorno_lettura[trovate$RFID == rfid], decreasing = TRUE)
+    tenute <- sort(disegnate$giorno_lettura[disegnate$RFID == rfid], decreasing = TRUE)
+    expect_equal(tenute, utils::head(tutte, 10))
+  }
+  # l'ordine delle righe è quello di partenza
+  chiave <- function(df) paste(df$RFID, format(df$giorno_lettura))
+  expect_false(is.unsorted(match(chiave(disegnate), chiave(trovate))))
+
+  # il numero per RFID segue l'argomento e l'opzione
+  expect_equal(nrow(limita_letture_ricerca(trovate, per_rfid = 2)), 6)
+  withr::local_options(trackerfid.letture_per_rfid = 1)
+  una <- limita_letture_ricerca(trovate)
+  expect_equal(nrow(una), 3)
+  expect_true(all(una$is_ultimo))
+  expect_equal(nrow(limita_letture_ricerca(trovate[0, ])), 0)
+  expect_null(limita_letture_ricerca(NULL))
+})
+
 test_that("la ricerca disegna le letture più recenti quando sono troppe", {
   trovate <- cerca_per_rfid(
     seleziona_periodo(archivio_esempio()),
     c("RFD20250901001", "RFD20250905100")
   )
-  tutte <- limita_letture_ricerca(trovate)
-  expect_equal(nrow(tutte), nrow(trovate))
-  expect_identical(attr(tutte, "totale"), nrow(trovate))
-
   poche <- limita_letture_ricerca(trovate, massimo = 5)
   expect_equal(nrow(poche), 5)
   expect_identical(attr(poche, "totale"), nrow(trovate))
@@ -182,5 +220,4 @@ test_that("la ricerca disegna le letture più recenti quando sono troppe", {
   # il limite predefinito segue l'opzione
   withr::local_options(trackerfid.max_letture_ricerca = 4)
   expect_equal(nrow(limita_letture_ricerca(trovate)), 4)
-  expect_null(limita_letture_ricerca(NULL))
 })

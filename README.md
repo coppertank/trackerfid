@@ -34,7 +34,7 @@ Per installare il pacchetto: `devtools::install()`, poi `trackerfid::run_app()`.
 
 ## Formato del file
 
-Il file è quello che scrive il passo 3 della [preparazione dei dati reali](#preparare-i-dati-reali). Deve contenere 9 campi obbligatori e può contenerne altri facoltativi, segnati nella tabella. L'ordine delle colonne e le maiuscole nei nomi non contano. Le colonne che l'app non usa vengono ignorate: tra quelle del passo 3, `giorno`, `id_giro`, `eseguito`, `frequenza`, `codice_categoria`, `data_attivazione_contenitore`, `data_cessazione_contenitore`, `id_fornitura` e `stato_fornitura`.
+Il file è quello che scrive il passo 3 della [preparazione dei dati reali](#preparare-i-dati-reali). Deve contenere 9 campi obbligatori e può contenerne altri facoltativi, segnati nella tabella. L'ordine delle colonne e le maiuscole nei nomi non contano. Le colonne che l'app non usa vengono ignorate: tra quelle del passo 3, `giorno`, `id_giro`, `eseguito`, `frequenza`, `codice_categoria`, `data_attivazione_contenitore`, `data_cessazione_contenitore`, `id_fornitura`, `stato_fornitura` e le sette della fornitura: nucleo, categoria e manovra sociale.
 
 | Campo | Tipo | Contenuto |
 |---|---|---|
@@ -92,18 +92,17 @@ Al caricamento l'app controlla il file e mostra l'esito sotto il campo di carica
 
 ## Come si usa
 
-La barra laterale a sinistra, richiudibile dal pulsante in alto, contiene il caricamento del file delle letture, il periodo di analisi, il dettaglio del bidone selezionato e i controlli della scheda aperta. I filtri della mappa principale stanno invece sopra la mappa.
+La barra verde in alto riporta il titolo e, a destra, il periodo di analisi. La barra laterale a sinistra, richiudibile dal pulsante in alto, contiene il caricamento del file delle letture, il dettaglio del bidone selezionato e i controlli della scheda aperta. La sezione del caricamento si chiude con un click sul titolo, una volta caricati i dati: chiusa occupa una riga e riporta il nome del file. I filtri della mappa principale stanno invece sopra la mappa.
 
 ### Periodo di analisi
 
-Tutta l'app lavora sulle letture di un periodo: mappe, ricerche, statistiche, dettaglio del bidone e analisi dei cluster. Il periodo compare nel titolo, ad esempio «DASHBOARD RFID - ANNO 2025».
+Tutta l'app lavora sulle letture di un periodo: mappe, ricerche, statistiche, dettaglio del bidone e analisi dei cluster. Per questo il periodo si sceglie nella barra verde in alto, all'estremità destra, quando un file è caricato. Se l'intervallo non è valido, o il periodo non ha letture, un avviso compare accanto alle date. Il periodo compare anche nel titolo, ad esempio «DASHBOARD RFID - ANNO 2025».
 
-- **Anno.** L'elenco propone gli anni presenti nel file. All'apertura è selezionato il più recente, dal 1 gennaio al 31 dicembre.
-- **Periodo personalizzato.** Spuntando la casella compaiono le due date, precompilate con l'anno scelto.
+Il periodo si sceglie con due date, dal / al. All'apertura vale l'anno più recente del file, dal 1 gennaio al 31 dicembre; il calendario propone i giorni dal 1 gennaio dell'anno più vecchio al 31 dicembre del più recente. Un anno intero compare nel titolo come «ANNO 2025», un altro intervallo con le sue date.
 
 ### Mappa Principale
 
-Ogni bidone compare una sola volta, nella posizione della sua ultima lettura nel periodo. Quello che si vede dipende dallo zoom.
+Ogni bidone compare una sola volta, nella posizione della sua ultima lettura nel periodo. Sopra la mappa, accanto al badge della visualizzazione, si legge quante letture superano i filtri e di quanti RFID, ad esempio «5.360 letture di 248 RFID (ultima lettura registrata)», e che cosa si vede allo zoom attuale. Quello che si vede dipende dallo zoom.
 
 - **Da lontano**, fino a zoom 10: una bolla per cantiere, con il nome.
 - **Avvicinandosi**, da zoom 11 a zoom 13: una bolla per comune, nel baricentro del comune. La bolla resta ferma al variare dei filtri.
@@ -115,7 +114,7 @@ Una bolla riporta il numero dei suoi bidoni e la percentuale di censiti, con gli
 
 **Mappa WebGL.** La mappa è disegnata dalla scheda grafica, con MapLibre GL JS, su uno sfondo vettoriale di [OpenFreeMap](https://openfreemap.org), lo stile «bright», con i colori della mappa di OpenStreetMap: serve la connessione a internet. Un altro sfondo si sceglie con l'opzione `trackerfid.stile_mappa`, ad esempio `options(trackerfid.stile_mappa = "https://tiles.openfreemap.org/styles/liberty")`.
 
-**Legenda.** Sta in un riquadro sopra la mappa. Un click sull'intestazione «Legenda» la chiude, lasciandone un piccolo pulsante nell'angolo, e un altro la riapre. La scelta vale per tutte le mappe e il browser la ricorda alla visita successiva. A ogni cambio dei filtri il browser riceve tutti i bidoni e le bolle di cantieri e comuni, e da lì zoom, spostamenti, cluster e passaggio da una fascia all'altra restano nel browser, senza chiedere niente al server. Le bolle arrivano prima dei bidoni: da lontano si aggiornano subito, mentre il browser raggruppa i bidoni.
+**Legenda.** Sta in un riquadro sopra la mappa, in basso a destra. A ogni avvio dell'app è chiusa: è un piccolo pulsante nell'angolo, «Legenda», che si apre con un click e con un altro si richiude. La scelta vale per tutte le mappe. A ogni cambio dei filtri il browser riceve tutti i bidoni e le bolle di cantieri e comuni, e da lì zoom, spostamenti, cluster e passaggio da una fascia all'altra restano nel browser, senza chiedere niente al server. Le bolle arrivano prima dei bidoni: da lontano si aggiornano subito, mentre il browser raggruppa i bidoni.
 
 **Confini dei comuni.** Tutte le mappe disegnano i confini dei comuni serviti, con un bordo tratteggiato e un riempimento appena accennato nel colore del cantiere. La legenda riporta il colore di ogni cantiere. I confini non rispondono al mouse: click e passaggi arrivano alla mappa e ai marker.
 
@@ -144,14 +143,17 @@ Per vedere le sole letture fuori giro si tolgono le altre tre voci. Le statistic
 
 ### Ricerca RFID
 
-Si inseriscono uno o più RFID, separati da virgola o a capo, e si preme «Cerca RFID». La mappa mostra tutte le letture dei bidoni cercati, senza cluster. L'ultima lettura ha il bordo spesso e sta sopra le altre, le precedenti sono attenuate e tratteggiate. Un riquadro grigio racchiude tutte le posizioni dello stesso bidone. Se le letture trovate sono più di 50.000 la mappa disegna le più recenti: il riquadro copre comunque tutte le posizioni.
+Si inseriscono uno o più RFID, separati da virgola o a capo, e si preme «Cerca RFID».
+
+- **Mappa.** Le ultime 10 letture di ogni RFID cercato, senza cluster: un bidone letto centinaia di volte nello stesso punto avrebbe centinaia di marker uno sopra l'altro. L'ultima lettura ha il bordo spesso e sta sopra le altre, le precedenti sono attenuate e tratteggiate. Un riquadro grigio racchiude tutte le posizioni dello stesso bidone nel periodo, anche quelle che la mappa non disegna.
+- **Tabella delle letture.** Sopra la mappa, in basso a sinistra, in un riquadro come quello della legenda che si chiude con un click sull'intestazione. Riporta tutte le letture del periodo degli RFID cercati, raggruppate per RFID, dalla più recente: data e ora, mezzo e servizio del giro. La riga di ogni RFID dice quante letture ha, il primo e l'ultimo giorno, e con quali mezzi e in quali giri è stato letto; un click sulla freccia mostra le letture. Con un solo RFID cercato sono già in vista.
 
 ### Ricerca Giro
 
 Mostra che cosa ha letto un mezzo in un giorno, e dove. Nella barra laterale si scelgono il mezzo, oppure tutti, e un giorno o un intervallo di giorni; all'apertura la ricerca è sull'ultimo giorno con letture. Due caselle restringono la ricerca alle sole letture fuori giro o fuori comune, secondo il campo `coerenza_comune`.
 
-- **Tabella dei giri.** Una riga per giorno, mezzo, giro previsto e comune del giro: che cosa doveva fare il mezzo secondo il calendario, a che ora ha letto, quante letture e quanti bidoni, quante letture fuori giro e fuori comune, e in quale comune sono state fatte davvero le letture. I giri con più letture fuori giro stanno in cima. Un click su una riga mostra sulla mappa le sole letture di quel giro; un secondo click le rimette tutte.
-- **Mappa.** Tutte le letture trovate, una per marker, senza cluster. Il confine dei comuni in cui i giri dovevano lavorare è messo in evidenza con un contorno scuro, e la mappa inquadra insieme letture e comuni: se il mezzo ha letto altrove si vede subito. Con più di sei comuni, come in una ricerca su tutti i mezzi, il contorno non viene disegnato. Oltre 50.000 letture la mappa disegna per prime quelle fuori giro o fuori comune.
+- **Tabella dei giri.** Sta sopra la mappa, in basso a sinistra, in un riquadro come quello della legenda che si chiude con un click sull'intestazione. Una riga per giorno, mezzo, giro previsto e comune del giro: che cosa doveva fare il mezzo secondo il calendario, a che ora ha letto, quante letture e quanti bidoni, quante letture fuori giro e fuori comune, e in quale comune sono state fatte davvero le letture. I giri con più letture fuori giro stanno in cima. Sotto i titoli ogni colonna ha un filtro: i testi cercano una parte del valore, senza badare alle maiuscole, ad esempio `VEH001` nel mezzo o `lim` nel comune; la data si scrive come si vede, `24/09`; nei numeri si scrive un valore oppure un confronto, `>0`, `<5`, `>=2`. Un click su una riga mostra sulla mappa le letture di quel giro; un secondo click toglie la scelta.
+- **Mappa.** Le letture del giro scelto nella tabella, una per marker, senza cluster. Finché non si sceglie un giro la mappa non ha marker e inquadra la zona di tutti i giri trovati: così una ricerca su molti giorni o su tutti i mezzi non la riempie di letture. Il confine del comune in cui il giro doveva lavorare è messo in evidenza con un contorno scuro, e la mappa inquadra insieme letture e comune: se il mezzo ha letto altrove si vede subito. Oltre 50.000 letture la mappa disegna per prime quelle fuori giro o fuori comune.
 
 Per trovare i giri sbagliati di un periodo si confrontano, nella tabella, il comune del giro e quello in cui sono state fatte le letture. La casella «Fuori giro» trova i non censiti letti fuori dal comune del giro: i censiti si confrontano con il comune del database, e un mezzo che ha fatto un giro diverso dal previsto tra contenitori censiti non ha letture fuori giro. Un click su un marker apre il dettaglio del bidone.
 
@@ -270,15 +272,15 @@ Senza date si analizza l'anno più recente del file. Lo script si può anche car
 
 ## Confini dei comuni
 
-Le mappe dell'app usano i confini di `inst/extdata/comuni_confini.geojson`: sono quelli dell'ISTAT, presi dall'ultimo rilascio della raccolta [geojson-italy](https://github.com/guglielmo/geojson-italy), con licenza CC-BY 4.0. Il file ha un confine per ogni riga della tabella dei comuni, nello stesso ordine.
+Le mappe dell'app usano i confini di `inst/extdata/comuni_confini.geojson`: sono quelli della Regione del Veneto, dallo strato dei comuni del suo geoportale, con licenza IODL 2.0. Non sono semplificati: seguono il confine ufficiale vertice per vertice. Il file ha un confine per ogni riga della tabella dei comuni, nello stesso ordine, e pesa 1,25 MB: il browser lo scarica una volta, e non a ogni mappa. Le mappe citano la fonte in basso, come chiede la licenza.
 
-Per aggiornarli, o dopo aver aggiunto un comune alla tabella:
+Lo shapefile della Regione sta in `data-raw/rvccomuni/`, con la richiesta da cui viene in `wfsrequest.txt`. Quando la Regione pubblica confini nuovi basta sostituire il contenuto della cartella, con un solo file `.shp`, e rieseguire lo script; lo stesso dopo aver aggiunto un comune alla tabella:
 
 ```sh
 Rscript data-raw/prepara_comuni.R
 ```
 
-Lo script scarica il file nazionale dei comuni e ne tiene quelli serviti. I nomi si confrontano senza badare a maiuscole, accenti e apostrofi: `ROSA'` trova `Rosà`. Se anche un solo comune non trova il suo confine, o se il centro abitato indicato in tabella cade fuori dal confine trovato, lo script si ferma senza scrivere niente e dice quali comuni controllare.
+Lo script legge lo shapefile, lo riporta in longitudine e latitudine e ne tiene i comuni serviti. Serve il pacchetto `sf`. I nomi si confrontano senza badare a maiuscole, accenti e apostrofi: `ROSÀ` della tabella trova `Rosa'` della Regione. Dopo aver cambiato i confini va rigenerato il dataset di esempio, con `Rscript data-raw/genera_sample_dataset.R`. Se anche un solo comune non trova il suo confine, o se il centro abitato indicato in tabella cade fuori dal confine trovato, lo script si ferma senza scrivere niente e dice quali comuni controllare.
 
 ## Preparare i dati reali
 
@@ -290,12 +292,26 @@ Il CSV con le letture vere si produce dentro il repository, con gli script elenc
 | 2 | `data-raw/02_importa_tabelle.R` | Carica le tabelle ripulite da `data-raw/intermedi/`. Il codice commentato le ricostruisce dalle estrazioni |
 | 3 | `data-raw/03_crea_letture_app.R` | Applica le regole di preparazione e scrive `data-raw/output/letture_app.csv` e `data-raw/output/letture_app.duckdb`, da caricare nell'app |
 | 4, facoltativo | `data-raw/04_crea_letture_storiche.R` | Legge le letture precedenti alle antenne da `data-raw/origine/`, porta i codici RFID allo stesso formato del passo 3 e scrive `data-raw/output/letture_storiche.csv`, per i report di confronto. L'app non le usa |
+| 5, facoltativo | `data-raw/05_report_conferimenti.R` | Compila il report sui [conferimenti del secco oltre il limite](#conferimenti-del-secco-oltre-il-limite) sul CSV del passo 3 e scrive in `data-raw/output/` il report e tre CSV |
 
 Il passo 3 esegue da solo anche il passo 2. Il file `.duckdb` contiene le stesse letture del CSV, già controllate come le controlla l'app, con gli avvisi del controllo: l'app lo apre senza rileggerle. Lo scrive `scrivi_archivio()`, che si può usare anche da sola su un CSV già preparato: `scrivi_archivio("letture_app.csv", "letture_app.duckdb")`. Le regole sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune di lettura arriva con le letture delle antenne: il passo 2 lo ricava dal campo `IndirizzoLocalizzazione` e, con la tabella dei comuni del pacchetto, ne trova il cantiere. Il servizio e gli altri dati del contenitore vengono dall'anagrafica dei contenitori attiva nel giorno della lettura, insieme alla fornitura a cui il contenitore è legato: `id_fornitura`, il suo stato, `stato_fornitura`, l'utenza che la possiede, `id_utenza`, e il suo comune, `comune_fornitura`. Un'utenza può avere più forniture. Una lettura è «Presente» a database se ha una fornitura: quella del contenitore o, per un sacchetto, quella del suo gruppo di sacchetti; un sacchetto non ha un'utenza. Il giro, il suo comune, `comune_giro`, e i campi `id_giro` ed `eseguito` vengono dal turno del calendario in cui cade la lettura. La coerenza del comune, `coerenza_comune`, confronta il comune di lettura con quello del database o del giro, con la stessa funzione che l'app usa al caricamento. I nomi dei giri sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone), e danno il servizio atteso. I nomi dei comuni si correggono nel passo 2: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso.
+
+Il passo 3 aggiunge in coda sette colonne della fornitura, che l'app non usa: `nucleo_residenti`, `nucleo_non_residenti`, `nucleo_totale`, `tipo_categoria`, `categoria`, `sottocategoria` e `manovra_sociale`, in vigore al momento della lettura. Vengono dalle tabelle della composizione dei nuclei e delle manovre sociali del passo 2; servono al passo 5.
 
 Il passo 4 serve ai report che confrontano il sistema precedente con le antenne: l'app non carica le letture storiche. Va adattato al file di origine: in cima allo script si indicano il nome del file e i nomi delle due colonne. Alla fine riporta quanti RFID delle antenne compaiono anche nelle letture storiche: se sono pochi, i codici dei due file hanno con ogni probabilità formati diversi.
 
 Le tre cartelle dei dati sono escluse da git: i dati aziendali restano sul computer di chi li prepara. Il passo 1 richiede i pacchetti `odbc` e `DBI` e la sorgente dati ODBC configurata.
+
+## Conferimenti del secco oltre il limite
+
+Il report `docs/conferimenti_secco.Rmd` trova le forniture domestiche che, al ritmo attuale, conferiranno in un anno più secco di quanto consente la tariffa: i litri del nucleo residente, da 720 per un componente a 1680 per cinque o più, oppure 6240 con il potenziamento del secco di una manovra sociale per neonati, anziani o disabili. Per ogni fornitura stima i conferimenti dell'anno, quelli consentiti, quelli eccedenti e la probabilità di superare il limite, e la mette in una classe: «Oltre il limite», «Probabile superamento», «Vicino al limite», «Entro il limite», oppure il motivo per cui non si può dire. Per i bidoni non censiti del secco stima i conferimenti, il nucleo più piccolo che li giustificherebbe, quanto è comune il potenziamento tra le forniture censite che conferiscono così e il contenitore censito che potrebbero aver sostituito.
+
+Le letture delle antenne non vedono tutti gli svuotamenti: le antenne sono recenti e solo su una parte dei mezzi. Per questo il report non conta le letture, ma le confronta con le occasioni, cioè le volte in cui un mezzo con l'antenna è passato davanti al bidone, che si riconoscono dalle letture dei bidoni vicini. Il report spiega il metodo, le ragioni delle scelte e la prova su un territorio simulato.
+
+- Sul dataset di esempio: `rmarkdown::render("docs/conferimenti_secco.Rmd")`. Nell'esempio i bidoni del secco sono grandi ed esposti quasi sempre: i risultati servono solo a vedere il report.
+- Sui dati aziendali: dopo il passo 3, `source("data-raw/05_report_conferimenti.R")`. Il periodo si cambia in cima allo script; report e CSV restano in `data-raw/output/`, fuori dal repository.
+
+L'app non usa ancora questa analisi.
 
 ## File grandi
 
@@ -330,6 +346,7 @@ Il processo di R usa circa 0,5 GB con il file `.duckdb`. Con un CSV arriva a cir
 | Opzione | Predefinito | Cosa regola |
 |---|---|---|
 | `trackerfid.max_letture_ricerca` | 50.000 | Letture disegnate sulla mappa dalla ricerca RFID e dalla ricerca dei giri |
+| `trackerfid.letture_per_rfid` | 10 | Ultime letture di ogni RFID disegnate sulla mappa della ricerca RFID |
 | `trackerfid.max_upload_mb` | 2.048 | Dimensione massima di un file caricato dal browser |
 
 Per ripetere le misure sul proprio computer: `Rscript dev/misura_prestazioni.R <file delle letture>`. Per un file di prova sintetico delle dimensioni volute: `Rscript data-raw/genera_dataset_grande.R <cartella>`.
@@ -338,7 +355,7 @@ Per ripetere le misure sul proprio computer: `Rscript dev/misura_prestazioni.R <
 
 `inst/extdata/sample_rfid_dataset.csv` contiene 6.475 letture di 251 RFID, cioè 239 bidoni e 12 sacchetti, da ottobre 2024 a dicembre 2025, con cinque mezzi e 50 utenze. I bidoni stanno nel territorio servito, tra l'Altopiano di Asiago e i Colli Euganei, dentro i confini dei loro comuni. Il 2025 è completo, il 2024 parziale: serve a provare la selezione dell'anno. Ogni bidone viene letto a cadenza fissa dal giro del proprio servizio, come con un calendario di raccolta reale. Ogni giro del calendario, cioè un turno in un giorno della settimana, lavora in un comune, e i suoi bidoni stanno lì.
 
-Le colonne sono le 28 che scrive il passo 3 della preparazione dei dati reali; quelle del contenitore e della fornitura che l'app non usa, come frequenza, categoria, codice e stato della fornitura, hanno valori inventati. Ogni contenitore censito ha una fornitura, che lo lega alla sua utenza per il suo servizio: un contenitore che cambia utenza o servizio cambia fornitura. Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta, con il suo numero, `id_giro`, il servizio atteso dal giro, con il nome del database, e il comune del giro, `comune_giro`. I bidoni censiti hanno il servizio a database, `servizio_transponder`: 23 letture di quattro censiti, letti nei giri del secco porta a porta, non sono coerenti. Il comune di lettura, `comune_lettura`, è quello il cui confine contiene il punto: nell'esempio nessuna lettura è fuori dai comuni serviti, e una su cinque è fatta in un comune diverso da quello del giro, quasi sempre per i due tag anomali. I bidoni censiti hanno anche il comune della fornitura, e il cantiere segue dal comune di lettura. Per coerenza del comune le letture sono 5.460 coerenti, 389 fuori comune, 618 fuori giro e 8 di coerenza ignota, quelle dei sacchetti censiti. I comuni in cui lavorano i giri sono 32, nei quattro cantieri. I bidoni non censiti sono 37: nel 2025, 18 hanno una stima netta del servizio e 19 una stima incerta, con il punto di domanda sulla mappa.
+Le colonne sono le 28 che scrive il passo 3 della preparazione dei dati reali; quelle del contenitore e della fornitura che l'app non usa, come frequenza, categoria, codice e stato della fornitura, hanno valori inventati. Ogni contenitore censito ha una fornitura, che lo lega alla sua utenza per il suo servizio: un contenitore che cambia utenza o servizio cambia fornitura. Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta, con il suo numero, `id_giro`, il servizio atteso dal giro, con il nome del database, e il comune del giro, `comune_giro`. I bidoni censiti hanno il servizio a database, `servizio_transponder`: 23 letture di quattro censiti, letti nei giri del secco porta a porta, non sono coerenti. Il comune di lettura, `comune_lettura`, è quello il cui confine contiene il punto: nell'esempio nessuna lettura è fuori dai comuni serviti, e una su cinque è fatta in un comune diverso da quello del giro, quasi sempre per i due tag anomali. I bidoni censiti hanno anche il comune della fornitura, e il cantiere segue dal comune di lettura. Per coerenza del comune le letture sono 5.415 coerenti, 427 fuori comune, 625 fuori giro e 8 di coerenza ignota, quelle dei sacchetti censiti. I comuni in cui lavorano i giri sono 32, nei quattro cantieri. I bidoni non censiti sono 37: nel 2025, 18 hanno una stima netta del servizio e 19 una stima incerta, con il punto di domanda sulla mappa.
 
 Le incongruenze dell'esempio: il contenitore `RFD20250905100` è registrato a LIMENA e letto a CITTADELLA, quindi fuori comune; il tag rimasto su un mezzo, censito a MAROSTICA, è fuori comune nelle letture fatte a NOVE e a BASSANO DEL GRAPPA; il tag fermo in deposito, non censito, è letto da giri di ogni comune, quindi fuori giro. Qualche censito letto appena oltre il confine del suo comune risulta fuori comune. Mercoledì 24 settembre 2025 il mezzo `VEH001` doveva lavorare a LIMENA e ha letto dieci bidoni a BORGORICCO: nella scheda «Ricerca Giro» il comune del giro e quello di lettura sono diversi, ma è fuori giro solo il non censito, perché i nove censiti sono nel comune del loro database.
 
@@ -366,10 +383,10 @@ R/
   app_ui.R, app_server.R        interfaccia e collegamento dei moduli
   run_app.R, app_config.R       avvio e configurazione golem
   mod_caricamento_*.R           caricamento e validazione del file delle letture
-  mod_periodo_*.R               anno o periodo personalizzato, valido per tutta l'app
+  mod_periodo_*.R               periodo di analisi, due date valide per tutta l'app
   mod_filtri_*.R                filtri sopra la mappa principale e statistiche
   mod_mappa_*.R                 mappa WebGL, con mapgl, usata dalle quattro schede con mappa
-  mod_ricerca_*.R               ricerca per RFID e per utenza
+  mod_ricerca_*.R               ricerca per RFID e per utenza, tabella delle letture della ricerca RFID
   mod_giro_*.R                  ricerca dei giri di un mezzo
   mod_cluster_analysis_*.R      scheda di analisi dei cluster spaziali
   utils_archivio.R              archivio DuckDB delle letture: lettura, validazione in SQL, file .duckdb
@@ -383,15 +400,17 @@ R/
   utils_cluster_viste.R         tabella interattiva, grafici e mappa dei cluster
   utils_geografia.R             comuni, cantieri e confini del territorio servito
   utils_gruppi.R                calcoli per gruppo senza cicli, per i dataset grandi
+  utils_tabelle_mappa.R         tabelle delle ricerche sopra le mappe
+  utils_conferimenti.R          conferimenti del secco oltre il limite, per il report
   utils_mappa_aggregata.R       bolle di cantieri e comuni, fasce di zoom
   utils_giri.R                  giri dei mezzi: ricerca e riepilogo
   generate_cluster_analysis.R   funzioni esportate per l'analisi senza app
   fct_preparazione_letture.R    regole che trasformano i dati aziendali nel CSV dell'app
-  fct_confini_comuni.R          scarica i confini dei comuni e sceglie quelli serviti
+  fct_preparazione_comuni.R     confini dei comuni serviti dallo shapefile della Regione del Veneto
 inst/
   extdata/                      dataset di esempio e analisi dei cluster di esempio
   extdata/comuni_cantieri.csv   i 66 comuni serviti, con cantiere e coordinate del centro
-  extdata/comuni_confini.geojson   confini dei comuni serviti: ISTAT, dalla raccolta geojson-italy
+  extdata/comuni_confini.geojson   confini dei comuni serviti, della Regione del Veneto, non semplificati
   scripts/generate_cluster_analysis.R   script eseguibile da riga di comando
   app/www/custom_style.css, script.js
   app/www/mappa.js              mappe WebGL nel browser: dati, cluster, bolle, click, popup
@@ -399,15 +418,18 @@ inst/
 data-raw/
   genera_sample_dataset.R       dataset di esempio, simulati
   genera_dataset_grande.R       dataset sintetico di milioni di letture, per misurare i tempi
-  prepara_comuni.R              scarica i confini aggiornati dei comuni serviti
+  prepara_comuni.R              scrive i confini dei comuni serviti dallo shapefile della Regione
+  rvccomuni/                    shapefile dei comuni della Regione del Veneto
   01_estrai_tabelle.R, 02_importa_tabelle.R, 03_crea_letture_app.R   dati reali, tre passi: CSV e file .duckdb
   04_crea_letture_storiche.R    dati reali: letture precedenti alle antenne, per i report; facoltativo
+  05_report_conferimenti.R      dati reali: report sui conferimenti del secco oltre il limite; facoltativo
   origine/, intermedi/, output/ dati aziendali, esclusi da git
 dev/
   misura_prestazioni.R          tempi e memoria di ogni passaggio dell'app su un file
 docs/
   analisi_cluster.md            analisi dei cluster: regole, colonne, scelte
   indice_fiducia.Rmd            report sull'indice di fiducia, da compilare in HTML
+  conferimenti_secco.Rmd        report sui conferimenti del secco oltre il limite
 tests/testthat/
 ```
 
@@ -434,7 +456,7 @@ Prima specifica:
 Specifica delle correzioni e dell'analisi dei cluster:
 
 - **Dataset di esempio su base annuale.** La prima versione copriva 30 giorni, con una o due letture per la maggior parte dei bidoni. Raccolte annue e soglie dell'analisi dei cluster non erano dimostrabili su quei dati. I casi speciali della prima versione sono rimasti. Il file ha mantenuto il nome `sample_rfid_dataset.csv`.
-- **Periodo valido per tutta l'app.** La selezione dell'anno e il periodo personalizzato stanno in un solo controllo nella barra laterale, usato anche dall'analisi dei cluster.
+- **Periodo valido per tutta l'app.** Il periodo si sceglie con due date, nella barra verde in alto, e vale anche per l'analisi dei cluster. Non c'è più un elenco dell'anno a parte.
 - **Colonne dell'output.** La specifica parlava di 25 campi e ne definiva 22. Sono stati aggiunti `presente_a_database`, la cronologia dei cambi di servizio e la composizione del servizio stimato. Le colonne del servizio sono `servizio_transponder`, con la sua cronologia `servizio_transponder_cronologia`, e, per i non censiti, `servizio_atteso` con la composizione `servizio_atteso_dettaglio`.
 - **Classificazione.** Tre correzioni alle regole, descritte in [docs/analisi_cluster.md](docs/analisi_cluster.md).
 - **Distanze per DBSCAN.** Proiezione locale in metri al posto della matrice di Haversine, per reggere tag con migliaia di letture. I cluster coincidono.

@@ -10,14 +10,18 @@
 
 #' Limiti del disegno delle mappe
 #'
-#' Si può cambiare con l'opzione `trackerfid.max_letture_ricerca`.
+#' Si possono cambiare con le opzioni `trackerfid.max_letture_ricerca` e
+#' `trackerfid.letture_per_rfid`.
 #'
 #' @return Lista con `letture_ricerca`, il numero massimo di letture
-#'   disegnate dalla ricerca RFID e dalla ricerca dei giri.
+#'   disegnate dalla ricerca RFID e dalla ricerca dei giri, e
+#'   `letture_per_rfid`, le letture più recenti di ogni RFID che la ricerca
+#'   RFID disegna: le altre stanno solo nella tabella delle letture.
 #' @noRd
 limiti_mappa <- function() {
   list(
-    letture_ricerca = getOption("trackerfid.max_letture_ricerca", 50000)
+    letture_ricerca = getOption("trackerfid.max_letture_ricerca", 50000),
+    letture_per_rfid = getOption("trackerfid.letture_per_rfid", 10)
   )
 }
 
@@ -162,24 +166,41 @@ descrizione_vista <- function(livello) {
   )
 }
 
-#' Tiene le letture da disegnare nella ricerca RFID quando sono troppe
+#' Tiene le letture da disegnare nella ricerca RFID
 #'
-#' Restano l'ultima lettura di ogni RFID e, fino al limite, le letture più
-#' recenti.
+#' Per ogni RFID restano le sue letture più recenti, al massimo `per_rfid`:
+#' con centinaia di letture nello stesso punto i marker si coprono, e la
+#' storia completa sta nella tabella delle letture. Se sono ancora troppe,
+#' restano l'ultima lettura di ogni RFID e, fino a `massimo`, le più recenti.
 #'
 #' @param df Letture trovate, con la colonna `is_ultimo`.
+#' @param per_rfid Numero massimo di letture disegnate per ogni RFID.
 #' @param massimo Numero massimo di letture da disegnare.
-#' @return Le letture da disegnare. L'attributo `totale` riporta quante erano.
+#' @return Le letture da disegnare, nell'ordine di partenza. L'attributo
+#'   `totale` riporta quante erano.
 #' @noRd
 limita_letture_ricerca <- function(
   df,
+  per_rfid = limiti_mappa()$letture_per_rfid,
   massimo = limiti_mappa()$letture_ricerca
 ) {
   if (is.null(df)) {
     return(NULL)
   }
   totale <- nrow(df)
-  if (totale > massimo) {
+  if (totale > 0) {
+    # Posizione di ogni lettura tra quelle del suo RFID, dalla più recente.
+    ordine <- order(
+      df$RFID,
+      !df$is_ultimo,
+      -as.numeric(df$giorno_lettura),
+      method = "radix"
+    )
+    posizione <- integer(totale)
+    posizione[ordine] <- sequence(rle(df$RFID[ordine])$lengths)
+    df <- df[posizione <= per_rfid, , drop = FALSE]
+  }
+  if (nrow(df) > massimo) {
     ordine <- order(
       !df$is_ultimo,
       -as.numeric(df$giorno_lettura),

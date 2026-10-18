@@ -41,26 +41,6 @@ filtra_letture_post_test <- function(df_letture, df_test_mezzi) {
     )))
 }
 
-#' Estrae i codici RFID dal testo degli eventi
-#'
-#' Tiene gli eventi "Lettura Tag" e ne ricava i codici. Un evento con più
-#' codici separati da punto e virgola diventa una riga per codice.
-#'
-#' @param df Eventi, con la colonna `Evento`.
-#' @return Gli eventi di lettura, con la colonna `RFID`.
-#' @noRd
-estrai_rfid <- function(df) {
-  df |>
-    dplyr::filter(stringr::str_detect(.data$Evento, "Lettura Tag")) |>
-    # tutto ciò che segue "Lettura Tag " (spazio compreso) fino alla virgola
-    dplyr::mutate(
-      RFID = stringr::str_extract(.data$Evento, "(?<=Lettura Tag )[^,]+")
-    ) |>
-    # con un ';' divide i codici e crea una riga per ciascuno
-    tidyr::separate_longer_delim(cols = "RFID", delim = ";") |>
-    dplyr::mutate(RFID = stringr::str_trim(.data$RFID))
-}
-
 #' Porta i codici RFID a un formato unico
 #'
 #' Rimuove gli zeri iniziali, poi riempie con zeri a sinistra: fino a 10
@@ -304,6 +284,175 @@ associa_servizio_atteso_da_calendario <- function(
       "latitudine",
       "longitudine"
     ))
+  )
+}
+
+#' Colonne della fornitura aggiunte da `associa_nucleo_e_manovra()`
+#'
+#' Seguono, nel CSV dell'app, le 28 colonne di
+#' `associa_servizio_atteso_da_calendario()`. L'app non le usa: servono
+#' all'analisi dei conferimenti del secco, vedi `analisi_conferimenti()`.
+#' @noRd
+colonne_nucleo_manovra <- function() {
+  c(
+    "nucleo_residenti",
+    "nucleo_non_residenti",
+    "nucleo_totale",
+    "tipo_categoria",
+    "categoria",
+    "sottocategoria",
+    "manovra_sociale"
+  )
+}
+
+#' Associa a ogni lettura il nucleo familiare e la manovra sociale
+#'
+#' Per una lettura legata a una fornitura cerca, nel giorno e all'ora della
+#' lettura:
+#' - la composizione del nucleo e la categoria della fornitura in vigore: la
+#'   riga di `df_componenti` della stessa fornitura con l'inizio della
+#'   decorrenza più recente non successivo alla lettura, purché la decorrenza
+#'   non sia già finita. Una fine mancante vuol dire ancora in vigore;
+#' - la manovra sociale in vigore nel giorno della lettura. Se ce n'è più di
+#'   una, vince una manovra che dà il potenziamento del secco, vedi
+#'   `manovre_potenziamento()`, e tra quelle la più recente.
+#'
+#' Una lettura senza fornitura, o senza righe in vigore, resta con i campi
+#' vuoti. Una fornitura senza manovra in vigore ha `manovra_sociale` vuota.
+#'
+#' @param df_letture Letture con `id_fornitura`, `giorno_lettura` e
+#'   `giorno`, come le restituisce `associa_servizio_atteso_da_calendario()`.
+#' @param df_componenti Composizione dei nuclei, con `id_fornitura`,
+#'   `data_inizio_decorrenza`, `data_fine_decorrenza`, `nucleo_residenti`,
+#'   `nucleo_non_residenti`, `nucleo_totale`, `tipo_categoria`, `categoria`
+#'   e `sottocategoria`.
+#' @param df_manovra Manovre sociali, con `id_fornitura`,
+#'   `data_inizio_dichiarazione`, `data_fine_dichiarazione` e una colonna con
+#'   la tipologia della manovra.
+#' @param colonna_manovra Nome della colonna di `df_manovra` con la tipologia,
+#'   ad esempio `"MANOVRA SOCIALE ANZIANI"`. Se manca, è la prima colonna di
+#'   testo con un valore che inizia per `MANOVRA SOCIALE`.
+#' @return Le letture, con in coda le colonne di `colonne_nucleo_manovra()`.
+#' @noRd
+associa_nucleo_e_manovra <- function(
+  df_letture,
+  df_componenti,
+  df_manovra,
+  colonna_manovra = NULL
+) {
+  fornitura <- as.character(df_letture$id_fornitura)
+  istante <- df_letture$giorno_lettura
+  giorno <- as.Date(df_letture$giorno)
+
+  # 1. Nucleo e categoria: la decorrenza iniziata più di recente, se non è
+  # già finita. Il join lavora sulle coppie distinte di fornitura e istante.
+  componenti <- df_componenti |>
+    dplyr::mutate(
+      id_fornitura = as.character(.data$id_fornitura),
+      dplyr::across(
+        dplyr::any_of(c("tipo_categoria", "categoria", "sottocategoria")),
+        as.character
+      ),
+      dplyr::across(
+        dplyr::any_of(c("nucleo_residenti", "nucleo_non_residenti", "nucleo_totale")),
+        as.integer
+      )
+    )
+  chiavi <- unique(data.frame(
+    id_fornitura = fornitura,
+    istante = istante,
+    stringsAsFactors = FALSE
+  )[!is.na(fornitura), , drop = FALSE])
+  in_vigore <- dplyr::left_join(
+    chiavi,
+    componenti,
+    by = dplyr::join_by("id_fornitura", "istante" >= "data_inizio_decorrenza"),
+    relationship = "many-to-many"
+  )
+  # Per ogni coppia la decorrenza iniziata per ultima.
+  in_vigore <- in_vigore[order(
+    in_vigore$id_fornitura,
+    as.numeric(in_vigore$istante),
+    -as.numeric(in_vigore$data_inizio_decorrenza),
+    method = "radix"
+  ), , drop = FALSE]
+  in_vigore <- in_vigore[!duplicated(in_vigore[c("id_fornitura", "istante")]), , drop = FALSE]
+  finita <- !is.na(in_vigore$data_fine_decorrenza) &
+    in_vigore$istante > in_vigore$data_fine_decorrenza
+  campi_nucleo <- colonne_nucleo_manovra()[1:6]
+  for (campo in campi_nucleo) {
+    if (!campo %in% names(in_vigore)) {
+      in_vigore[[campo]] <- NA
+    }
+    in_vigore[[campo]][finita] <- NA
+  }
+  riga <- match(
+    paste(fornitura, as.numeric(istante), sep = "\r"),
+    paste(in_vigore$id_fornitura, as.numeric(in_vigore$istante), sep = "\r")
+  )
+  riga[is.na(fornitura)] <- NA_integer_
+  for (campo in campi_nucleo) {
+    df_letture[[campo]] <- in_vigore[[campo]][riga]
+  }
+
+  # 2. Manovra sociale in vigore nel giorno della lettura.
+  colonna_manovra <- colonna_manovra %||% trova_colonna_manovra(df_manovra)
+  manovre <- data.frame(
+    id_fornitura = as.character(df_manovra$id_fornitura),
+    inizio = as.Date(df_manovra$data_inizio_dichiarazione),
+    fine = as.Date(df_manovra$data_fine_dichiarazione),
+    manovra = stringr::str_squish(toupper(as.character(df_manovra[[colonna_manovra]]))),
+    stringsAsFactors = FALSE
+  )
+  manovre$fine[is.na(manovre$fine)] <- as.Date("2099-12-31")
+  giorni <- unique(data.frame(
+    id_fornitura = fornitura,
+    giorno = giorno,
+    stringsAsFactors = FALSE
+  )[!is.na(fornitura), , drop = FALSE])
+  trovate <- dplyr::inner_join(
+    giorni,
+    manovre,
+    by = dplyr::join_by("id_fornitura", "giorno" >= "inizio", "giorno" <= "fine")
+  )
+  trovate <- trovate[!is.na(trovate$manovra) & nzchar(trovate$manovra), , drop = FALSE]
+  # Prima le manovre del potenziamento, poi le più recenti.
+  trovate <- trovate[order(
+    trovate$id_fornitura,
+    trovate$giorno,
+    !trovate$manovra %in% manovre_potenziamento(),
+    -as.numeric(trovate$inizio),
+    method = "radix"
+  ), , drop = FALSE]
+  trovate <- trovate[!duplicated(trovate[c("id_fornitura", "giorno")]), , drop = FALSE]
+  riga <- match(
+    paste(fornitura, as.numeric(giorno), sep = "\r"),
+    paste(trovate$id_fornitura, as.numeric(trovate$giorno), sep = "\r")
+  )
+  riga[is.na(fornitura)] <- NA_integer_
+  df_letture$manovra_sociale <- trovate$manovra[riga]
+  df_letture
+}
+
+#' Colonna con la tipologia della manovra sociale
+#'
+#' La prima colonna di testo, oltre al codice della fornitura, con almeno un
+#' valore che inizia per `MANOVRA SOCIALE`.
+#' @noRd
+trova_colonna_manovra <- function(df_manovra) {
+  for (campo in setdiff(names(df_manovra), "id_fornitura")) {
+    valori <- df_manovra[[campo]]
+    if (is.character(valori) || is.factor(valori)) {
+      valori <- toupper(stringr::str_squish(as.character(valori)))
+      if (any(startsWith(valori, "MANOVRA SOCIALE"), na.rm = TRUE)) {
+        return(campo)
+      }
+    }
+  }
+  stop(
+    "Nella tabella delle manovre sociali nessuna colonna ha valori che ",
+    "iniziano per MANOVRA SOCIALE: indicala con l'argomento colonna_manovra.",
+    call. = FALSE
   )
 }
 

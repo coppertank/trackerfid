@@ -233,15 +233,22 @@ descrizione_giri <- function(letture) {
 #' Tabella interattiva dei giri
 #'
 #' Una riga per giro, in ordine di letture fuori giro: i giri da guardare
-#' stanno in cima. Un click su una riga mostra sulla mappa le sole letture di
-#' quel giro.
+#' stanno in cima. Un click su una riga la sceglie, e la mappa mostra le
+#' letture di quel giro; un secondo click toglie la scelta. Ogni colonna ha un
+#' filtro: i testi cercano una parte del valore, senza badare alle maiuscole;
+#' la data si cerca come si vede, `24/09`, o come `2025-09`; i numeri
+#' accettano un valore o un confronto, `>0`, `<5`, `>=2`, vedi
+#' `filtro_numerico_js()`. Le righe restano
+#' nell'ordine di `riepilogo`: il numero della riga scelta, che reactable
+#' comunica al server, è la riga del riepilogo anche dopo un ordinamento.
 #'
 #' @param riepilogo Risultato di `riepilogo_giri()`.
+#' @return Widget reactable.
 #' @noRd
-tabella_giri_dt <- function(riepilogo) {
+tabella_giri <- function(riepilogo) {
   ora <- function(x) format(x, "%H:%M", tz = "UTC")
   tabella <- data.frame(
-    Data = format(riepilogo$giorno, "%d/%m/%Y"),
+    Data = riepilogo$giorno,
     Mezzo = paste(riepilogo$matricola_veicolo, riepilogo$targa_veicolo),
     `Giro previsto` = riepilogo$servizio_giro,
     `Comune del giro` = riepilogo$comune_giro,
@@ -251,36 +258,85 @@ tabella_giri_dt <- function(riepilogo) {
     `Fuori giro` = riepilogo$fuori_giro,
     `Fuori comune` = riepilogo$fuori_comune,
     `Letto a` = riepilogo$letto_in,
-    # Colonna nascosta: la data come numero, per ordinare.
-    ordine_giorno = as.integer(riepilogo$giorno),
     check.names = FALSE,
     stringsAsFactors = FALSE
   )
-  lingua <- lingua_dt()
-  lingua$zeroRecords <- "Nessun giro trovato"
-  lingua$emptyTable <- "Nessun giro nei giorni scelti"
-  nascosta <- ncol(tabella) - 1L
-  DT::datatable(
+  # Le incongruenze in rosso. La data arriva al browser come AAAA-MM-GG, che
+  # si ordina come data, e si mostra come GG/MM/AAAA.
+  incongruenze <- function(valore) {
+    if (isTRUE(valore > 0)) list(color = "#b03a2e", fontWeight = 700)
+  }
+  data_italiana <- reactable::JS(
+    "function(cell) { var p = String(cell.value).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : cell.value; }"
+  )
+  # La data si filtra come si vede, GG/MM/AAAA, o come arriva, AAAA-MM-GG.
+  filtro_data <- reactable::JS(paste(
+    "function(rows, columnId, filterValue) {",
+    "  var cerca = String(filterValue).trim();",
+    "  return rows.filter(function(row) {",
+    "    var v = String(row.values[columnId]);",
+    "    var p = v.split('-');",
+    "    var it = p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : v;",
+    "    return it.indexOf(cerca) !== -1 || v.indexOf(cerca) !== -1;",
+    "  });",
+    "}",
+    sep = "\n"
+  ))
+  numero <- function(...) {
+    reactable::colDef(..., filterMethod = filtro_numerico_js())
+  }
+  reactable::reactable(
     tabella,
-    rownames = FALSE,
+    columns = list(
+      .selection = reactable::colDef(show = FALSE),
+      Data = reactable::colDef(cell = data_italiana, filterMethod = filtro_data, minWidth = 85),
+      Mezzo = reactable::colDef(minWidth = 115),
+      `Giro previsto` = reactable::colDef(minWidth = 120),
+      `Comune del giro` = reactable::colDef(minWidth = 110),
+      Orario = reactable::colDef(minWidth = 85),
+      Letture = numero(minWidth = 60),
+      Bidoni = numero(minWidth = 60),
+      `Fuori giro` = numero(style = incongruenze, minWidth = 70),
+      `Fuori comune` = numero(style = incongruenze, minWidth = 80),
+      `Letto a` = reactable::colDef(minWidth = 150)
+    ),
+    defaultSorted = list(`Fuori giro` = "desc", Data = "desc"),
     selection = "single",
-    class = "compact stripe hover nowrap",
-    options = list(
-      pageLength = 5,
-      lengthMenu = c(5, 10, 25, 50),
-      scrollX = TRUE,
-      language = lingua,
-      order = list(list(7, "desc"), list(nascosta, "desc")),
-      columnDefs = list(
-        list(targets = nascosta, visible = FALSE, searchable = FALSE),
-        # La data si ordina con la colonna nascosta.
-        list(targets = 0, orderData = nascosta)
-      )
-    )
-  ) |>
-    DT::formatStyle(
-      c("Fuori giro", "Fuori comune"),
-      fontWeight = DT::styleInterval(0, c("normal", "bold")),
-      color = DT::styleInterval(0, c("inherit", "#b03a2e"))
-    )
+    onClick = "select",
+    filterable = TRUE,
+    defaultPageSize = 5,
+    showPageSizeOptions = TRUE,
+    pageSizeOptions = c(5, 10, 25, 50),
+    wrap = FALSE,
+    compact = TRUE,
+    highlight = TRUE,
+    rowStyle = list(cursor = "pointer"),
+    theme = tema_tabelle_mappa(),
+    language = lingua_reactable("Nessun giro nei giorni scelti")
+  )
+}
+
+#' Filtro di reactable per le colonne di numeri
+#'
+#' Accetta un valore, `3`, oppure un confronto: `>0`, `<5`, `>=2`, `<=10`,
+#' `=4`. Un testo che non è nessuno dei due non filtra niente.
+#' @noRd
+filtro_numerico_js <- function() {
+  reactable::JS(paste(
+    "function(rows, columnId, filterValue) {",
+    "  var m = String(filterValue).replace(/\\s/g, '').match(/^(>=|<=|>|<|=)?(\\d+(?:[.,]\\d+)?)$/);",
+    "  if (!m) return rows;",
+    "  var op = m[1] || '=';",
+    "  var n = parseFloat(m[2].replace(',', '.'));",
+    "  return rows.filter(function(row) {",
+    "    var v = row.values[columnId];",
+    "    if (op === '>') return v > n;",
+    "    if (op === '<') return v < n;",
+    "    if (op === '>=') return v >= n;",
+    "    if (op === '<=') return v <= n;",
+    "    return v === n;",
+    "  });",
+    "}",
+    sep = "\n"
+  ))
 }

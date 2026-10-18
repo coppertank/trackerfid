@@ -110,6 +110,11 @@ mod_caricamento_server <- function(
 
     # Esito del caricamento: errori, oppure righe, RFID e periodo, dal
     # riepilogo dell'archivio.
+    # Nome del file caricato, accanto al titolo della sezione chiusa.
+    output$riassunto <- renderText({
+      if (is.null(stato$dati)) "" else stato$origine
+    })
+
     output$esito <- renderUI({
       if (!is.null(stato$errori)) {
         return(div(

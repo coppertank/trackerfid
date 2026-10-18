@@ -109,23 +109,39 @@ mod_mappa_server <- function(
           descrizione <- if (territorio) {
             descrizione_vista(livello_aggregazione(input$mappa_zoom))
           }
+          # Le letture che superano i filtri, se il modulo dei filtri le ha
+          # contate, e gli RFID sulla mappa, ognuno nella sua ultima lettura.
+          letture <- attr(df, "letture")
           paste0(
-            conta(n_rfid, "bidone", "bidoni"),
-            " sulla mappa (ultima lettura)",
+            if (!is.null(letture)) {
+              paste(conta(letture, "lettura", "letture"), "di ")
+            },
+            conta(n_rfid, "RFID", "RFID"),
+            " (ultima lettura registrata)",
             if (!is.null(descrizione)) paste0(" \u00b7 ", descrizione)
           )
         },
-        rfid = paste0(
-          conta(nrow(df), "lettura", "letture"),
-          " di ",
-          conta(n_rfid, "RFID", "RFID"),
-          if (nrow(df) > limiti_mappa()$letture_ricerca) {
-            sprintf(
-              " \u00b7 sulla mappa le %s pi\u00f9 recenti",
-              formatta_numero(limiti_mappa()$letture_ricerca)
-            )
-          }
-        ),
+        rfid = {
+          # Sulla mappa le ultime letture di ogni RFID; tutte nella tabella.
+          limiti <- limiti_mappa()
+          sulla_mappa <- nrow(limita_letture_ricerca(df))
+          paste0(
+            conta(nrow(df), "lettura", "letture"),
+            " di ",
+            conta(n_rfid, "RFID", "RFID"),
+            if (sulla_mappa < nrow(df)) {
+              sprintf(
+                " \u00b7 sulla mappa %s: %s",
+                formatta_numero(sulla_mappa),
+                if (sulla_mappa >= limiti$letture_ricerca) {
+                  "le pi\u00f9 recenti"
+                } else {
+                  sprintf("le ultime %d di ogni RFID", limiti$letture_per_rfid)
+                }
+              )
+            }
+          )
+        },
         utenza = paste(
           conta(n_rfid, "bidone", "bidoni"),
           "di",

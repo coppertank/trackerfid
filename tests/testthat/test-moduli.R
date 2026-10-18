@@ -96,13 +96,11 @@ test_that("il periodo predefinito è l'anno più recente del dataset", {
     letture <- letture_periodo(selezione)
     expect_true(all(lubridate::year(letture$giorno_lettura) == 2025))
     expect_equal(selezione$n, nrow(letture))
-    expect_match(as.character(output$riepilogo$html), "01/01/2025")
-    expect_match(
-      as.character(output$riepilogo$html),
-      sprintf("%s letture di 248 RFID", formatta_numero(nrow(letture)))
-    )
+    # con letture nel periodo la barra in alto non mostra avvisi
+    expect_null(output$riepilogo$html)
 
-    session$setInputs(anno_filtro = "2024")
+    # un anno intero scelto con le date ha l'etichetta dell'anno
+    session$setInputs(intervallo = as.Date(c("2024-01-01", "2024-12-31")))
     expect_identical(periodo$periodo(), as.Date(c("2024-01-01", "2024-12-31")))
     expect_identical(periodo$etichetta(), "Anno 2024")
     expect_true(all(
@@ -112,16 +110,13 @@ test_that("il periodo predefinito è l'anno più recente del dataset", {
   })
 })
 
-test_that("il periodo personalizzato sostituisce l'anno e viene validato", {
+test_that("il periodo è l'intervallo di date scelto, e viene validato", {
   dati <- shiny::reactiveVal(archivio_esempio())
   shiny::testServer(mod_periodo_server, args = list(dati = dati), {
     periodo <- session$getReturned()
     session$flushReact()
 
-    # le date personalizzate contano solo con l'opzione attiva
     session$setInputs(intervallo = as.Date(c("2025-03-15", "2025-09-30")))
-    expect_identical(periodo$etichetta(), "Anno 2025")
-    session$setInputs(personalizzato = TRUE)
     expect_identical(periodo$periodo(), as.Date(c("2025-03-15", "2025-09-30")))
     expect_identical(periodo$etichetta(), "15/03/2025 - 30/09/2025")
     giorni <- as.Date(letture_periodo(periodo$dati())$giorno_lettura)
@@ -144,9 +139,6 @@ test_that("il periodo personalizzato sostituisce l'anno e viene validato", {
       as.character(output$riepilogo$html),
       "Nessuna lettura nel periodo"
     )
-
-    session$setInputs(personalizzato = FALSE)
-    expect_identical(periodo$etichetta(), "Anno 2025")
   })
 })
 
@@ -161,10 +153,7 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
 
     dati(archivio_esempio())
     session$flushReact()
-    session$setInputs(
-      personalizzato = TRUE,
-      intervallo = as.Date(c("2025-05-01", "2025-05-31"))
-    )
+    session$setInputs(intervallo = as.Date(c("2025-05-01", "2025-05-31")))
     expect_identical(periodo$etichetta(), "01/05/2025 - 31/05/2025")
 
     solo_2024 <- dati_esempio()[
@@ -174,6 +163,10 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
     session$flushReact()
     expect_identical(periodo$etichetta(), "Anno 2024")
     expect_equal(periodo$dati()$n, nrow(solo_2024))
+
+    dati(NULL)
+    session$flushReact()
+    expect_null(periodo$periodo())
   })
 })
 
@@ -456,10 +449,19 @@ test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
       html <- as.character(output$esito$html)
       expect_match(html, "1 RFID su 2 trovati")
       expect_match(html, "Non trovati: \\s*inesistente")
+      # la tabella sopra la mappa riporta tutte le letture trovate
+      expect_identical(
+        output$nota_letture,
+        sprintf("%d letture nel periodo. Sulla mappa le ultime 10 di ogni RFID.", n_letture)
+      )
+      tabella <- jsonlite::fromJSON(output$letture)$x$tag$attribs
+      expect_identical(tabella$groupBy, "RFID")
+      expect_length(tabella$data$RFID, n_letture)
 
       session$setInputs(pulisci = 1)
       expect_null(ricerca$risultati())
       expect_null(ricerca$codici())
+      expect_error(output$letture)
     }
   )
 })
@@ -668,6 +670,37 @@ test_that("l'esportazione dalla scheda usa il nome con le date del periodo", {
   )
 })
 
+test_that("il caricamento si chiude e il periodo sta nella barra in alto", {
+  html <- as.character(app_ui(NULL))
+  # la sezione del caricamento è collassabile, aperta all'avvio, e chiusa
+  # mostra il nome del file caricato
+  expect_match(
+    html,
+    '<details open class="sezione-sidebar sezione-collassabile">\\s*<summary class="titolo-sezione" title="Mostra o nascondi la sezione">'
+  )
+  expect_match(html, 'id="caricamento-riassunto"', fixed = TRUE)
+  # il periodo sta nell'intestazione, non nella barra laterale
+  intestazione <- regmatches(html, regexpr("<header.*</header>", html))
+  laterale <- regmatches(html, regexpr("<aside.*</aside>", html))
+  for (id in c("periodo-intervallo", "periodo-riepilogo")) {
+    expect_match(intestazione, sprintf('id="%s"', id), fixed = TRUE)
+    expect_no_match(laterale, sprintf('id="%s"', id), fixed = TRUE)
+  }
+  expect_match(intestazione, '<li class="dropdown periodo-intestazione">', fixed = TRUE)
+  expect_no_match(laterale, "Periodo di analisi", fixed = TRUE)
+  # solo le date: niente elenco dell'anno né casella del periodo personalizzato
+  expect_no_match(html, "periodo-anno_filtro", fixed = TRUE)
+  expect_no_match(html, "periodo-personalizzato", fixed = TRUE)
+})
+
+test_that("chiusa, la sezione del caricamento riporta il file caricato", {
+  shiny::testServer(mod_caricamento_server, args = list(demo = FALSE, percorso = NULL), {
+    expect_identical(output$riassunto, "")
+    session$setInputs(carica_esempio = 1)
+    expect_match(output$riassunto, basename(percorso_dataset_esempio()), fixed = TRUE)
+  })
+})
+
 test_that("l'interfaccia contiene le schede e i controlli richiesti", {
   html <- as.character(app_ui(NULL))
   for (testo in c(
@@ -676,8 +709,7 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
     "Ricerca Utenza",
     "Analisi Cluster Spaziale",
     "Caricamento Dati",
-    "Seleziona Anno di Analisi",
-    "Periodo personalizzato",
+    "Periodo di analisi",
     "Stato database",
     "Servizio del contenitore",
     "Giro del calendario",
@@ -1023,13 +1055,23 @@ test_that("la mappa principale riceve bidoni e bolle in un messaggio solo", {
       expect_identical(disegnati(), ultimi)
 
       # zoom e spostamenti restano nel browser: cambia solo l'intestazione
-      expect_match(output$riepilogo, "^251 bidoni sulla mappa \\(ultima lettura\\)")
+      expect_match(output$riepilogo, "^251 RFID \\(ultima lettura registrata\\) \u00b7 ")
       expect_match(output$riepilogo, "una bolla per cantiere")
       session$setInputs(mappa_zoom = 11.5)
       expect_match(output$riepilogo, "una bolla per comune")
       session$setInputs(mappa_zoom = 14.2)
-      expect_identical(output$riepilogo, "251 bidoni sulla mappa (ultima lettura)")
+      expect_identical(output$riepilogo, "251 RFID (ultima lettura registrata)")
       expect_length(registro$messaggi, 3)
+      # con il numero delle letture che superano i filtri, dal modulo dei filtri
+      dati(structure(ultimi, letture = 6475L))
+      session$flushReact()
+      expect_identical(
+        output$riepilogo,
+        "6.475 letture di 251 RFID (ultima lettura registrata)"
+      )
+      dati(ultimi)
+      session$flushReact()
+      registro$messaggi <- registro$messaggi[1:3]
 
       # il click su un bidone
       session$setInputs(mappa_clic = list(i = 2, nonce = 1))
@@ -1084,11 +1126,48 @@ test_that("la ricerca RFID disegna al massimo le letture previste dal limite", {
         output$riepilogo,
         sprintf("%d letture di 1 RFID", nrow(trovate))
       )
-      expect_match(output$riepilogo, "sulla mappa le 5 più recenti")
+      expect_match(output$riepilogo, "sulla mappa 5: le più recenti")
       # la prima riga disegnata è l'ultima lettura dell'RFID
       expect_true(disegnati()$is_ultimo[1])
       session$setInputs(mappa_clic = list(i = 0, nonce = 1))
       expect_identical(selezione()$rfid, "RFD20250901001")
+    }
+  )
+})
+
+test_that("la ricerca RFID disegna le ultime 10 letture di ogni RFID", {
+  registro <- registra_messaggi()
+  trovate <- cerca_per_rfid(
+    seleziona_periodo(archivio_esempio()),
+    c("RFD20241001301", "RFD20250905100")
+  )
+  dati <- shiny::reactiveVal(trovate)
+  shiny::testServer(
+    mod_mappa_server,
+    args = list(dati = dati, modalita = "rfid"),
+    {
+      session$flushReact()
+      deposito <- sum(trovate$RFID == "RFD20241001301")
+      spostato <- sum(trovate$RFID == "RFD20250905100")
+      expect_gt(deposito, 10)
+      expect_equal(nrow(disegnati()), 10 + min(spostato, 10))
+      expect_identical(attr(disegnati(), "totale"), nrow(trovate))
+      expect_length(registro$messaggi[[1]]$dati$punti$x, nrow(disegnati()))
+      # l'area di spostamento e l'inquadratura comprendono tutte le letture
+      expect_identical(registro$messaggi[[1]]$dati$riquadri, riquadri_rfid(trovate))
+      expect_match(
+        output$riepilogo,
+        sprintf(
+          "%d letture di 2 RFID \u00b7 sulla mappa %d: le ultime 10 di ogni RFID",
+          nrow(trovate),
+          nrow(disegnati())
+        ),
+        fixed = TRUE
+      )
+      # con poche letture la mappa le disegna tutte, e non lo dice
+      dati(trovate[trovate$RFID == "RFD20250905100", ])
+      session$flushReact()
+      expect_no_match(output$riepilogo, "sulla mappa", fixed = TRUE)
     }
   )
 })
@@ -1199,9 +1278,12 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
     session$flushReact()
     tutti <- nrow(filtrati())
     expect_equal(tutti, 248)
+    # con l'ultima lettura di ogni RFID arriva il numero di tutte le letture
+    # che superano i filtri, per l'intestazione della mappa
+    expect_identical(attr(filtrati(), "letture"), nrow(letture))
 
     # solo le letture fuori comune: il contenitore spostato, il tag sul mezzo
-    # e tre censiti letti appena oltre il confine del loro comune
+    # e quattro censiti letti appena oltre il confine del loro comune
     session$setInputs(coerenza_comune_check = "fuori_comune")
     expect_setequal(
       filtrati()$RFID,
@@ -1210,13 +1292,14 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
         "RFD20250203302",
         "RFD20241007067",
         "RFD20241017188",
-        "RFD20241009045"
+        "RFD20241030027",
+        "RFD20241002198"
       )
     )
     expect_true(all(filtrati()$coerenza_comune == "Fuori comune"))
     expect_match(
       as.character(output$stat_box$html),
-      "Fuori comune:</span>\\s*<b>5</b>"
+      "Fuori comune:</span>\\s*<b>6</b>"
     )
 
     # solo fuori giro: la mappa mostra l'ultima lettura fuori giro di ogni RFID
@@ -1227,6 +1310,7 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
       dplyr::n_distinct(letture$RFID[letture$coerenza_comune == "Fuori giro"])
     )
     expect_equal(nrow(filtrati()), 36)
+    expect_identical(attr(filtrati(), "letture"), sum(letture$coerenza_comune == "Fuori giro"))
     expect_true("RFD20241001301" %in% filtrati()$RFID)
     # un censito non è mai fuori giro
     expect_true(all(filtrati()$presente_a_database == "Non Presente"))
@@ -1261,18 +1345,22 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_identical(stato$mezzo, "")
     expect_identical(stato$dal, as.Date("2025-12-31"))
     expect_identical(stato$al, as.Date("2025-12-31"))
-    all_avvio <- restituito$risultati()
+    all_avvio <- trovate()
     expect_true(all(all_avvio$giorno == as.Date("2025-12-31")))
     expect_gt(nrow(all_avvio), 0)
-    expect_null(restituito$messaggio())
+    # senza un giro scelto la mappa non riceve letture: inquadra la zona dei
+    # giri trovati e invita a sceglierne uno
+    expect_null(restituito$risultati())
+    expect_match(restituito$messaggio(), "Scegli un giro nella tabella")
+    expect_identical(restituito$vista(), area_giri(all_avvio))
 
     # un mezzo, un giorno: il giro sbagliato
     session$setInputs(
       mezzo = "VEH001",
       giorni = as.Date(c("2025-09-24", "2025-09-24"))
     )
-    expect_equal(nrow(restituito$risultati()), 10)
-    expect_true(all(restituito$risultati()$matricola_veicolo == "VEH001"))
+    expect_equal(nrow(trovate()), 10)
+    expect_true(all(trovate()$matricola_veicolo == "VEH001"))
     giri <- restituito$riepilogo()
     expect_equal(nrow(giri), 1)
     expect_identical(giri$comune_giro, "LIMENA")
@@ -1287,7 +1375,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
       giorni = as.Date(c("2025-09-22", "2025-09-28")),
       solo = "fuori_giro"
     )
-    settimana <- restituito$risultati()
+    settimana <- trovate()
     expect_true(all(settimana$coerenza_comune == "Fuori giro"))
     expect_gt(dplyr::n_distinct(settimana$matricola_veicolo), 1)
     expect_true(all(
@@ -1303,21 +1391,26 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
         giri$giorno == as.Date("2025-09-24")
     )
     expect_identical(giri$comune_giro[riga], "LIMENA")
-    session$setInputs(tabella_rows_selected = riga)
+    session$setInputs(tabella__reactable__selected = riga)
     expect_equal(nrow(restituito$risultati()), 1)
     expect_true(all(restituito$risultati()$comune_giro == "LIMENA"))
     expect_true(all(restituito$risultati()$comune_lettura == "BORGORICCO"))
-    # tolta la selezione tornano tutte
-    session$setInputs(tabella_rows_selected = NULL)
-    expect_equal(nrow(restituito$risultati()), nrow(settimana))
+    # la mappa inquadra il giro scelto, con il suo comune, e non ha avvisi
+    expect_identical(restituito$vista(), area_giri(restituito$risultati()))
+    expect_null(restituito$messaggio())
+    # tolta la selezione la mappa resta senza letture
+    session$setInputs(tabella__reactable__selected = NULL)
+    expect_null(restituito$risultati())
     # una riga che non esiste non sceglie niente
-    session$setInputs(tabella_rows_selected = 9999)
-    expect_equal(nrow(restituito$risultati()), nrow(settimana))
+    session$setInputs(tabella__reactable__selected = 9999)
+    expect_null(restituito$risultati())
 
     # cambiare la ricerca toglie il giro scelto
-    session$setInputs(tabella_rows_selected = riga)
+    session$setInputs(tabella__reactable__selected = riga)
+    expect_equal(nrow(restituito$risultati()), 1)
     session$setInputs(solo = NULL)
-    expect_gt(nrow(restituito$risultati()), nrow(settimana))
+    expect_null(restituito$risultati())
+    expect_gt(nrow(trovate()), nrow(settimana))
 
     # un intervallo scritto a met\u00e0, o rovesciato, non cambia la ricerca
     session$setInputs(giorni = as.Date(c("2025-09-28", "2025-09-22")))
@@ -1330,7 +1423,8 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
       mezzo = "VEH005",
       giorni = as.Date(c("2025-09-28", "2025-09-28"))
     )
-    expect_equal(nrow(restituito$risultati()), 0)
+    expect_equal(nrow(trovate()), 0)
+    expect_null(restituito$risultati())
     expect_match(restituito$messaggio(), "Nessuna lettura")
 
     # un nuovo periodo riporta la ricerca ai valori predefiniti
@@ -1339,7 +1433,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_identical(stato$mezzo, "")
     expect_identical(stato$solo, character(0))
     expect_identical(stato$dal, as.Date("2024-12-31"))
-    expect_true(all(restituito$risultati()$giorno == as.Date("2024-12-31")))
+    expect_true(all(trovate()$giorno == as.Date("2024-12-31")))
 
     # senza letture non c'\u00e8 niente da cercare
     dati(NULL)
@@ -1403,6 +1497,19 @@ test_that("l'interfaccia ha la scheda dei giri, il suo pannello e il filtro sull
   expect_match(html, 'id="giro-solo"', fixed = TRUE)
   expect_match(html, 'id="giro-tabella"', fixed = TRUE)
   expect_match(html, 'id="mappa_giro-mappa"', fixed = TRUE)
+  # le tabelle delle due ricerche stanno sopra la mappa, prima della legenda,
+  # in un riquadro aperto
+  for (coppia in list(c("mappa_giro-mappa", "giro-tabella"), c("mappa_rfid-mappa", "ricerca_rfid-letture"))) {
+    mappa <- regexpr(sprintf('id="%s"', coppia[1]), html, fixed = TRUE)
+    tabella <- regexpr(sprintf('id="%s"', coppia[2]), html, fixed = TRUE)
+    legenda <- regexpr('class="legenda-mappa"', substring(html, mappa), fixed = TRUE) + mappa
+    expect_gt(tabella, mappa)
+    expect_lt(tabella, legenda)
+  }
+  expect_match(html, '<div class="tabella-mappa tabella-giri">', fixed = TRUE)
+  expect_match(html, '<div class="tabella-mappa tabella-letture">', fixed = TRUE)
+  expect_match(html, 'data-display-if="output.con_letture" data-ns-prefix="ricerca_rfid-"', fixed = TRUE)
+  expect_length(gregexpr('<details open class="tabella-dettagli">', html, fixed = TRUE)[[1]], 2)
   expect_match(html, "input.scheda_attiva == &#39;giro&#39;", fixed = TRUE)
   expect_match(html, "Visualizzazione: Ricerca Giro", fixed = TRUE)
   # la scheda dei giri sta dopo la ricerca per RFID

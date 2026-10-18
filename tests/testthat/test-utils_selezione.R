@@ -183,3 +183,18 @@ test_that("gli anni disponibili vanno dal più recente", {
   withr::defer(chiudi_archivio(vuoto))
   expect_identical(anni_disponibili(vuoto), numeric(0))
 })
+
+test_that("le letture che superano i filtri si contano tutte, non solo le ultime", {
+  selezione <- seleziona_periodo(archivio_esempio(), periodo_anno(2025))
+  letture <- letture_periodo(selezione)
+  expect_identical(conta_letture(selezione), nrow(letture))
+  expect_identical(
+    conta_letture(selezione, stato_db = "Non Presente"),
+    sum(letture$presente_a_database == "Non Presente")
+  )
+  # gli stessi filtri di conteggi_cantieri()
+  expect_identical(
+    conta_letture(selezione, cantieri_esclusi = "ASIAGO"),
+    sum(conteggi_cantieri(selezione, cantieri_esclusi = "ASIAGO"))
+  )
+})

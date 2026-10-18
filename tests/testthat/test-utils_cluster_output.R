@@ -493,7 +493,7 @@ test_that("ogni cluster riporta il comune di lettura e le incongruenze", {
   expect_false("distanza_comune_m" %in% names(analisi))
   expect_identical(
     as.integer(table(analisi$incongruenza_comune)[c("FUORI_COMUNE", "FUORI_GIRO")]),
-    c(4L, 20L)
+    c(4L, 21L)
   )
   # ogni cluster dell'esempio cade in un comune servito
   expect_false(anyNA(analisi$comune_geografico))

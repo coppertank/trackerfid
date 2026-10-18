@@ -271,6 +271,25 @@ ultime_letture <- function(selezione, ..., colonne = NULL) {
   )
 }
 
+#' Numero delle letture che superano i filtri
+#'
+#' Le letture del periodo, non le ultime: è il numero che l'intestazione della
+#' mappa principale riporta accanto agli RFID.
+#'
+#' @inheritParams ultime_letture
+#' @return Un intero.
+#' @noRd
+conta_letture <- function(selezione, ...) {
+  as.integer(interroga(
+    selezione$archivio,
+    sprintf(
+      "SELECT count(*) AS n FROM %s WHERE %s",
+      sql_con_icona(selezione),
+      condizione_filtri(selezione$archivio$con, ...)
+    )
+  )$n)
+}
+
 #' Letture per cantiere tra quelle che superano i filtri
 #'
 #' @inheritParams ultime_letture

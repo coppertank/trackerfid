@@ -7,11 +7,9 @@
 
 library(tidyverse)
 
-
 # TEST MEZZI -------------------------------------------------------------
 
 test_mezzi <- readRDS(file = "data-raw/intermedi/test_mezzi.rds")
-
 
 # test_mezzi <- read_delim(
 #   "data-raw/origine/AppSheet.ViewData.2026-10-13.csv",
@@ -44,7 +42,6 @@ test_mezzi <- readRDS(file = "data-raw/intermedi/test_mezzi.rds")
 # LETTURE ----------------------------------------------------------------
 
 letture <- readRDS(file = "data-raw/intermedi/letture.rds")
-
 
 # letture <- read_delim(
 #   "data-raw/origine/letture_antenne.csv",
@@ -93,7 +90,6 @@ letture <- readRDS(file = "data-raw/intermedi/letture.rds")
 associazione_contenitori <- readRDS(
   file = "data-raw/intermedi/associazione_contenitori.rds"
 )
-
 
 # associazione_contenitori <- read.csv(
 #   "data-raw/origine/dv_cnt_associazione_contenitori.csv",
@@ -219,3 +215,69 @@ calendario_servizio_rifiuti <- readRDS(
 #   rename(comune_giro = comune)
 
 # saveRDS(calendario_servizio_rifiuti, file = "data-raw/intermedi/calendario_servizio_rifiuti.rds")
+
+# ASSOCIAZIONE COMPONENTI ------------------------------------------------
+
+associazione_componenti <- readRDS(
+  file = "data-raw/intermedi/associazione_componenti.rds"
+)
+
+# associazione_componenti <- read_delim(
+#   "data-raw/origine/dv_associazione_componenti.csv",
+#   col_types = cols(.default = col_character()),
+#   na = c("", "NA", "NaN", "null", "NULL")
+# ) |>
+#   mutate(
+#     data_inizio_decorrenza = as.POSIXct(
+#       data_inizio_decorrenza,
+#       format = "%Y/%m/%d %H.%M.%S"
+#     ),
+#     data_fine_decorrenza = as.POSIXct(
+#       data_fine_decorrenza,
+#       format = "%Y/%m/%d %H.%M.%S"
+#     ),
+#     across(
+#       c(nucleo_residenti, nucleo_non_residenti, nucleo_totale),
+#       as.integer
+#     ),
+#     across(c(tipo_categoria, categoria, sottocategoria), as.factor)
+#   ) |>
+#   rename(id_fornitura = id_servizio) |>
+#   select(
+#     id_fornitura,
+#     data_inizio_decorrenza,
+#     data_fine_decorrenza,
+#     nucleo_residenti,
+#     nucleo_non_residenti,
+#     nucleo_totale,
+#     tipo_categoria,
+#     categoria,
+#     sottocategoria
+#   )
+
+# saveRDS(associazione_componenti, file = "data-raw/intermedi/associazione_componenti.rds")
+
+# MANOVRA SOCIALE --------------------------------------------------------
+
+manovra_sociale <- readRDS(
+  file = "data-raw/intermedi/manovra_sociale.rds"
+)
+
+# manovra_sociale <- read_delim(
+#   "data-raw/origine/dv_cnt_manovra_sociale.csv",
+#   col_types = cols(.default = col_character()),
+#   na = c("", "NA", "NaN", "null", "NULL")
+# ) |>
+#   mutate(
+#     data_inizio_dichiarazione = as_date(
+#       data_inizio_dichiarazione
+#     ),
+#     data_fine_dichiarazione = if_else(
+#       is.na(data_fine_dichiarazione),
+#       as_date("2099-12-31"),
+#       as_date(data_fine_dichiarazione)
+#     )
+#   ) |>
+#   rename(id_fornitura = id_servizio)
+
+# saveRDS(manovra_sociale, file = "data-raw/intermedi/manovra_sociale.rds")

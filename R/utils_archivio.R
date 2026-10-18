@@ -136,16 +136,6 @@ sql_elenco <- function(con, valori) {
 #' @noRd
 colonne_archivio <- function() c(colonne_dataset(), "riga")
 
-#' Tipo SQL di ogni colonna della tabella delle letture
-#' @noRd
-tipi_archivio <- function() {
-  tipi <- stats::setNames(rep("VARCHAR", length(colonne_archivio())), colonne_archivio())
-  tipi[["giorno_lettura"]] <- "TIMESTAMP"
-  tipi[c("latitudine", "longitudine", colonne_quantita())] <- "DOUBLE"
-  tipi[["riga"]] <- "BIGINT"
-  tipi
-}
-
 #' Legge e valida un file di letture in un archivio DuckDB
 #'
 #' Accetta CSV, CSV compresso con gzip (`.csv.gz`), Parquet e il file
@@ -206,43 +196,6 @@ letture_archivio <- function(archivio, condizione = NULL) {
       if (is.null(condizione)) "" else paste(" WHERE", condizione)
     )
   )
-}
-
-#' Porta in un archivio letture già validate
-#'
-#' Le colonne di `colonne_dataset()` che mancano vengono create vuote, con il
-#' tipo giusto; le altre vengono ignorate. Come nella validazione, senza
-#' `servizio_giro` il giro è il servizio atteso. Le colonne derivate non
-#' vengono ricalcolate: le letture vanno in archivio così come sono. Serve ai
-#' test e a chi ha le letture in un data frame.
-#'
-#' @param letture Data frame di letture validate.
-#' @param origine Nome da mostrare come origine delle letture.
-#' @return Archivio, vedi `nuovo_archivio()`.
-#' @noRd
-archivio_da_letture <- function(letture, origine = "letture") {
-  if (is.null(letture[[colonne_calendario()]])) {
-    letture[[colonne_calendario()]] <- letture[["servizio_atteso"]]
-  }
-  tipi <- tipi_archivio()
-  n <- nrow(letture)
-  tabella <- lapply(stats::setNames(names(tipi), names(tipi)), function(campo) {
-    valori <- letture[[campo]]
-    switch(
-      tipi[[campo]],
-      TIMESTAMP = if (is.null(valori)) {
-        as.POSIXct(rep(NA_real_, n), tz = "UTC")
-      } else {
-        converti_data_ora(valori)
-      },
-      DOUBLE = if (is.null(valori)) rep(NA_real_, n) else as.numeric(valori),
-      BIGINT = seq_len(n),
-      if (is.null(valori)) rep(NA_character_, n) else as.character(valori)
-    )
-  })
-  con <- connessione_duckdb()
-  DBI::dbWriteTable(con, "letture", as.data.frame(tabella, stringsAsFactors = FALSE))
-  nuovo_archivio(con, "letture", origine = origine)
 }
 
 # --- Lettura del file ---------------------------------------------------------
@@ -332,7 +285,7 @@ sql_pulito <- function(colonna, csv = TRUE) {
 
 #' Formati di data e ora accettati per `giorno_lettura`
 #'
-#' Gli stessi di `converti_data_ora()`: anno-mese-giorno o giorno/mese/anno,
+#' Anno-mese-giorno o giorno/mese/anno,
 #' con ore, minuti ed eventuali secondi, oppure la sola data.
 #' @noRd
 formati_data_ora <- function() {

@@ -3,8 +3,8 @@
 # La tabella dei comuni sta in `inst/extdata/comuni_cantieri.csv`: è l'unico
 # elenco di comuni e cantieri. I confini stanno in
 # `inst/extdata/comuni_confini.geojson`, un comune per ogni riga della
-# tabella: li scarica `scarica_confini_comuni()`, in
-# `R/fct_confini_comuni.R`.
+# tabella: li prepara `prepara_confini_comuni()`, in
+# `R/fct_preparazione_comuni.R`, dagli shapefile della Regione del Veneto.
 
 # Tabelle lette una sola volta per sessione di R.
 memoria_geografia <- new.env(parent = emptyenv())
@@ -125,7 +125,7 @@ anelli_geometria <- function(geometria) {
 #' Vertici dei confini di un file GeoJSON di comuni
 #'
 #' @param geojson `FeatureCollection` in cui ogni comune ha le proprietà
-#'   `comune` e `cantiere`, come quella scritta da `scarica_confini_comuni()`.
+#'   `comune` e `cantiere`, come quella scritta da `prepara_confini_comuni()`.
 #' @return Tibble con una riga per vertice: `comune`, `cantiere`, `poligono`
 #'   (identificativo unico di ogni poligono), `anello`, `punto`,
 #'   `longitudine`, `latitudine`.
@@ -149,7 +149,8 @@ anelli_geojson <- function(geojson) {
 
 #' Confini dei comuni serviti
 #'
-#' Fonte: ISTAT, dalla raccolta `guglielmo/geojson-italy`, licenza CC-BY 4.0.
+#' Fonte: Regione del Veneto, strato dei comuni del geoportale, licenza IODL
+#' 2.0. I confini non sono semplificati.
 #' Per disegnarli con `ggplot2::geom_polygon()` servono `group = poligono` e
 #' `subgroup = anello`.
 #'

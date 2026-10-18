@@ -53,3 +53,26 @@ mod_ricerca_ui <- function(id, tipo = c("rfid", "utenza")) {
     uiOutput(ns("esito"))
   )
 }
+
+#' Ricerca per RFID: tabella delle letture trovate
+#'
+#' Sta sopra la mappa della scheda, in basso a sinistra, in un riquadro che
+#' si chiude come la legenda: va passata come `sovrapposto` a
+#' `mod_mappa_ui()`. Riporta tutte le letture del periodo degli RFID cercati,
+#' anche quelle che la mappa non disegna.
+#'
+#' @param id Identificativo del modulo di ricerca.
+#' @noRd
+mod_ricerca_tabella_ui <- function(id) {
+  ns <- NS(id)
+  conditionalPanel(
+    "output.con_letture",
+    ns = ns,
+    riquadro_tabella_mappa(
+      "Letture degli RFID cercati",
+      reactable::reactableOutput(ns("letture")),
+      nota = textOutput(ns("nota_letture"), inline = TRUE),
+      classe = "tabella-letture"
+    )
+  )
+}

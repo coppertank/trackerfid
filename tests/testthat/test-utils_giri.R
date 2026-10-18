@@ -168,9 +168,10 @@ test_that("frase, limite e tabella dei giri", {
   expect_null(area_giri(d[0, ]))
   expect_null(area_giri(NULL))
 
-  tabella <- tabella_giri_dt(riepilogo_giri(d))
-  expect_s3_class(tabella, "datatables")
-  dati <- tabella$x$data
+  giri <- riepilogo_giri(d)
+  tabella <- tabella_giri(giri)
+  expect_s3_class(tabella, "reactable")
+  dati <- dati_reactable(tabella)
   expect_named(
     dati,
     c(
@@ -183,21 +184,38 @@ test_that("frase, limite e tabella dei giri", {
       "Bidoni",
       "Fuori giro",
       "Fuori comune",
-      "Letto a",
-      "ordine_giorno"
+      "Letto a"
     )
   )
-  expect_identical(dati$Data[1], "03/03/2025")
+  # le righe sono quelle del riepilogo, nello stesso ordine: la riga scelta
+  # nel browser è la riga del riepilogo
+  expect_equal(nrow(dati), nrow(giri))
+  expect_identical(dati$Data, format(giri$giorno, "%Y-%m-%d"))
   expect_identical(dati$Mezzo[1], "M1 AA111AA")
   expect_identical(dati$Orario[1], "06:10\u201307:05")
-  # i giri con letture fuori giro stanno in cima; la data si ordina come data
-  expect_identical(tabella$x$options$order[[1]], list(7, "desc"))
-  nascosta <- Filter(
-    function(k) isFALSE(k$visible),
-    tabella$x$options$columnDefs
-  )[[1]]
-  expect_identical(nascosta$targets, 10L)
-  expect_s3_class(tabella_giri_dt(riepilogo_giri(d[0, ])), "datatables")
+  attributi <- attributi_reactable(tabella)
+  # i giri con letture fuori giro stanno in cima, poi i più recenti
+  expect_identical(
+    attributi$defaultSorted,
+    list(list(id = "Fuori giro", desc = TRUE), list(id = "Data", desc = TRUE))
+  )
+  # una riga si sceglie con un click; la colonna della scelta non si vede
+  expect_identical(attributi$selection, "single")
+  expect_identical(attributi$onClick, "select")
+  selezione <- Filter(function(k) identical(k$id, ".selection"), attributi$columns)
+  expect_false(selezione[[1]]$show)
+  # la data si mostra all'italiana
+  colonna_data <- Filter(function(k) identical(k$id, "Data"), attributi$columns)
+  expect_match(as.character(colonna_data[[1]]$cell), "p[2] + '/' + p[1]", fixed = TRUE)
+  # ogni colonna si filtra: la data come si vede, i numeri con un confronto
+  expect_true(attributi$filterable)
+  colonne <- stats::setNames(attributi$columns, vapply(attributi$columns, function(k) k$id, ""))
+  expect_match(as.character(colonne$Data$filterMethod), "p[2] + '/' + p[1]", fixed = TRUE)
+  for (numero in c("Letture", "Bidoni", "Fuori giro", "Fuori comune")) {
+    expect_identical(as.character(colonne[[numero]]$filterMethod), as.character(filtro_numerico_js()))
+  }
+  expect_null(colonne$Mezzo$filterMethod)
+  expect_s3_class(tabella_giri(riepilogo_giri(d[0, ])), "reactable")
 })
 
 test_that("un giro \u00e8 quello del calendario anche se il servizio atteso viene dai censiti", {
@@ -215,7 +233,7 @@ test_that("un giro \u00e8 quello del calendario anche se il servizio atteso vien
   expect_identical(giri$servizio_giro, "CARTA")
   expect_identical(giri$letture, 3L)
   expect_equal(nrow(letture_del_giro(d, giri[1, ])), 3)
-  expect_identical(tabella_giri_dt(giri)$x$data[["Giro previsto"]], "CARTA")
+  expect_identical(dati_reactable(tabella_giri(giri))[["Giro previsto"]], "CARTA")
   # senza quella colonna il giro \u00e8 quello del servizio atteso
   senza <- d[names(d) != "servizio_giro"]
   expect_identical(servizio_del_giro(senza), c("CARTA", "CARTA", "SECCO"))
@@ -260,4 +278,14 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   prima <- riepilogo_giri(cerca_giri(d, "VEH001", "2025-09-17", "2025-09-17"))
   expect_identical(prima$comune_giro, "BORGORICCO")
   expect_lte(prima$fuori_giro, 1)
+})
+
+test_that("il filtro dei numeri accetta un valore o un confronto", {
+  js <- as.character(filtro_numerico_js())
+  expect_s3_class(filtro_numerico_js(), "JS_EVAL")
+  for (operatore in c("'>'", "'<'", "'>='", "'<='")) {
+    expect_match(js, operatore, fixed = TRUE)
+  }
+  # senza un numero valido il filtro lascia tutte le righe
+  expect_match(js, "if (!m) return rows;", fixed = TRUE)
 })

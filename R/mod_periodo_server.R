@@ -1,78 +1,49 @@
 #' Modulo periodo di analisi: logica
 #'
-#' Il periodo predefinito è l'anno solare più recente del dataset. Lo stato
+#' Il periodo è un intervallo di date. Al caricamento di un file vale l'anno
+#' solare più recente del file, dal primo gennaio al 31 dicembre. Lo stato
 #' vive sul server, come per i filtri: al caricamento di un nuovo dataset il
 #' periodo si riallinea subito, senza attendere il browser.
 #'
 #' @param id Identificativo del modulo.
 #' @param dati Reactive con l'archivio delle letture (o `NULL`).
 #' @return Lista di reactive: `periodo` (due date, `NULL` se non valido),
-#'   `etichetta` (descrizione breve) e `dati` (selezione delle letture del
-#'   periodo, vedi `seleziona_periodo()`; `NULL` senza dataset o periodo).
+#'   `etichetta` (descrizione breve: "Anno 2025" per un anno intero, vedi
+#'   `etichetta_periodo()`) e `dati` (selezione delle letture del periodo,
+#'   vedi `seleziona_periodo()`; `NULL` senza dataset o periodo).
 #' @noRd
 mod_periodo_server <- function(id, dati) {
   moduleServer(id, function(input, output, session) {
-    stato <- reactiveValues(
-      anno = NULL,
-      personalizzato = FALSE,
-      intervallo = NULL
-    )
+    stato <- reactiveValues(intervallo = NULL)
 
     output$caricato <- reactive(!is.null(dati()))
     outputOptions(output, "caricato", suspendWhenHidden = FALSE)
 
-    imposta_anno <- function(anno) {
-      stato$anno <- anno
-      stato$intervallo <- periodo_anno(anno)
-      updateDateRangeInput(
-        session,
-        "intervallo",
-        start = stato$intervallo[1],
-        end = stato$intervallo[2]
-      )
-    }
-
-    # Nuovo dataset: anno più recente, periodo personalizzato disattivato.
+    # Nuovo dataset: l'anno più recente. Il calendario va dal primo gennaio
+    # dell'anno più vecchio al 31 dicembre del più recente.
     observeEvent(
       dati(),
       {
         d <- dati()
-        stato$personalizzato <- FALSE
-        updateCheckboxInput(session, "personalizzato", value = FALSE)
-        if (is.null(d)) {
-          stato$anno <- NULL
+        anni <- anni_disponibili(d)
+        if (length(anni) == 0) {
           stato$intervallo <- NULL
           return(invisible())
         }
-        anni <- anni_disponibili(d)
-        updateSelectInput(
+        stato$intervallo <- periodo_anno(anni[1])
+        updateDateRangeInput(
           session,
-          "anno_filtro",
-          choices = anni,
-          selected = anni[1]
+          "intervallo",
+          start = stato$intervallo[1],
+          end = stato$intervallo[2],
+          min = periodo_anno(min(anni))[1],
+          max = stato$intervallo[2]
         )
-        imposta_anno(anni[1])
       },
       ignoreNULL = FALSE,
       priority = 200
     )
 
-    observeEvent(
-      input$anno_filtro,
-      {
-        anno <- suppressWarnings(as.integer(input$anno_filtro))
-        req(!is.na(anno))
-        if (!identical(anno, as.integer(stato$anno))) imposta_anno(anno)
-      },
-      ignoreInit = TRUE
-    )
-    observeEvent(
-      input$personalizzato,
-      {
-        stato$personalizzato <- isTRUE(input$personalizzato)
-      },
-      ignoreInit = TRUE
-    )
     observeEvent(
       input$intervallo,
       {
@@ -82,15 +53,10 @@ mod_periodo_server <- function(id, dati) {
     )
 
     periodo <- reactive({
-      if (is.null(stato$anno)) {
-        return(NULL)
-      }
-      if (!stato$personalizzato) {
-        return(periodo_anno(stato$anno))
-      }
       intervallo <- stato$intervallo
       if (
-        length(intervallo) != 2 ||
+        is.null(intervallo) ||
+          length(intervallo) != 2 ||
           anyNA(intervallo) ||
           intervallo[1] > intervallo[2]
       ) {
@@ -108,34 +74,25 @@ mod_periodo_server <- function(id, dati) {
       seleziona_periodo(d, p)
     })
 
+    # Nella barra in alto compare solo un avviso: un intervallo non valido o
+    # un periodo senza letture. Il numero delle letture lo riporta
+    # l'intestazione della mappa principale.
     output$riepilogo <- renderUI({
-      req(dati())
+      req(dati(), !is.null(stato$intervallo))
       p <- periodo()
       if (is.null(p)) {
-        return(div(
-          class = "esito-ricerca esito-avviso",
+        return(span(
+          class = "periodo-riepilogo periodo-avviso",
           "Intervallo non valido: indica due date, con l'inizio non successivo alla fine."
         ))
       }
-      d <- dati_periodo()
-      div(
-        class = paste(
-          "esito-ricerca",
-          if (d$n > 0) "esito-ok" else "esito-avviso"
-        ),
-        tags$div(paste(format(p, "%d/%m/%Y"), collapse = " \u2013 ")),
-        tags$div(
-          if (d$n > 0) {
-            paste(
-              conta(d$n, "lettura", "letture"),
-              "di",
-              conta(d$n_rfid, "RFID", "RFID")
-            )
-          } else {
-            "Nessuna lettura nel periodo."
-          }
-        )
-      )
+      if (dati_periodo()$n == 0) {
+        return(span(
+          class = "periodo-riepilogo periodo-avviso",
+          "Nessuna lettura nel periodo."
+        ))
+      }
+      NULL
     })
 
     list(

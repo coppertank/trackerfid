@@ -176,20 +176,6 @@ test_that("restano solo le letture dei mezzi collaudati, dopo il collaudo", {
   )
 })
 
-test_that("i codici RFID vengono estratti dal testo degli eventi", {
-  eventi <- dplyr::tibble(
-    Evento = c(
-      "Lettura Tag ABC123, antenna 1",
-      "Lettura Tag AAA;BBB ; CCC, antenna 2",
-      "Svuotamento contenitore",
-      NA
-    )
-  )
-  estratti <- estrai_rfid(eventi)
-  expect_identical(estratti$RFID, c("ABC123", "AAA", "BBB", "CCC"))
-  expect_true(all(grepl("Lettura Tag", estratti$Evento)))
-})
-
 test_that("i codici RFID sono portati a 10 o 24 caratteri", {
   formato <- function(codici) formatta_rfid(dplyr::tibble(RFID = codici))$RFID
 
@@ -708,4 +694,62 @@ test_that("gli script leggono i CSV come testo, con il separatore del file", {
 
   vuoto <- scrivi_csv("")
   expect_error(read_csv_auto(vuoto), class = "errore_validazione")
+})
+
+test_that("nucleo e manovra sono quelli in vigore al momento della lettura", {
+  letture <- data.frame(
+    id_fornitura = c("F1", "F1", "F1", "F2", NA, "F3"),
+    giorno_lettura = as.POSIXct(
+      c(
+        "2026-03-01 08:00:00", "2026-07-01 08:00:00", "2026-12-01 08:00:00",
+        "2026-05-01 08:00:00", "2026-05-01 08:00:00", "2026-05-01 08:00:00"
+      ),
+      tz = "UTC"
+    ),
+    stringsAsFactors = FALSE
+  )
+  letture$giorno <- as.Date(letture$giorno_lettura)
+  componenti <- data.frame(
+    # F1 ha 2 residenti fino a giugno, poi 3; F2 ha una decorrenza finita
+    id_fornitura = c(1, 1, 2),
+    data_inizio_decorrenza = as.POSIXct(c("2020-01-01", "2026-06-15", "2020-01-01"), tz = "UTC"),
+    data_fine_decorrenza = as.POSIXct(c("2026-06-14", NA, "2026-01-01"), tz = "UTC"),
+    nucleo_residenti = c("2", "3", "4"),
+    nucleo_non_residenti = c("0", "1", "0"),
+    nucleo_totale = c("2", "4", "4"),
+    tipo_categoria = factor(c("DOMESTICA", "DOMESTICA", "DOMESTICA")),
+    categoria = c("ABITAZIONE", "ABITAZIONE", "ABITAZIONE"),
+    sottocategoria = c("RESIDENTE", "RESIDENTE", "RESIDENTE"),
+    stringsAsFactors = FALSE
+  )
+  componenti$id_fornitura <- paste0("F", componenti$id_fornitura)
+  manovra <- data.frame(
+    id_fornitura = c("F1", "F1", "F3"),
+    data_inizio_dichiarazione = as.Date(c("2026-06-01", "2026-06-01", "2026-01-01")),
+    data_fine_dichiarazione = as.Date(c("2026-10-31", NA, NA)),
+    tipo_dichiarazione = c("ALTRA AGEVOLAZIONE", "manovra sociale anziani", "ALTRA AGEVOLAZIONE"),
+    stringsAsFactors = FALSE
+  )
+  esito <- associa_nucleo_e_manovra(letture, componenti, manovra)
+  expect_identical(names(esito), c(names(letture), colonne_nucleo_manovra()))
+  expect_identical(esito$nucleo_residenti, c(2L, 3L, 3L, NA, NA, NA))
+  expect_identical(esito$nucleo_totale, c(2L, 4L, 4L, NA, NA, NA))
+  expect_identical(esito$tipo_categoria, c("DOMESTICA", "DOMESTICA", "DOMESTICA", NA, NA, NA))
+  # a marzo nessuna manovra; a luglio due, e vince quella del potenziamento;
+  # a dicembre resta la sola manovra ancora in vigore
+  expect_identical(
+    esito$manovra_sociale,
+    c(NA, "MANOVRA SOCIALE ANZIANI", "MANOVRA SOCIALE ANZIANI", NA, NA, "ALTRA AGEVOLAZIONE")
+  )
+  expect_identical(trova_colonna_manovra(manovra), "tipo_dichiarazione")
+  expect_error(
+    associa_nucleo_e_manovra(letture, componenti, manovra[, 1:3]),
+    "indicala con l'argomento colonna_manovra"
+  )
+  # la colonna si può anche indicare
+  manovra$altra <- manovra$tipo_dichiarazione
+  expect_identical(
+    associa_nucleo_e_manovra(letture, componenti, manovra, colonna_manovra = "altra")$manovra_sociale,
+    esito$manovra_sociale
+  )
 })

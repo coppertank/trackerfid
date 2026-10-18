@@ -315,7 +315,12 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       if (is.null(d)) {
         return(NULL)
       }
-      do.call(ultime_letture, c(list(d), filtri()))
+      # L'ultima lettura di ogni RFID, con il numero di tutte le letture che
+      # superano i filtri: lo riporta l'intestazione della mappa.
+      structure(
+        do.call(ultime_letture, c(list(d), filtri())),
+        letture = do.call(conta_letture, c(list(d), filtri()))
+      )
     })
 
     output$stat_box <- renderUI({

@@ -160,7 +160,7 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   expect_true(all(d$comune_lettura %in% comuni_cantieri()$comune))
   # una lettura su cinque è fatta in un comune diverso da quello del giro:
   # quasi tutte sono dei due tag anomali
-  expect_equal(sum(d$comune_lettura != d$comune_giro), 1218)
+  expect_equal(sum(d$comune_lettura != d$comune_giro), 1233)
   expect_false(anyNA(d$comune_assegnato))
   expect_false(anyNA(d$cantiere))
   # la coerenza del comune: i censiti contro il comune del database, i non
@@ -169,11 +169,11 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   conteggi <- table(d$coerenza_comune, d$presente_a_database)
   expect_equal(
     as.integer(conteggi[unname(stati_coerenza_comune()), "Presente"]),
-    c(5010L, 389L, 0L, 8L)
+    c(4972L, 427L, 0L, 8L)
   )
   expect_equal(
     as.integer(conteggi[unname(stati_coerenza_comune()), "Non Presente"]),
-    c(450L, 0L, 618L, 0L)
+    c(443L, 0L, 625L, 0L)
   )
   expect_true(all(
     d$coerenza_comune[rfid_sacchetto(d$RFID) & d$presente_a_database == "Presente"] ==
@@ -281,7 +281,8 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "stato_fornitura",
       "id_utenza",
       "latitudine",
-      "longitudine"
+      "longitudine",
+      colonne_nucleo_manovra()
     )
   )
   # la coerenza del file è quella che l'app ricalcola al caricamento
