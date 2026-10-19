@@ -213,7 +213,7 @@ test_that("ricerche, giri e cluster spaziali hanno i loro livelli", {
 test_that("i punti viaggiano in colonne compatte", {
   trovate <- cerca_per_rfid(
     seleziona_periodo(archivio_esempio()),
-    "RFD20250905100"
+    "D250905100"
   )
   punti <- punti_mappa(trovate, "rfid")
   expect_named(punti, c("x", "y", "k", "c", "r", "u"))
@@ -282,11 +282,11 @@ test_that("la mappa principale riceve bidoni e bolle di cantieri e comuni", {
 
 test_that("la ricerca RFID riceve i riquadri degli spostamenti", {
   selezione <- seleziona_periodo(archivio_esempio())
-  trovate <- cerca_per_rfid(selezione, c("RFD20250905100", "RFD20250901050"))
+  trovate <- cerca_per_rfid(selezione, c("D250905100", "D250901050"))
   dati <- dati_mappa(trovate, "rfid")
   riquadri <- dati$riquadri
-  spostato <- trovate[trovate$RFID == "RFD20250905100", ]
-  riga <- match("RFD20250905100", riquadri$r)
+  spostato <- trovate[trovate$RFID == "D250905100", ]
+  riga <- match("D250905100", riquadri$r)
   expect_equal(c(riquadri$sud[riga], riquadri$nord[riga]), range(spostato$latitudine))
   expect_equal(c(riquadri$ovest[riga], riquadri$est[riga]), range(spostato$longitudine))
   # un RFID letto sempre nello stesso punto non ha riquadro
@@ -300,7 +300,7 @@ test_that("la ricerca RFID riceve i riquadri degli spostamenti", {
 
 test_that("la mappa dei giri riceve il contorno dei comuni dei giri", {
   selezione <- seleziona_periodo(archivio_esempio())
-  letture <- cerca_giri(selezione, "VEH001", "2025-09-24", "2025-09-24")
+  letture <- cerca_giri(selezione, "1601", "2025-09-24", "2025-09-24")
   dati <- dati_mappa(letture, "giro")
   expect_length(dati$punti$x, nrow(letture))
   # il comune del giro è Limena: un anello
@@ -341,7 +341,7 @@ test_that("la vista si adatta ai punti", {
 })
 
 test_that("il popup di una lettura riporta comune e cantiere", {
-  spostato <- cerca_per_rfid(seleziona_periodo(archivio_esempio()), "RFD20250905100")
+  spostato <- cerca_per_rfid(seleziona_periodo(archivio_esempio()), "D250905100")
   popup <- vapply(seq_len(nrow(spostato)), function(i) popup_lettura(spostato, i), character(1))
   expect_true(all(grepl("<b>Comune a database:</b> LIMENA", popup, fixed = TRUE)))
   # il cantiere è quello del comune di lettura

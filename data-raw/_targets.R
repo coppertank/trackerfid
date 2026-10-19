@@ -2,7 +2,8 @@
 #
 # Dai file estratti dal passo 1 in data-raw/origine/ scrive in
 # data-raw/output/:
-#   - letture_app.csv e letture_app.duckdb, da caricare nell'app;
+#   - letture_app.csv e letture_app.duckdb, da caricare nell'app, e
+#     controllo_giri.csv, i giri del calendario da controllare;
 #   - letture_storiche.csv, le letture prima delle antenne, per i report;
 #   - il report sui conferimenti del secco, con i suoi tre CSV.
 #
@@ -73,7 +74,7 @@ list(
   tar_target(file_storiche, file_origine()$storiche, format = "file"),
   tar_target(file_report, "docs/conferimenti_secco.Rmd", format = "file"),
 
-  # --- Letture per l'app: CSV e archivio .duckdb ---------------------------
+  # --- Letture per l'app: CSV, archivio .duckdb e controllo dei giri -------
   # Il target dipende dai file estratti: quando cambiano, si rifà.
   tar_target(
     letture_app,

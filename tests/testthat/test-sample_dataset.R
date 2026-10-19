@@ -57,7 +57,8 @@ test_that("volume e raccolte previste sono realistici e univoci per RFID", {
   censiti <- d[
     d$presente_a_database == "Presente" & !rfid_sacchetto(d$RFID),
   ]
-  expect_setequal(unique(censiti$volume_previsto), c(240, 770, 1100))
+  # i volumi dell'anagrafica aziendale
+  expect_setequal(unique(censiti$volume_previsto), c(40, 60, 120, 1100))
   expect_setequal(unique(censiti$numero_raccolte_annue_previste), c(13, 26))
 
   per_rfid <- dplyr::summarise(
@@ -69,19 +70,13 @@ test_that("volume e raccolte previste sono realistici e univoci per RFID", {
   expect_true(all(per_rfid$volumi == 1))
   expect_true(all(per_rfid$raccolte == 1))
 
-  # i contenitori che hanno cambiato servizio conservano volume e raccolte iniziali
+  # le raccolte sono 26 l'anno, 13 per una parte del vetro
   stabili <- dplyr::filter(
     censiti,
     dplyr::n_distinct(servizio_atteso) == 1,
     .by = "RFID"
   )
   ultimi <- ultime_di(stabili)
-  expect_true(all(
-    ultimi$volume_previsto[
-      ultimi$servizio_atteso == "PLASTICA E METALLI"
-    ] ==
-      770
-  ))
   expect_true(all(
     ultimi$numero_raccolte_annue_previste[
       ultimi$servizio_atteso != "VETRO"
@@ -94,10 +89,27 @@ test_that("volume e raccolte previste sono realistici e univoci per RFID", {
     ]),
     c(13, 26)
   )
-  quota_secco_1100 <- mean(
-    ultimi$volume_previsto[ultimi$servizio_atteso == "SECCO"] == 1100
+
+  # il volume segue la fornitura con cui il contenitore e' stato letto la
+  # prima volta: bidoni piccoli per le domestiche, il cassonetto da 1100
+  # litri per le non domestiche, salvo l'umido
+  completi <- dati_esempio_completi()
+  completi <- completi[!is.na(completi$volume_previsto) & !is.na(completi$sottocategoria), ]
+  primi <- completi[!duplicated(completi$RFID), ]
+  domestici <- primi[primi$sottocategoria == "D", ]
+  non_domestici <- primi[primi$sottocategoria == "ND", ]
+  expect_true(all(non_domestici$volume_previsto ==
+    ifelse(non_domestici$servizio_transponder == "UMIDO", 120, 1100)))
+  expect_true(all(
+    domestici$volume_previsto[domestici$servizio_transponder %in% c("UMIDO", "VETRO")] == 40
+  ))
+  expect_setequal(
+    unique(domestici$volume_previsto[domestici$servizio_transponder == "SECCO"]),
+    c(40, 60, 120)
   )
-  expect_equal(quota_secco_1100, 0.8, tolerance = 0.15)
+  expect_true(all(
+    domestici$volume_previsto[domestici$servizio_transponder %in% c("CARTA", "PLASTICA E METALLI", "VERDE E RAMAGLIE")] == 120
+  ))
 })
 
 test_that("distribuzioni vicine a quelle richieste", {
@@ -149,7 +161,8 @@ test_that("distribuzioni vicine a quelle richieste", {
 
 test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   esito <- carica_dataset(percorso_dataset_esempio())
-  expect_length(esito$avvisi, 0)
+  # l'unico avviso e' quello del giro di zona
+  expect_identical(esito$avvisi, avvisi_esempio())
   d <- esito$dati
   # una lettura esiste solo se un mezzo passa durante un giro: servizio
   # atteso e comune del giro ci sono sempre, anche per i censiti
@@ -159,21 +172,36 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   expect_identical(d$comune_lettura, d$comune_geografico)
   expect_true(all(d$comune_lettura %in% comuni_cantieri()$comune))
   # una lettura su cinque è fatta in un comune diverso da quello del giro:
-  # quasi tutte sono dei due tag anomali
-  expect_equal(sum(d$comune_lettura != d$comune_giro), 1233)
+  # quasi tutte sono dei due tag anomali e del giro di zona, che il
+  # calendario chiama MASSICCIO DEL GRAPPA
+  expect_equal(sum(d$comune_lettura != d$comune_giro), 1326)
+  expect_equal(sum(d$comune_giro == "MASSICCIO DEL GRAPPA"), 106)
   expect_false(anyNA(d$comune_assegnato))
   expect_false(anyNA(d$cantiere))
   # la coerenza del comune: i censiti contro il comune del database, i non
-  # censiti contro quello del giro. I sacchetti censiti, senza un comune a
-  # database, hanno la coerenza ignota
+  # censiti contro quello del giro, con la tolleranza dal confine. I
+  # sacchetti censiti, senza un comune a database, e i non censiti letti dal
+  # giro di zona hanno la coerenza ignota
   conteggi <- table(d$coerenza_comune, d$presente_a_database)
   expect_equal(
     as.integer(conteggi[unname(stati_coerenza_comune()), "Presente"]),
-    c(4972L, 427L, 0L, 8L)
+    c(5010L, 389L, 0L, 8L)
   )
   expect_equal(
     as.integer(conteggi[unname(stati_coerenza_comune()), "Non Presente"]),
-    c(443L, 0L, 625L, 0L)
+    c(450L, 0L, 605L, 13L)
+  )
+  # le letture fatte in un altro comune hanno la distanza dal comune
+  # dichiarato; 45 sono entro la tolleranza, e quindi coerenti
+  vicine <- d$coerenza_comune == "Coerente" & !is.na(d$distanza_comune_dichiarato)
+  expect_equal(sum(vicine), 45)
+  expect_true(all(d$distanza_comune_dichiarato[vicine] <= tolleranza_confine_m()))
+  incongruenti <- d$coerenza_comune %in% c("Fuori comune", "Fuori giro")
+  expect_true(all(d$distanza_comune_dichiarato[incongruenti] > tolleranza_confine_m()))
+  # la distanza e' quella che calcola la preparazione dei dati
+  expect_equal(
+    d$distanza_comune_dichiarato,
+    distanza_comune_dichiarato(as.data.frame(d))
   )
   expect_true(all(
     d$coerenza_comune[rfid_sacchetto(d$RFID) & d$presente_a_database == "Presente"] ==
@@ -203,7 +231,7 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   expect_equal(sum(is.na(stime$servizio_prevalente)), 19)
   expect_true(all(stime$quota[is.na(stime$servizio_prevalente)] < 0.8))
   # il tag fermo in deposito è letto dai giri di tutti i mezzi: stima incerta
-  expect_true(is.na(stime$servizio_prevalente[stime$RFID == "RFD20241001301"]))
+  expect_true(is.na(stime$servizio_prevalente[stime$RFID == "D241001301"]))
 })
 
 test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
@@ -269,11 +297,11 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "volume",
       "frequenza",
       "numero_raccolte_annue",
-      "codice_categoria",
       "comune_fornitura",
       "comune_giro",
       "comune_lettura",
       "coerenza_comune",
+      "distanza_comune_dichiarato",
       "cantiere",
       "data_attivazione_contenitore",
       "data_cessazione_contenitore",
@@ -306,10 +334,10 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   expect_true(all(non_coerenti$servizio_giro == "SECCO PAP"))
   expect_identical(
     as.integer(table(non_coerenti$RFID)[c(
-      "RFD20241007190",
-      "RFD20241011121",
-      "RFD20250901001",
-      "RFD20250905100"
+      "D241007190",
+      "D241011121",
+      "D250901001",
+      "D250905100"
     )]),
     c(10L, 11L, 1L, 1L)
   )
@@ -324,7 +352,22 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   )
   # le colonne del contenitore che l'app non usa ci sono, per i censiti
   expect_identical(is.na(grezzo$frequenza), is.na(d$servizio_transponder))
-  expect_true(all(grezzo$eseguito == "SI"))
+  # la conferma del giro: la stessa per tutte le letture di un giro in un
+  # giorno, NO negli ultimi sette giorni, non ancora confermati, e a volte
+  # mancante
+  expect_true(all(grezzo$eseguito %in% c("SI", "NO", NA)))
+  expect_true(all(tapply(
+    paste(grezzo$eseguito),
+    paste(grezzo$id_giro, grezzo$giorno),
+    function(x) length(unique(x)) == 1
+  )))
+  expect_identical(
+    grezzo$eseguito %in% "NO",
+    grezzo$giorno >= "2025-12-25"
+  )
+  expect_gt(sum(is.na(grezzo$eseguito)), 0)
+  # i codici del giro, come nei dati aziendali, sono numeri di quattro cifre
+  expect_true(all(grepl("^18[0-9]{2}$", grezzo$id_giro)))
   expect_identical(grezzo$giorno, substr(grezzo$giorno_lettura, 1, 10))
 })
 test_that("casi speciali presenti", {
@@ -333,19 +376,19 @@ test_that("casi speciali presenti", {
 
   # righe di esempio della prima specifica
   expect_identical(
-    format(letture("RFD20250901001")$giorno_lettura[1]),
+    format(letture("D250901001")$giorno_lettura[1]),
     "2025-09-01 06:00:00"
   )
   expect_identical(
-    format(letture("RFD20250901002")$giorno_lettura[1]),
+    format(letture("D250901002")$giorno_lettura[1]),
     "2025-09-01 06:15:00"
   )
   expect_identical(
-    format(letture("RFD20250901201")$giorno_lettura[1]),
+    format(letture("D250901201")$giorno_lettura[1]),
     "2025-09-01 06:30:00"
   )
 
-  cambio_servizio <- letture("RFD20250901001")
+  cambio_servizio <- letture("D250901001")
   expect_identical(
     cambio_servizio$servizio_transponder[1:3],
     c("CARTA", "SECCO", "CARTA")
@@ -356,24 +399,24 @@ test_that("casi speciali presenti", {
   )
   expect_true(all(cambio_servizio$servizio_transponder[-2] == "CARTA"))
 
-  cambio_utenza <- letture("RFD20250901050")
-  expect_identical(cambio_utenza$id_utenza[1], "UTZ001")
+  cambio_utenza <- letture("D250901050")
+  expect_identical(cambio_utenza$id_utenza[1], "58590001")
   expect_identical(format(cambio_utenza$giorno_lettura[1], "%d/%m"), "01/09")
-  prima_nuova <- cambio_utenza[cambio_utenza$id_utenza == "UTZ025", ][1, ]
+  prima_nuova <- cambio_utenza[cambio_utenza$id_utenza == "58590025", ][1, ]
   expect_identical(format(prima_nuova$giorno_lettura, "%d/%m"), "20/09")
 
-  con_stima <- letture("RFD20250915201")
+  con_stima <- letture("D250915201")
   expect_equal(nrow(con_stima), 4)
   expect_true(all(con_stima$servizio_atteso == "SECCO"))
 
   # due letture in due giri di tipologie diverse: la stima resta incerta
-  incerto <- letture("RFD20250920250")
+  incerto <- letture("D250920250")
   expect_equal(nrow(incerto), 2)
   expect_identical(incerto$servizio_atteso, c("SECCO", "CARTA"))
   expect_true(all(is.na(incerto$comune_fornitura)))
   expect_false(anyNA(incerto$comune_giro))
 
-  spostato <- letture("RFD20250905100")
+  spostato <- letture("D250905100")
   expect_equal(spostato$latitudine[1:2], c(45.4744, 45.6488))
   expect_equal(spostato$longitudine[1:2], c(11.8449, 11.7836))
 })
@@ -409,7 +452,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   grezzo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
   forniture <- grezzo$id_fornitura[rfid_sacchetto(grezzo$RFID)]
   censiti_grezzo <- grezzo$presente_a_database[rfid_sacchetto(grezzo$RFID)] == "Presente"
-  expect_setequal(forniture[censiti_grezzo], sprintf("SAC%03d", 1:4))
+  expect_setequal(forniture[censiti_grezzo], sprintf("%09d", 200000000L + 1:4))
   expect_true(all(is.na(forniture[!censiti_grezzo])))
   expect_false(any(forniture[censiti_grezzo] %in% grezzo$id_fornitura[!rfid_sacchetto(grezzo$RFID)]))
   expect_identical(s$comune_assegnato, s$comune_lettura)
@@ -449,12 +492,12 @@ test_that("il dataset contiene un esempio per ogni indicatore di cluster", {
     unique(analisi$indicatore_cluster[analisi$RFID == rfid])
   }
 
-  expect_identical(indicatore("RFD20241001301"), "DEPOT_STUCK")
-  expect_identical(indicatore("RFD20250203302"), "TRUCK_STOWAWAY")
-  expect_identical(indicatore("RFD20241003303"), "SCATTERED_READS / GPS_NOISE")
-  expect_identical(indicatore("RFD20250905100"), "RELOCATED_BIN")
-  expect_identical(indicatore("RFD20250915201"), "GHOST_TAG")
-  expect_identical(indicatore("RFD20250901001"), "VALID_TARGET")
+  expect_identical(indicatore("D241001301"), "DEPOT_STUCK")
+  expect_identical(indicatore("D250203302"), "TRUCK_STOWAWAY")
+  expect_identical(indicatore("D241003303"), "SCATTERED_READS / GPS_NOISE")
+  expect_identical(indicatore("D250905100"), "RELOCATED_BIN")
+  expect_identical(indicatore("D250915201"), "GHOST_TAG")
+  expect_identical(indicatore("D250901001"), "VALID_TARGET")
 
   conteggi <- table(analisi$indicatore_cluster)
   expect_setequal(
@@ -494,9 +537,10 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   )
   expect_true(all(per_rfid == 1))
 
-  # tutti i comuni sono in tabella; il cantiere è quello del comune assegnato
+  # tutti i comuni sono in tabella, salvo la zona di un giro; il cantiere è
+  # quello del comune assegnato
   comuni <- stats::na.omit(c(d$comune_fornitura, d$comune_giro))
-  expect_true(all(comuni %in% comuni_cantieri()$comune))
+  expect_identical(setdiff(comuni, comuni_cantieri()$comune), "MASSICCIO DEL GRAPPA")
   # il comune di lettura è quello il cui confine contiene il punto: nel
   # dataset di esempio ogni lettura sta in un comune servito
   expect_false(anyNA(d$comune_geografico))
@@ -539,7 +583,7 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
 
   # il contenitore spostato resta registrato a Limena, cantiere di Rubano, ma
   # dalla seconda lettura in poi viene letto a Cittadella
-  spostato <- d[d$RFID == "RFD20250905100", ]
+  spostato <- d[d$RFID == "D250905100", ]
   expect_identical(unique(spostato$comune_fornitura), "LIMENA")
   expect_identical(spostato$comune_lettura[1:2], c("LIMENA", "CITTADELLA"))
   expect_identical(spostato$comune_giro[1:2], c("LIMENA", "CITTADELLA"))
@@ -555,12 +599,12 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
     c("Coerente", rep("Fuori comune", nrow(spostato) - 1))
   )
   expect_identical(
-    unique(d$comune_fornitura[d$RFID == "RFD20250901001"]),
+    unique(d$comune_fornitura[d$RFID == "D250901001"]),
     "BASSANO DEL GRAPPA"
   )
   # il tag rimasto sul mezzo viene letto durante giri di più comuni, sempre
   # lungo lo stesso percorso
-  sul_mezzo <- d[d$RFID == "RFD20250203302", ]
+  sul_mezzo <- d[d$RFID == "D250203302", ]
   expect_gt(dplyr::n_distinct(sul_mezzo$comune_giro), 1)
   expect_setequal(
     sul_mezzo$comune_lettura,

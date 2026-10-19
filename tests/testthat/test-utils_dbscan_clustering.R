@@ -126,9 +126,9 @@ test_that("sul dataset di esempio la proiezione dà gli stessi cluster di Havers
   per_rfid <- split(d, d$RFID)
   # il tag sul camion ha 570 letture: prova anche un caso numeroso
   campione <- per_rfid[c(
-    "RFD20250203302",
-    "RFD20241003303",
-    "RFD20250905100",
+    "D250203302",
+    "D241003303",
+    "D250905100",
     utils::head(names(per_rfid), 40)
   )]
   for (letture in campione) {

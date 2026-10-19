@@ -869,6 +869,7 @@ popup_lettura <- function(df, riga) {
     coerenza_comune = r[["coerenza_comune"]],
     servizio_giro = r[["servizio_giro"]],
     coerenza_servizio = r[["coerenza_servizio"]],
-    servizio_transponder = r[["servizio_transponder"]]
+    servizio_transponder = r[["servizio_transponder"]],
+    distanza_comune_dichiarato = r[["distanza_comune_dichiarato"]]
   )
 }

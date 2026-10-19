@@ -22,14 +22,16 @@ test_that("la selezione di un periodo conta le sue letture e i suoi RFID", {
 })
 
 test_that("le letture del periodo sono quelle del filtro in R, nell'ordine del file", {
+  # con le sole colonne che l'app usa
+  esempio <- dati_esempio()[colonne_app()]
   for (anno in c(2024, 2025)) {
     selezione <- seleziona_periodo(archivio_esempio(), periodo_anno(anno))
     expect_identical(
       letture_periodo(selezione),
-      filtra_periodo(dati_esempio(), periodo_anno(anno))
+      filtra_periodo(esempio, periodo_anno(anno))
     )
   }
-  expect_identical(letture_periodo(seleziona_periodo(archivio_esempio())), dati_esempio())
+  expect_identical(letture_periodo(seleziona_periodo(archivio_esempio())), esempio)
 })
 
 test_that("la condizione SQL sui sacchetti è quella di rfid_sacchetto", {
@@ -115,7 +117,7 @@ test_that("l'ultima lettura restituisce le colonne chieste, con la riga del file
   expect_named(ultime, c("RFID", "latitudine", "riga"))
   expect_equal(nrow(ultime), 251)
   tutte <- ultime_esempio()
-  expect_named(tutte, c(colonne_dataset(), "servizio_icona", "riga"))
+  expect_named(tutte, c(colonne_app(), "servizio_icona", "riga"))
   # la riga riporta alla lettura del file
   expect_identical(dati_esempio()$RFID[tutte$riga], tutte$RFID)
   expect_equal(dati_esempio()$giorno_lettura[tutte$riga], tutte$giorno_lettura)
@@ -164,8 +166,8 @@ test_that("l'area da inquadrare è il riquadro dei cantieri e dei comuni scelti"
 })
 
 test_that("le letture di un RFID vengono dal periodo o da tutto l'archivio", {
-  rfid <- "RFD20250901001"
-  esempio <- dati_esempio()
+  rfid <- "D250901001"
+  esempio <- dati_esempio()[colonne_app()]
   tutte <- letture_del_rfid(archivio_esempio(), rfid)
   attese <- esempio[esempio$RFID == rfid, ]
   attese <- attese[order(attese$giorno_lettura), ]

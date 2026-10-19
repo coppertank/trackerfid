@@ -54,6 +54,9 @@ conta <- function(n, singolare, plurale) {
 #' @param servizio_giro Character, facoltativo: giro del calendario.
 #' @param coerenza_servizio Character, facoltativo: valori di
 #'   `stati_coerenza()`. Una lettura non coerente ha una riga sua.
+#' @param distanza_comune_dichiarato Numeric, facoltativo: metri dal comune
+#'   dichiarato, vedi `colonna_distanza()`. Una lettura fatta in un altro
+#'   comune ma coerente perché vicina al confine ha una riga che lo dice.
 #' @return HTML string
 #' @noRd
 create_popup_html <- function(
@@ -71,7 +74,8 @@ create_popup_html <- function(
   coerenza_comune = NULL,
   servizio_giro = NULL,
   coerenza_servizio = NULL,
-  servizio_transponder = NULL
+  servizio_transponder = NULL,
+  distanza_comune_dichiarato = NULL
 ) {
   testo <- function(x, se_mancante = "N/A") {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
@@ -102,6 +106,27 @@ create_popup_html <- function(
     )
   )
   riga_cantiere <- riga_facoltativa("Cantiere", cantiere)
+  # Una lettura fatta in un altro comune, ma coerente perché vicina al confine
+  # del comune dichiarato.
+  riga_confine <- if (is.null(distanza_comune_dichiarato) || is.null(coerenza_comune)) {
+    ""
+  } else {
+    distanza <- suppressWarnings(as.numeric(distanza_comune_dichiarato))
+    di <- ifelse(presente %in% "Presente", "del comune a database", "del comune del giro")
+    ifelse(
+      coerenza_comune %in% stati_coerenza_comune()[["coerente"]] & !is.na(distanza),
+      paste0(
+        "<b>Al confine:</b> letto ",
+        ifelse(
+          distanza == 0,
+          paste("dentro il confine", di),
+          paste0(formatta_numero(distanza), " m oltre il confine ", di)
+        ),
+        "<br>"
+      ),
+      ""
+    )
+  }
   # Una lettura fuori comune o fuori giro ha una riga sua, che dice dove era
   # dichiarata e dove è stata fatta.
   riga_incongruenza <- function(etichetta, dichiarato) {
@@ -194,6 +219,7 @@ create_popup_html <- function(
     "<br>",
     riga_comune,
     riga_lettura,
+    riga_confine,
     riga_cantiere,
     "<b>Censito:</b> ",
     testo(presente),

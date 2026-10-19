@@ -206,11 +206,11 @@ verifica_testo(
 esempi <- data.frame(
   chiave = c("regolare", "cambiato", "non_censito", "mezzo", "isolata"),
   RFID = c(
-    "RFD20241001058",
-    "RFD20250901001",
-    "RFD20241014226",
-    "RFD20250203302",
-    "RFD20241003303"
+    "D241001058",
+    "D250901001",
+    "D241014226",
+    "D250203302",
+    "D241003303"
   ),
   cluster_id = c(1L, 1L, 1L, 1L, 2L),
   esempio = c(
@@ -662,7 +662,7 @@ verifica_testo(
 )
 
 # Il bidone spostato del dataset: il luogo con meno letture e quello con più letture.
-spostato <- dettaglio[dettaglio$RFID == "RFD20250905100", ]
+spostato <- dettaglio[dettaglio$RFID == "D250905100", ]
 verifica_testo(
   nrow(spostato) == 2,
   "il bidone spostato non ha più due cluster."

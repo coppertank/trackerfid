@@ -62,24 +62,20 @@ litri_consentiti <- function(nucleo_residenti, potenziamento = FALSE) {
   litri
 }
 
-#' Dice se una fornitura è domestica, dalla sua tipologia
+#' Dice se una fornitura è domestica, dalla sottocategoria
 #'
-#' `TRUE` per le tipologie che iniziano per `DOMESTIC` e per il codice `UD`;
-#' `FALSE` per quelle che contengono `NON DOMESTIC` e per il codice `UND`;
-#' mancante per le altre, che l'analisi non sa classificare. Il report
-#' elenca le tipologie trovate e come sono state lette.
+#' La sottocategoria vale `D` per le forniture domestiche e `ND` per le non
+#' domestiche; è vuota per i non censiti. `TRUE` per `D`, `FALSE` per `ND`,
+#' mancante per gli altri valori, che l'analisi non sa classificare: il
+#' report li elenca.
 #'
-#' @param tipo_categoria Tipologia della fornitura.
+#' @param sottocategoria Sottocategoria della fornitura.
 #' @noRd
-fornitura_domestica <- function(tipo_categoria) {
-  valori <- toupper(stringr::str_squish(as.character(tipo_categoria)))
+fornitura_domestica <- function(sottocategoria) {
+  valori <- toupper(stringr::str_squish(as.character(sottocategoria)))
   esito <- rep(NA, length(valori))
-  non_domestica <- grepl("NON DOMESTIC", valori, fixed = TRUE) |
-    valori %in% c("UND", "NON DOMESTICA", "NON DOMESTICO")
-  domestica <- !non_domestica &
-    (startsWith(valori, "DOMESTIC") | valori %in% "UD")
-  esito[domestica %in% TRUE] <- TRUE
-  esito[non_domestica %in% TRUE] <- FALSE
+  esito[valori %in% "D"] <- TRUE
+  esito[valori %in% "ND"] <- FALSE
   esito
 }
 
@@ -149,155 +145,6 @@ classi_conferimenti <- function() {
     "Non domestica",
     "Categoria sconosciuta"
   )
-}
-
-# --- Lettura del file ------------------------------------------------------------
-
-#' Colonne del CSV della pipeline che servono all'analisi dei conferimenti
-#'
-#' Le obbligatorie sono quelle senza le quali l'analisi non ha senso; le
-#' altre, se mancano, restano vuote.
-#' @noRd
-colonne_conferimenti <- function() {
-  list(
-    obbligatorie = c(
-      "giorno_lettura",
-      "RFID",
-      "presente_a_database",
-      "servizio_transponder",
-      "servizio_atteso",
-      "id_fornitura",
-      "volume_previsto",
-      "numero_raccolte_annue_previste",
-      "nucleo_residenti",
-      "tipo_categoria",
-      "potenziamento_secco",
-      "latitudine",
-      "longitudine"
-    ),
-    facoltative = c(
-      "matricola_veicolo",
-      "id_utenza",
-      "stato_fornitura",
-      "data_attivazione_contenitore",
-      "data_cessazione_contenitore",
-      "nucleo_non_residenti",
-      "nucleo_totale",
-      "categoria",
-      "sottocategoria",
-      "comune_fornitura",
-      "comune_lettura"
-    )
-  )
-}
-
-#' Legge il CSV della pipeline per l'analisi dei conferimenti
-#'
-#' L'app non tiene le colonne della fornitura che servono qui, come il nucleo
-#' e il potenziamento del secco: per questo l'analisi legge il CSV, non l'archivio
-#' `.duckdb`. Legge solo le colonne di `colonne_conferimenti()`, tutte come
-#' testo, poi converte date, ore e numeri. I nomi alternativi di
-#' `alias_colonne()` valgono anche qui.
-#'
-#' @param percorso Percorso del CSV, anche compresso con gzip.
-#' @return Data frame delle letture.
-#' @noRd
-leggi_letture_conferimenti <- function(percorso) {
-  if (!file.exists(percorso)) {
-    stop("File non trovato: ", percorso, call. = FALSE)
-  }
-  separatore <- if (grepl("\\.gz$", percorso)) "auto" else rileva_separatore(percorso)
-  intestazione <- names(data.table::fread(
-    percorso,
-    sep = separatore,
-    nrows = 0,
-    showProgress = FALSE
-  ))
-  # Nomi del file portati a quelli dell'analisi, senza badare alle maiuscole.
-  nomi <- intestazione
-  alias <- alias_colonne()
-  da_alias <- tolower(nomi) %in% names(alias)
-  nomi[da_alias] <- alias[tolower(nomi[da_alias])]
-  colonne <- colonne_conferimenti()
-  volute <- c(colonne$obbligatorie, colonne$facoltative)
-  posizione <- match(tolower(volute), tolower(nomi))
-  # Con due nomi per la stessa colonna vale il primo trovato.
-  mancanti <- colonne$obbligatorie[is.na(posizione[seq_along(colonne$obbligatorie)])]
-  if (length(mancanti) > 0) {
-    stop(
-      "Mancano le colonne: ",
-      paste(mancanti, collapse = ", "),
-      ". Il file va rigenerato con la pipeline di preparazione dei dati.",
-      call. = FALSE
-    )
-  }
-  presenti <- !is.na(posizione)
-  letture <- data.table::fread(
-    percorso,
-    sep = separatore,
-    select = posizione[presenti],
-    colClasses = "character",
-    na.strings = c("", "NA"),
-    encoding = "UTF-8",
-    strip.white = TRUE,
-    showProgress = FALSE,
-    data.table = FALSE
-  )
-  names(letture) <- volute[presenti]
-  for (campo in volute[!presenti]) {
-    letture[[campo]] <- NA_character_
-  }
-  letture <- letture[volute]
-
-  numero <- function(x) suppressWarnings(as.numeric(sub(",", ".", x, fixed = TRUE)))
-  # Le date sono poche, ripetute su milioni di righe: si convertono una volta.
-  in_data <- function(x) {
-    valori <- unique(x)
-    date <- suppressWarnings(as.Date(substr(valori, 1, 10), optional = TRUE))
-    date[match(x, valori)]
-  }
-  letture$giorno_lettura <- leggi_data_ora(letture$giorno_lettura)
-  for (campo in c("latitudine", "longitudine", "volume_previsto", "numero_raccolte_annue_previste")) {
-    letture[[campo]] <- numero(letture[[campo]])
-  }
-  for (campo in c("nucleo_residenti", "nucleo_non_residenti", "nucleo_totale")) {
-    letture[[campo]] <- as.integer(numero(letture[[campo]]))
-  }
-  for (campo in c("data_attivazione_contenitore", "data_cessazione_contenitore")) {
-    letture[[campo]] <- in_data(letture[[campo]])
-  }
-  for (campo in c("servizio_transponder", "servizio_atteso", "tipo_categoria")) {
-    letture[[campo]] <- toupper(letture[[campo]])
-  }
-  # write.csv scrive TRUE e FALSE; mancante senza fornitura.
-  letture$potenziamento_secco <- ifelse(
-    is.na(letture$potenziamento_secco),
-    NA,
-    toupper(letture$potenziamento_secco) %in% c("TRUE", "T", "1", "SI")
-  )
-  scartate <- is.na(letture$giorno_lettura) | is.na(letture$RFID) |
-    is.na(letture$latitudine) | is.na(letture$longitudine)
-  structure(letture[!scartate, , drop = FALSE], scartate = sum(scartate))
-}
-
-#' Date e ore del CSV, in UTC
-#'
-#' Il formato della pipeline, `AAAA-MM-GG HH:MM:SS`, si legge con un percorso
-#' veloce; gli altri formati di `formati_data_ora()`, come le date italiane,
-#' con `lubridate::parse_date_time()`, più lento.
-#' @noRd
-leggi_data_ora <- function(x) {
-  esito <- lubridate::fast_strptime(x, "%Y-%m-%d %H:%M:%OS", tz = "UTC", lt = FALSE)
-  altri <- which(is.na(esito) & !is.na(x))
-  if (length(altri) > 0) {
-    esito[altri] <- suppressWarnings(lubridate::parse_date_time(
-      x[altri],
-      orders = c("Ymd HMS", "Ymd HM", "Ymd", "dmY HMS", "dmY HM", "dmY"),
-      tz = "UTC",
-      exact = FALSE
-    ))
-  }
-  esito
 }
 
 # --- Posizioni, vicini e occasioni -------------------------------------------------
@@ -536,7 +383,9 @@ nucleo_minimo_compatibile <- function(litri) {
 #'    che abbia il potenziamento, dalle forniture censite con conferimenti
 #'    simili, e cerca il contenitore censito che potrebbe aver sostituito.
 #'
-#' @param letture Letture, come le restituisce `leggi_letture_conferimenti()`.
+#' @param letture Letture validate con tutte le colonne della pipeline, come
+#'   le restituisce `carica_dataset(percorso, colonne = "tutte")` dal CSV
+#'   della pipeline. Le sole colonne dell'app non bastano.
 #' @param dal,al Primo e ultimo giorno del periodo. Senza, dal primo giorno
 #'   dell'anno dell'ultima lettura all'ultima lettura. Il periodo comincia
 #'   comunque dal primo giorno con letture.
@@ -553,6 +402,30 @@ analisi_conferimenti <- function(
   al = NULL,
   parametri = parametri_conferimenti()
 ) {
+  usate <- c(
+    "giorno_lettura", "RFID", "presente_a_database", "servizio_transponder",
+    "servizio_atteso", "latitudine", "longitudine", "id_utenza",
+    "volume_previsto", "numero_raccolte_annue_previste", "comune_fornitura",
+    "comune_lettura", "id_fornitura", "stato_fornitura",
+    "data_attivazione_contenitore", "data_cessazione_contenitore",
+    "nucleo_residenti", "tipo_categoria", "categoria", "sottocategoria",
+    "potenziamento_secco"
+  )
+  mancanti <- setdiff(usate, names(letture))
+  if (length(mancanti) > 0) {
+    stop(
+      "Mancano le colonne: ", paste(mancanti, collapse = ", "),
+      ". Le letture vanno lette con carica_dataset(percorso, colonne = \"tutte\").",
+      call. = FALSE
+    )
+  }
+  censite <- letture$presente_a_database == "Presente" & !rfid_sacchetto(letture$RFID)
+  if (any(censite) && all(is.na(letture$id_fornitura[censite]))) {
+    stop(
+      "Le letture dei censiti non hanno la fornitura: il file va rigenerato con la pipeline di preparazione dei dati.",
+      call. = FALSE
+    )
+  }
   giorno <- as.integer(as.Date(letture$giorno_lettura))
   al <- as.integer(as.Date(al %||% as.Date(max(giorno), origin = "1970-01-01")))
   dal <- as.integer(as.Date(
@@ -672,7 +545,7 @@ analisi_conferimenti <- function(
   # 3. Tasso medio: le forniture domestiche censite con occasioni contate.
   base <- unita$tipo == "censito" & unita$metodo == "passaggi" &
     unita$occasioni >= parametri$occasioni_minime &
-    fornitura_domestica(unita$tipo_categoria) %in% TRUE
+    fornitura_domestica(unita$sottocategoria) %in% TRUE
   base_ridotta <- !any(base)
   if (base_ridotta) {
     base <- unita$occasioni > 0
@@ -838,7 +711,6 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
     0,
     1 - stats::pbeta(pmin(quota_consentita, 1), stima$alfa, stima$beta)
   )
-  tipo <- ultimo_valido_per_gruppo(unita$tipo_categoria, f, quante)
   stato <- ultimo_valido_per_gruppo(unita$stato_fornitura, f, quante)
 
   forniture <- data.frame(
@@ -846,7 +718,7 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
     id_utenza = ultimo_valido_per_gruppo(unita$id_utenza, f, quante),
     RFID = vapply(split(unita$RFID, f), function(x) paste(unique(rev(x)), collapse = ", "), ""),
     comune_fornitura = ultimo_valido_per_gruppo(unita$comune_fornitura, f, quante),
-    tipo_categoria = tipo,
+    tipo_categoria = ultimo_valido_per_gruppo(unita$tipo_categoria, f, quante),
     categoria = ultimo_valido_per_gruppo(unita$categoria, f, quante),
     sottocategoria = ultimo_valido_per_gruppo(unita$sottocategoria, f, quante),
     stato_fornitura = stato,
@@ -886,16 +758,19 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
 #' Classe di ogni fornitura
 #'
 #' Prima le ragioni per cui non si può dire niente, poi la probabilità di
-#' superare il limite. Vedi `classi_conferimenti()`.
+#' superare il limite. Vedi `classi_conferimenti()`. Una fornitura cessata o
+#' annullata, o senza contenitori attivi alla fine del periodo, non è attiva:
+#' nei dati aziendali lo stato vale `ATTIVA`, `CESSATA` o `ANNULLATA`.
 #' @noRd
 classe_fornitura <- function(forniture, parametri) {
   soglie <- parametri$soglie_probabilita
-  domestica <- fornitura_domestica(forniture$tipo_categoria)
+  domestica <- fornitura_domestica(forniture$sottocategoria)
   dplyr::case_when(
     is.na(domestica) ~ "Categoria sconosciuta",
     !domestica ~ "Non domestica",
     forniture$contenitori_attivi == 0 |
-      toupper(dplyr::coalesce(forniture$stato_fornitura, "")) %in% c("CESSATO", "CESSATA") ~ "Non attiva",
+      toupper(dplyr::coalesce(forniture$stato_fornitura, "")) %in%
+        c("CESSATA", "CESSATO", "ANNULLATA", "ANNULLATO") ~ "Non attiva",
     is.na(forniture$litri_consentiti) | is.na(forniture$volume) ~ "Nucleo mancante",
     forniture$occasioni < parametri$occasioni_minime ~ "Dati insufficienti",
     forniture$probabilita_oltre >= soglie[["oltre"]] ~ "Oltre il limite",

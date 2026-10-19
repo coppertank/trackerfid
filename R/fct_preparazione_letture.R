@@ -41,6 +41,56 @@ filtra_letture_post_test <- function(df_letture, df_test_mezzi) {
     )))
 }
 
+#' Riporta il comune di lettura ai comuni della tabella
+#'
+#' Il sistema di localizzazione dei mezzi scrive a volte il nome di una
+#' frazione, o un nome che la tabella dei comuni non contiene. Per quelle
+#' letture il comune viene dalla posizione, con i confini della Regione del
+#' Veneto, vedi `comune_del_punto()`; una lettura fuori dai comuni serviti
+#' tiene il nome del file, e l'app la tratta come fuori dai comuni serviti. I
+#' nomi che la tabella contiene, scritti in un'altra grafia, passano alla
+#' grafia della tabella. Il cantiere segue il comune. Un messaggio elenca i
+#' nomi corretti.
+#'
+#' Le letture vicine al confine non si toccano: il comune del file resta, e la
+#' tolleranza dal confine la applica `coerenza_comune()`.
+#'
+#' @param letture Letture con `comune_lettura`, `cantiere`, `latitudine` e
+#'   `longitudine`.
+#' @return Le letture, con `comune_lettura` e `cantiere` corretti.
+#' @noRd
+correggi_comune_lettura <- function(letture) {
+  tabella <- comuni_cantieri()
+  riga <- indice_comune(letture$comune_lettura)
+  nota <- !is.na(riga)
+  letture$comune_lettura[nota] <- tabella$comune[riga[nota]]
+  ignota <- which(!nota & !is.na(letture$latitudine) & !is.na(letture$longitudine))
+  if (length(ignota) > 0) {
+    trovato <- comune_del_punto(letture$latitudine[ignota], letture$longitudine[ignota])
+    corrette <- ignota[!is.na(trovato)]
+    if (length(corrette) > 0) {
+      prima <- letture$comune_lettura[corrette]
+      letture$comune_lettura[corrette] <- trovato[!is.na(trovato)]
+      conteggio <- sort(table(paste0(
+        dplyr::coalesce(prima, "(vuoto)"),
+        " \u2192 ",
+        letture$comune_lettura[corrette]
+      )), decreasing = TRUE)
+      message(sprintf(
+        "Comune di lettura ricavato dalla posizione per %d letture con un nome che la tabella dei comuni non contiene: %s%s",
+        length(corrette),
+        paste(sprintf("%s (%d)", names(conteggio), conteggio)[seq_len(min(10, length(conteggio)))], collapse = ", "),
+        if (length(conteggio) > 10) ", \u2026" else ""
+      ))
+    }
+  }
+  letture$cantiere <- dplyr::coalesce(
+    cantiere_di_comune(letture$comune_lettura),
+    letture$cantiere
+  )
+  letture
+}
+
 #' Porta i codici RFID a un formato unico
 #'
 #' Rimuove gli zeri iniziali, poi riempie con zeri a sinistra: fino a 10
@@ -90,7 +140,7 @@ formatta_rfid <- function(df) {
 #'   `codice_transponder`, il periodo di validità
 #'   (`data_attivazione_contenitore` e `data_cessazione_contenitore`), i dati
 #'   del contenitore (`servizio_transponder`, `volume`, `frequenza`,
-#'   `numero_raccolte_annue`, `codice_categoria`) e i dati della fornitura
+#'   `numero_raccolte_annue`) e i dati della fornitura
 #'   (`id_fornitura`, `id_utenza` e `comune_fornitura`).
 #' @param df_associazione_sacchetti Associazioni dei sacchetti, con
 #'   `codice_uhf` e `id_fornitura`.
@@ -248,7 +298,9 @@ associa_servizio_atteso_da_calendario <- function(
   )
   letture$coerenza_servizio <- coerenza_servizio(letture)
 
-  # 4. Comune di lettura a confronto con il comune dichiarato.
+  # 4. Comune di lettura a confronto con il comune dichiarato, con la
+  # tolleranza dal confine.
+  letture$distanza_comune_dichiarato <- distanza_comune_dichiarato(letture)
   letture$coerenza_comune <- coerenza_comune(letture)
 
   # Solo le colonne del CSV dell'app
@@ -270,11 +322,11 @@ associa_servizio_atteso_da_calendario <- function(
       "volume",
       "frequenza",
       "numero_raccolte_annue",
-      "codice_categoria",
       "comune_fornitura",
       "comune_giro",
       "comune_lettura",
       "coerenza_comune",
+      "distanza_comune_dichiarato",
       "cantiere",
       "data_attivazione_contenitore",
       "data_cessazione_contenitore",
@@ -533,6 +585,134 @@ servizio_da_giro <- function(servizio_giro) {
   uniforma_servizio(servizio_giro)
 }
 
+#' Distanza di ogni lettura dal suo comune dichiarato, in metri
+#'
+#' Solo per le letture fatte in un comune diverso da quello dichiarato: il
+#' comune del database per un censito, quello del giro per un non censito,
+#' vedi `coerenza_comune()`. Zero se il punto cade dentro il comune
+#' dichiarato, secondo i confini della Regione: il sistema di localizzazione
+#' dei mezzi ne usa di un po' diversi. Mancante per le altre letture, e se il
+#' comune dichiarato non è un comune servito.
+#'
+#' @param letture Letture con `presente_a_database`, `comune_lettura`,
+#'   `comune_fornitura`, `comune_giro`, `latitudine` e `longitudine`.
+#' @return Un numero intero di metri per lettura.
+#' @noRd
+distanza_comune_dichiarato <- function(letture) {
+  n <- nrow(letture)
+  colonna <- function(nome) as.character(letture[[nome]] %||% rep(NA_character_, n))
+  censito <- letture[["presente_a_database"]] %in% "Presente"
+  dichiarato <- ifelse(censito, colonna("comune_fornitura"), colonna("comune_giro"))
+  chiave <- function(x) {
+    per_valori_distinti(as.character(x), function(nomi) {
+      chiavi <- chiave_comune(nomi)
+      chiavi[!is.na(chiavi) & !nzchar(chiavi)] <- NA_character_
+      chiavi
+    })
+  }
+  letto <- chiave(colonna("comune_lettura"))
+  atteso <- chiave(dichiarato)
+  diverso <- which(!is.na(letto) & !is.na(atteso) & letto != atteso)
+  esito <- rep(NA_real_, n)
+  esito[diverso] <- round(distanza_dal_comune(
+    letture$latitudine[diverso],
+    letture$longitudine[diverso],
+    dichiarato[diverso]
+  ))
+  esito
+}
+
+#' Giri del calendario da controllare
+#'
+#' Due controlli sul campo `eseguito` del calendario, nel periodo delle
+#' letture:
+#'
+#' - un giro ancora `NO` più di `giorni_conferma` giorni prima dell'ultima
+#'   lettura: probabilmente una conferma dimenticata;
+#' - un giro confermato, `SI`, di un mezzo con l'antenna collaudata, dopo il
+#'   collaudo, senza nessuna lettura: l'antenna potrebbe essere spenta o
+#'   guasta. Un giro che non raccoglie contenitori, come la pulizia del
+#'   territorio, può non avere letture.
+#'
+#' Un avviso dice quanti sono; l'elenco lo scrive `scrivi_letture_app()`.
+#'
+#' @param letture Letture con `giorno`, `matricola_veicolo` e `id_giro`, come
+#'   le restituisce `associa_servizio_atteso_da_calendario()`.
+#' @param calendario Calendario dei giri, come lo restituisce
+#'   `importa_calendario()`.
+#' @param test_mezzi Test dei mezzi, come li restituisce
+#'   `importa_test_mezzi()`.
+#' @param giorni_conferma Giorni dopo i quali un giro ancora `NO` va
+#'   segnalato.
+#' @return Data frame con una riga per giro da controllare: `giorno`,
+#'   `matricola_veicolo`, `id_giro`, `servizio_giro`, `comune_giro`,
+#'   `eseguito` e `problema`.
+#' @noRd
+controllo_giri <- function(letture, calendario, test_mezzi, giorni_conferma = 7) {
+  vuoto <- data.frame(
+    giorno = as.Date(character(0)),
+    matricola_veicolo = character(0),
+    id_giro = character(0),
+    servizio_giro = character(0),
+    comune_giro = character(0),
+    eseguito = character(0),
+    problema = character(0),
+    stringsAsFactors = FALSE
+  )
+  if (nrow(letture) == 0 || nrow(calendario) == 0) {
+    return(vuoto)
+  }
+  periodo <- range(letture$giorno, na.rm = TRUE)
+  giri <- calendario[
+    !is.na(calendario$giorno) &
+      calendario$giorno >= periodo[1] & calendario$giorno <= periodo[2],
+    c("giorno", "matricola_mezzo", "id_giro", "descrizione_servizio", "comune_giro", "eseguito")
+  ]
+  giri <- unique(giri)
+  names(giri) <- c("giorno", "matricola_veicolo", "id_giro", "servizio_giro", "comune_giro", "eseguito")
+  giri$id_giro <- as.character(giri$id_giro)
+  esito <- toupper(stringr::str_squish(as.character(giri$eseguito)))
+
+  non_confermato <- esito %in% "NO" & giri$giorno <= periodo[2] - giorni_conferma
+  collaudati <- test_mezzi[test_mezzi$esito %in% "POSITIVO", , drop = FALSE]
+  i <- match(giri$matricola_veicolo, collaudati$matricola_veicolo)
+  con_antenna <- !is.na(i) & giri$giorno > collaudati$data_test[i]
+  letti <- unique(paste(letture$matricola_veicolo, letture$giorno, letture$id_giro))
+  senza_letture <- esito %in% "SI" & con_antenna &
+    !paste(giri$matricola_veicolo, giri$giorno, giri$id_giro) %in% letti
+
+  problemi <- rbind(
+    cbind(giri[non_confermato, , drop = FALSE], problema = rep(
+      sprintf("non confermato dopo %d giorni", giorni_conferma),
+      sum(non_confermato)
+    )),
+    cbind(giri[senza_letture, , drop = FALSE], problema = rep(
+      "confermato, senza letture dell'antenna",
+      sum(senza_letture)
+    ))
+  )
+  if (sum(non_confermato) > 0) {
+    warning(sprintf(
+      "%d giri sono ancora non confermati dopo pi\u00f9 di %d giorni: l'elenco \u00e8 in controllo_giri.csv.",
+      sum(non_confermato),
+      giorni_conferma
+    ), call. = FALSE)
+  }
+  if (sum(senza_letture) > 0) {
+    warning(sprintf(
+      "%d giri confermati di mezzi con l'antenna non hanno nessuna lettura: l'antenna potrebbe essere spenta o guasta. L'elenco \u00e8 in controllo_giri.csv.",
+      sum(senza_letture)
+    ), call. = FALSE)
+  }
+  if (nrow(problemi) == 0) {
+    return(vuoto)
+  }
+  problemi$problema <- as.character(problemi$problema)
+  problemi <- problemi[order(problemi$giorno, problemi$matricola_veicolo, problemi$id_giro, method = "radix"), , drop = FALSE]
+  rownames(problemi) <- NULL
+  problemi
+}
+
 # --- La pipeline di preparazione --------------------------------------------------
 
 #' Toglie le letture che non vanno nel CSV dell'app
@@ -552,18 +732,22 @@ filtra_codici_app <- function(letture) {
 #'
 #' Importa le tabelle con le funzioni di `R/fct_importa_tabelle.R`, poi
 #' applica le regole nell'ordine: `filtra_letture_post_test()`,
-#' `formatta_rfid()`, `associa_servizio()`,
+#' `correggi_comune_lettura()`, `formatta_rfid()`, `associa_servizio()`,
 #' `associa_servizio_atteso_da_calendario()`, `associa_componenti()`,
-#' `associa_potenziamento()` e `filtra_codici_app()`. Le tabelle intermedie
-#' non vengono salvate: la pipeline di {targets} tiene solo i file finali.
+#' `associa_potenziamento()` e `filtra_codici_app()`. Controlla i giri del
+#' calendario con `controllo_giri()`. Le tabelle intermedie non vengono
+#' salvate: la pipeline di {targets} tiene solo i file finali.
 #'
 #' @param file Lista dei percorsi, con i nomi di `file_origine()`.
-#' @return Le letture, con le 35 colonne del CSV dell'app.
+#' @return Le letture, con le 35 colonne del CSV dell'app, e l'attributo
+#'   `controllo_giri`, i giri da controllare.
 #' @noRd
 prepara_letture_app <- function(file = file_origine()) {
   letture <- importa_letture(file$letture)
   test_mezzi <- importa_test_mezzi(file$test_mezzi)
-  valide <- formatta_rfid(filtra_letture_post_test(letture, test_mezzi))
+  valide <- formatta_rfid(correggi_comune_lettura(
+    filtra_letture_post_test(letture, test_mezzi)
+  ))
   rm(letture)
   con_servizio <- associa_servizio(
     valide,
@@ -571,33 +755,42 @@ prepara_letture_app <- function(file = file_origine()) {
     importa_sacchetti(file$gruppi_sacchetti, file$servizi_sacchetti)
   )
   rm(valide)
-  con_giro <- associa_servizio_atteso_da_calendario(
-    con_servizio,
-    importa_calendario(file$calendario)
-  )
+  calendario <- importa_calendario(file$calendario)
+  con_giro <- associa_servizio_atteso_da_calendario(con_servizio, calendario)
   rm(con_servizio)
+  da_controllare <- controllo_giri(con_giro, calendario, test_mezzi)
+  rm(calendario)
   con_nucleo <- associa_componenti(con_giro, importa_componenti(file$componenti))
   rm(con_giro)
   con_nucleo <- associa_potenziamento(con_nucleo, importa_manovre(file$manovre))
-  filtra_codici_app(con_nucleo)
+  structure(filtra_codici_app(con_nucleo), controllo_giri = da_controllare)
 }
 
 #' Scrive il CSV dell'app e il suo archivio `.duckdb`
 #'
-#' L'archivio è lo stesso CSV letto e validato come lo legge l'app, con gli
-#' avvisi della validazione: vedi `scrivi_archivio()`.
+#' Il CSV ha tutte le colonne della pipeline. L'archivio è lo stesso CSV
+#' letto e validato come lo legge l'app, con le sole colonne dell'app e gli
+#' avvisi della validazione: vedi `scrivi_archivio()`. `controllo_giri.csv`
+#' elenca i giri da controllare, vedi `controllo_giri()`: c'è sempre, anche
+#' senza righe.
 #'
 #' @param letture Risultato di `prepara_letture_app()`.
 #' @param cartella Cartella in cui scrivere.
-#' @return I percorsi dei due file: il CSV e l'archivio.
+#' @return I percorsi dei tre file: il CSV, l'archivio e il controllo dei
+#'   giri.
 #' @noRd
 scrivi_letture_app <- function(letture, cartella = "data-raw/output") {
   dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
   csv <- file.path(cartella, "letture_app.csv")
   archivio <- file.path(cartella, "letture_app.duckdb")
+  giri <- file.path(cartella, "controllo_giri.csv")
+  da_controllare <- attr(letture, "controllo_giri") %||%
+    controllo_giri(letture[0, ], data.frame(), data.frame())
+  attr(letture, "controllo_giri") <- NULL
   utils::write.csv(letture, csv, row.names = FALSE)
   scrivi_archivio(csv, archivio)
-  c(csv, archivio)
+  utils::write.csv(da_controllare, giri, row.names = FALSE, na = "")
+  c(csv, archivio, giri)
 }
 
 #' Scrive il CSV delle letture storiche, per i report

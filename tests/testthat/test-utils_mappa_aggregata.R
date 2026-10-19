@@ -79,7 +79,7 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
   expect_equal(sum(per_cantiere$n), nrow(ultimi))
   # i bidoni senza cantiere formano una bolla con il nome mancante
   senza <- ultimi
-  senza$cantiere[senza$RFID == "RFD20241001301"] <- NA
+  senza$cantiere[senza$RFID == "D241001301"] <- NA
   expect_setequal(aggrega_marker(senza, "cantiere")$nome, c(cantieri(), NA))
   expect_equal(
     sum(per_cantiere$censiti),
@@ -164,10 +164,10 @@ test_that("la ricerca disegna le ultime letture di ogni RFID", {
   # il tag fermo in deposito ha centinaia di letture, il servizio cambiato 10
   trovate <- cerca_per_rfid(
     seleziona_periodo(archivio_esempio()),
-    c("RFD20241001301", "RFD20250901001", "RFD20250905100")
+    c("D241001301", "D250901001", "D250905100")
   )
   conteggi <- table(trovate$RFID)
-  expect_gt(conteggi[["RFD20241001301"]], 10)
+  expect_gt(conteggi[["D241001301"]], 10)
   disegnate <- limita_letture_ricerca(trovate)
   expect_identical(attr(disegnate, "totale"), nrow(trovate))
   expect_equal(
@@ -198,7 +198,7 @@ test_that("la ricerca disegna le ultime letture di ogni RFID", {
 test_that("la ricerca disegna le letture più recenti quando sono troppe", {
   trovate <- cerca_per_rfid(
     seleziona_periodo(archivio_esempio()),
-    c("RFD20250901001", "RFD20250905100")
+    c("D250901001", "D250905100")
   )
   poche <- limita_letture_ricerca(trovate, massimo = 5)
   expect_equal(nrow(poche), 5)

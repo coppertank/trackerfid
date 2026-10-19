@@ -66,6 +66,37 @@ alias_colonne <- function() {
 #' @noRd
 colonne_calendario <- function() "servizio_giro"
 
+#' Conferma del giro
+#'
+#' `eseguito` dice se il giro del calendario è stato confermato: `SI`, `NO`
+#' se non ancora, e a volte manca. `NO` non vuol dire che il giro non è stato
+#' fatto: di solito diventa `SI` nei giorni seguenti. La tabella dei giri la
+#' mostra; nessun conto la usa, perché una lettura dice già che il mezzo è
+#' passato. Facoltativa, senza avviso se manca.
+#' @noRd
+colonna_conferma <- function() "eseguito"
+
+#' Distanza della lettura dal comune dichiarato
+#'
+#' `distanza_comune_dichiarato` la scrive la preparazione dei dati, vedi
+#' `distanza_comune_dichiarato()`: in metri, zero se il punto cade dentro il
+#' comune dichiarato, solo per le letture fatte in un altro comune. Una
+#' lettura appena oltre il confine, entro `tolleranza_confine_m()`, è
+#' coerente: vedi `coerenza_comune()`. Facoltativa, senza avviso se manca: un
+#' file senza la colonna confronta i soli nomi.
+#' @noRd
+colonna_distanza <- function() "distanza_comune_dichiarato"
+
+#' Distanza dal confine entro cui una lettura in un altro comune è coerente
+#'
+#' In metri. Il mezzo legge un bidone dall'altra parte della strada, il GPS
+#' sbaglia di qualche decina di metri e il sistema di localizzazione può usare
+#' confini un po' diversi da quelli della Regione: vicino al confine il comune
+#' di lettura è spesso quello accanto. Un bidone davvero spostato di solito è
+#' molto più lontano.
+#' @noRd
+tolleranza_confine_m <- function() 100
+
 #' Campi facoltativi numerici del CSV
 #' @noRd
 colonne_quantita <- function() {
@@ -107,16 +138,63 @@ colonne_derivate <- function() {
   )
 }
 
-#' Tutte le colonne del dataset validato, nell'ordine in cui compaiono
+#' Colonne del file della pipeline che l'app non usa ancora, con il tipo
+#'
+#' Giro, contenitore, fornitura, nucleo, categoria e potenziamento del secco.
+#' La validazione le tiene, convertite nel tipo SQL indicato: il dataset è
+#' uno solo, con tutte le colonne, e le usa l'analisi dei conferimenti. Un
+#' file che non le ha le lascia vuote, senza avvisi; un valore che non si
+#' converte resta vuoto, con un avviso.
+#'
+#' @return Vettore con nome: per ogni colonna `VARCHAR`, `DATE`, `INTEGER` o
+#'   `BOOLEAN`.
 #' @noRd
-colonne_dataset <- function() {
+tipi_colonne_preparazione <- function() {
+  c(
+    giorno = "DATE",
+    id_giro = "VARCHAR",
+    frequenza = "VARCHAR",
+    data_attivazione_contenitore = "DATE",
+    data_cessazione_contenitore = "DATE",
+    id_fornitura = "VARCHAR",
+    stato_fornitura = "VARCHAR",
+    nucleo_residenti = "INTEGER",
+    nucleo_non_residenti = "INTEGER",
+    nucleo_totale = "INTEGER",
+    tipo_categoria = "VARCHAR",
+    categoria = "VARCHAR",
+    sottocategoria = "VARCHAR",
+    potenziamento_secco = "BOOLEAN"
+  )
+}
+
+#' Nomi delle colonne di `tipi_colonne_preparazione()`
+#' @noRd
+colonne_preparazione <- function() names(tipi_colonne_preparazione())
+
+#' Colonne del dataset validato che l'app usa
+#'
+#' Sono quelle che filtri, mappe, ricerche, dettaglio e analisi dei cluster
+#' portano in R: le altre colonne del dataset restano nell'archivio.
+#' @noRd
+colonne_app <- function() {
   c(
     colonne_obbligatorie(),
     colonne_contenitore(),
     colonne_facoltative(),
     colonne_calendario(),
+    colonna_conferma(),
+    colonna_distanza(),
     colonne_derivate()
   )
+}
+
+#' Tutte le colonne del dataset validato, nell'ordine in cui compaiono
+#'
+#' Quelle che l'app usa, poi quelle della pipeline che non usa ancora.
+#' @noRd
+colonne_dataset <- function() {
+  c(colonne_app(), colonne_preparazione())
 }
 
 #' Valori ammessi per `presente_a_database`
@@ -149,18 +227,23 @@ stati_coerenza_comune <- function() {
 #' - per un non censito il comune del giro: se differisce, la lettura è
 #'   `Fuori giro`, di solito un mezzo che non faceva il giro del calendario.
 #'
-#' Se i due comuni coincidono la lettura è `Coerente`. Se manca il comune
-#' dichiarato, o il comune di lettura, la coerenza è `Coerenza ignota`: ad
-#' esempio per un sacchetto censito, che a database non ha un comune. I nomi
-#' si confrontano senza badare a maiuscole, accenti e apostrofi, vedi
-#' `chiave_comune()`.
+#' Se i due comuni coincidono la lettura è `Coerente`. È coerente anche una
+#' lettura fatta in un altro comune ma entro `tolleranza_confine_m()` metri
+#' dal comune dichiarato, secondo `distanza_comune_dichiarato`: vicino al
+#' confine il sistema di localizzazione dà spesso il comune accanto. Se manca
+#' il comune dichiarato, o il comune di lettura, la coerenza è `Coerenza
+#' ignota`: ad esempio per un sacchetto censito, che a database non ha un
+#' comune. È ignota anche quella di un non censito il cui comune del giro non
+#' è un comune servito, come una zona del calendario: non c'è un confine con
+#' cui confrontare il comune di lettura. I nomi si confrontano senza badare a
+#' maiuscole, accenti e apostrofi, vedi `chiave_comune()`.
 #'
 #' La usano la preparazione dei dati e la validazione dell'app: il CSV
 #' riporta gli stessi valori che l'app ricalcola al caricamento.
 #'
 #' @param data Letture con `presente_a_database`, `comune_lettura`,
-#'   `comune_fornitura` e `comune_giro`. Una colonna che manca vale come
-#'   vuota.
+#'   `comune_fornitura`, `comune_giro` e, se c'è,
+#'   `distanza_comune_dichiarato`. Una colonna che manca vale come vuota.
 #' @return Vettore di testo, un valore di `stati_coerenza_comune()` per
 #'   lettura.
 #' @noRd
@@ -179,12 +262,20 @@ coerenza_comune <- function(data) {
   }
   lettura <- chiave("comune_lettura")
   censito <- data[["presente_a_database"]] %in% "Presente"
-  dichiarato <- chiave("comune_giro")
+  giro <- chiave("comune_giro")
+  dichiarato <- giro
   dichiarato[censito] <- chiave("comune_fornitura")[censito]
+  distanza <- suppressWarnings(as.numeric(
+    data[[colonna_distanza()]] %||% rep(NA_real_, n)
+  ))
+  # Un giro in una zona, non in un comune servito: niente confronto.
+  giro_fuori_tabella <- !censito & !is.na(giro) &
+    is.na(indice_comune(as.character(data[["comune_giro"]] %||% rep(NA, n))))
   stati <- stati_coerenza_comune()
   esito <- rep(stati[["ignota"]], n)
-  noto <- !is.na(lettura) & !is.na(dichiarato)
-  uguale <- noto & lettura == dichiarato
+  noto <- !is.na(lettura) & !is.na(dichiarato) & !giro_fuori_tabella
+  uguale <- noto & (lettura == dichiarato |
+    (!is.na(distanza) & distanza <= tolleranza_confine_m()))
   esito[uguale] <- stati[["coerente"]]
   esito[noto & !uguale & censito] <- stati[["fuori_comune"]]
   esito[noto & !uguale & !censito] <- stati[["fuori_giro"]]

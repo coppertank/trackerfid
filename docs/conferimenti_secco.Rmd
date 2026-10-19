@@ -26,7 +26,8 @@ output:
 # Servono i pacchetti rmarkdown, ggplot2 e pkgload.
 #
 # Parametri:
-#   letture       CSV della pipeline; vuoto per il dataset di esempio
+#   letture       CSV della pipeline, con tutte le colonne; vuoto per il
+#                 dataset di esempio
 #   dal, al       periodo, "AAAA-MM-GG"; vuoti per l'anno dell'ultima lettura
 #   cartella_csv  se indicata, vi scrive le forniture, l'elenco da contattare
 #                 e i non censiti
@@ -124,7 +125,9 @@ tema_grafico <- theme_minimal(base_size = 12) +
 esempio <- !nzchar(params$letture)
 percorso <- if (esempio) percorso_dataset_esempio() else params$letture
 vuoto_null <- function(x) if (nzchar(x)) x else NULL
-letture <- leggi_letture_conferimenti(percorso)
+# Le letture validate come le valida l'app, ma con tutte le colonne della
+# pipeline: l'app tiene solo le sue, e nucleo e potenziamento non ci sono.
+letture <- carica_dataset(percorso, colonne = "tutte")$dati
 analisi <- analisi_conferimenti(
   letture,
   dal = vuoto_null(params$dal),
@@ -310,9 +313,9 @@ spiegazione <- c(
   ),
   sprintf("Meno di %s occasioni osservate.", parametri$occasioni_minime),
   "Senza nucleo né potenziamento il limite non si conosce.",
-  "Nessun contenitore attivo alla fine del periodo, o fornitura cessata.",
+  "Nessun contenitore attivo alla fine del periodo, o fornitura cessata o annullata.",
   "Regole diverse: fuori da questa analisi.",
-  "La tipologia della fornitura non dice se è domestica: vedi «Tipologie delle forniture»."
+  "La sottocategoria della fornitura non è né D né ND: vedi «Sottocategorie delle forniture»."
 )
 knitr::kable(
   data.frame(
@@ -412,19 +415,19 @@ simula_conferimenti <- function(
     volume_previsto = 120,
     numero_raccolte_annue_previste = 26,
     nucleo_residenti = b$nucleo[letti$k],
-    tipo_categoria = "DOMESTICA",
+    tipo_categoria = "IA_31",
     potenziamento_secco = !is.na(b$manovra[letti$k]),
     latitudine = b$lat[letti$k] + stats::rnorm(nrow(letti), 0, 4) * m_lat,
     longitudine = b$lon[letti$k] + stats::rnorm(nrow(letti), 0, 4) * m_lon,
-    matricola_veicolo = "VEH01",
+    matricola_veicolo = "1601",
     id_utenza = b$id_fornitura[letti$k],
-    stato_fornitura = "APERTO",
+    stato_fornitura = "ATTIVA",
     data_attivazione_contenitore = as.Date("2020-01-01"),
-    data_cessazione_contenitore = as.Date(NA),
+    data_cessazione_contenitore = as.Date("2099-12-31"),
     nucleo_non_residenti = 0L,
     nucleo_totale = b$nucleo[letti$k],
-    categoria = "ABITAZIONE",
-    sottocategoria = "RESIDENTE",
+    categoria = "31",
+    sottocategoria = "D",
     comune_fornitura = "PROVA",
     comune_lettura = "PROVA",
     stringsAsFactors = FALSE
@@ -796,28 +799,28 @@ if (nrow(mostrati) > 0) {
 
 `r intero(sum(!is.na(nc$fornitura_candidata)))` non censiti hanno un candidato; `r intero(sum(!nc$dati_sufficienti))` hanno meno di `r parametri$occasioni_minime` occasioni e non compaiono nella tabella.
 
-## Tipologie delle forniture
+## Sottocategorie delle forniture
 
-L'analisi riguarda le sole forniture domestiche, e lo riconosce dalla tipologia della fornitura con una regola semplice: domestica se la tipologia inizia per «DOMESTIC» o è «UD», non domestica se contiene «NON DOMESTIC» o è «UND». Le tipologie trovate nel periodo, e come sono state lette:
+L'analisi riguarda le sole forniture domestiche, e le riconosce dalla sottocategoria della fornitura: «D» per una domestica, «ND» per una non domestica. Un non censito non ha sottocategoria. Una fornitura con un altro valore, o senza, finisce tra quelle di categoria sconosciuta: succede alle forniture censite che non hanno una decorrenza dei componenti, e quindi nemmeno nucleo e categoria. Le sottocategorie trovate nel periodo, e come sono state lette:
 
-```{r tabella-tipologie}
-domestiche_tutte <- fornitura_domestica(f$tipo_categoria) %in% TRUE
-tipologie <- as.data.frame(
-  table(tipo = f$tipo_categoria, useNA = "ifany"),
+```{r tabella-sottocategorie}
+domestiche_tutte <- fornitura_domestica(f$sottocategoria) %in% TRUE
+sottocategorie <- as.data.frame(
+  table(sottocategoria = f$sottocategoria, useNA = "ifany"),
   stringsAsFactors = FALSE
 )
-lettura <- fornitura_domestica(tipologie$tipo)
+lettura <- fornitura_domestica(sottocategorie$sottocategoria)
 knitr::kable(
   data.frame(
-    ifelse(is.na(tipologie$tipo), "(vuota)", tipologie$tipo),
+    ifelse(is.na(sottocategorie$sottocategoria), "(vuota)", sottocategorie$sottocategoria),
     ifelse(
       is.na(lettura),
       "non riconosciuta",
       ifelse(lettura, "domestica", "non domestica")
     ),
-    intero(tipologie$Freq)
+    intero(sottocategorie$Freq)
   ),
-  col.names = c("Tipologia", "Letta come", "Forniture"),
+  col.names = c("Sottocategoria", "Letta come", "Forniture"),
   align = "llr"
 )
 con_potenziamento <- sum(f$potenziamento)
@@ -827,6 +830,7 @@ Forniture con il potenziamento del secco all'ultima lettura: `r intero(con_poten
 
 ## Limiti e scelte da confermare
 
+- **La conferma del giro non conta.** Il campo `eseguito` dice se il giro è stato confermato, non se è stato fatto: un giro ancora `NO` può diventare `SI` nei giorni seguenti. Le letture dicono già da sole che il mezzo è passato, e l'analisi le usa tutte, qualunque sia la conferma.
 - **Una lettura è uno svuotamento.** Un bidone tenuto vicino alla strada, ma non esposto, può essere letto lo stesso: conterebbe come un conferimento. Un'antenna che non legge un bidone esposto fa il contrario. Le due cose si verificano solo sul posto, su un campione di forniture segnalate.
 - **I conferimenti già fatti nell'anno non contano.** L'analisi stima il ritmo attuale e lo riporta a un anno intero: dice chi, continuando così, supererà il limite. Per sapere quanto pagherà una fornitura quest'anno servono anche i conferimenti da gennaio, che le antenne non hanno visto.
 - **Volume e raccolte vengono dall'anagrafica.** Se sono sbagliati, è sbagliato anche il confronto: un carrellato da 120 litri registrato da 240 dimezza i conferimenti consentiti.
@@ -884,6 +888,6 @@ knitr::kable(
 Sui dati aziendali, dalla radice del progetto:
 
 1. il passo 1, `source("data-raw/01_estrai_tabelle.R")`, estrae le tabelle dal database aziendale in `data-raw/origine/`;
-2. la pipeline di preparazione, `targets::tar_make()`, scrive `data-raw/output/letture_app.csv`, con le colonne della fornitura: nucleo e categoria in vigore al momento di ogni lettura, e se la fornitura aveva il potenziamento del secco. Poi compila questo report e scrive in `data-raw/output/` il report in HTML e i tre CSV: tutte le forniture, quelle da contattare e i non censiti. Il periodo si cambia in cima a `data-raw/_targets.R`. Se le estrazioni e le regole non sono cambiate, la pipeline non rifà niente.
+2. la pipeline di preparazione, `targets::tar_make()`, scrive `data-raw/output/letture_app.csv`, con le colonne della fornitura: nucleo, categoria e sottocategoria in vigore al momento di ogni lettura, e se la fornitura aveva il potenziamento del secco. Scrive anche l'archivio `letture_app.duckdb` per l'app, che ha solo le colonne dell'app. Poi compila questo report dal CSV e scrive in `data-raw/output/` il report in HTML e i tre CSV: tutte le forniture, quelle da contattare e i non censiti. Il periodo si cambia in cima a `data-raw/_targets.R`. Se le estrazioni e le regole non sono cambiate, la pipeline non rifà niente.
 
 Il report compilato sui dati aziendali contiene codici di forniture e utenze: resta in `data-raw/output/`, fuori dal repository.

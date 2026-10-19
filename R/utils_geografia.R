@@ -305,6 +305,129 @@ baricentri_comuni <- function() {
   memoria_geografia$baricentri
 }
 
+#' Punti dentro un comune e loro distanza dal confine
+#'
+#' Scorre i lati del confine una volta sola, per tutti i punti insieme: un
+#' punto è dentro se una semiretta che parte da lui attraversa un numero
+#' dispari di lati, come in `dentro_poligoni()`. La distanza è quella dal
+#' lato più vicino, in metri, in una proiezione locale: dentro un comune la
+#' lunghezza di un grado di longitudine cambia di pochissimo.
+#'
+#' @param lng,lat Coordinate dei punti.
+#' @param lati Confine di un comune, un elemento di `lati_comuni()`.
+#' @param distanza `TRUE` per calcolare anche la distanza dal confine.
+#' @return Lista con `dentro`, un valore logico per punto, e `distanza`, in
+#'   metri, oppure `NULL` senza `distanza`.
+#' @noRd
+misura_comune <- function(lng, lat, lati, distanza = FALSE) {
+  x <- lati$x
+  y <- lati$y
+  # Il vertice che precede il primo di un anello è l'ultimo dello stesso anello.
+  precedente <- seq_along(x) - 1L
+  primi <- !duplicated(lati$anello)
+  precedente[primi] <- which(!duplicated(lati$anello, fromLast = TRUE))
+  dentro <- logical(length(lng))
+  if (distanza) {
+    metri_x <- 111320 * cos(mean(c(lati$y_min, lati$y_max)) * pi / 180)
+    metri_y <- 110574
+    px <- lng * metri_x
+    py <- lat * metri_y
+    quadrato <- rep(Inf, length(lng))
+  }
+  for (j in seq_along(x)) {
+    xa <- x[precedente[j]]
+    ya <- y[precedente[j]]
+    attraversa <- ((y[j] > lat) != (ya > lat)) &
+      (lng < (xa - x[j]) * (lat - y[j]) / (ya - y[j]) + x[j])
+    dentro <- xor(dentro, attraversa %in% TRUE)
+    if (distanza) {
+      ax <- xa * metri_x
+      ay <- ya * metri_y
+      dx <- x[j] * metri_x - ax
+      dy <- y[j] * metri_y - ay
+      lunghezza <- dx * dx + dy * dy
+      t <- if (lunghezza > 0) {
+        pmin(pmax(((px - ax) * dx + (py - ay) * dy) / lunghezza, 0), 1)
+      } else {
+        0
+      }
+      quadrato <- pmin(quadrato, (px - ax - t * dx)^2 + (py - ay - t * dy)^2)
+    }
+  }
+  list(dentro = dentro, distanza = if (distanza) sqrt(quadrato))
+}
+
+#' Comune servito che contiene ogni punto
+#'
+#' Serve alla preparazione dei dati, quando il comune di lettura non è nella
+#' tabella dei comuni, e al dataset di esempio. L'app non lo usa: il comune di
+#' una lettura viene dal file. I punti ripetuti si trattano una volta sola.
+#'
+#' @param lat,lng Coordinate dei punti.
+#' @return Il nome del comune, nella grafia della tabella, oppure `NA` per un
+#'   punto fuori dai comuni serviti o senza coordinate.
+#' @noRd
+comune_del_punto <- function(lat, lng) {
+  esito <- rep(NA_character_, length(lat))
+  validi <- which(!is.na(lat) & !is.na(lng))
+  if (length(validi) == 0) {
+    return(esito)
+  }
+  chiave <- paste(lat[validi], lng[validi])
+  distinti <- !duplicated(chiave)
+  plat <- lat[validi][distinti]
+  plng <- lng[validi][distinti]
+  trovato <- rep(NA_character_, length(plat))
+  nomi <- comuni_cantieri()$comune
+  lati <- lati_comuni()
+  for (r in seq_along(lati)) {
+    confine <- lati[[r]]
+    if (is.null(confine)) {
+      next
+    }
+    candidati <- which(
+      is.na(trovato) &
+        plng >= confine$x_min & plng <= confine$x_max &
+        plat >= confine$y_min & plat <= confine$y_max
+    )
+    if (length(candidati) == 0) {
+      next
+    }
+    dentro <- misura_comune(plng[candidati], plat[candidati], confine)$dentro
+    trovato[candidati[dentro]] <- nomi[r]
+  }
+  esito[validi] <- trovato[match(chiave, chiave[distinti])]
+  esito
+}
+
+#' Distanza di ogni punto da un comune servito, in metri
+#'
+#' Zero per un punto dentro il comune, altrimenti la distanza dal suo confine.
+#' Serve alla preparazione dei dati: dice se una lettura fatta in un altro
+#' comune è appena oltre il confine del comune dichiarato, vedi
+#' `distanza_comune_dichiarato()`.
+#'
+#' @param lat,lng Coordinate dei punti.
+#' @param comune Comune di ogni punto, in qualsiasi grafia.
+#' @return Un numero per punto; `NA` se il comune non è nella tabella, non ha
+#'   un confine, o il punto non ha coordinate.
+#' @noRd
+distanza_dal_comune <- function(lat, lng, comune) {
+  esito <- rep(NA_real_, length(lat))
+  riga <- indice_comune(comune)
+  lati <- lati_comuni()
+  for (r in sort(unique(stats::na.omit(riga)))) {
+    confine <- lati[[r]]
+    quali <- which(riga == r & !is.na(lat) & !is.na(lng))
+    if (is.null(confine) || length(quali) == 0) {
+      next
+    }
+    misura <- misura_comune(lng[quali], lat[quali], confine, distanza = TRUE)
+    esito[quali] <- ifelse(misura$dentro, 0, misura$distanza)
+  }
+  esito
+}
+
 #' Riquadro che contiene tutta la zona servita
 #'
 #' @return Lista con `lat_min`, `lat_max`, `lng_min`, `lng_max`.

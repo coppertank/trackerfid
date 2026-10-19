@@ -147,7 +147,7 @@ sql_ultime <- function(selezione, condizione = "TRUE") {
 #' Colonne restituite dalle interrogazioni sulle letture
 #' @noRd
 colonne_risultato <- function(icona = TRUE) {
-  paste(c(colonne_dataset(), if (icona) "servizio_icona"), collapse = ", ")
+  paste(c(colonne_app(), if (icona) "servizio_icona"), collapse = ", ")
 }
 
 #' Condizione SQL dei filtri della mappa principale
@@ -253,13 +253,13 @@ condizione_filtri <- function(
 #'
 #' @param selezione Selezione delle letture.
 #' @param ... Filtri, vedi `condizione_filtri()`.
-#' @param colonne Colonne da restituire. Tutte quelle di `colonne_dataset()`
-#'   e `servizio_icona`, se manca.
+#' @param colonne Colonne da restituire. Tutte quelle di `colonne_app()` e
+#'   `servizio_icona`, se manca.
 #' @return Tibble con una riga per RFID, dalla lettura più recente. Ha sempre
 #'   anche la colonna `riga`, la posizione della lettura nel file.
 #' @noRd
 ultime_letture <- function(selezione, ..., colonne = NULL) {
-  colonne <- unique(c(colonne %||% c(colonne_dataset(), "servizio_icona"), "riga"))
+  colonne <- unique(c(colonne %||% c(colonne_app(), "servizio_icona"), "riga"))
   interroga(
     selezione$archivio,
     sprintf(
@@ -571,10 +571,11 @@ letture_del_rfid <- function(origine, rfid) {
 #' Letture di una selezione, per l'analisi dei cluster
 #'
 #' @param selezione Selezione delle letture.
-#' @return Tibble con le letture del periodo, nell'ordine del file.
+#' @return Tibble con le letture del periodo, nell'ordine del file, con le
+#'   colonne di `colonne_app()`.
 #' @noRd
 letture_periodo <- function(selezione) {
-  letture_archivio(selezione$archivio, sql_periodo(selezione))
+  letture_archivio(selezione$archivio, sql_periodo(selezione), colonne_app())
 }
 
 #' Anni presenti nelle letture di un archivio, dal più recente

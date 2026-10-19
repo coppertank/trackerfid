@@ -31,6 +31,7 @@ colonne_riepilogo_giri <- function() {
     "targa_veicolo",
     "servizio_giro",
     "comune_giro",
+    "eseguito",
     "prima_lettura",
     "ultima_lettura",
     "letture",
@@ -44,9 +45,12 @@ colonne_riepilogo_giri <- function() {
 #' Riepilogo dei giri: una riga per giorno, mezzo, servizio e comune del giro
 #'
 #' Di ogni giro dice che cosa il mezzo doveva fare, cioè servizio atteso e
-#' comune del calendario, e che cosa ha fatto: quante letture, di quanti
-#' bidoni, quante fuori giro e quante fuori comune, vedi `coerenza_comune()`,
-#' e in quali comuni sono state fatte le letture.
+#' comune del calendario, se il giro è stato confermato, e che cosa ha fatto:
+#' quante letture, di quanti bidoni, quante fuori giro e quante fuori comune,
+#' vedi `coerenza_comune()`, e in quali comuni sono state fatte le letture.
+#' La conferma, `eseguito`, è `NO` se una lettura del giro la ha a `NO`,
+#' altrimenti `SI` se una la ha a `SI`, altrimenti manca: vedi
+#' `colonna_conferma()`.
 #'
 #' @param letture Letture trovate da `cerca_giri()`.
 #' @return Tibble con le colonne di `colonne_riepilogo_giri()`, in ordine di
@@ -61,6 +65,7 @@ riepilogo_giri <- function(letture) {
       targa_veicolo = character(0),
       servizio_giro = character(0),
       comune_giro = character(0),
+      eseguito = character(0),
       prima_lettura = as.POSIXct(character(0), tz = "UTC"),
       ultima_lettura = as.POSIXct(character(0), tz = "UTC"),
       letture = integer(0),
@@ -97,12 +102,21 @@ riepilogo_giri <- function(letture) {
     .default = comune_prevalente
   )
   bidoni <- n_distinti_per_gruppo(letture$RFID, gruppo, n)
+  conferma <- toupper(as.character(
+    letture[[colonna_conferma()]] %||% rep(NA_character_, nrow(letture))
+  ))
+  eseguito <- dplyr::case_when(
+    tabulate(gruppo[conferma %in% "NO"], n) > 0 ~ "NO",
+    tabulate(gruppo[conferma %in% "SI"], n) > 0 ~ "SI",
+    .default = NA_character_
+  )
   riepilogo <- dplyr::tibble(
     giorno = primo_per_gruppo(giorno, gruppo, n),
     matricola_veicolo = primo_per_gruppo(letture$matricola_veicolo, gruppo, n),
     targa_veicolo = primo_per_gruppo(letture$targa_veicolo, gruppo, n),
     servizio_giro = primo_per_gruppo(servizio_giro, gruppo, n),
     comune_giro = primo_per_gruppo(comune_giro, gruppo, n),
+    eseguito = eseguito,
     prima_lettura = primo_per_gruppo(letture$giorno_lettura, gruppo, n),
     ultima_lettura = ultimo_per_gruppo(letture$giorno_lettura, gruppo, n),
     # Calcolato qui sopra: dentro `tibble()` la colonna `letture` nasconderebbe
@@ -252,6 +266,8 @@ tabella_giri <- function(riepilogo) {
     Mezzo = paste(riepilogo$matricola_veicolo, riepilogo$targa_veicolo),
     `Giro previsto` = riepilogo$servizio_giro,
     `Comune del giro` = riepilogo$comune_giro,
+    # Un giro senza l'informazione ha un trattino: si filtra come gli altri.
+    Confermato = dplyr::coalesce(riepilogo$eseguito, "\u2013"),
     Orario = paste(ora(riepilogo$prima_lettura), ora(riepilogo$ultima_lettura), sep = "\u2013"),
     Letture = riepilogo$letture,
     Bidoni = riepilogo$bidoni,
@@ -265,6 +281,11 @@ tabella_giri <- function(riepilogo) {
   # si ordina come data, e si mostra come GG/MM/AAAA.
   incongruenze <- function(valore) {
     if (isTRUE(valore > 0)) list(color = "#b03a2e", fontWeight = 700)
+  }
+  # Un giro non ancora confermato in arancio: non e' un errore, ma va
+  # guardato se resta cosi' a lungo.
+  non_confermato <- function(valore) {
+    if (identical(valore, "NO")) list(color = "#b35c00", fontWeight = 700)
   }
   data_italiana <- reactable::JS(
     "function(cell) { var p = String(cell.value).split('-'); return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : cell.value; }"
@@ -293,6 +314,7 @@ tabella_giri <- function(riepilogo) {
       Mezzo = reactable::colDef(minWidth = 115),
       `Giro previsto` = reactable::colDef(minWidth = 120),
       `Comune del giro` = reactable::colDef(minWidth = 110),
+      Confermato = reactable::colDef(style = non_confermato, align = "center", minWidth = 85),
       Orario = reactable::colDef(minWidth = 85),
       Letture = numero(minWidth = 60),
       Bidoni = numero(minWidth = 60),

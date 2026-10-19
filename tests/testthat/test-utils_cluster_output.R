@@ -222,7 +222,7 @@ test_that("il cambio di servizio riporta il servizio attuale e la cronologia", {
   expect_lt(analisi$cluster_indice_fiducia, stabile$cluster_indice_fiducia)
 
   esempio <- analisi_esempio()
-  speciale <- esempio[esempio$RFID == "RFD20250901001", ]
+  speciale <- esempio[esempio$RFID == "D250901001", ]
   expect_identical(
     speciale$servizio_transponder_cronologia,
     "CARTA > SECCO > CARTA"
@@ -486,14 +486,14 @@ test_that("ogni cluster riporta il comune di lettura e le incongruenze", {
 
   # sul dataset di esempio: il contenitore spostato, nel suo secondo luogo
   analisi <- analisi_esempio()
-  spostato <- analisi[analisi$RFID == "RFD20250905100", ]
+  spostato <- analisi[analisi$RFID == "D250905100", ]
   expect_identical(spostato$comune, c("LIMENA", "LIMENA"))
   expect_identical(spostato$comune_geografico, c("LIMENA", "CITTADELLA"))
   expect_identical(spostato$incongruenza_comune, c(NA, "FUORI_COMUNE"))
   expect_false("distanza_comune_m" %in% names(analisi))
   expect_identical(
     as.integer(table(analisi$incongruenza_comune)[c("FUORI_COMUNE", "FUORI_GIRO")]),
-    c(4L, 21L)
+    c(4L, 18L)
   )
   # ogni cluster dell'esempio cade in un comune servito
   expect_false(anyNA(analisi$comune_geografico))

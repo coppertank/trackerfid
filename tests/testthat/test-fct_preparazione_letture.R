@@ -45,10 +45,9 @@ contenitori_prova <- dplyr::tibble(
   # la fornitura lega il contenitore all'utenza: il 10 marzo il contenitore
   # passa a un'altra fornitura, di un'altra utenza
   id_fornitura = c("F1", "F2", "F3"),
-  stato_fornitura = "APERTO",
+  stato_fornitura = "ATTIVA",
   id_utenza = c("U1", "U2", "U3"),
-  comune_fornitura = "ROSÀ",
-  codice_categoria = "UD"
+  comune_fornitura = "ROSÀ"
 )
 # un sacchetto ha solo la fornitura del suo gruppo
 sacchetti_prova <- dplyr::tibble(
@@ -91,11 +90,11 @@ colonne_passo_3 <- c(
   "volume",
   "frequenza",
   "numero_raccolte_annue",
-  "codice_categoria",
   "comune_fornitura",
   "comune_giro",
   "comune_lettura",
   "coerenza_comune",
+  "distanza_comune_dichiarato",
   "cantiere",
   "data_attivazione_contenitore",
   "data_cessazione_contenitore",
@@ -134,9 +133,8 @@ letture_associate <- function(
     data_attivazione_contenitore = as.Date(ifelse(censito, "2025-01-01", NA)),
     data_cessazione_contenitore = as.Date(ifelse(censito, "2099-12-31", NA)),
     id_fornitura = ifelse(censito, "F1", NA_character_),
-    stato_fornitura = ifelse(censito, "APERTO", NA_character_),
+    stato_fornitura = ifelse(censito, "ATTIVA", NA_character_),
     id_utenza = ifelse(censito, "U1", NA_character_),
-    codice_categoria = ifelse(censito, "UD", NA_character_),
     presente_a_database = ifelse(censito, "Presente", "Non Presente"),
     comune_fornitura = ifelse(censito, "ROSÀ", NA_character_)
   )
@@ -233,7 +231,7 @@ test_that("ogni lettura riceve il contenitore valido nel suo giorno", {
   expect_equal(associate$volume, c(240, 240, 240, NA, NA))
   expect_identical(
     associate$stato_fornitura,
-    c(rep("APERTO", 3), NA, NA)
+    c(rep("ATTIVA", 3), NA, NA)
   )
   expect_identical(
     associate$comune_fornitura,
@@ -715,7 +713,7 @@ test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
     nucleo_totale = c(2L, 4L, 4L),
     tipo_categoria = "DOMESTICA",
     categoria = "ABITAZIONE",
-    sottocategoria = "RESIDENTE",
+    sottocategoria = "D",
     stringsAsFactors = FALSE
   )
   esito <- associa_componenti(letture, componenti)
@@ -727,6 +725,8 @@ test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
   senza <- associa_componenti(letture, componenti[names(componenti) != "sottocategoria"])
   expect_true(all(is.na(senza$sottocategoria)))
   expect_identical(colonne_nucleo_manovra(), c(colonne_componenti(), "potenziamento_secco"))
+  # il dataset validato le tiene tutte
+  expect_true(all(colonne_nucleo_manovra() %in% colonne_preparazione()))
 })
 
 test_that("il potenziamento vale se la fornitura ha almeno una manovra in vigore", {
@@ -761,4 +761,106 @@ test_that("il potenziamento vale se la fornitura ha almeno una manovra in vigore
   expect_identical(con_annullata$potenziamento_secco, esito$potenziamento_secco)
   # senza dichiarazioni nessuna fornitura ha il potenziamento
   expect_identical(associa_potenziamento(letture, manovre[0, ])$potenziamento_secco, c(rep(FALSE, 5), NA))
+})
+
+test_that("il comune di lettura che la tabella non conosce viene dalla posizione", {
+  cc <- comuni_cantieri()
+  limena <- cc[cc$comune == "LIMENA", ]
+  letture <- data.frame(
+    comune_lettura = c("LIMENA", "rosa'", "TAGGI DI PROVA", "VENEZIA", "BOH"),
+    cantiere = c("RUBANO", NA, NA, NA, NA),
+    latitudine = c(limena$latitudine, 45.72, limena$latitudine, 45.44, NA),
+    longitudine = c(limena$longitudine, 11.79, limena$longitudine, 12.33, NA),
+    stringsAsFactors = FALSE
+  )
+  expect_message(
+    corrette <- correggi_comune_lettura(letture),
+    "per 1 letture.*TAGGI DI PROVA → LIMENA \\(1\\)"
+  )
+  # i nomi della tabella passano alla sua grafia; la frazione prende il
+  # comune che la contiene; fuori dai comuni serviti, o senza posizione, il
+  # nome resta
+  expect_identical(corrette$comune_lettura, c("LIMENA", "ROSÀ", "LIMENA", "VENEZIA", "BOH"))
+  expect_identical(corrette$cantiere, c("RUBANO", "BASSANO", "RUBANO", NA, NA))
+  # senza nomi da correggere, nessun messaggio
+  expect_no_message(correggi_comune_lettura(letture[1:2, ]))
+})
+
+test_that("la distanza dal comune dichiarato c'e' solo per le letture in un altro comune", {
+  cc <- comuni_cantieri()
+  limena <- cc[cc$comune == "LIMENA", ]
+  letture <- data.frame(
+    presente_a_database = c("Presente", "Presente", "Non Presente", "Non Presente", "Presente"),
+    comune_fornitura = c("LIMENA", "CITTADELLA", NA, NA, NA),
+    comune_giro = c("CITTADELLA", "LIMENA", "LIMENA", "MASSICCIO DEL GRAPPA", "LIMENA"),
+    comune_lettura = c("Limena", "LIMENA", "CITTADELLA", "LIMENA", "LIMENA"),
+    latitudine = limena$latitudine,
+    longitudine = limena$longitudine,
+    stringsAsFactors = FALSE
+  )
+  distanza <- distanza_comune_dichiarato(letture)
+  # stesso comune, anche scritto in un altro modo: manca
+  expect_true(is.na(distanza[1]))
+  # un censito letto a LIMENA ma a database a CITTADELLA: lontano
+  expect_gt(distanza[2], 10000)
+  # un non censito letto da un giro di LIMENA: il punto e' dentro LIMENA
+  expect_identical(distanza[3], 0)
+  # un giro di zona, o un censito senza comune a database: manca
+  expect_true(all(is.na(distanza[4:5])))
+  expect_identical(distanza_comune_dichiarato(letture[0, ]), numeric(0))
+  # senza le colonne dei comuni nessuna distanza
+  expect_true(all(is.na(distanza_comune_dichiarato(letture[, c("presente_a_database", "latitudine", "longitudine")]))))
+})
+
+test_that("si segnalano i giri non confermati da tempo e quelli confermati senza letture", {
+  letture <- data.frame(
+    giorno = as.Date(c("2026-08-03", "2026-08-31")),
+    matricola_veicolo = "1601",
+    id_giro = "10",
+    stringsAsFactors = FALSE
+  )
+  calendario <- data.frame(
+    giorno = as.Date(c(
+      "2026-08-03", "2026-08-05", "2026-08-10", "2026-08-10",
+      "2026-08-28", "2026-08-31", "2026-07-30", "2026-08-12", "2026-08-12"
+    )),
+    matricola_mezzo = c("1601", "1601", "1601", "1602", "1601", "1601", "1601", "1601", "1601"),
+    id_giro = c("10", "12", "10", "13", "12", "10", "10", "14", "14"),
+    eseguito = c("SI", "NO", "si", "SI", "NO", "SI", "SI", NA, NA),
+    descrizione_servizio = "SECCO PAP",
+    comune_giro = "LIMENA",
+    stringsAsFactors = FALSE
+  )
+  test_mezzi <- data.frame(
+    targa_veicolo = c("AB123CD", "ZZ999ZZ"),
+    matricola_veicolo = c("1601", "1602"),
+    esito = c("POSITIVO", "NEGATIVO"),
+    data_test = as.Date("2026-07-31"),
+    stringsAsFactors = FALSE
+  )
+  expect_warning(
+    expect_warning(
+      giri <- controllo_giri(letture, calendario, test_mezzi),
+      "1 giri sono ancora non confermati"
+    ),
+    "1 giri confermati di mezzi con l'antenna non hanno nessuna lettura"
+  )
+  # il NO del 5 agosto ha piu' di sette giorni, quello del 28 no; il giro
+  # confermato del 10 agosto non ha letture; quello del mezzo senza antenna,
+  # quello prima del periodo e quelli senza conferma non contano
+  expect_named(giri, c("giorno", "matricola_veicolo", "id_giro", "servizio_giro", "comune_giro", "eseguito", "problema"))
+  expect_identical(giri$giorno, as.Date(c("2026-08-05", "2026-08-10")))
+  expect_identical(giri$id_giro, c("12", "10"))
+  expect_identical(giri$problema, c("non confermato dopo 7 giorni", "confermato, senza letture dell'antenna"))
+  # con un'attesa piu' lunga il NO non conta
+  expect_warning(
+    piu_lunga <- controllo_giri(letture, calendario, test_mezzi, giorni_conferma = 30),
+    "senza|nessuna lettura"
+  )
+  expect_identical(piu_lunga$problema, "confermato, senza letture dell'antenna")
+  # niente da segnalare: tabella vuota, senza avvisi
+  expect_no_warning(vuoto <- controllo_giri(letture, calendario[1, ], test_mezzi))
+  expect_equal(nrow(vuoto), 0)
+  expect_named(vuoto, names(giri))
+  expect_equal(nrow(controllo_giri(letture[0, ], calendario, test_mezzi)), 0)
 })

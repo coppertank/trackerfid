@@ -25,19 +25,20 @@ letture_via <- function(
         volume_previsto = if (is.null(b$fornitura)) NA_real_ else 120,
         numero_raccolte_annue_previste = if (is.null(b$fornitura)) NA_real_ else 26,
         nucleo_residenti = b$nucleo %||% NA_integer_,
-        tipo_categoria = if (is.null(b$fornitura)) NA_character_ else b$tipo %||% "DOMESTICA",
+        tipo_categoria = if (is.null(b$fornitura)) NA_character_ else b$tipo %||% "IA_31",
         potenziamento_secco = if (is.null(b$fornitura)) NA else !is.null(b$manovra),
         latitudine = 45.7 + (b$scarto_m %||% 0) * m_lat,
         longitudine = 11.7 + b$posizione * 15 * m_lon,
-        matricola_veicolo = "VEH001",
+        matricola_veicolo = "1601",
         id_utenza = if (is.null(b$fornitura)) NA_character_ else paste0("U", b$fornitura),
-        stato_fornitura = if (is.null(b$fornitura)) NA_character_ else "APERTO",
+        stato_fornitura = if (is.null(b$fornitura)) NA_character_ else "ATTIVA",
         data_attivazione_contenitore = as.Date(NA),
-        data_cessazione_contenitore = as.Date(NA),
+        # un'associazione aperta finisce il 2099-12-31, come nella pipeline
+        data_cessazione_contenitore = as.Date(if (is.null(b$fornitura)) NA else "2099-12-31"),
         nucleo_non_residenti = NA_integer_,
         nucleo_totale = NA_integer_,
-        categoria = NA_character_,
-        sottocategoria = NA_character_,
+        categoria = if (is.null(b$fornitura)) NA_character_ else b$categoria %||% "31",
+        sottocategoria = if (is.null(b$fornitura)) NA_character_ else b$sottocategoria %||% "D",
         comune_fornitura = "PROVA",
         comune_lettura = "PROVA",
         stringsAsFactors = FALSE
@@ -75,10 +76,26 @@ test_that("il limite dipende dai residenti, o dal potenziamento", {
   expect_identical(litri_consentiti(2, NA), 960)
 })
 
-test_that("le forniture domestiche si riconoscono dalla tipologia", {
+test_that("le forniture domestiche si riconoscono dalla sottocategoria", {
   expect_identical(
-    fornitura_domestica(c("DOMESTICA", "Domestico", "UD", "NON DOMESTICA", "und", "ALTRO", NA)),
-    c(TRUE, TRUE, TRUE, FALSE, FALSE, NA, NA)
+    fornitura_domestica(c("D", "d", " D ", "ND", "nd", "DOMESTICA", "", NA)),
+    c(TRUE, TRUE, TRUE, FALSE, FALSE, NA, NA, NA)
+  )
+})
+
+test_that("una fornitura cessata o annullata non è attiva", {
+  forniture <- data.frame(
+    sottocategoria = c("D", "D", "D", "D", "ND"),
+    stato_fornitura = c("ATTIVA", "CESSATA", "ANNULLATA", NA, "CESSATA"),
+    contenitori_attivi = c(1L, 1L, 1L, 0L, 1L),
+    litri_consentiti = 720,
+    volume = 120,
+    occasioni = 10,
+    probabilita_oltre = 0.9
+  )
+  expect_identical(
+    classe_fornitura(forniture, parametri_conferimenti()),
+    c("Oltre il limite", "Non attiva", "Non attiva", "Non attiva", "Non domestica")
   )
 })
 
@@ -183,7 +200,7 @@ test_that("i passaggi senza antenna non cambiano la stima, il conto per giorni s
 test_that("potenziamento, non domestiche, nucleo mancante e dati insufficienti", {
   letture <- via(list(
     POTENZIATO = list(posizione = 11, fornitura = "F1", nucleo = 1L, manovra = "MANOVRA SOCIALE ANZIANI", esposto = function(j) TRUE),
-    NEGOZIO = list(posizione = 12, fornitura = "F2", tipo = "NON DOMESTICA", esposto = function(j) TRUE),
+    NEGOZIO = list(posizione = 12, fornitura = "F2", tipo = "IA_50", categoria = "71", sottocategoria = "ND", nucleo = 0L, esposto = function(j) TRUE),
     SENZA = list(posizione = 13, fornitura = "F3", esposto = function(j) TRUE),
     TARDI = list(posizione = 14, fornitura = "F4", nucleo = 1L, esposto = function(j) j >= 18)
   ))
@@ -278,44 +295,29 @@ test_that("un non censito ha nucleo minimo, quota di potenziamento e candidato",
   expect_equal(m$quota, (m$con_potenziamento + 0.5) / (m$forniture + 1))
 })
 
-test_that("il CSV della pipeline si legge con le colonne della fornitura", {
-  letture <- leggi_letture_conferimenti(percorso_dataset_esempio())
-  expect_named(
-    letture,
-    c(colonne_conferimenti()$obbligatorie, colonne_conferimenti()$facoltative)
-  )
-  expect_equal(nrow(letture), nrow(dati_esempio()))
-  expect_s3_class(letture$giorno_lettura, "POSIXct")
-  expect_equal(letture$giorno_lettura, dati_esempio()$giorno_lettura)
-  expect_type(letture$nucleo_residenti, "integer")
-  expect_s3_class(letture$data_attivazione_contenitore, "Date")
-  expect_type(letture$potenziamento_secco, "logical")
-  # mancante senza fornitura, vero o falso con una fornitura
-  esempio <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
-  expect_identical(is.na(letture$potenziamento_secco), is.na(esempio$id_fornitura))
-  expect_identical(which(letture$potenziamento_secco), which(esempio$potenziamento_secco == "TRUE"))
-
-  # un file senza le colonne della fornitura va rigenerato
-  vecchio <- withr::local_tempfile(fileext = ".csv")
-  grezzo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
-  utils::write.csv(grezzo[1:28], vecchio, row.names = FALSE)
+test_that("l'analisi chiede le colonne della fornitura", {
+  letture <- dati_esempio_completi()
   expect_error(
-    leggi_letture_conferimenti(vecchio),
-    "Mancano le colonne: nucleo_residenti, tipo_categoria, potenziamento_secco"
+    analisi_conferimenti(letture[setdiff(names(letture), c("nucleo_residenti", "sottocategoria"))]),
+    "Mancano le colonne: nucleo_residenti, sottocategoria"
   )
-  expect_error(leggi_letture_conferimenti("non_esiste.csv"), "File non trovato")
+  # un file preparato prima della fornitura: le colonne ci sono, ma vuote
+  vecchio <- letture
+  vecchio$id_fornitura <- NA_character_
+  expect_error(analisi_conferimenti(vecchio), "va rigenerato")
+  # le sole colonne dell'app non bastano
+  expect_error(analisi_conferimenti(dati_esempio()), "colonne = \"tutte\"", fixed = TRUE)
 })
 
 test_that("l'analisi del dataset di esempio separa domestiche e non domestiche", {
-  letture <- leggi_letture_conferimenti(percorso_dataset_esempio())
-  analisi <- analisi_conferimenti(letture, dal = "2025-01-01", al = "2025-12-31")
+  analisi <- analisi_conferimenti(dati_esempio_completi(), dal = "2025-01-01", al = "2025-12-31")
   expect_identical(analisi$periodo, as.Date(c("2025-01-01", "2025-12-31")))
   expect_identical(analisi$riepilogo$sacchetti, 10L)
   f <- analisi$forniture
   expect_false(anyDuplicated(f$id_fornitura) > 0)
-  # le non domestiche dell'esempio sono quelle con il codice di categoria UND
-  esempio <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
-  und <- unique(esempio$id_fornitura[esempio$codice_categoria %in% "UND"])
+  # le non domestiche dell'esempio sono quelle con la sottocategoria ND
+  esempio <- dati_esempio_completi()
+  und <- unique(esempio$id_fornitura[esempio$sottocategoria %in% "ND"])
   expect_gt(length(intersect(und, f$id_fornitura)), 0)
   expect_true(all(f$classe[f$id_fornitura %in% und] == "Non domestica"))
   expect_true(all(f$classe[!f$id_fornitura %in% und] != "Non domestica"))
@@ -342,10 +344,4 @@ test_that("i risultati si scrivono in tre CSV", {
   expect_match(basename(percorsi[["contattare"]]), "conferimenti_da_contattare_2025-01-07_2025-12-31.csv")
   contattare <- utils::read.csv2(percorsi[["contattare"]], colClasses = "character")
   expect_identical(contattare$id_fornitura, "F1")
-})
-
-test_that("date e ore si leggono nel formato della pipeline e negli altri", {
-  x <- c("2025-09-01 08:30:15", "01/09/2025 08:30:15", "2025-09-01", NA, "non una data")
-  attese <- as.POSIXct(c("2025-09-01 08:30:15", "2025-09-01 08:30:15", "2025-09-01 00:00:00", NA, NA), tz = "UTC")
-  expect_equal(leggi_data_ora(x), attese)
 })

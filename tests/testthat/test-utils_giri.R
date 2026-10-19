@@ -148,7 +148,7 @@ test_that("frase, limite e tabella dei giri", {
   expect_null(limita_letture_giro(NULL))
 
   # l'area da inquadrare comprende i comuni dei giri, se sono pochi
-  esempio <- cerca_giri(seleziona_periodo(archivio_esempio()), "VEH001", "2025-09-24", "2025-09-24")
+  esempio <- cerca_giri(seleziona_periodo(archivio_esempio()), "1601", "2025-09-24", "2025-09-24")
   area <- area_giri(esempio)
   expect_named(area, c("latitudine", "longitudine"))
   expect_equal(nrow(area), nrow(esempio) + 2)
@@ -179,6 +179,7 @@ test_that("frase, limite e tabella dei giri", {
       "Mezzo",
       "Giro previsto",
       "Comune del giro",
+      "Confermato",
       "Orario",
       "Letture",
       "Bidoni",
@@ -218,6 +219,33 @@ test_that("frase, limite e tabella dei giri", {
   expect_s3_class(tabella_giri(riepilogo_giri(d[0, ])), "reactable")
 })
 
+test_that("un giro e' confermato, non ancora confermato o senza l'informazione", {
+  d <- letture_giri()
+  d$giorno <- lubridate::as_date(d$giorno_lettura)
+  giri <- riepilogo_giri(d)
+  # senza la colonna la conferma manca, e in tabella c'e' un trattino
+  expect_true(all(is.na(giri$eseguito)))
+  expect_true(all(dati_reactable(tabella_giri(giri))$Confermato == "\u2013"))
+  # un giro e' NO se una sua lettura lo e', SI se una lo e', altrimenti manca
+  gruppo <- match(
+    paste(d$giorno, d$matricola_veicolo, servizio_del_giro(d), d$comune_giro),
+    paste(giri$giorno, giri$matricola_veicolo, giri$servizio_giro, giri$comune_giro)
+  )
+  d$eseguito <- NA_character_
+  d$eseguito[gruppo == 1] <- c("SI", "NO")[seq_len(sum(gruppo == 1)) %% 2 + 1]
+  d$eseguito[gruppo == 2] <- "si"
+  confermati <- riepilogo_giri(d)
+  expect_identical(confermati$eseguito[1:2], c("NO", "SI"))
+  expect_true(all(is.na(confermati$eseguito[-(1:2)])))
+  tabella <- tabella_giri(confermati)
+  expect_identical(dati_reactable(tabella)$Confermato[1:3], c("NO", "SI", "\u2013"))
+  # il NO si vede in arancio
+  colonne <- attributi_reactable(tabella)$columns
+  confermato <- Filter(function(k) identical(k$id, "Confermato"), colonne)[[1]]
+  expect_identical(confermato$style[[1]]$color, "#b35c00")
+  expect_null(confermato$style[[2]])
+})
+
 test_that("un giro \u00e8 quello del calendario anche se il servizio atteso viene dai censiti", {
   # Il calendario dava la carta; il servizio atteso di un non censito viene
   # dai censiti letti nello stesso giro, ed \u00e8 il secco
@@ -254,10 +282,10 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   expect_false(anyNA(giri$servizio_giro))
   expect_equal(sum(giri$letture), seleziona_periodo(archivio_esempio(), periodo_anno(2025))$n)
 
-  # mercoled\u00ec 24 settembre 2025 il mezzo VEH001 doveva lavorare a Limena e
+  # mercoled\u00ec 24 settembre 2025 il mezzo 1601 doveva lavorare a Limena e
   # ha letto a Borgoricco. I censiti sono nel loro comune: fuori giro resta il
   # solo non censito
-  sbagliato <- cerca_giri(d, "VEH001", "2025-09-24", "2025-09-24")
+  sbagliato <- cerca_giri(d, "1601", "2025-09-24", "2025-09-24")
   riga <- riepilogo_giri(sbagliato)
   expect_equal(nrow(riga), 1)
   # il giro ha il nome del calendario
@@ -272,10 +300,10 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   expect_identical(riga$letto_in, "BORGORICCO")
   expect_identical(
     sbagliato$RFID[sbagliato$coerenza_comune == "Fuori giro"],
-    "RFD20241009227"
+    "D241009227"
   )
   # la settimana prima lo stesso giro era a Borgoricco
-  prima <- riepilogo_giri(cerca_giri(d, "VEH001", "2025-09-17", "2025-09-17"))
+  prima <- riepilogo_giri(cerca_giri(d, "1601", "2025-09-17", "2025-09-17"))
   expect_identical(prima$comune_giro, "BORGORICCO")
   expect_lte(prima$fuori_giro, 1)
 })

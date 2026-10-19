@@ -15,7 +15,9 @@ test_that("il database di un archivio conosce la tipologia di ogni servizio", {
 })
 
 test_that("le colonne dell'archivio sono quelle del dataset più la riga del file", {
-  expect_identical(colonne_archivio(), c(colonne_dataset(), "riga"))
+  expect_identical(colonne_archivio(), c(colonne_app(), "riga"))
+  expect_identical(colonne_archivio("tutte"), c(colonne_dataset(), "riga"))
+  expect_identical(names(tipi_archivio("tutte")), colonne_archivio("tutte"))
   tipi <- tipi_archivio()
   expect_identical(names(tipi), colonne_archivio())
   expect_identical(tipi[["giorno_lettura"]], "TIMESTAMP")
@@ -43,7 +45,8 @@ test_that("le letture si estraggono tutte o con una condizione, nell'ordine del 
   attese <- dati_esempio()[dati_esempio()$comune_lettura %in% "LIMENA", ]
   expect_identical(limena, attese)
   expect_equal(nrow(letture_archivio(archivio, "FALSE")), 0)
-  expect_named(letture_archivio(archivio, "FALSE"), colonne_dataset())
+  expect_named(letture_archivio(archivio, "FALSE"), colonne_app())
+  expect_identical(archivio$colonne, colonne_app())
 })
 
 test_that("le letture di un data frame vanno in un archivio con tutte le colonne", {
@@ -53,7 +56,7 @@ test_that("le letture di un data frame vanno in un archivio con tutte le colonne
   expect_identical(archivio$origine, "prova")
   expect_identical(archivio$n, nrow(letture))
   estratte <- letture_archivio(archivio)
-  expect_named(estratte, colonne_dataset())
+  expect_named(estratte, colonne_app())
   expect_identical(estratte$RFID, letture$RFID)
   expect_equal(estratte$giorno_lettura, letture$giorno_lettura)
   # le colonne che mancano sono vuote, con il loro tipo
@@ -148,9 +151,9 @@ test_that("un archivio scritto in un file .duckdb si riapre uguale, con gli avvi
   # una riga senza RFID: la validazione la scarta con un avviso
   csv <- scrivi_csv(c(
     intestazione_csv,
-    "2025-09-01 08:00:00,AB123CD,VEH001,A,Presente,CARTA,U1,41.9,12.4",
-    "2025-09-02 08:00:00,AB123CD,VEH001,,Presente,CARTA,U1,41.9,12.4",
-    "2025-09-03 08:00:00,AB123CD,VEH001,B,Non Presente,SECCO,,41.8,12.3"
+    "2025-09-01 08:00:00,AB123CD,1601,A,Presente,CARTA,U1,41.9,12.4",
+    "2025-09-02 08:00:00,AB123CD,1601,,Presente,CARTA,U1,41.9,12.4",
+    "2025-09-03 08:00:00,AB123CD,1601,B,Non Presente,SECCO,,41.8,12.3"
   ))
   dal_csv <- carica_archivio(csv)
   withr::defer(chiudi_archivio(dal_csv$archivio))
@@ -203,6 +206,28 @@ test_that("il file .duckdb del dataset di esempio dà gli stessi risultati del C
   sostituito <- carica_archivio(percorso)
   withr::defer(chiudi_archivio(sostituito$archivio))
   expect_identical(sostituito$archivio$n, nrow(letture_test()))
+})
+
+test_that("l'app tiene le sue colonne, e su richiesta tutte quelle della pipeline", {
+  esempio <- percorso_dataset_esempio()
+  app <- carica_dataset(esempio)$dati
+  tutte <- carica_dataset(esempio, colonne = "tutte")$dati
+  expect_named(app, colonne_app())
+  expect_named(tutte, colonne_dataset())
+  expect_identical(tutte[colonne_app()], app)
+  # il file .duckdb tiene le colonne con cui è scritto, e l'app lo apre
+  cartella <- withr::local_tempdir()
+  percorso <- file.path(cartella, "tutte.duckdb")
+  scrivi_archivio(esempio, percorso, colonne = "tutte")
+  aperto <- carica_archivio(percorso)
+  withr::defer(chiudi_archivio(aperto$archivio))
+  expect_identical(aperto$archivio$colonne, colonne_dataset())
+  expect_identical(letture_archivio(aperto$archivio), tutte)
+  expect_identical(
+    ultime_letture(seleziona_periodo(aperto$archivio)),
+    ultime_esempio()
+  )
+  expect_error(carica_archivio(esempio, colonne = "alcune"), "should be one of")
 })
 
 test_that("un file .duckdb che non è un archivio valido ferma il caricamento", {

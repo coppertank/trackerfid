@@ -263,7 +263,7 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
     expect_identical(stato$coerenza_escluse, "coerente")
     expect_setequal(
       filtrati()$RFID,
-      c("RFD20241007190", "RFD20241011121", "RFD20250901001", "RFD20250905100")
+      c("D241007190", "D241011121", "D250901001", "D250905100")
     )
     expect_true(all(filtrati()$coerenza_servizio == "NO"))
     expect_match(
@@ -344,7 +344,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     expect_equal(nrow(filtrati()), 19)
     expect_true(all(filtrati()$presente_a_database == "Non Presente"))
     expect_true(all(is.na(filtrati()$servizio_icona)))
-    expect_true("RFD20250920250" %in% filtrati()$RFID)
+    expect_true("D250920250" %in% filtrati()$RFID)
     expect_match(
       as.character(output$stat_box$html),
       "Stima incerta:</span>\\s*<b>19</b>"
@@ -362,7 +362,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     censiti <- filtrati()[filtrati()$presente_a_database == "Presente", ]
     expect_true(all(censiti$servizio_transponder == "SECCO"))
     expect_true(all(servizio_mostrato(filtrati()) == "SECCO"))
-    expect_true("RFD20250915201" %in% non_censiti()$RFID)
+    expect_true("D250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
     # con lo stato a database: i soli non censiti
     session$setInputs(presente_filter = "Non Presente")
@@ -431,7 +431,7 @@ test_that("i filtri si azzerano con un nuovo dataset ma non al cambio di periodo
 })
 
 test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
-  n_letture <- sum(dati_esempio()$RFID == "RFD20250901001")
+  n_letture <- sum(dati_esempio()$RFID == "D250901001")
   dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(
     mod_ricerca_server,
@@ -440,12 +440,12 @@ test_that("la ricerca RFID parte dal pulsante e si azzera con Pulisci", {
       ricerca <- session$getReturned()
       expect_null(ricerca$risultati())
 
-      session$setInputs(testo = "RFD20250901001, inesistente")
+      session$setInputs(testo = "D250901001, inesistente")
       expect_null(ricerca$risultati())
 
       session$setInputs(cerca = 1)
       expect_equal(nrow(ricerca$risultati()), n_letture)
-      expect_identical(ricerca$codici(), c("RFD20250901001", "inesistente"))
+      expect_identical(ricerca$codici(), c("D250901001", "inesistente"))
       html <- as.character(output$esito$html)
       expect_match(html, "1 RFID su 2 trovati")
       expect_match(html, "Non trovati: \\s*inesistente")
@@ -474,16 +474,16 @@ test_that("la ricerca utenza mostra solo i bidoni dell'utenza attuale", {
     {
       ricerca <- session$getReturned()
 
-      session$setInputs(testo = "UTZ001", cerca = 1)
-      expect_false("RFD20250901050" %in% ricerca$risultati()$RFID)
+      session$setInputs(testo = "58590001", cerca = 1)
+      expect_false("D250901050" %in% ricerca$risultati()$RFID)
       expect_equal(anyDuplicated(ricerca$risultati()$RFID), 0)
 
-      session$setInputs(testo = "UTZ025\nUTZ999", cerca = 2)
-      expect_true("RFD20250901050" %in% ricerca$risultati()$RFID)
-      expect_true(all(ricerca$risultati()$id_utenza == "UTZ025"))
+      session$setInputs(testo = "58590025\n58590999", cerca = 2)
+      expect_true("D250901050" %in% ricerca$risultati()$RFID)
+      expect_true(all(ricerca$risultati()$id_utenza == "58590025"))
       expect_match(
         as.character(output$esito$html),
-        "Nessun bidone attualmente associato a: \\s*UTZ999"
+        "Nessun bidone attualmente associato a: \\s*58590999"
       )
     }
   )
@@ -511,7 +511,7 @@ test_that("il click su un marker restituisce l'RFID della lettura e apre il popu
   registro <- registra_messaggi()
   trovate <- cerca_per_rfid(
     seleziona_periodo(archivio_esempio()),
-    c("RFD20250901001", "RFD20250905100")
+    c("D250901001", "D250905100")
   )
   dati <- shiny::reactiveVal(trovate)
   shiny::testServer(
@@ -967,7 +967,7 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
 test_that("le letture senza cantiere hanno una voce tra i cantieri", {
   # Nel dataset di esempio ogni lettura ha un cantiere: in un file può mancare.
   tutte <- dati_esempio()
-  vuote <- tutte$RFID == "RFD20241001301"
+  vuote <- tutte$RFID == "D241001301"
   tutte$comune_lettura[vuote] <- NA
   tutte$comune_geografico[vuote] <- NA
   tutte$comune_assegnato[vuote] <- NA
@@ -983,7 +983,7 @@ test_that("le letture senza cantiere hanno una voce tra i cantieri", {
       fixed = TRUE
     )
     session$setInputs(cantiere_check = senza_cantiere())
-    expect_identical(restituito$dati_filtrati()$RFID, "RFD20241001301")
+    expect_identical(restituito$dati_filtrati()$RFID, "D241001301")
     expect_true(is.na(restituito$dati_filtrati()$cantiere))
     expect_equal(restituito$area(), angoli(tutte[vuote, ]))
   })
@@ -1110,7 +1110,7 @@ test_that("la mappa principale riceve bidoni e bolle in un messaggio solo", {
 test_that("la ricerca RFID disegna al massimo le letture previste dal limite", {
   withr::local_options(trackerfid.max_letture_ricerca = 5)
   registro <- registra_messaggi()
-  trovate <- cerca_per_rfid(seleziona_periodo(archivio_esempio()), "RFD20250901001")
+  trovate <- cerca_per_rfid(seleziona_periodo(archivio_esempio()), "D250901001")
   dati <- shiny::reactiveVal(trovate)
   shiny::testServer(
     mod_mappa_server,
@@ -1130,7 +1130,7 @@ test_that("la ricerca RFID disegna al massimo le letture previste dal limite", {
       # la prima riga disegnata è l'ultima lettura dell'RFID
       expect_true(disegnati()$is_ultimo[1])
       session$setInputs(mappa_clic = list(i = 0, nonce = 1))
-      expect_identical(selezione()$rfid, "RFD20250901001")
+      expect_identical(selezione()$rfid, "D250901001")
     }
   )
 })
@@ -1139,7 +1139,7 @@ test_that("la ricerca RFID disegna le ultime 10 letture di ogni RFID", {
   registro <- registra_messaggi()
   trovate <- cerca_per_rfid(
     seleziona_periodo(archivio_esempio()),
-    c("RFD20241001301", "RFD20250905100")
+    c("D241001301", "D250905100")
   )
   dati <- shiny::reactiveVal(trovate)
   shiny::testServer(
@@ -1147,8 +1147,8 @@ test_that("la ricerca RFID disegna le ultime 10 letture di ogni RFID", {
     args = list(dati = dati, modalita = "rfid"),
     {
       session$flushReact()
-      deposito <- sum(trovate$RFID == "RFD20241001301")
-      spostato <- sum(trovate$RFID == "RFD20250905100")
+      deposito <- sum(trovate$RFID == "D241001301")
+      spostato <- sum(trovate$RFID == "D250905100")
       expect_gt(deposito, 10)
       expect_equal(nrow(disegnati()), 10 + min(spostato, 10))
       expect_identical(attr(disegnati(), "totale"), nrow(trovate))
@@ -1165,7 +1165,7 @@ test_that("la ricerca RFID disegna le ultime 10 letture di ogni RFID", {
         fixed = TRUE
       )
       # con poche letture la mappa le disegna tutte, e non lo dice
-      dati(trovate[trovate$RFID == "RFD20250905100", ])
+      dati(trovate[trovate$RFID == "D250905100", ])
       session$flushReact()
       expect_no_match(output$riepilogo, "sulla mappa", fixed = TRUE)
     }
@@ -1283,23 +1283,22 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
     expect_identical(attr(filtrati(), "letture"), nrow(letture))
 
     # solo le letture fuori comune: il contenitore spostato, il tag sul mezzo
-    # e quattro censiti letti appena oltre il confine del loro comune
+    # e due censiti letti oltre il confine del loro comune, piu' lontano della
+    # tolleranza. Altri due sono sempre entro la tolleranza: coerenti
     session$setInputs(coerenza_comune_check = "fuori_comune")
     expect_setequal(
       filtrati()$RFID,
       c(
-        "RFD20250905100",
-        "RFD20250203302",
-        "RFD20241007067",
-        "RFD20241017188",
-        "RFD20241030027",
-        "RFD20241002198"
+        "D250905100",
+        "D250203302",
+        "D241007067",
+        "D241017188"
       )
     )
     expect_true(all(filtrati()$coerenza_comune == "Fuori comune"))
     expect_match(
       as.character(output$stat_box$html),
-      "Fuori comune:</span>\\s*<b>6</b>"
+      "Fuori comune:</span>\\s*<b>4</b>"
     )
 
     # solo fuori giro: la mappa mostra l'ultima lettura fuori giro di ogni RFID
@@ -1309,19 +1308,25 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
       nrow(filtrati()),
       dplyr::n_distinct(letture$RFID[letture$coerenza_comune == "Fuori giro"])
     )
-    expect_equal(nrow(filtrati()), 36)
+    expect_equal(nrow(filtrati()), 35)
     expect_identical(attr(filtrati(), "letture"), sum(letture$coerenza_comune == "Fuori giro"))
-    expect_true("RFD20241001301" %in% filtrati()$RFID)
+    expect_true("D241001301" %in% filtrati()$RFID)
     # un censito non è mai fuori giro
     expect_true(all(filtrati()$presente_a_database == "Non Presente"))
 
-    # solo la coerenza ignota: i sacchetti censiti, senza comune a database
+    # solo la coerenza ignota: i sacchetti censiti, senza comune a database,
+    # e i non censiti letti dal giro di zona
     session$setInputs(coerenza_comune_check = "ignota")
-    expect_true(all(rfid_sacchetto(filtrati()$RFID)))
-    expect_equal(nrow(filtrati()), 7)
+    ignoti <- filtrati()
+    expect_equal(sum(rfid_sacchetto(ignoti$RFID)), 7)
+    expect_true(all(
+      ignoti$comune_giro[!rfid_sacchetto(ignoti$RFID)] == "MASSICCIO DEL GRAPPA"
+    ))
+    expect_true(all(ignoti$presente_a_database[!rfid_sacchetto(ignoti$RFID)] == "Non Presente"))
+    expect_equal(nrow(ignoti), 10)
     expect_match(
       as.character(output$stat_box$html),
-      "Coerenza ignota:</span>\\s*<b>7</b>"
+      "Coerenza ignota:</span>\\s*<b>10</b>"
     )
 
     # solo le letture coerenti
@@ -1356,11 +1361,11 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
 
     # un mezzo, un giorno: il giro sbagliato
     session$setInputs(
-      mezzo = "VEH001",
+      mezzo = "1601",
       giorni = as.Date(c("2025-09-24", "2025-09-24"))
     )
     expect_equal(nrow(trovate()), 10)
-    expect_true(all(trovate()$matricola_veicolo == "VEH001"))
+    expect_true(all(trovate()$matricola_veicolo == "1601"))
     giri <- restituito$riepilogo()
     expect_equal(nrow(giri), 1)
     expect_identical(giri$comune_giro, "LIMENA")
@@ -1387,7 +1392,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
 
     # un click su una riga della tabella: le sole letture di quel giro
     riga <- which(
-      giri$matricola_veicolo == "VEH001" &
+      giri$matricola_veicolo == "1601" &
         giri$giorno == as.Date("2025-09-24")
     )
     expect_identical(giri$comune_giro[riga], "LIMENA")
@@ -1420,7 +1425,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
 
     # nessuna lettura: avviso sulla mappa
     session$setInputs(
-      mezzo = "VEH005",
+      mezzo = "1605",
       giorni = as.Date(c("2025-09-28", "2025-09-28"))
     )
     expect_equal(nrow(trovate()), 0)
@@ -1445,7 +1450,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
 
 test_that("la mappa dei giri disegna le letture trovate, anche ripetute", {
   registro <- registra_messaggi()
-  letture <- cerca_giri(seleziona_periodo(archivio_esempio()), "VEH001", "2025-09-22", "2025-09-28")
+  letture <- cerca_giri(seleziona_periodo(archivio_esempio()), "1601", "2025-09-22", "2025-09-28")
   dati <- shiny::reactiveVal(letture)
   shiny::testServer(
     mod_mappa_server,

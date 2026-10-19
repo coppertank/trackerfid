@@ -27,7 +27,7 @@ test_that("l'analisi da file usa come predefinito l'anno più recente", {
 test_that("gli avvisi di validazione vengono mostrati e gli errori interrompono", {
   senza_facoltative <- scrivi_csv(c(
     intestazione_csv,
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5"
   ))
   expect_message(
     analisi <- genera_analisi_cluster(senza_facoltative),

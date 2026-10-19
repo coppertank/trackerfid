@@ -42,7 +42,10 @@ file_origine <- function(cartella = "data-raw/origine") {
 #' @param na Testi da leggere come mancanti.
 #' @return Data frame di sole colonne di testo, con i nomi del file.
 #' @noRd
-leggi_tabella_origine <- function(percorso, na = c("", "NA", "NaN", "null", "NULL")) {
+leggi_tabella_origine <- function(
+  percorso,
+  na = c("", "NA", "NaN", "null", "NULL")
+) {
   if (!file.exists(percorso)) {
     stop("File non trovato: ", percorso, call. = FALSE)
   }
@@ -88,12 +91,19 @@ data_o_aperta <- function(x, aperta = TRUE) {
 #' @noRd
 importa_test_mezzi <- function(percorso) {
   grezzo <- leggi_tabella_origine(percorso, na = c("", "NA", "-"))
-  verbale <- gsub(".", ":", grezzo[["ULTIMA DATA VERBALE SEZIONE B"]], fixed = TRUE)
+  verbale <- gsub(
+    ".",
+    ":",
+    grezzo[["ULTIMA DATA VERBALE SEZIONE B"]],
+    fixed = TRUE
+  )
   data.frame(
     targa_veicolo = grezzo[["TARGA_VEICOLO"]],
     matricola_veicolo = grezzo[["MATRICOLA_VEICOLO"]],
     esito = grezzo[["ESITO TEST SEZIONE B"]],
-    data_test = lubridate::as_date(suppressWarnings(lubridate::ymd_hm(verbale))),
+    data_test = lubridate::as_date(suppressWarnings(lubridate::ymd_hm(
+      verbale
+    ))),
     stringsAsFactors = FALSE
   )
 }
@@ -139,7 +149,10 @@ importa_letture <- function(percorso, comuni = comuni_cantieri()) {
   )
   tenute <- letture$latitudine != 0 & letture$comune_lettura != ""
   letture <- letture[tenute %in% TRUE, , drop = FALSE]
-  letture$cantiere <- comuni$cantiere[match(letture$comune_lettura, comuni$comune)]
+  letture$cantiere <- comuni$cantiere[match(
+    letture$comune_lettura,
+    comuni$comune
+  )]
   rownames(letture) <- NULL
   letture
 }
@@ -167,13 +180,17 @@ importa_contenitori <- function(percorso) {
     volume = numero_testo(grezzo$volume),
     frequenza = grezzo$frequenza,
     numero_raccolte_annue = numero_testo(grezzo$numero_raccolte_annue),
-    data_attivazione_contenitore = data_o_aperta(grezzo$data_attivazione_contenitore, aperta = FALSE),
-    data_cessazione_contenitore = data_o_aperta(grezzo$data_cessazione_contenitore),
+    data_attivazione_contenitore = data_o_aperta(
+      grezzo$data_attivazione_contenitore,
+      aperta = FALSE
+    ),
+    data_cessazione_contenitore = data_o_aperta(
+      grezzo$data_cessazione_contenitore
+    ),
     id_fornitura = grezzo$id_servizio,
     stato_fornitura = grezzo$stato_servizio,
     id_utenza = grezzo$id_utenza,
     comune_fornitura = comune,
-    codice_categoria = grezzo$codice_categoria,
     stringsAsFactors = FALSE
   )
 }
@@ -193,12 +210,23 @@ importa_sacchetti <- function(percorso_gruppi, percorso_servizi) {
   gruppi <- leggi_tabella_origine(percorso_gruppi)
   servizi <- leggi_tabella_origine(percorso_servizi)
   variazione <- as.POSIXct(servizi$ultima_variazione)
-  ordine <- order(servizi$codice_gruppo_sacchetti, -as.numeric(variazione), method = "radix")
+  ordine <- order(
+    servizi$codice_gruppo_sacchetti,
+    -as.numeric(variazione),
+    method = "radix"
+  )
   servizi <- servizi[ordine, , drop = FALSE]
-  servizi <- servizi[!duplicated(servizi$codice_gruppo_sacchetti), , drop = FALSE]
+  servizi <- servizi[
+    !duplicated(servizi$codice_gruppo_sacchetti),
+    ,
+    drop = FALSE
+  ]
   data.frame(
     codice_uhf = gruppi$codice_uhf,
-    id_fornitura = servizi$id_servizio[match(gruppi$codice_gruppo_sacchetti, servizi$codice_gruppo_sacchetti)],
+    id_fornitura = servizi$id_servizio[match(
+      gruppi$codice_gruppo_sacchetti,
+      servizi$codice_gruppo_sacchetti
+    )],
     stringsAsFactors = FALSE
   )
 }
@@ -227,7 +255,7 @@ importa_calendario <- function(percorso) {
 #' Composizione dei nuclei e categoria delle forniture
 #'
 #' Una riga per decorrenza: dal giorno e ora di inizio a quelli di fine. Le
-#' date arrivano come `AAAA/MM/GG HH.MM.SS`.
+#' colonne arrivano in maiuscolo, le date come `AAAA-MM-GG HH:MM:SS`.
 #'
 #' @param percorso CSV dell'associazione dei componenti.
 #' @return Data frame con le colonne che `associa_componenti()` si
@@ -235,18 +263,18 @@ importa_calendario <- function(percorso) {
 #' @noRd
 importa_componenti <- function(percorso) {
   grezzo <- leggi_tabella_origine(percorso)
-  istante <- function(x) as.POSIXct(x, format = "%Y/%m/%d %H.%M.%S")
+  istante <- function(x) as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S")
   intero <- function(x) suppressWarnings(as.integer(numero_testo(x)))
   data.frame(
-    id_fornitura = grezzo$id_servizio,
-    data_inizio_decorrenza = istante(grezzo$data_inizio_decorrenza),
-    data_fine_decorrenza = istante(grezzo$data_fine_decorrenza),
-    nucleo_residenti = intero(grezzo$nucleo_residenti),
-    nucleo_non_residenti = intero(grezzo$nucleo_non_residenti),
-    nucleo_totale = intero(grezzo$nucleo_totale),
-    tipo_categoria = grezzo$tipo_categoria,
-    categoria = grezzo$categoria,
-    sottocategoria = grezzo$sottocategoria,
+    id_fornitura = grezzo$ID_SERVIZIO,
+    data_inizio_decorrenza = istante(grezzo$DATA_INIZIO_DECORRENZA),
+    data_fine_decorrenza = istante(grezzo$DATA_FINE_DECORRENZA),
+    nucleo_residenti = intero(grezzo$NUCLEO_RESIDENTI),
+    nucleo_non_residenti = intero(grezzo$NUCLEO_NON_RESIDENTI),
+    nucleo_totale = intero(grezzo$NUCLEO_TOTALE),
+    tipo_categoria = grezzo$TIPO_CATEGORIA,
+    categoria = grezzo$CATEGORIA,
+    sottocategoria = grezzo$SOTTOCATEGORIA,
     stringsAsFactors = FALSE
   )
 }
@@ -267,7 +295,10 @@ importa_manovre <- function(percorso) {
   grezzo <- leggi_tabella_origine(percorso)
   data.frame(
     id_fornitura = grezzo$id_servizio,
-    data_inizio_dichiarazione = data_o_aperta(grezzo$data_inizio_dichiarazione, aperta = FALSE),
+    data_inizio_dichiarazione = data_o_aperta(
+      grezzo$data_inizio_dichiarazione,
+      aperta = FALSE
+    ),
     data_fine_dichiarazione = data_o_aperta(grezzo$data_fine_dichiarazione),
     stringsAsFactors = FALSE
   )
@@ -290,14 +321,22 @@ importa_letture_storiche <- function(
   grezzo <- leggi_tabella_origine(percorso, na = c("", "NA"))
   mancanti <- setdiff(c(colonna_rfid, colonna_data), names(grezzo))
   if (length(mancanti) > 0) {
-    stop("Nel file delle letture storiche mancano le colonne: ", paste(mancanti, collapse = ", "), call. = FALSE)
+    stop(
+      "Nel file delle letture storiche mancano le colonne: ",
+      paste(mancanti, collapse = ", "),
+      call. = FALSE
+    )
   }
   storiche <- data.frame(
     RFID = grezzo[[colonna_rfid]],
     giorno_lettura = grezzo[[colonna_data]],
     stringsAsFactors = FALSE
   )
-  storiche <- storiche[!is.na(storiche$RFID) & !is.na(storiche$giorno_lettura), , drop = FALSE]
+  storiche <- storiche[
+    !is.na(storiche$RFID) & !is.na(storiche$giorno_lettura),
+    ,
+    drop = FALSE
+  ]
   storiche <- formatta_rfid(storiche)
   storiche <- storiche[!startsWith(storiche$RFID, "00BD"), , drop = FALSE]
   storiche <- unique(storiche)

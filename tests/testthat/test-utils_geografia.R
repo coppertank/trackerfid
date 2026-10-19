@@ -609,3 +609,61 @@ test_that("sul dataset di esempio ogni contenitore censito ha il comune del data
   expect_false(anyNA(geografia$comune))
   expect_false(anyNA(geografia$cantiere))
 })
+
+test_that("il comune di un punto viene dai confini, per tanti punti insieme", {
+  cc <- comuni_cantieri()
+  # il centro abitato della tabella sta dentro il confine del suo comune
+  expect_identical(comune_del_punto(cc$latitudine, cc$longitudine), cc$comune)
+  # fuori dai comuni serviti, o senza coordinate, il comune manca; i punti
+  # ripetuti danno lo stesso comune
+  expect_identical(
+    comune_del_punto(
+      c(45.44, NA, cc$latitudine[1], cc$latitudine[1]),
+      c(12.33, 11.8, cc$longitudine[1], cc$longitudine[1])
+    ),
+    c(NA, NA, cc$comune[1], cc$comune[1])
+  )
+  expect_identical(comune_del_punto(numeric(0), numeric(0)), character(0))
+  # la stessa regola di `dentro_poligoni()`, punto per punto
+  confini <- split(poligoni_comuni(), poligoni_comuni()$comune)
+  limena <- cc[cc$comune == "LIMENA", ]
+  griglia <- expand.grid(
+    lat = limena$latitudine + seq(-0.03, 0.03, length.out = 9),
+    lng = limena$longitudine + seq(-0.04, 0.04, length.out = 9)
+  )
+  dentro <- vapply(seq_len(nrow(griglia)), function(i) {
+    dentro_poligoni(griglia$lng[i], griglia$lat[i], confini[["LIMENA"]])
+  }, logical(1))
+  misura <- misura_comune(griglia$lng, griglia$lat, lati_comuni()[[indice_comune("LIMENA")]])
+  expect_identical(misura$dentro, dentro)
+  expect_true(any(dentro) && any(!dentro))
+})
+
+test_that("la distanza da un comune e' zero dentro e cresce fuori", {
+  cc <- comuni_cantieri()
+  limena <- cc[cc$comune == "LIMENA", ]
+  cittadella <- cc[cc$comune == "CITTADELLA", ]
+  expect_identical(distanza_dal_comune(limena$latitudine, limena$longitudine, "Limena"), 0)
+  # dal centro di LIMENA il confine di CITTADELLA e' a una quindicina di
+  # chilometri, meno della distanza tra i due centri
+  lontano <- distanza_dal_comune(limena$latitudine, limena$longitudine, "CITTADELLA")
+  tra_centri <- distanza_haversine_m(
+    limena$latitudine, limena$longitudine,
+    cittadella$latitudine, cittadella$longitudine
+  )
+  expect_gt(lontano, 10000)
+  expect_lt(lontano, tra_centri)
+  # un punto appena fuori dal confine: alcune decine di metri. Si parte da un
+  # vertice del confine e ci si allontana dal centro
+  confine <- lati_comuni()[[indice_comune("LIMENA")]]
+  vertice <- which.max(confine$x)
+  fuori <- c(lat = confine$y[vertice], lng = confine$x[vertice] + 0.0005)
+  vicino <- distanza_dal_comune(fuori[["lat"]], fuori[["lng"]], "LIMENA")
+  expect_gt(vicino, 0)
+  expect_lt(vicino, 0.0005 * 111320 * cos(45.47 * pi / 180) + 1)
+  # comune che la tabella non contiene, o punto senza coordinate: manca
+  expect_identical(
+    distanza_dal_comune(c(45.47, NA), c(11.84, 11.84), c("MASSICCIO DEL GRAPPA", "LIMENA")),
+    c(NA_real_, NA_real_)
+  )
+})

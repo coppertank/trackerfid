@@ -34,7 +34,7 @@ test_that("la tabella delle letture riporta tutte le letture, per RFID, dalla pi
   selezione <- seleziona_periodo(archivio_esempio(), periodo_anno(2025))
   trovate <- cerca_per_rfid(
     selezione,
-    c("RFD20250905100", "RFD20241001301", "RFD20250901001")
+    c("D250905100", "D241001301", "D250901001")
   )
   tabella <- tabella_letture_rfid(trovate)
   expect_s3_class(tabella, "reactable")
@@ -66,7 +66,7 @@ test_that("la tabella delle letture riporta tutte le letture, per RFID, dalla pi
   expect_identical(colonne$Giro$aggregate, "frequency")
   # più RFID: i gruppi sono chiusi; uno solo: è già aperto
   expect_null(attributi$defaultExpanded)
-  uno <- tabella_letture_rfid(trovate[trovate$RFID == "RFD20250905100", ])
+  uno <- tabella_letture_rfid(trovate[trovate$RFID == "D250905100", ])
   expect_true(attributi_reactable(uno)$defaultExpanded)
   expect_true(attributi$paginateSubRows)
 })

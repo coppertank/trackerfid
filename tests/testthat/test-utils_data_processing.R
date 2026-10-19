@@ -2,7 +2,7 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   esito <- carica_dataset(percorso_dataset_esempio())
   dati <- esito$dati
 
-  expect_identical(names(dati), colonne_dataset())
+  expect_identical(names(dati), colonne_app())
   expect_s3_class(dati$giorno_lettura, "POSIXct")
   expect_type(dati$volume_previsto, "double")
   expect_type(dati$numero_raccolte_annue_previste, "double")
@@ -19,14 +19,55 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   expect_type(dati$longitudine, "double")
   expect_type(dati$RFID, "character")
   expect_setequal(unique(dati$presente_a_database), stati_database())
-  expect_length(esito$avvisi, 0)
+  expect_identical(esito$avvisi, avvisi_esempio())
+
+  # con tutte le colonne restano anche quelle della pipeline che l'app non
+  # usa, nel loro tipo
+  dati <- carica_dataset(percorso_dataset_esempio(), colonne = "tutte")$dati
+  grezzo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character", na.strings = c("", "NA"))
+  expect_true(all(names(grezzo) %in% c(colonne_dataset(), names(alias_colonne()))))
+  expect_s3_class(dati$giorno, "Date")
+  expect_s3_class(dati$data_attivazione_contenitore, "Date")
+  expect_type(dati$nucleo_residenti, "integer")
+  expect_type(dati$potenziamento_secco, "logical")
+  expect_identical(dati$id_fornitura, grezzo$id_fornitura)
+  expect_identical(dati$sottocategoria, grezzo$sottocategoria)
+  expect_identical(which(dati$potenziamento_secco), which(grezzo$potenziamento_secco == "TRUE"))
+  expect_identical(is.na(dati$potenziamento_secco), is.na(grezzo$id_fornitura))
+})
+
+test_that("le colonne della pipeline si convertono, o restano vuote con un avviso", {
+  percorso <- scrivi_csv(c(
+    paste0(intestazione_csv, ",giorno,nucleo_residenti,potenziamento_secco,sottocategoria,id_giro"),
+    "2025-09-15 08:30:00,AB1,1601,R1,Presente,SECCO,U1,45.7,11.7,15/09/2025,2,SI,D,0007",
+    "2025-09-16 08:30:00,AB1,1601,R2,Presente,SECCO,U1,45.7,11.7,2025-09-16,tre,false,ND,8",
+    "2025-09-17 08:30:00,AB1,1601,R3,Non Presente,SECCO,,45.7,11.7,ieri,,forse,,"
+  ))
+  # l'app non le legge: niente colonne in più, niente avvisi
+  solo_app <- carica_dataset(percorso)
+  expect_named(solo_app$dati, colonne_app())
+  expect_false(any(grepl("non interpretabili", solo_app$avvisi)))
+  esito <- carica_dataset(percorso, colonne = "tutte")
+  dati <- esito$dati
+  expect_identical(dati$giorno, as.Date(c("2025-09-15", "2025-09-16", NA)))
+  expect_identical(dati$nucleo_residenti, c(2L, NA, NA))
+  expect_identical(dati$potenziamento_secco, c(TRUE, FALSE, NA))
+  expect_identical(dati$sottocategoria, c("D", "ND", NA))
+  # i codici restano testo, con gli zeri iniziali
+  expect_identical(dati$id_giro, c("0007", "8", NA))
+  # una colonna assente resta vuota, senza avvisi
+  expect_true(all(is.na(dati$id_fornitura)))
+  expect_false(any(grepl("id_fornitura", esito$avvisi)))
+  expect_match(esito$avvisi, "giorno: 1 valori non interpretabili, lasciati vuoti. Righe del file: 4", all = FALSE, fixed = TRUE)
+  expect_match(esito$avvisi, "nucleo_residenti: 1 valori non interpretabili", all = FALSE, fixed = TRUE)
+  expect_match(esito$avvisi, "potenziamento_secco: 1 valori non interpretabili", all = FALSE, fixed = TRUE)
 })
 
 test_that("legge CSV con punto e virgola, virgola decimale e date italiane", {
   percorso <- scrivi_csv(c(
     gsub(",", ";", intestazione_transponder),
-    "15/09/2025 08:30:00;AB123CD;VEH001;R1;Presente;carta;secco pap;007;41,9028;12,4964",
-    "16/09/2025 09:00;AB123CD;VEH001;R2;non presente;;SECCO;;41,9100;12,5000"
+    "15/09/2025 08:30:00;AB123CD;1601;R1;Presente;carta;secco pap;007;41,9028;12,4964",
+    "16/09/2025 09:00;AB123CD;1601;R2;non presente;;SECCO;;41,9100;12,5000"
   ))
   dati <- carica_dataset(percorso)$dati
 
@@ -50,10 +91,10 @@ test_that("legge CSV con punto e virgola, virgola decimale e date italiane", {
 test_that("i nomi delle colonne non dipendono da maiuscole e ordine", {
   percorso <- scrivi_csv(c(
     "rfid,GIORNO_LETTURA,targa_veicolo,matricola_veicolo,presente_a_database,Servizio_Atteso,ORIGINE_SERVIZIO,id_utenza,longitudine,latitudine,extra",
-    "R1,2025-09-15 08:30:00,AB123CD,VEH001,Presente,CARTA,database,UTZ001,12.4964,41.9028,x"
+    "R1,2025-09-15 08:30:00,AB123CD,1601,Presente,CARTA,database,58590001,12.4964,41.9028,x"
   ))
   dati <- carica_dataset(percorso)$dati
-  expect_identical(names(dati), colonne_dataset())
+  expect_identical(names(dati), colonne_app())
   expect_equal(dati$latitudine, 41.9028)
 })
 
@@ -71,8 +112,8 @@ test_that("le colonne mancanti producono un errore esplicito", {
 test_that("i valori non interpretabili sono segnalati con il numero di riga", {
   percorso <- scrivi_csv(c(
     intestazione_csv,
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5",
-    "non-una-data,AB123CD,VEH001,R2,Forse,CARTA,UTZ001,abc,999"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5",
+    "non-una-data,AB123CD,1601,R2,Forse,CARTA,58590001,abc,999"
   ))
   errore <- expect_error(carica_dataset(percorso), class = "errore_validazione")
   messaggi <- errore$messaggi
@@ -95,9 +136,9 @@ test_that("un file vuoto o senza righe produce un errore esplicito", {
 test_that("le righe senza campi essenziali sono scartate con un avviso", {
   percorso <- scrivi_csv(c(
     intestazione_csv,
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5",
-    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Presente,CARTA,UTZ001,,12.5",
-    "2025-09-15 10:30:00,AB123CD,VEH001,,Presente,CARTA,UTZ001,41.9,12.5"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5",
+    "2025-09-15 09:30:00,AB123CD,1601,R2,Presente,CARTA,58590001,,12.5",
+    "2025-09-15 10:30:00,AB123CD,1601,,Presente,CARTA,58590001,41.9,12.5"
   ))
   esito <- carica_dataset(percorso)
   expect_identical(esito$dati$RFID, "R1")
@@ -107,8 +148,8 @@ test_that("le righe senza campi essenziali sono scartate con un avviso", {
 test_that("le incoerenze del dataset generano avvisi non bloccanti", {
   percorso <- scrivi_csv(c(
     intestazione_csv,
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Non Presente,CARTA,UTZ001,41.9,12.5",
-    "2025-09-15 09:30:00,AB123CD,VEH002,R2,Presente,CARTA,UTZ001,41.9,12.5"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Non Presente,CARTA,58590001,41.9,12.5",
+    "2025-09-15 09:30:00,AB123CD,1602,R2,Presente,CARTA,58590001,41.9,12.5"
   ))
   esito <- carica_dataset(percorso)
   expect_equal(nrow(esito$dati), 2)
@@ -129,7 +170,7 @@ test_that("l'ultima lettura di ogni RFID si sceglie in DuckDB", {
   # le colonne del dataset, il servizio dell'icona e la posizione nel file
   expect_identical(
     names(ultimi),
-    c(colonne_dataset(), "servizio_icona", "riga")
+    c(colonne_app(), "servizio_icona", "riga")
   )
   # dalla più recente alla meno recente
   expect_false(is.unsorted(rev(ultimi$giorno_lettura)))
@@ -557,10 +598,10 @@ test_that("la ricerca per utenza considera solo l'utenza attuale", {
 
   esempio <- seleziona_periodo(archivio_esempio())
   expect_false(
-    "RFD20250901050" %in% filtra_ultimo_per_utenza(esempio, "UTZ001")$RFID
+    "D250901050" %in% filtra_ultimo_per_utenza(esempio, "58590001")$RFID
   )
   expect_true(
-    "RFD20250901050" %in% filtra_ultimo_per_utenza(esempio, "UTZ025")$RFID
+    "D250901050" %in% filtra_ultimo_per_utenza(esempio, "58590025")$RFID
   )
 })
 
@@ -613,24 +654,24 @@ test_that("i casi speciali del dataset di esempio sono riconosciuti", {
   d <- dati_esempio()
   caso <- function(rfid) analizza_rfid(d[d$RFID == rfid, ])
 
-  cambio <- caso("RFD20250901001")
+  cambio <- caso("D250901001")
   expect_identical(cambio$caso, "cambio_servizio")
   expect_identical(
     cambio$cronologia_servizio$valore,
     c("CARTA", "SECCO", "CARTA")
   )
 
-  utenza <- caso("RFD20250901050")
+  utenza <- caso("D250901050")
   expect_true(utenza$cambio_utenza)
-  expect_identical(utenza$cronologia_utenza$valore, c("UTZ001", "UTZ025"))
+  expect_identical(utenza$cronologia_utenza$valore, c("58590001", "58590025"))
 
-  stima <- caso("RFD20250915201")
+  stima <- caso("D250915201")
   expect_identical(stima$caso, "non_censito_con_stima")
   expect_identical(stima$stima$servizio, "SECCO")
   expect_equal(stima$stima$pct, 100)
 
   # due letture, due giri di tipologie diverse: la stima c'è ma è incerta
-  incerto <- caso("RFD20250920250")
+  incerto <- caso("D250920250")
   expect_identical(incerto$caso, "non_censito_con_stima")
   expect_setequal(incerto$stima$servizio, c("SECCO", "CARTA"))
   expect_equal(incerto$stima$pct, c(50, 50))
@@ -652,8 +693,8 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
       intestazione_csv,
       ",numero_raccolte_annue_previste,VOLUME_PREVISTO,Comune_da_database,Comune_Giro,Comune_Lettura,CANTIERE"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,26,1100,Rosà,Bassano del Grappa,rosà,",
-    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Non Presente,SECCO PAP,NA,45.43,11.79,NA,,,rubano,RUBANO,"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.72,11.76,26,1100,Rosà,Bassano del Grappa,rosà,",
+    "2025-09-15 09:30:00,AB123CD,1601,R2,Non Presente,SECCO PAP,NA,45.43,11.79,NA,,,rubano,RUBANO,"
   ))
   esito <- carica_dataset(con)
   expect_equal(esito$dati$volume_previsto, c(1100, NA))
@@ -684,12 +725,12 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
       intestazione_transponder,
       ",servizio_giro,coerenza_servizio,volume,numero_raccolte_annue,id_giro,frequenza"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,SECCO,UTZ001,45.72,11.76,SECCO PAP,SI,240,26,12,QUINDICINALE",
-    "2025-09-15 08:35:00,AB123CD,VEH001,R2,Presente,secco,SECCO,UTZ002,45.72,11.76,SECCO PAP,NO,1100,13,12,MENSILE",
-    "2025-09-15 08:40:00,AB123CD,VEH001,R3,Non Presente,NA,SECCO,NA,45.72,11.76,SECCO PAP,,NA,NA,12,"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,SECCO,58590001,45.72,11.76,SECCO PAP,SI,240,26,12,QUINDICINALE",
+    "2025-09-15 08:35:00,AB123CD,1601,R2,Presente,secco,SECCO,58590002,45.72,11.76,SECCO PAP,NO,1100,13,12,MENSILE",
+    "2025-09-15 08:40:00,AB123CD,1601,R3,Non Presente,NA,SECCO,NA,45.72,11.76,SECCO PAP,,NA,NA,12,"
   )))
   # le colonne che l'app non usa restano fuori
-  expect_identical(names(passo_3$dati), colonne_dataset())
+  expect_identical(names(passo_3$dati), colonne_app())
   expect_identical(passo_3$dati$servizio_transponder, c("CARTA", "SECCO", NA))
   expect_identical(passo_3$dati$servizio_atteso, rep("SECCO", 3))
   expect_identical(passo_3$dati$servizio_giro, rep("SECCO PAP", 3))
@@ -706,7 +747,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   # un file con tutti e due i nomi tiene quello dell'app
   doppio <- carica_dataset(scrivi_csv(c(
     paste0(intestazione_csv, ",volume,volume_previsto"),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,240,770"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.72,11.76,240,770"
   )))
   expect_equal(doppio$dati$volume_previsto, 770)
 
@@ -714,15 +755,15 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   # database stava nel servizio atteso, con l'origine "Database"
   fusione <- carica_dataset(scrivi_csv(c(
     paste0(intestazione_csv, ",servizio_giro,origine_servizio"),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,SECCO PAP,Database",
-    "2025-09-15 08:35:00,AB123CD,VEH001,R2,Non Presente,SECCO,NA,45.72,11.76,SECCO PAP,Calendario",
-    "2025-09-15 08:40:00,AB123CD,VEH001,R3,Presente,CARTA,UTZ003,45.72,11.76,CARTA/CARTONE PAP,database"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.72,11.76,SECCO PAP,Database",
+    "2025-09-15 08:35:00,AB123CD,1601,R2,Non Presente,SECCO,NA,45.72,11.76,SECCO PAP,Calendario",
+    "2025-09-15 08:40:00,AB123CD,1601,R3,Presente,CARTA,58590003,45.72,11.76,CARTA/CARTONE PAP,database"
   )))
   expect_identical(fusione$dati$servizio_transponder, c("CARTA", NA, "CARTA"))
   expect_identical(fusione$dati$servizio_atteso, c("SECCO", "SECCO", "CARTA"))
   expect_identical(fusione$dati$coerenza_servizio, c("NO", NA, "SI"))
   expect_false("origine_servizio" %in% names(fusione$dati))
-  expect_identical(names(fusione$dati), colonne_dataset())
+  expect_identical(names(fusione$dati), colonne_app())
 
   expect_identical(colonne_contenitore(), "servizio_transponder")
   expect_true("servizio_transponder" %in% colonne_dataset())
@@ -737,12 +778,13 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
       intestazione_csv,
       ",comune_fornitura,comune_giro,comune_lettura"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5,Bassano del Grappa,Rubano,BASSANO DEL GRAPPA",
-    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Presente,CARTA,UTZ002,41.9,12.5,Limena,Rubano,Rubano",
-    "2025-09-15 10:30:00,AB123CD,VEH001,R3,Non Presente,SECCO,NA,41.9,12.5,,Rubano,rosa'",
-    # un comune che la tabella non contiene conta come fuori dai comuni serviti
-    "2025-09-15 11:30:00,AB123CD,VEH001,R4,Non Presente,SECCO,NA,41.9,12.5,,Padova,Padova",
-    "2025-09-15 12:30:00,AB123CD,VEH001,R5,Non Presente,SECCO,NA,41.9,12.5,,Rubano,"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5,Bassano del Grappa,Rubano,BASSANO DEL GRAPPA",
+    "2025-09-15 09:30:00,AB123CD,1601,R2,Presente,CARTA,58590002,41.9,12.5,Limena,Rubano,Rubano",
+    "2025-09-15 10:30:00,AB123CD,1601,R3,Non Presente,SECCO,NA,41.9,12.5,,Rubano,rosa'",
+    # un comune che la tabella non contiene conta come fuori dai comuni
+    # serviti; un giro fuori dalla tabella non da' un confronto
+    "2025-09-15 11:30:00,AB123CD,1601,R4,Non Presente,SECCO,NA,41.9,12.5,,Padova,Padova",
+    "2025-09-15 12:30:00,AB123CD,1601,R5,Non Presente,SECCO,NA,41.9,12.5,,Rubano,"
   )))
   expect_identical(gia_scritto$dati$comune_giro, c(rep("RUBANO", 3), "PADOVA", "RUBANO"))
   expect_identical(
@@ -763,7 +805,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   )
   expect_identical(
     gia_scritto$dati$coerenza_comune,
-    c("Coerente", "Fuori comune", "Fuori giro", "Coerente", "Coerenza ignota")
+    c("Coerente", "Fuori comune", "Fuori giro", "Coerenza ignota", "Coerenza ignota")
   )
   expect_true(any(grepl(
     "Comuni di lettura assenti dalla tabella dei comuni: PADOVA.",
@@ -776,7 +818,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
       intestazione_csv,
       ",comune_fornitura,comune_giro,comune_lettura,coerenza_comune"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5,Limena,Rubano,Rubano,Coerente"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5,Limena,Rubano,Rubano,Coerente"
   )))
   expect_identical(ricalcolata$dati$coerenza_comune, "Fuori comune")
 
@@ -786,7 +828,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
       intestazione_csv,
       ",volume_previsto,numero_raccolte_annue_previste,comune"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.47,11.84,1100,26,Limena"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.47,11.84,1100,26,Limena"
   )))
   expect_identical(vecchio$dati$comune_fornitura, "LIMENA")
   expect_identical(vecchio$dati$cantiere, "RUBANO")
@@ -803,13 +845,13 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   expect_identical(alias_colonne()[["comune_da_database"]], "comune_fornitura")
   da_database <- carica_dataset(scrivi_csv(c(
     paste0(intestazione_csv, ",comune_da_database,comune_lettura"),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.47,11.84,Limena,Cittadella"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.47,11.84,Limena,Cittadella"
   )))
   expect_identical(da_database$dati$comune_fornitura, "LIMENA")
   expect_identical(da_database$dati$coerenza_comune, "Fuori comune")
   tutti_e_due <- carica_dataset(scrivi_csv(c(
     paste0(intestazione_csv, ",comune_da_database,comune_fornitura"),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.47,11.84,Limena,Cittadella"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.47,11.84,Limena,Cittadella"
   )))
   expect_identical(tutti_e_due$dati$comune_fornitura, "CITTADELLA")
 
@@ -819,8 +861,8 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
       intestazione_csv,
       ",volume_previsto,numero_raccolte_annue_previste,comune_fornitura,comune_giro,cantiere"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.4,11.9,1100,26,Padova,,ovest",
-    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Presente,CARTA,UTZ002,45.4,11.9,1100,26,Vicenza,,"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.4,11.9,1100,26,Padova,,ovest",
+    "2025-09-15 09:30:00,AB123CD,1601,R2,Presente,CARTA,58590002,45.4,11.9,1100,26,Vicenza,,"
   )))
   expect_identical(fuori$dati$comune_lettura, rep(NA_character_, 2))
   expect_identical(fuori$dati$comune_assegnato, c("PADOVA", "VICENZA"))
@@ -831,22 +873,22 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
     fixed = TRUE
   )))
 
-  # anche un comune del giro che la tabella non contiene viene segnalato:
-  # se il nome è sbagliato, i non censiti letti in quel giro risultano fuori
-  # giro
+  # anche un comune del giro che la tabella non contiene viene segnalato: per
+  # i non censiti letti in quel giro, come per una zona del calendario, la
+  # coerenza del comune è ignota
   soppresso <- carica_dataset(scrivi_csv(c(
     paste0(
       intestazione_csv,
       ",comune_fornitura,comune_giro,comune_lettura,cantiere"
     ),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,Rosà,Valstagna,Rosà,BASSANO",
-    "2025-09-15 09:30:00,AB123CD,VEH001,R2,Non Presente,CARTA,NA,45.72,11.76,,Valstagna,Valbrenta,BASSANO"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.72,11.76,Rosà,Valstagna,Rosà,BASSANO",
+    "2025-09-15 09:30:00,AB123CD,1601,R2,Non Presente,CARTA,NA,45.72,11.76,,Valstagna,Valbrenta,BASSANO"
   )))
   expect_identical(soppresso$dati$comune_giro, rep("VALSTAGNA", 2))
   expect_identical(soppresso$dati$comune_lettura, c("ROSÀ", "VALBRENTA"))
-  expect_identical(soppresso$dati$coerenza_comune, c("Coerente", "Fuori giro"))
+  expect_identical(soppresso$dati$coerenza_comune, c("Coerente", "Coerenza ignota"))
   expect_true(any(grepl(
-    "Comuni dei giri assenti dalla tabella dei comuni: VALSTAGNA. Se il nome \u00e8 sbagliato, i non censiti letti in quei giri risultano fuori giro.",
+    "Comuni dei giri assenti dalla tabella dei comuni: VALSTAGNA. Per i non censiti letti in quei giri la coerenza del comune \u00e8 ignota; un nome sbagliato va corretto nel calendario.",
     soppresso$avvisi,
     fixed = TRUE
   )))
@@ -855,9 +897,9 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
 
   senza <- carica_dataset(scrivi_csv(c(
     intestazione_csv,
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5"
   )))
-  expect_identical(names(senza$dati), colonne_dataset())
+  expect_identical(names(senza$dati), colonne_app())
   expect_true(all(is.na(senza$dati$volume_previsto)))
   expect_true(all(is.na(senza$dati$comune_assegnato)))
   expect_true(all(is.na(senza$dati$cantiere)))
@@ -872,7 +914,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
 
   errato <- scrivi_csv(c(
     paste0(intestazione_csv, ",volume_previsto"),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,41.9,12.5,grande"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,41.9,12.5,grande"
   ))
   errore <- expect_error(carica_dataset(errato), class = "errore_validazione")
   expect_match(
@@ -978,10 +1020,10 @@ test_that("l'icona di un censito è il servizio a database della lettura", {
   # dataset di esempio: stima netta, stima incerta
   esempio <- aggiungi_servizio_icona(dati_esempio())
   expect_true(all(
-    esempio$servizio_icona[esempio$RFID == "RFD20250915201"] == "SECCO"
+    esempio$servizio_icona[esempio$RFID == "D250915201"] == "SECCO"
   ))
   expect_true(all(is.na(esempio$servizio_icona[
-    esempio$RFID == "RFD20250920250"
+    esempio$RFID == "D250920250"
   ])))
   censiti <- esempio$presente_a_database == "Presente"
   bidoni <- censiti & !rfid_sacchetto(esempio$RFID)
@@ -1000,13 +1042,13 @@ test_that("l'icona di un censito è il servizio a database della lettura", {
 test_that("gli spazi superflui non cambiano il dataset letto", {
   pulito <- carica_dataset(scrivi_csv(c(
     paste0(intestazione_csv, ",comune_fornitura"),
-    "2025-09-15 08:30:00,AB123CD,VEH001,R1,Presente,CARTA,UTZ001,45.72,11.76,Limena",
-    "2025-09-16 09:30:00,AB123CD,VEH001,R2,Non Presente,SECCO PAP,NA,45.43,11.79,"
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,CARTA,58590001,45.72,11.76,Limena",
+    "2025-09-16 09:30:00,AB123CD,1601,R2,Non Presente,SECCO PAP,NA,45.43,11.79,"
   )))
   sporco <- carica_dataset(scrivi_csv(c(
     paste0(intestazione_csv, ",comune_fornitura"),
-    "\"2025-09-15  08:30:00 \",AB123CD , VEH001,\" R1 \",Presente ,\"CARTA \",UTZ001,\" 45.72\",11.76 ,\"  Limena \"",
-    "2025-09-16 09:30:00,AB123CD,VEH001,R2,\"Non  Presente\",\"SECCO  PAP\",NA,45.43,11.79,\" \""
+    "\"2025-09-15  08:30:00 \",AB123CD , 1601,\" R1 \",Presente ,\"CARTA \",58590001,\" 45.72\",11.76 ,\"  Limena \"",
+    "2025-09-16 09:30:00,AB123CD,1601,R2,\"Non  Presente\",\"SECCO  PAP\",NA,45.43,11.79,\" \""
   )))
   expect_identical(sporco$dati, pulito$dati)
   expect_identical(sporco$avvisi, pulito$avvisi)
@@ -1038,7 +1080,7 @@ test_that("le letture si leggono da un CSV compresso con gzip", {
 
   esito <- carica_dataset(compresso)
   expect_identical(esito$dati, atteso)
-  expect_length(esito$avvisi, 0)
+  expect_identical(esito$avvisi, avvisi_esempio())
 
   # un file caricato dal browser ha un nome temporaneo: conta quello originale
   anonimo <- withr::local_tempfile(fileext = ".dat")
@@ -1075,7 +1117,7 @@ test_that("le letture si leggono da un file Parquet con le colonne già tipizzat
   )
   esito <- carica_dataset(file)
   expect_equal(esito$dati, atteso)
-  expect_length(esito$avvisi, 0)
+  expect_identical(esito$avvisi, avvisi_esempio())
   # data e ora restano quelle scritte, senza spostamenti di fuso
   expect_s3_class(esito$dati$giorno_lettura, "POSIXct")
   expect_identical(
@@ -1198,13 +1240,13 @@ test_that("i filtri per cantiere e comune si combinano con gli altri", {
     tutte
   )
   con_vuoti <- dati
-  con_vuoti$cantiere[con_vuoti$RFID == "RFD20241001301"] <- NA
+  con_vuoti$cantiere[con_vuoti$RFID == "D241001301"] <- NA
   solo_assegnate <- maschera_di(
     con_vuoti,
     cantieri_esclusi = senza_cantiere()
   )
   expect_identical(solo_assegnate, !is.na(con_vuoti$cantiere))
-  expect_equal(sum(!solo_assegnate), sum(dati$RFID == "RFD20241001301"))
+  expect_equal(sum(!solo_assegnate), sum(dati$RFID == "D241001301"))
 
   # il comune è quello assegnato alla lettura
   limena <- maschera_di(dati, comuni = "LIMENA")
@@ -1284,7 +1326,7 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
 
   # le letture senza cantiere contano sotto una voce loro, in fondo
   con_vuoti <- dati
-  con_vuoti$cantiere[con_vuoti$RFID == "RFD20241001301"] <- NA
+  con_vuoti$cantiere[con_vuoti$RFID == "D241001301"] <- NA
   selezione_vuoti <- selezione_di(con_vuoti)
   vuoti <- calcola_statistiche(
     ultime_letture(selezione_vuoti),
@@ -1294,7 +1336,7 @@ test_that("le statistiche contano RFID e letture di ogni cantiere", {
   expect_equal(vuoti$rfid_cantieri[[senza_cantiere()]], 1)
   expect_equal(
     vuoti$letture_cantieri[[senza_cantiere()]],
-    sum(dati$RFID == "RFD20241001301")
+    sum(dati$RFID == "D241001301")
   )
 
   # senza le letture restano i soli RFID; senza cantieri niente
@@ -1321,7 +1363,7 @@ test_that("i sacchetti si riconoscono dal codice RFID", {
       "00BD123456",
       # 24 caratteri, ma senza il prefisso
       sprintf("%024d", 7),
-      "RFD20250901001",
+      "D250901001",
       NA,
       ""
     )),
@@ -1365,7 +1407,7 @@ test_that("un sacchetto tiene il servizio del giro, e l'icona gli dà il suo", {
     paste(
       paste(giorno, "08:00:00"),
       "AB123CD",
-      "VEH001",
+      "1601",
       rfid,
       stato,
       servizio,
@@ -1549,6 +1591,74 @@ test_that("la coerenza del comune confronta il comune di lettura con quello dich
   expect_false(any(unlist(incongruenze_comune(d))))
 })
 
+test_that("una lettura vicina al confine è coerente, un giro di una zona non dà un confronto", {
+  expect_identical(tolleranza_confine_m(), 100)
+  d <- data.frame(
+    presente_a_database = c("Presente", "Presente", "Non Presente", "Non Presente", "Non Presente", "Presente", "Non Presente"),
+    comune_fornitura = c("LIMENA", "LIMENA", NA, NA, NA, "LIMENA", NA),
+    comune_giro = c("RUBANO", "RUBANO", "CITTADELLA", "MASSICCIO DEL GRAPPA", "MASSICCIO DEL GRAPPA", "RUBANO", "CITTADELLA"),
+    comune_lettura = c("PADOVA", "PADOVA", "TOMBOLO", "POVE DEL GRAPPA", NA, "VIGODARZERE", "TOMBOLO"),
+    distanza_comune_dichiarato = c(40, 2500, 100, NA, NA, 0, 101),
+    stringsAsFactors = FALSE
+  )
+  attesa <- c(
+    # 40 metri oltre il confine di LIMENA
+    "Coerente",
+    # due chilometri e mezzo: spostato
+    "Fuori comune",
+    # la tolleranza comprende il suo estremo
+    "Coerente",
+    # il giro di una zona: niente confronto, con o senza comune di lettura
+    "Coerenza ignota",
+    "Coerenza ignota",
+    # dentro il confine del comune dichiarato, secondo la Regione
+    "Coerente",
+    "Fuori giro"
+  )
+  expect_identical(coerenza_comune(d), attesa)
+  # senza la distanza contano i soli nomi
+  expect_identical(
+    coerenza_comune(d[, setdiff(names(d), "distanza_comune_dichiarato")]),
+    c("Fuori comune", "Fuori comune", "Fuori giro", "Coerenza ignota", "Coerenza ignota", "Fuori comune", "Fuori giro")
+  )
+
+  # la validazione dell'app applica la stessa regola, e tiene la distanza e
+  # la conferma del giro
+  righe <- sprintf(
+    "2025-09-15 0%d:30:00,AB123CD,1601,R%d,%s,SECCO,NA,45.4,11.8,%s,%s,%s,%s,%s",
+    seq_len(nrow(d)),
+    seq_len(nrow(d)),
+    d$presente_a_database,
+    ifelse(is.na(d$comune_fornitura), "", d$comune_fornitura),
+    d$comune_giro,
+    ifelse(is.na(d$comune_lettura), "", d$comune_lettura),
+    ifelse(is.na(d$distanza_comune_dichiarato), "", d$distanza_comune_dichiarato),
+    c("SI", "NO", "si", "", "SI", "SI", "NO")
+  )
+  esito <- carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",comune_fornitura,comune_giro,comune_lettura,distanza_comune_dichiarato,eseguito"),
+    righe
+  )))
+  expect_identical(esito$dati$coerenza_comune, attesa)
+  expect_identical(esito$dati$distanza_comune_dichiarato, d$distanza_comune_dichiarato)
+  expect_identical(esito$dati$eseguito, c("SI", "NO", "SI", NA, "SI", "SI", "NO"))
+  expect_true(any(grepl("Comuni dei giri assenti dalla tabella dei comuni: MASSICCIO DEL GRAPPA.", esito$avvisi, fixed = TRUE)))
+  # le due colonne sono facoltative, senza avviso se mancano
+  senza <- carica_dataset(scrivi_csv(c(
+    intestazione_csv,
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,SECCO,U1,45.4,11.8"
+  )))
+  expect_true(is.na(senza$dati$eseguito))
+  expect_true(is.na(senza$dati$distanza_comune_dichiarato))
+  expect_false(any(grepl("eseguito|distanza", senza$avvisi)))
+  # una distanza che non e' un numero ferma il caricamento
+  errore <- expect_error(carica_dataset(scrivi_csv(c(
+    paste0(intestazione_csv, ",distanza_comune_dichiarato"),
+    "2025-09-15 08:30:00,AB123CD,1601,R1,Presente,SECCO,U1,45.4,11.8,vicino"
+  ))), class = "errore_validazione")
+  expect_match(conditionMessage(errore), "distanza_comune_dichiarato: 1 valori non numerici o negativi")
+})
+
 # Letture con la coerenza del comune scritta a mano: A coerente, B fuori
 # comune, C fuori giro, D di coerenza ignota.
 letture_coerenza_comune <- function() {
@@ -1614,17 +1724,18 @@ test_that("le statistiche contano i bidoni fuori comune e fuori giro", {
   expect_identical(senza$fuori_giro, 0L)
   expect_identical(senza$coerenza_comune_ignota, 0L)
   # sul dataset di esempio del 2025, per ultima lettura di ogni RFID: i
-  # sacchetti censiti non hanno un comune a database
+  # sacchetti censiti non hanno un comune a database, e un non censito e'
+  # letto per ultimo dal giro di zona
   esempio <- calcola_statistiche(ultime_esempio(periodo = periodo_anno(2025)))
   expect_identical(esempio$fuori_comune, 3L)
-  expect_identical(esempio$fuori_giro, 20L)
-  expect_identical(esempio$coerenza_comune_ignota, 7L)
+  expect_identical(esempio$fuori_giro, 18L)
+  expect_identical(esempio$coerenza_comune_ignota, 8L)
 })
 
 test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarati", {
   d <- dati_esempio()
   # spostato: otto letture a Cittadella, registrato a Limena
-  spostato <- analizza_rfid(d[d$RFID == "RFD20250905100", ])$coerenza_comune
+  spostato <- analizza_rfid(d[d$RFID == "D250905100", ])$coerenza_comune
   expect_identical(spostato$fuori_comune$n, 8L)
   expect_identical(spostato$fuori_comune$dichiarati, "LIMENA")
   expect_identical(spostato$fuori_comune$letti, "CITTADELLA")
@@ -1633,7 +1744,7 @@ test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarat
   expect_null(spostato$fuori_giro$letture)
 
   # il tag fermo in deposito, non censito, è letto da giri di ogni comune
-  deposito <- analizza_rfid(d[d$RFID == "RFD20241001301", ])$coerenza_comune
+  deposito <- analizza_rfid(d[d$RFID == "D241001301", ])$coerenza_comune
   expect_identical(deposito$fuori_comune$n, 0L)
   expect_gt(deposito$fuori_giro$n, 300)
   expect_identical(deposito$fuori_giro$letti, "CAMPOSAMPIERO")
@@ -1648,7 +1759,7 @@ test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarat
   )
 
   # un contenitore coerente non ha niente da segnalare
-  coerente <- analizza_rfid(d[d$RFID == "RFD20250901001", ])$coerenza_comune
+  coerente <- analizza_rfid(d[d$RFID == "D250901001", ])$coerenza_comune
   expect_identical(coerente$fuori_comune$n, 0L)
   expect_identical(coerente$fuori_giro$n, 0L)
   # letture senza la coerenza del comune
