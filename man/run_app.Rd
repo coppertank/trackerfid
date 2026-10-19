@@ -38,7 +38,7 @@ See \code{?golem::get_golem_options} for more details.
 Con \code{demo = TRUE} l'app si apre con i dati di esempio già caricati.
 Con \code{letture = "percorso"} l'app legge il file dal disco all'avvio, senza
 passare dal caricamento del browser: è il modo più rapido per i file con
-milioni di letture, soprattutto con l'archivio \code{.duckdb} del passo 3 della
+milioni di letture, soprattutto con l'archivio \code{.duckdb} della pipeline di
 preparazione dei dati. Il file resta aperto per tutte le sessioni dello
 stesso processo.}
 }

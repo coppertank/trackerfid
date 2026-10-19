@@ -1,5 +1,5 @@
 # Tabelle di prova nella forma di quelle estratte dai sistemi aziendali e
-# ripulite dal passo 2.
+# ripulite da `R/fct_importa_tabelle.R`.
 
 ora <- function(testo) as.POSIXct(testo)
 
@@ -74,7 +74,7 @@ calendario_prova <- dplyr::tibble(
   comune_giro = "BASSANO DEL GRAPPA"
 )
 
-# Colonne del CSV dell'app, nell'ordine in cui le scrive il passo 3.
+# Colonne del CSV dell'app, nell'ordine in cui le scrive la pipeline.
 colonne_passo_3 <- c(
   "giorno_lettura",
   "giorno",
@@ -678,78 +678,87 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
   expect_identical(caricate$cantiere, rep("BASSANO", 4))
 })
 
-test_that("gli script leggono i CSV come testo, con il separatore del file", {
+test_that("i CSV estratti si leggono come testo, con il separatore del file", {
   virgola <- scrivi_csv(c("a,b,c", "1,2,3"))
   punto_virgola <- scrivi_csv(c("RFID;giorno_lettura", "0000012345; 2025-01-10 08:00:00", ";"))
   expect_identical(rileva_separatore(virgola), ",")
   expect_identical(rileva_separatore(punto_virgola), ";")
 
-  letto <- read_csv_auto(punto_virgola)
+  letto <- leggi_tabella_origine(punto_virgola)
   expect_identical(names(letto), c("RFID", "giorno_lettura"))
   # gli zeri iniziali restano, gli spazi ai margini no, i vuoti mancano
   expect_identical(letto$RFID, c("0000012345", NA))
   expect_identical(letto$giorno_lettura, c("2025-01-10 08:00:00", NA))
   expect_s3_class(letto, "data.frame")
-  expect_true(all(vapply(read_csv_auto(virgola), is.character, logical(1))))
+  expect_true(all(vapply(leggi_tabella_origine(virgola), is.character, logical(1))))
 
   vuoto <- scrivi_csv("")
-  expect_error(read_csv_auto(vuoto), class = "errore_validazione")
+  expect_error(leggi_tabella_origine(vuoto), class = "errore_validazione")
 })
 
-test_that("nucleo e manovra sono quelli in vigore al momento della lettura", {
+test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
   letture <- data.frame(
-    id_fornitura = c("F1", "F1", "F1", "F2", NA, "F3"),
+    id_fornitura = c("F1", "F1", "F1", "F2", NA),
     giorno_lettura = as.POSIXct(
-      c(
-        "2026-03-01 08:00:00", "2026-07-01 08:00:00", "2026-12-01 08:00:00",
-        "2026-05-01 08:00:00", "2026-05-01 08:00:00", "2026-05-01 08:00:00"
-      ),
+      c("2026-03-01 08:00:00", "2026-07-01 08:00:00", "2026-12-01 08:00:00", "2026-05-01 08:00:00", "2026-05-01 08:00:00"),
       tz = "UTC"
     ),
     stringsAsFactors = FALSE
   )
-  letture$giorno <- as.Date(letture$giorno_lettura)
   componenti <- data.frame(
-    # F1 ha 2 residenti fino a giugno, poi 3; F2 ha una decorrenza finita
-    id_fornitura = c(1, 1, 2),
+    # F1 ha 2 residenti fino a metà giugno, poi 3; F2 ha una decorrenza finita
+    id_fornitura = c("F1", "F1", "F2"),
     data_inizio_decorrenza = as.POSIXct(c("2020-01-01", "2026-06-15", "2020-01-01"), tz = "UTC"),
     data_fine_decorrenza = as.POSIXct(c("2026-06-14", NA, "2026-01-01"), tz = "UTC"),
-    nucleo_residenti = c("2", "3", "4"),
-    nucleo_non_residenti = c("0", "1", "0"),
-    nucleo_totale = c("2", "4", "4"),
-    tipo_categoria = factor(c("DOMESTICA", "DOMESTICA", "DOMESTICA")),
-    categoria = c("ABITAZIONE", "ABITAZIONE", "ABITAZIONE"),
-    sottocategoria = c("RESIDENTE", "RESIDENTE", "RESIDENTE"),
+    nucleo_residenti = c(2L, 3L, 4L),
+    nucleo_non_residenti = c(0L, 1L, 0L),
+    nucleo_totale = c(2L, 4L, 4L),
+    tipo_categoria = "DOMESTICA",
+    categoria = "ABITAZIONE",
+    sottocategoria = "RESIDENTE",
     stringsAsFactors = FALSE
   )
-  componenti$id_fornitura <- paste0("F", componenti$id_fornitura)
-  manovra <- data.frame(
-    id_fornitura = c("F1", "F1", "F3"),
-    data_inizio_dichiarazione = as.Date(c("2026-06-01", "2026-06-01", "2026-01-01")),
-    data_fine_dichiarazione = as.Date(c("2026-10-31", NA, NA)),
-    tipo_dichiarazione = c("ALTRA AGEVOLAZIONE", "manovra sociale anziani", "ALTRA AGEVOLAZIONE"),
+  esito <- associa_componenti(letture, componenti)
+  expect_identical(names(esito), c(names(letture), colonne_componenti()))
+  expect_identical(esito$nucleo_residenti, c(2L, 3L, 3L, NA, NA))
+  expect_identical(esito$nucleo_totale, c(2L, 4L, 4L, NA, NA))
+  expect_identical(esito$tipo_categoria, c("DOMESTICA", "DOMESTICA", "DOMESTICA", NA, NA))
+  # una colonna che la tabella non ha resta vuota
+  senza <- associa_componenti(letture, componenti[names(componenti) != "sottocategoria"])
+  expect_true(all(is.na(senza$sottocategoria)))
+  expect_identical(colonne_nucleo_manovra(), c(colonne_componenti(), "potenziamento_secco"))
+})
+
+test_that("il potenziamento vale se la fornitura ha almeno una manovra in vigore", {
+  letture <- data.frame(
+    id_fornitura = c("F1", "F1", "F1", "F1", "F2", NA),
+    giorno = as.Date(c("2026-03-01", "2026-06-01", "2026-07-15", "2026-12-01", "2026-05-01", "2026-05-01")),
     stringsAsFactors = FALSE
   )
-  esito <- associa_nucleo_e_manovra(letture, componenti, manovra)
-  expect_identical(names(esito), c(names(letture), colonne_nucleo_manovra()))
-  expect_identical(esito$nucleo_residenti, c(2L, 3L, 3L, NA, NA, NA))
-  expect_identical(esito$nucleo_totale, c(2L, 4L, 4L, NA, NA, NA))
-  expect_identical(esito$tipo_categoria, c("DOMESTICA", "DOMESTICA", "DOMESTICA", NA, NA, NA))
-  # a marzo nessuna manovra; a luglio due, e vince quella del potenziamento;
-  # a dicembre resta la sola manovra ancora in vigore
-  expect_identical(
-    esito$manovra_sociale,
-    c(NA, "MANOVRA SOCIALE ANZIANI", "MANOVRA SOCIALE ANZIANI", NA, NA, "ALTRA AGEVOLAZIONE")
+  manovre <- data.frame(
+    # F1: due dichiarazioni sovrapposte da giugno, l'ultima ancora aperta
+    id_fornitura = c("F1", "F1"),
+    data_inizio_dichiarazione = as.Date(c("2026-06-01", "2026-07-01")),
+    data_fine_dichiarazione = as.Date(c("2026-07-31", NA)),
+    stringsAsFactors = FALSE
   )
-  expect_identical(trova_colonna_manovra(manovra), "tipo_dichiarazione")
-  expect_error(
-    associa_nucleo_e_manovra(letture, componenti, manovra[, 1:3]),
-    "indicala con l'argomento colonna_manovra"
+  esito <- associa_potenziamento(letture, manovre)
+  expect_identical(names(esito), c(names(letture), "potenziamento_secco"))
+  # il primo giorno conta; con due dichiarazioni basta una; senza fornitura manca
+  expect_identical(esito$potenziamento_secco, c(FALSE, TRUE, TRUE, TRUE, FALSE, NA))
+  expect_no_warning(associa_potenziamento(letture, manovre))
+
+  # una dichiarazione che finisce prima di cominciare: annullata, non conta
+  annullata <- rbind(manovre, data.frame(
+    id_fornitura = "F2",
+    data_inizio_dichiarazione = as.Date("2026-04-01"),
+    data_fine_dichiarazione = as.Date("2026-01-01")
+  ))
+  expect_warning(
+    con_annullata <- associa_potenziamento(letture, annullata),
+    "1 dichiarazioni di manovra sociale finiscono prima di cominciare.*Forniture: F2"
   )
-  # la colonna si può anche indicare
-  manovra$altra <- manovra$tipo_dichiarazione
-  expect_identical(
-    associa_nucleo_e_manovra(letture, componenti, manovra, colonna_manovra = "altra")$manovra_sociale,
-    esito$manovra_sociale
-  )
+  expect_identical(con_annullata$potenziamento_secco, esito$potenziamento_secco)
+  # senza dichiarazioni nessuna fornitura ha il potenziamento
+  expect_identical(associa_potenziamento(letture, manovre[0, ])$potenziamento_secco, c(rep(FALSE, 5), NA))
 })

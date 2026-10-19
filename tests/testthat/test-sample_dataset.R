@@ -245,7 +245,7 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
     c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA E METALLI", "VERDE E RAMAGLIE")
   )
 
-  # il file ha le colonne del passo 3
+  # il file ha le colonne della pipeline
   grezzo <- utils::read.csv(
     percorso_dataset_esempio(),
     colClasses = "character",

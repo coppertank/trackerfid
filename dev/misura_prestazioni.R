@@ -44,8 +44,8 @@ message(sprintf(
   length(esito$avvisi)
 ))
 if (tolower(tools::file_ext(file)) != "duckdb") {
-  # Lo stesso archivio scritto in un file .duckdb, come fa il passo 3, e
-  # riaperto: è il caricamento dell'app con il file del passo 3.
+  # Lo stesso archivio scritto in un file .duckdb, come fa la pipeline, e
+  # riaperto: è il caricamento dell'app con il file della pipeline.
   file_duckdb <- tempfile(fileext = ".duckdb")
   misura("Scrittura del file .duckdb", scrivi_archivio(archivio, file_duckdb))
   message(sprintf("  file .duckdb di %.0f MB", file.size(file_duckdb) / 1024^2))

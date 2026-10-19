@@ -37,7 +37,7 @@ colonne_contenitore <- function() "servizio_transponder"
 
 #' Nomi alternativi delle colonne del file
 #'
-#' Il passo 3 della preparazione dei dati scrive `volume` e
+#' La pipeline di preparazione dei dati scrive `volume` e
 #' `numero_raccolte_annue`, come l'anagrafica dei contenitori; l'app li chiama
 #' come la tabella dell'analisi dei cluster. Il comune della fornitura si
 #' chiamava `comune_da_database` nei file preparati fino al 17 ottobre 2026, e

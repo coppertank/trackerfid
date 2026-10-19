@@ -34,7 +34,7 @@ Per installare il pacchetto: `devtools::install()`, poi `trackerfid::run_app()`.
 
 ## Formato del file
 
-Il file è quello che scrive il passo 3 della [preparazione dei dati reali](#preparare-i-dati-reali). Deve contenere 9 campi obbligatori e può contenerne altri facoltativi, segnati nella tabella. L'ordine delle colonne e le maiuscole nei nomi non contano. Le colonne che l'app non usa vengono ignorate: tra quelle del passo 3, `giorno`, `id_giro`, `eseguito`, `frequenza`, `codice_categoria`, `data_attivazione_contenitore`, `data_cessazione_contenitore`, `id_fornitura`, `stato_fornitura` e le sette della fornitura: nucleo, categoria e manovra sociale.
+Il file è quello che scrive la pipeline della [preparazione dei dati reali](#preparare-i-dati-reali). Deve contenere 9 campi obbligatori e può contenerne altri facoltativi, segnati nella tabella. L'ordine delle colonne e le maiuscole nei nomi non contano. Le colonne che l'app non usa vengono ignorate: tra quelle del passo 3, `giorno`, `id_giro`, `eseguito`, `frequenza`, `codice_categoria`, `data_attivazione_contenitore`, `data_cessazione_contenitore`, `id_fornitura`, `stato_fornitura` e le sette della fornitura: nucleo, categoria e manovra sociale.
 
 | Campo | Tipo | Contenuto |
 |---|---|---|
@@ -74,7 +74,7 @@ Il file è quello che scrive il passo 3 della [preparazione dei dati reali](#pre
 
 Cosa viene accettato:
 
-- file CSV, CSV compresso con gzip (`.csv.gz`), Parquet (`.parquet`) oppure l'archivio DuckDB (`.duckdb`) che scrive il passo 3 della preparazione dei dati, già controllato: si apre in un istante, vedi [File grandi](#file-grandi);
+- file CSV, CSV compresso con gzip (`.csv.gz`), Parquet (`.parquet`) oppure l'archivio DuckDB (`.duckdb`) che scrive la pipeline di preparazione dei dati, già controllato: si apre in un istante, vedi [File grandi](#file-grandi);
 - separatore virgola o punto e virgola, rilevato automaticamente;
 - decimali con il punto o con la virgola;
 - date anche senza secondi o in formato italiano (`DD/MM/YYYY HH:MM:SS`);
@@ -284,23 +284,24 @@ Lo script legge lo shapefile, lo riporta in longitudine e latitudine e ne tiene 
 
 ## Preparare i dati reali
 
-Il CSV con le letture vere si produce dentro il repository, con gli script elencati qui sotto, da eseguire in ordine dalla radice del progetto.
+Il CSV con le letture vere si produce dentro il repository, in due passi, dalla radice del progetto.
 
-| Passo | Script | Cosa fa |
+| Passo | Come | Cosa fa |
 |---|---|---|
-| 1 | `data-raw/01_estrai_tabelle.R` | Estrae le tabelle dal database aziendale e le salva in `data-raw/origine/` |
-| 2 | `data-raw/02_importa_tabelle.R` | Carica le tabelle ripulite da `data-raw/intermedi/`. Il codice commentato le ricostruisce dalle estrazioni |
-| 3 | `data-raw/03_crea_letture_app.R` | Applica le regole di preparazione e scrive `data-raw/output/letture_app.csv` e `data-raw/output/letture_app.duckdb`, da caricare nell'app |
-| 4, facoltativo | `data-raw/04_crea_letture_storiche.R` | Legge le letture precedenti alle antenne da `data-raw/origine/`, porta i codici RFID allo stesso formato del passo 3 e scrive `data-raw/output/letture_storiche.csv`, per i report di confronto. L'app non le usa |
-| 5, facoltativo | `data-raw/05_report_conferimenti.R` | Compila il report sui [conferimenti del secco oltre il limite](#conferimenti-del-secco-oltre-il-limite) sul CSV del passo 3 e scrive in `data-raw/output/` il report e tre CSV |
+| 1, estrazione | `source("data-raw/01_estrai_tabelle.R")`, a mano | Estrae le tabelle dal database aziendale e le salva in `data-raw/origine/` |
+| 2, pipeline di preparazione | `targets::tar_make()` | Dai file estratti scrive in `data-raw/output/` il CSV e l'archivio `.duckdb` da caricare nell'app, il CSV delle letture storiche per i report e il report sui [conferimenti del secco oltre il limite](#conferimenti-del-secco-oltre-il-limite), con i suoi tre CSV |
 
-Il passo 3 esegue da solo anche il passo 2. Il file `.duckdb` contiene le stesse letture del CSV, già controllate come le controlla l'app, con gli avvisi del controllo: l'app lo apre senza rileggerle. Lo scrive `scrivi_archivio()`, che si può usare anche da sola su un CSV già preparato: `scrivi_archivio("letture_app.csv", "letture_app.duckdb")`. Le regole sono funzioni del pacchetto, in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune di lettura arriva con le letture delle antenne: il passo 2 lo ricava dal campo `IndirizzoLocalizzazione` e, con la tabella dei comuni del pacchetto, ne trova il cantiere. Il servizio e gli altri dati del contenitore vengono dall'anagrafica dei contenitori attiva nel giorno della lettura, insieme alla fornitura a cui il contenitore è legato: `id_fornitura`, il suo stato, `stato_fornitura`, l'utenza che la possiede, `id_utenza`, e il suo comune, `comune_fornitura`. Un'utenza può avere più forniture. Una lettura è «Presente» a database se ha una fornitura: quella del contenitore o, per un sacchetto, quella del suo gruppo di sacchetti; un sacchetto non ha un'utenza. Il giro, il suo comune, `comune_giro`, e i campi `id_giro` ed `eseguito` vengono dal turno del calendario in cui cade la lettura. La coerenza del comune, `coerenza_comune`, confronta il comune di lettura con quello del database o del giro, con la stessa funzione che l'app usa al caricamento. I nomi dei giri sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone), e danno il servizio atteso. I nomi dei comuni si correggono nel passo 2: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso.
+La pipeline usa il pacchetto [{targets}](https://docs.ropensci.org/targets/): sta in `data-raw/_targets.R` e rifà solo quello che è cambiato. Dopo una nuova estrazione riconosce i file cambiati; dopo una modifica a una regola del pacchetto rifà le letture dell'app e il report, non le letture storiche. Salva solo i file finali: le tabelle intermedie restano in memoria. Altri comandi utili: `targets::tar_make(names = letture_app)` per il solo CSV dell'app, `targets::tar_outdated()` per sapere che cosa è da rifare, `targets::tar_visnetwork()` per vedere la catena dei passi. Servono i pacchetti `targets`, `rmarkdown`, `ggplot2` e `pkgload`.
 
-Il passo 3 aggiunge in coda sette colonne della fornitura, che l'app non usa: `nucleo_residenti`, `nucleo_non_residenti`, `nucleo_totale`, `tipo_categoria`, `categoria`, `sottocategoria` e `manovra_sociale`, in vigore al momento della lettura. Vengono dalle tabelle della composizione dei nuclei e delle manovre sociali del passo 2; servono al passo 5.
+I file di `data-raw/origine/` hanno sempre lo stesso nome, elencato in `file_origine()`. Le letture delle antenne, `letture_antenne.csv`, e i test dei mezzi, `AppSheet.ViewData.csv`, arrivano da altri sistemi e vanno salvati con quel nome. In cima a `data-raw/_targets.R` si indicano i nomi delle due colonne del file delle letture storiche e il periodo del report.
 
-Il passo 4 serve ai report che confrontano il sistema precedente con le antenne: l'app non carica le letture storiche. Va adattato al file di origine: in cima allo script si indicano il nome del file e i nomi delle due colonne. Alla fine riporta quanti RFID delle antenne compaiono anche nelle letture storiche: se sono pochi, i codici dei due file hanno con ogni probabilità formati diversi.
+Il file `.duckdb` contiene le stesse letture del CSV, già controllate come le controlla l'app, con gli avvisi del controllo: l'app lo apre senza rileggerle. Lo scrive `scrivi_archivio()`, che si può usare anche da sola su un CSV già preparato: `scrivi_archivio("letture_app.csv", "letture_app.duckdb")`. Le regole sono funzioni del pacchetto, in `R/fct_importa_tabelle.R`, una per file estratto, e in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune di lettura arriva con le letture delle antenne: è il testo dopo la prima virgola del campo `IndirizzoLocalizzazione`, e con la tabella dei comuni del pacchetto se ne trova il cantiere. Il servizio e gli altri dati del contenitore vengono dall'anagrafica dei contenitori attiva nel giorno della lettura, insieme alla fornitura a cui il contenitore è legato: `id_fornitura`, il suo stato, `stato_fornitura`, l'utenza che la possiede, `id_utenza`, e il suo comune, `comune_fornitura`. Un'utenza può avere più forniture. Una lettura è «Presente» a database se ha una fornitura: quella del contenitore o, per un sacchetto, quella del suo gruppo di sacchetti; un sacchetto non ha un'utenza. Il giro, il suo comune, `comune_giro`, e i campi `id_giro` ed `eseguito` vengono dal turno del calendario in cui cade la lettura. La coerenza del comune, `coerenza_comune`, confronta il comune di lettura con quello del database o del giro, con la stessa funzione che l'app usa al caricamento. I nomi dei giri sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone), e danno il servizio atteso. I nomi dei comuni si correggono all'importazione: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso.
 
-Le tre cartelle dei dati sono escluse da git: i dati aziendali restano sul computer di chi li prepara. Il passo 1 richiede i pacchetti `odbc` e `DBI` e la sorgente dati ODBC configurata.
+La pipeline aggiunge in coda sette colonne della fornitura, che l'app non usa: `nucleo_residenti`, `nucleo_non_residenti`, `nucleo_totale`, `tipo_categoria`, `categoria`, `sottocategoria`, in vigore al momento della lettura, e `potenziamento_secco`, vero se nel giorno della lettura la fornitura ha almeno una manovra sociale in vigore. Vengono dalle tabelle della composizione dei nuclei e delle manovre sociali, che l'estrazione aziendale filtra già alle sole dichiarazioni del potenziamento; servono al report sui conferimenti. Una dichiarazione che finisce prima di cominciare, di solito annullata, non conta e dà un avviso.
+
+Le letture storiche servono ai report che confrontano il sistema precedente con le antenne: l'app non le carica. Hanno codice e istante, con i codici nello stesso formato delle letture delle antenne.
+
+Le cartelle dei dati, `data-raw/origine/`, `data-raw/output/` e l'archivio della pipeline, `data-raw/_targets/`, sono escluse da git: i dati aziendali restano sul computer di chi li prepara. Il passo 1 richiede i pacchetti `odbc` e `DBI` e la sorgente dati ODBC configurata.
 
 ## Conferimenti del secco oltre il limite
 
@@ -309,7 +310,7 @@ Il report `docs/conferimenti_secco.Rmd` trova le forniture domestiche che, al ri
 Le letture delle antenne non vedono tutti gli svuotamenti: le antenne sono recenti e solo su una parte dei mezzi. Per questo il report non conta le letture, ma le confronta con le occasioni, cioè le volte in cui un mezzo con l'antenna è passato davanti al bidone, che si riconoscono dalle letture dei bidoni vicini. Il report spiega il metodo, le ragioni delle scelte e la prova su un territorio simulato.
 
 - Sul dataset di esempio: `rmarkdown::render("docs/conferimenti_secco.Rmd")`. Nell'esempio i bidoni del secco sono grandi ed esposti quasi sempre: i risultati servono solo a vedere il report.
-- Sui dati aziendali: dopo il passo 3, `source("data-raw/05_report_conferimenti.R")`. Il periodo si cambia in cima allo script; report e CSV restano in `data-raw/output/`, fuori dal repository.
+- Sui dati aziendali: lo compila la pipeline di preparazione, `targets::tar_make()`. Il periodo si cambia in cima a `data-raw/_targets.R`; report e CSV restano in `data-raw/output/`, fuori dal repository.
 
 L'app non usa ancora questa analisi.
 
@@ -321,9 +322,9 @@ Un anno di letture con le antenne può arrivare a un paio di milioni di righe. L
 
 **Caricare il file.** Dal più semplice al più rapido.
 
-- Dal browser, come un file piccolo. Un CSV di 2 milioni di righe con le colonne del passo 3 pesa circa 550 MB.
+- Dal browser, come un file piccolo. Un CSV di 2 milioni di righe con le colonne della pipeline pesa circa 550 MB.
 - Dal browser, compresso. Lo stesso file in `.csv.gz` pesa circa un ottavo, in Parquet circa un settimo, e arriva al server in meno tempo.
-- Il file `.duckdb` del passo 3, dal browser o dal disco: le letture sono già controllate e l'app le apre in meno di un decimo di secondo, invece di qualche secondo. Pesa circa un decimo del CSV, e la memoria usata è un quinto.
+- Il file `.duckdb` della pipeline, dal browser o dal disco: le letture sono già controllate e l'app le apre in meno di un decimo di secondo, invece di qualche secondo. Pesa circa un decimo del CSV, e la memoria usata è un quinto.
 - Dal disco, senza passare dal browser: `run_app(letture = "percorso")`. Il file viene letto una volta sola e resta aperto per tutte le sessioni dello stesso processo. È la scelta giusta quando l'app è usata da più persone, meglio ancora con il file `.duckdb`.
 
 **Tempi misurati** su 2 milioni di letture di 100.000 bidoni, su un portatile, a ottobre 2026. I tempi nel browser sono misurati senza scheda grafica: con una scheda grafica sono più brevi.
@@ -355,7 +356,7 @@ Per ripetere le misure sul proprio computer: `Rscript dev/misura_prestazioni.R <
 
 `inst/extdata/sample_rfid_dataset.csv` contiene 6.475 letture di 251 RFID, cioè 239 bidoni e 12 sacchetti, da ottobre 2024 a dicembre 2025, con cinque mezzi e 50 utenze. I bidoni stanno nel territorio servito, tra l'Altopiano di Asiago e i Colli Euganei, dentro i confini dei loro comuni. Il 2025 è completo, il 2024 parziale: serve a provare la selezione dell'anno. Ogni bidone viene letto a cadenza fissa dal giro del proprio servizio, come con un calendario di raccolta reale. Ogni giro del calendario, cioè un turno in un giorno della settimana, lavora in un comune, e i suoi bidoni stanno lì.
 
-Le colonne sono le 28 che scrive il passo 3 della preparazione dei dati reali; quelle del contenitore e della fornitura che l'app non usa, come frequenza, categoria, codice e stato della fornitura, hanno valori inventati. Ogni contenitore censito ha una fornitura, che lo lega alla sua utenza per il suo servizio: un contenitore che cambia utenza o servizio cambia fornitura. Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta, con il suo numero, `id_giro`, il servizio atteso dal giro, con il nome del database, e il comune del giro, `comune_giro`. I bidoni censiti hanno il servizio a database, `servizio_transponder`: 23 letture di quattro censiti, letti nei giri del secco porta a porta, non sono coerenti. Il comune di lettura, `comune_lettura`, è quello il cui confine contiene il punto: nell'esempio nessuna lettura è fuori dai comuni serviti, e una su cinque è fatta in un comune diverso da quello del giro, quasi sempre per i due tag anomali. I bidoni censiti hanno anche il comune della fornitura, e il cantiere segue dal comune di lettura. Per coerenza del comune le letture sono 5.415 coerenti, 427 fuori comune, 625 fuori giro e 8 di coerenza ignota, quelle dei sacchetti censiti. I comuni in cui lavorano i giri sono 32, nei quattro cantieri. I bidoni non censiti sono 37: nel 2025, 18 hanno una stima netta del servizio e 19 una stima incerta, con il punto di domanda sulla mappa.
+Le colonne sono le 35 che scrive la pipeline di preparazione dei dati reali; quelle del contenitore e della fornitura che l'app non usa, come frequenza, categoria, codice e stato della fornitura, hanno valori inventati. Ogni contenitore censito ha una fornitura, che lo lega alla sua utenza per il suo servizio: un contenitore che cambia utenza o servizio cambia fornitura. Come nei dati reali, ogni lettura ha il giro del mezzo che l'ha fatta, con il suo numero, `id_giro`, il servizio atteso dal giro, con il nome del database, e il comune del giro, `comune_giro`. I bidoni censiti hanno il servizio a database, `servizio_transponder`: 23 letture di quattro censiti, letti nei giri del secco porta a porta, non sono coerenti. Il comune di lettura, `comune_lettura`, è quello il cui confine contiene il punto: nell'esempio nessuna lettura è fuori dai comuni serviti, e una su cinque è fatta in un comune diverso da quello del giro, quasi sempre per i due tag anomali. I bidoni censiti hanno anche il comune della fornitura, e il cantiere segue dal comune di lettura. Per coerenza del comune le letture sono 5.415 coerenti, 427 fuori comune, 625 fuori giro e 8 di coerenza ignota, quelle dei sacchetti censiti. I comuni in cui lavorano i giri sono 32, nei quattro cantieri. I bidoni non censiti sono 37: nel 2025, 18 hanno una stima netta del servizio e 19 una stima incerta, con il punto di domanda sulla mappa.
 
 Le incongruenze dell'esempio: il contenitore `RFD20250905100` è registrato a LIMENA e letto a CITTADELLA, quindi fuori comune; il tag rimasto su un mezzo, censito a MAROSTICA, è fuori comune nelle letture fatte a NOVE e a BASSANO DEL GRAPPA; il tag fermo in deposito, non censito, è letto da giri di ogni comune, quindi fuori giro. Qualche censito letto appena oltre il confine del suo comune risulta fuori comune. Mercoledì 24 settembre 2025 il mezzo `VEH001` doveva lavorare a LIMENA e ha letto dieci bidoni a BORGORICCO: nella scheda «Ricerca Giro» il comune del giro e quello di lettura sono diversi, ma è fuori giro solo il non censito, perché i nove censiti sono nel comune del loro database.
 
@@ -405,6 +406,7 @@ R/
   utils_mappa_aggregata.R       bolle di cantieri e comuni, fasce di zoom
   utils_giri.R                  giri dei mezzi: ricerca e riepilogo
   generate_cluster_analysis.R   funzioni esportate per l'analisi senza app
+  fct_importa_tabelle.R         importazione dei file estratti dal database aziendale
   fct_preparazione_letture.R    regole che trasformano i dati aziendali nel CSV dell'app
   fct_preparazione_comuni.R     confini dei comuni serviti dallo shapefile della Regione del Veneto
 inst/
@@ -420,10 +422,9 @@ data-raw/
   genera_dataset_grande.R       dataset sintetico di milioni di letture, per misurare i tempi
   prepara_comuni.R              scrive i confini dei comuni serviti dallo shapefile della Regione
   rvccomuni/                    shapefile dei comuni della Regione del Veneto
-  01_estrai_tabelle.R, 02_importa_tabelle.R, 03_crea_letture_app.R   dati reali, tre passi: CSV e file .duckdb
-  04_crea_letture_storiche.R    dati reali: letture precedenti alle antenne, per i report; facoltativo
-  05_report_conferimenti.R      dati reali: report sui conferimenti del secco oltre il limite; facoltativo
-  origine/, intermedi/, output/ dati aziendali, esclusi da git
+  01_estrai_tabelle.R           dati reali, passo 1: estrazione dal database aziendale
+  _targets.R                    dati reali, passo 2: pipeline di preparazione con {targets}
+  origine/, output/, _targets/  dati aziendali, esclusi da git
 dev/
   misura_prestazioni.R          tempi e memoria di ogni passaggio dell'app su un file
 docs/
@@ -475,7 +476,7 @@ Specifica su geografia e prestazioni:
 Correzioni alla logica dei non censiti:
 
 - **Giro su ogni lettura.** `servizio_atteso` e `comune_giro` ci sono per ogni lettura, non solo per i non censiti: così è nei dati reali, e così è ora il dataset di esempio. La prima specifica li voleva vuoti per i censiti.
-- **Comune dalla posizione, non dal calendario.** Il calendario dice dove un mezzo doveva andare, non dove è andato: un mezzo può sostituirne un altro. `comune_lettura` è quindi il comune in cui è stata fatta la lettura, e il comune del calendario sta in una colonna sua, `comune_giro`, che serve solo a riconoscere le letture fuori giro. Un file preparato prima di questa modifica non ha `comune_giro`: va rigenerato con il passo 3, altrimenti le letture fuori giro non si possono riconoscere.
+- **Comune dalla posizione, non dal calendario.** Il calendario dice dove un mezzo doveva andare, non dove è andato: un mezzo può sostituirne un altro. `comune_lettura` è quindi il comune in cui è stata fatta la lettura, e il comune del calendario sta in una colonna sua, `comune_giro`, che serve solo a riconoscere le letture fuori giro. Un file preparato prima di questa modifica non ha `comune_giro`: va rigenerato con la pipeline, altrimenti le letture fuori giro non si possono riconoscere.
 - **Giro con il nome del calendario, servizio atteso con quello del database.** `servizio_giro` resta scritto come nel calendario dei mezzi, così il secco porta a porta, `SECCO PAP`, si distingue dagli altri giri del secco. `servizio_atteso` ne è la versione con il nome del database, ricavata con una tabella di conversione nella preparazione dei dati.
 - **Tre servizi per ogni lettura.** Il servizio a database, `servizio_transponder`, il servizio atteso dal giro, `servizio_atteso`, con il nome del database, e il giro del calendario, `servizio_giro`. La coerenza, `coerenza_servizio`, confronta i primi due, con `SI` e `NO`. Per due giorni, a ottobre 2026, servizio a database e servizio atteso sono stati una colonna sola, con un campo sulla sua origine, e il servizio atteso dei non censiti veniva dai censiti letti dallo stesso mezzo: il proprietario del progetto ha poi riscritto la preparazione dei dati con le tre colonne separate. I file di quei giorni, con la colonna `origine_servizio`, si caricano ancora.
 - **Giri dei servizi.** Nei giri in cui non è chiaro quale rifiuto si raccolga, come `SERVIZI MERCATI`, il servizio atteso è il servizio a database più frequente tra i censiti letti nel giro.
@@ -498,7 +499,7 @@ Salto architetturale, ottobre 2026:
 
 Letture storiche, ottobre 2026:
 
-- **Letture storiche tolte dall'app.** L'app caricava, in un secondo campo, le letture del sistema precedente alle antenne, e il dettaglio del bidone ne mostrava un istogramma per anno. Il confronto tra i due sistemi si fa ora nei report: il passo 4 della preparazione dei dati prepara ancora le letture storiche, ma l'app non le carica più, e l'istogramma non c'è più.
+- **Letture storiche tolte dall'app.** L'app caricava, in un secondo campo, le letture del sistema precedente alle antenne, e il dettaglio del bidone ne mostrava un istogramma per anno. Il confronto tra i due sistemi si fa ora nei report: la pipeline di preparazione dei dati prepara ancora le letture storiche, ma l'app non le carica più, e l'istogramma non c'è più.
 
 ## Da completare
 

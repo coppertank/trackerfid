@@ -677,7 +677,7 @@ test_that("le colonne facoltative sono convertite se presenti e create vuote se 
   # nessun avviso la segnala
   expect_identical(esito$dati$servizio_giro, c("CARTA", "SECCO PAP"))
 
-  # il file del passo 3: servizio a database e servizio atteso dal giro,
+  # il file della pipeline: servizio a database e servizio atteso dal giro,
   # volume e raccolte con i nomi dell'anagrafica, colonne che l'app non usa
   passo_3 <- carica_dataset(scrivi_csv(c(
     paste0(

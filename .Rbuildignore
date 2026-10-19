@@ -4,3 +4,4 @@
 ^dev$
 ^docs$
 ^CLAUDE\.md$
+^_targets\.yaml$

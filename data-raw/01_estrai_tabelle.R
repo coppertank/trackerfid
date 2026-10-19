@@ -1,9 +1,16 @@
-# Passo 1 di 3: estrae le tabelle dal database aziendale.
+# Passo 1: estrae le tabelle dal database aziendale.
 #
 # Scrive un CSV per tabella in data-raw/origine/. Quei file sono la copia
 # grezza dei dati: non vanno modificati a mano e non entrano nel repository.
 # Eseguire dalla radice del progetto. Servono i pacchetti odbc e DBI e la
 # sorgente dati ODBC "DenodoODBC2" configurata sul computer.
+#
+# Dopo l'estrazione, la pipeline di preparazione, targets::tar_make(),
+# riconosce i file cambiati e rifà quello che serve: vedi data-raw/_targets.R.
+# I nomi che si aspetta sono quelli di file_origine(): le letture delle
+# antenne, letture_antenne.csv, e i test dei mezzi, AppSheet.ViewData.csv,
+# arrivano da altri sistemi e vanno salvati in data-raw/origine/ con quel
+# nome.
 
 library(odbc)
 library(DBI)
@@ -23,7 +30,8 @@ tabelle <- c(
   "dv_cnt_tag_contenitori",
   "dv_cnt_gruppi_sacchetti",
   "dv_cnt_gruppi_sacchetti_servizi",
-  "dv_associazione_componenti"
+  "dv_associazione_componenti",
+  "dv_potenziamento_secco"
 )
 
 

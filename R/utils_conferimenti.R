@@ -39,26 +39,6 @@ litri_potenziamento <- function() {
   6240
 }
 
-#' Manovre sociali che danno diritto al potenziamento del secco
-#'
-#' Sono i valori del campo `manovra_sociale` del CSV del passo 3. Una
-#' fornitura con una di queste manovre in vigore può conferire fino a
-#' `litri_potenziamento()` litri.
-#' @noRd
-manovre_potenziamento <- function() {
-  c(
-    "MANOVRA SOCIALE NEONATI",
-    "MANOVRA SOCIALE ANZIANI",
-    "MANOVRA SOCIALE DISABILI"
-  )
-}
-
-#' Dice se una manovra sociale dà il potenziamento del secco
-#' @noRd
-ha_potenziamento <- function(manovra) {
-  toupper(stringr::str_squish(as.character(manovra))) %in% manovre_potenziamento()
-}
-
 #' Litri di secco che una fornitura può conferire in un anno
 #'
 #' Con il potenziamento valgono `litri_potenziamento()` litri. Altrimenti il
@@ -173,7 +153,7 @@ classi_conferimenti <- function() {
 
 # --- Lettura del file ------------------------------------------------------------
 
-#' Colonne del CSV del passo 3 che servono all'analisi dei conferimenti
+#' Colonne del CSV della pipeline che servono all'analisi dei conferimenti
 #'
 #' Le obbligatorie sono quelle senza le quali l'analisi non ha senso; le
 #' altre, se mancano, restano vuote.
@@ -191,7 +171,7 @@ colonne_conferimenti <- function() {
       "numero_raccolte_annue_previste",
       "nucleo_residenti",
       "tipo_categoria",
-      "manovra_sociale",
+      "potenziamento_secco",
       "latitudine",
       "longitudine"
     ),
@@ -211,10 +191,10 @@ colonne_conferimenti <- function() {
   )
 }
 
-#' Legge il CSV del passo 3 per l'analisi dei conferimenti
+#' Legge il CSV della pipeline per l'analisi dei conferimenti
 #'
 #' L'app non tiene le colonne della fornitura che servono qui, come il nucleo
-#' e la manovra sociale: per questo l'analisi legge il CSV, non l'archivio
+#' e il potenziamento del secco: per questo l'analisi legge il CSV, non l'archivio
 #' `.duckdb`. Legge solo le colonne di `colonne_conferimenti()`, tutte come
 #' testo, poi converte date, ore e numeri. I nomi alternativi di
 #' `alias_colonne()` valgono anche qui.
@@ -247,7 +227,7 @@ leggi_letture_conferimenti <- function(percorso) {
     stop(
       "Mancano le colonne: ",
       paste(mancanti, collapse = ", "),
-      ". Il file va rigenerato con il passo 3 della preparazione dei dati.",
+      ". Il file va rigenerato con la pipeline di preparazione dei dati.",
       call. = FALSE
     )
   }
@@ -286,9 +266,15 @@ leggi_letture_conferimenti <- function(percorso) {
   for (campo in c("data_attivazione_contenitore", "data_cessazione_contenitore")) {
     letture[[campo]] <- in_data(letture[[campo]])
   }
-  for (campo in c("servizio_transponder", "servizio_atteso", "tipo_categoria", "manovra_sociale")) {
+  for (campo in c("servizio_transponder", "servizio_atteso", "tipo_categoria")) {
     letture[[campo]] <- toupper(letture[[campo]])
   }
+  # write.csv scrive TRUE e FALSE; mancante senza fornitura.
+  letture$potenziamento_secco <- ifelse(
+    is.na(letture$potenziamento_secco),
+    NA,
+    toupper(letture$potenziamento_secco) %in% c("TRUE", "T", "1", "SI")
+  )
   scartate <- is.na(letture$giorno_lettura) | is.na(letture$RFID) |
     is.na(letture$latitudine) | is.na(letture$longitudine)
   structure(letture[!scartate, , drop = FALSE], scartate = sum(scartate))
@@ -296,7 +282,7 @@ leggi_letture_conferimenti <- function(percorso) {
 
 #' Date e ore del CSV, in UTC
 #'
-#' Il formato del passo 3, `AAAA-MM-GG HH:MM:SS`, si legge con un percorso
+#' Il formato della pipeline, `AAAA-MM-GG HH:MM:SS`, si legge con un percorso
 #' veloce; gli altri formati di `formati_data_ora()`, come le date italiane,
 #' con `lubridate::parse_date_time()`, più lento.
 #' @noRd
@@ -641,8 +627,8 @@ analisi_conferimenti <- function(
     tipo_categoria = ultimo_valido_per_gruppo(r$tipo_categoria, u, quante),
     categoria = ultimo_valido_per_gruppo(r$categoria, u, quante),
     sottocategoria = ultimo_valido_per_gruppo(r$sottocategoria, u, quante),
-    # La manovra dell'ultima lettura: vuota se la manovra è finita.
-    manovra_sociale = ultimo_per_gruppo(r$manovra_sociale, u, quante),
+    # Il potenziamento dell'ultima lettura: falso se la manovra è finita.
+    potenziamento = ultimo_per_gruppo(r$potenziamento_secco, u, quante),
     attivazione = estremi_per_gruppo(as.integer(r$data_attivazione_contenitore), u, quante)$minimo,
     cessazione = estremi_per_gruppo(as.integer(r$data_cessazione_contenitore), u, quante)$massimo,
     prima_lettura = primo_per_gruppo(gu, u, quante),
@@ -842,8 +828,7 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
   stima <- stima_tasso(esposizioni, occasioni, tasso_medio, parametri$peso_prior, parametri$livello_intervallo)
   annui <- raccolte * contenitori_attivi
   nucleo <- ultimo_valido_per_gruppo(unita$nucleo_residenti, f, quante)
-  manovra <- ultimo_per_gruppo(unita$manovra_sociale, f, quante)
-  potenziamento <- ha_potenziamento(manovra)
+  potenziamento <- ultimo_per_gruppo(unita$potenziamento, f, quante) %in% TRUE
   litri <- litri_consentiti(nucleo, potenziamento)
   consentiti <- litri / volume
   conferimenti <- stima$tasso * annui
@@ -866,7 +851,6 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
     sottocategoria = ultimo_valido_per_gruppo(unita$sottocategoria, f, quante),
     stato_fornitura = stato,
     nucleo_residenti = nucleo,
-    manovra_sociale = manovra,
     potenziamento = potenziamento,
     contenitori_attivi = attive,
     volume = volume,
@@ -934,7 +918,6 @@ forniture_vuote <- function() {
     sottocategoria = character(0),
     stato_fornitura = character(0),
     nucleo_residenti = integer(0),
-    manovra_sociale = character(0),
     potenziamento = logical(0),
     contenitori_attivi = integer(0),
     volume = numeric(0),
@@ -1044,7 +1027,7 @@ stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra,
     RFID_candidato = sostituzione$RFID,
     distanza_candidato_m = sostituzione$distanza,
     ultima_lettura_candidato = sostituzione$ultima_lettura,
-    manovra_candidata = sostituzione$manovra_sociale,
+    potenziamento_candidato = sostituzione$potenziamento,
     stringsAsFactors = FALSE
   )
   esito[order(!esito$dati_sufficienti, -esito$litri_annui, method = "radix"), , drop = FALSE]
@@ -1060,7 +1043,7 @@ stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra,
 #' vicino.
 #'
 #' @return Data frame, una riga per unità non censita, con `id_fornitura`,
-#'   `id_utenza`, `RFID`, `distanza`, `ultima_lettura` e `manovra_sociale`
+#'   `id_utenza`, `RFID`, `distanza`, `ultima_lettura` e `potenziamento`
 #'   del candidato, vuoti se non ce n'è.
 #' @noRd
 candidati_sostituzione <- function(unita, censite, contenitori, raggio_m) {
@@ -1071,7 +1054,7 @@ candidati_sostituzione <- function(unita, censite, contenitori, raggio_m) {
     RFID = vuoto,
     distanza = rep(NA_real_, nrow(unita)),
     ultima_lettura = as.Date(vuoto),
-    manovra_sociale = vuoto,
+    potenziamento = rep(NA, nrow(unita)),
     stringsAsFactors = FALSE
   )
   if (nrow(unita) == 0 || nrow(censite) == 0) {
@@ -1106,7 +1089,7 @@ candidati_sostituzione <- function(unita, censite, contenitori, raggio_m) {
   esito$RFID[q] <- censite$RFID[candidato]
   esito$distanza[q] <- distanza[primo]
   esito$ultima_lettura[q] <- as.Date(censite$ultima_lettura[candidato], origin = "1970-01-01")
-  esito$manovra_sociale[q] <- censite$manovra_sociale[candidato]
+  esito$potenziamento[q] <- censite$potenziamento[candidato] %in% TRUE
   esito
 }
 
@@ -1130,7 +1113,7 @@ elenco_da_contattare <- function(analisi) {
     "RFID",
     "comune_fornitura",
     "nucleo_residenti",
-    "manovra_sociale",
+    "potenziamento",
     "volume",
     "raccolte_annue",
     "occasioni",

@@ -26,7 +26,7 @@ letture_via <- function(
         numero_raccolte_annue_previste = if (is.null(b$fornitura)) NA_real_ else 26,
         nucleo_residenti = b$nucleo %||% NA_integer_,
         tipo_categoria = if (is.null(b$fornitura)) NA_character_ else b$tipo %||% "DOMESTICA",
-        manovra_sociale = b$manovra %||% NA_character_,
+        potenziamento_secco = if (is.null(b$fornitura)) NA else !is.null(b$manovra),
         latitudine = 45.7 + (b$scarto_m %||% 0) * m_lat,
         longitudine = 11.7 + b$posizione * 15 * m_lon,
         matricola_veicolo = "VEH001",
@@ -73,19 +73,6 @@ test_that("il limite dipende dai residenti, o dal potenziamento", {
   # il potenziamento sostituisce il limite del nucleo, anche senza nucleo
   expect_identical(litri_consentiti(c(1, 5, NA), c(TRUE, TRUE, TRUE)), rep(6240, 3))
   expect_identical(litri_consentiti(2, NA), 960)
-})
-
-test_that("solo tre manovre danno il potenziamento", {
-  expect_identical(
-    ha_potenziamento(c(
-      "MANOVRA SOCIALE NEONATI",
-      " manovra  sociale anziani ",
-      "MANOVRA SOCIALE DISABILI",
-      "MANOVRA SOCIALE ALTRO",
-      NA
-    )),
-    c(TRUE, TRUE, TRUE, FALSE, FALSE)
-  )
 })
 
 test_that("le forniture domestiche si riconoscono dalla tipologia", {
@@ -282,7 +269,7 @@ test_that("un non censito ha nucleo minimo, quota di potenziamento e candidato",
   )
   expect_identical(nc$fornitura_candidata, "F1")
   expect_identical(nc$RFID_candidato, "VECCHIO")
-  expect_identical(nc$manovra_candidata, "MANOVRA SOCIALE NEONATI")
+  expect_true(nc$potenziamento_candidato)
   expect_lt(nc$distanza_candidato_m, 10)
   # la quota per fascia conta le forniture domestiche stimate
   m <- analisi$manovra_per_fascia
@@ -291,7 +278,7 @@ test_that("un non censito ha nucleo minimo, quota di potenziamento e candidato",
   expect_equal(m$quota, (m$con_potenziamento + 0.5) / (m$forniture + 1))
 })
 
-test_that("il CSV del passo 3 si legge con le colonne della fornitura", {
+test_that("il CSV della pipeline si legge con le colonne della fornitura", {
   letture <- leggi_letture_conferimenti(percorso_dataset_esempio())
   expect_named(
     letture,
@@ -302,7 +289,11 @@ test_that("il CSV del passo 3 si legge con le colonne della fornitura", {
   expect_equal(letture$giorno_lettura, dati_esempio()$giorno_lettura)
   expect_type(letture$nucleo_residenti, "integer")
   expect_s3_class(letture$data_attivazione_contenitore, "Date")
-  expect_true(all(stats::na.omit(letture$manovra_sociale) %in% manovre_potenziamento()))
+  expect_type(letture$potenziamento_secco, "logical")
+  # mancante senza fornitura, vero o falso con una fornitura
+  esempio <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
+  expect_identical(is.na(letture$potenziamento_secco), is.na(esempio$id_fornitura))
+  expect_identical(which(letture$potenziamento_secco), which(esempio$potenziamento_secco == "TRUE"))
 
   # un file senza le colonne della fornitura va rigenerato
   vecchio <- withr::local_tempfile(fileext = ".csv")
@@ -310,7 +301,7 @@ test_that("il CSV del passo 3 si legge con le colonne della fornitura", {
   utils::write.csv(grezzo[1:28], vecchio, row.names = FALSE)
   expect_error(
     leggi_letture_conferimenti(vecchio),
-    "Mancano le colonne: nucleo_residenti, tipo_categoria, manovra_sociale"
+    "Mancano le colonne: nucleo_residenti, tipo_categoria, potenziamento_secco"
   )
   expect_error(leggi_letture_conferimenti("non_esiste.csv"), "File non trovato")
 })
@@ -328,8 +319,12 @@ test_that("l'analisi del dataset di esempio separa domestiche e non domestiche",
   expect_gt(length(intersect(und, f$id_fornitura)), 0)
   expect_true(all(f$classe[f$id_fornitura %in% und] == "Non domestica"))
   expect_true(all(f$classe[!f$id_fornitura %in% und] != "Non domestica"))
-  # la fornitura che ottiene la manovra a giugno ha il potenziamento
-  expect_true(all(f$potenziamento == ha_potenziamento(f$manovra_sociale)))
+  # il potenziamento è quello dell'ultima lettura della fornitura, e lo hanno
+  # solo forniture domestiche
+  expect_type(f$potenziamento, "logical")
+  expect_true(any(f$potenziamento))
+  expect_false(any(f$potenziamento[f$id_fornitura %in% und]))
+  expect_identical(f$litri_consentiti[f$potenziamento], rep(litri_potenziamento(), sum(f$potenziamento)))
   expect_named(f, names(forniture_vuote()))
   expect_true(all(analisi$non_censiti$RFID %in% esempio$RFID[esempio$presente_a_database == "Non Presente"]))
 })
@@ -349,7 +344,7 @@ test_that("i risultati si scrivono in tre CSV", {
   expect_identical(contattare$id_fornitura, "F1")
 })
 
-test_that("date e ore si leggono nel formato del passo 3 e negli altri", {
+test_that("date e ore si leggono nel formato della pipeline e negli altri", {
   x <- c("2025-09-01 08:30:15", "01/09/2025 08:30:15", "2025-09-01", NA, "non una data")
   attese <- as.POSIXct(c("2025-09-01 08:30:15", "2025-09-01 08:30:15", "2025-09-01 00:00:00", NA, NA), tz = "UTC")
   expect_equal(leggi_data_ora(x), attese)

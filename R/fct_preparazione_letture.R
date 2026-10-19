@@ -13,7 +13,7 @@
 #'   `targa_veicolo`, `RFID`, `comune_lettura`, `cantiere`, `NumeroLetture`,
 #'   `latitudine` e `longitudine`. Il comune di lettura arriva dal sistema di
 #'   localizzazione dei mezzi, il cantiere dalla tabella dei comuni: vedi il
-#'   passo 2.
+#'   `importa_letture()`.
 #' @param df_test_mezzi Test dei mezzi, con `targa_veicolo`,
 #'   `matricola_veicolo`, `esito` e `data_test`.
 #' @return Le letture valide, con la matricola del mezzo.
@@ -287,89 +287,63 @@ associa_servizio_atteso_da_calendario <- function(
   )
 }
 
-#' Colonne della fornitura aggiunte da `associa_nucleo_e_manovra()`
+#' Colonne del nucleo e della categoria della fornitura
 #'
-#' Seguono, nel CSV dell'app, le 28 colonne di
-#' `associa_servizio_atteso_da_calendario()`. L'app non le usa: servono
-#' all'analisi dei conferimenti del secco, vedi `analisi_conferimenti()`.
+#' Le aggiunge `associa_componenti()`.
 #' @noRd
-colonne_nucleo_manovra <- function() {
+colonne_componenti <- function() {
   c(
     "nucleo_residenti",
     "nucleo_non_residenti",
     "nucleo_totale",
     "tipo_categoria",
     "categoria",
-    "sottocategoria",
-    "manovra_sociale"
+    "sottocategoria"
   )
 }
 
-#' Associa a ogni lettura il nucleo familiare e la manovra sociale
+#' Colonne della fornitura in coda al CSV dell'app
 #'
-#' Per una lettura legata a una fornitura cerca, nel giorno e all'ora della
-#' lettura:
-#' - la composizione del nucleo e la categoria della fornitura in vigore: la
-#'   riga di `df_componenti` della stessa fornitura con l'inizio della
-#'   decorrenza più recente non successivo alla lettura, purché la decorrenza
-#'   non sia già finita. Una fine mancante vuol dire ancora in vigore;
-#' - la manovra sociale in vigore nel giorno della lettura. Se ce n'è più di
-#'   una, vince una manovra che dà il potenziamento del secco, vedi
-#'   `manovre_potenziamento()`, e tra quelle la più recente.
-#'
-#' Una lettura senza fornitura, o senza righe in vigore, resta con i campi
-#' vuoti. Una fornitura senza manovra in vigore ha `manovra_sociale` vuota.
-#'
-#' @param df_letture Letture con `id_fornitura`, `giorno_lettura` e
-#'   `giorno`, come le restituisce `associa_servizio_atteso_da_calendario()`.
-#' @param df_componenti Composizione dei nuclei, con `id_fornitura`,
-#'   `data_inizio_decorrenza`, `data_fine_decorrenza`, `nucleo_residenti`,
-#'   `nucleo_non_residenti`, `nucleo_totale`, `tipo_categoria`, `categoria`
-#'   e `sottocategoria`.
-#' @param df_manovra Manovre sociali, con `id_fornitura`,
-#'   `data_inizio_dichiarazione`, `data_fine_dichiarazione` e una colonna con
-#'   la tipologia della manovra.
-#' @param colonna_manovra Nome della colonna di `df_manovra` con la tipologia,
-#'   ad esempio `"MANOVRA SOCIALE ANZIANI"`. Se manca, è la prima colonna di
-#'   testo con un valore che inizia per `MANOVRA SOCIALE`.
-#' @return Le letture, con in coda le colonne di `colonne_nucleo_manovra()`.
+#' Seguono le 28 colonne di `associa_servizio_atteso_da_calendario()`: quelle
+#' di `colonne_componenti()` e `potenziamento_secco`, di
+#' `associa_potenziamento()`. L'app non le usa: servono all'analisi dei
+#' conferimenti del secco, vedi `analisi_conferimenti()`.
 #' @noRd
-associa_nucleo_e_manovra <- function(
-  df_letture,
-  df_componenti,
-  df_manovra,
-  colonna_manovra = NULL
-) {
+colonne_nucleo_manovra <- function() {
+  c(colonne_componenti(), "potenziamento_secco")
+}
+
+#' Associa a ogni lettura il nucleo familiare e la categoria della fornitura
+#'
+#' Per una lettura legata a una fornitura prende, all'istante della lettura,
+#' la riga di `df_componenti` della stessa fornitura con l'inizio della
+#' decorrenza più recente non successivo alla lettura, purché la decorrenza
+#' non sia già finita. Una fine mancante vuol dire ancora in vigore. Una
+#' lettura senza fornitura, o senza una decorrenza in vigore, resta con i campi
+#' vuoti.
+#'
+#' Il confronto si fa sulle coppie distinte di fornitura e istante, molte meno
+#' delle letture.
+#'
+#' @param df_letture Letture con `id_fornitura` e `giorno_lettura`.
+#' @param df_componenti Composizione dei nuclei, con `id_fornitura`,
+#'   `data_inizio_decorrenza`, `data_fine_decorrenza` e le colonne di
+#'   `colonne_componenti()`, come le restituisce `importa_componenti()`.
+#' @return Le letture, con in coda le colonne di `colonne_componenti()`.
+#' @noRd
+associa_componenti <- function(df_letture, df_componenti) {
   fornitura <- as.character(df_letture$id_fornitura)
   istante <- df_letture$giorno_lettura
-  giorno <- as.Date(df_letture$giorno)
+  df_componenti$id_fornitura <- as.character(df_componenti$id_fornitura)
 
-  # 1. Nucleo e categoria: la decorrenza iniziata più di recente, se non è
-  # già finita. Il join lavora sulle coppie distinte di fornitura e istante.
-  componenti <- df_componenti |>
-    dplyr::mutate(
-      id_fornitura = as.character(.data$id_fornitura),
-      dplyr::across(
-        dplyr::any_of(c("tipo_categoria", "categoria", "sottocategoria")),
-        as.character
-      ),
-      dplyr::across(
-        dplyr::any_of(c("nucleo_residenti", "nucleo_non_residenti", "nucleo_totale")),
-        as.integer
-      )
-    )
-  chiavi <- unique(data.frame(
-    id_fornitura = fornitura,
-    istante = istante,
-    stringsAsFactors = FALSE
-  )[!is.na(fornitura), , drop = FALSE])
-  in_vigore <- dplyr::left_join(
-    chiavi,
-    componenti,
+  coppie <- unique(data.frame(id_fornitura = fornitura, istante = istante)[!is.na(fornitura), , drop = FALSE])
+  in_vigore <- dplyr::inner_join(
+    coppie,
+    df_componenti,
     by = dplyr::join_by("id_fornitura", "istante" >= "data_inizio_decorrenza"),
     relationship = "many-to-many"
   )
-  # Per ogni coppia la decorrenza iniziata per ultima.
+  # Per ogni coppia la decorrenza iniziata per ultima, se non è già finita.
   in_vigore <- in_vigore[order(
     in_vigore$id_fornitura,
     as.numeric(in_vigore$istante),
@@ -379,81 +353,75 @@ associa_nucleo_e_manovra <- function(
   in_vigore <- in_vigore[!duplicated(in_vigore[c("id_fornitura", "istante")]), , drop = FALSE]
   finita <- !is.na(in_vigore$data_fine_decorrenza) &
     in_vigore$istante > in_vigore$data_fine_decorrenza
-  campi_nucleo <- colonne_nucleo_manovra()[1:6]
-  for (campo in campi_nucleo) {
-    if (!campo %in% names(in_vigore)) {
-      in_vigore[[campo]] <- NA
-    }
-    in_vigore[[campo]][finita] <- NA
-  }
+  in_vigore <- in_vigore[!finita, , drop = FALSE]
+
   riga <- match(
     paste(fornitura, as.numeric(istante), sep = "\r"),
     paste(in_vigore$id_fornitura, as.numeric(in_vigore$istante), sep = "\r")
   )
-  riga[is.na(fornitura)] <- NA_integer_
-  for (campo in campi_nucleo) {
-    df_letture[[campo]] <- in_vigore[[campo]][riga]
+  for (campo in colonne_componenti()) {
+    valori <- in_vigore[[campo]] %||% rep(NA, nrow(in_vigore))
+    df_letture[[campo]] <- valori[riga]
   }
-
-  # 2. Manovra sociale in vigore nel giorno della lettura.
-  colonna_manovra <- colonna_manovra %||% trova_colonna_manovra(df_manovra)
-  manovre <- data.frame(
-    id_fornitura = as.character(df_manovra$id_fornitura),
-    inizio = as.Date(df_manovra$data_inizio_dichiarazione),
-    fine = as.Date(df_manovra$data_fine_dichiarazione),
-    manovra = stringr::str_squish(toupper(as.character(df_manovra[[colonna_manovra]]))),
-    stringsAsFactors = FALSE
-  )
-  manovre$fine[is.na(manovre$fine)] <- as.Date("2099-12-31")
-  giorni <- unique(data.frame(
-    id_fornitura = fornitura,
-    giorno = giorno,
-    stringsAsFactors = FALSE
-  )[!is.na(fornitura), , drop = FALSE])
-  trovate <- dplyr::inner_join(
-    giorni,
-    manovre,
-    by = dplyr::join_by("id_fornitura", "giorno" >= "inizio", "giorno" <= "fine")
-  )
-  trovate <- trovate[!is.na(trovate$manovra) & nzchar(trovate$manovra), , drop = FALSE]
-  # Prima le manovre del potenziamento, poi le più recenti.
-  trovate <- trovate[order(
-    trovate$id_fornitura,
-    trovate$giorno,
-    !trovate$manovra %in% manovre_potenziamento(),
-    -as.numeric(trovate$inizio),
-    method = "radix"
-  ), , drop = FALSE]
-  trovate <- trovate[!duplicated(trovate[c("id_fornitura", "giorno")]), , drop = FALSE]
-  riga <- match(
-    paste(fornitura, as.numeric(giorno), sep = "\r"),
-    paste(trovate$id_fornitura, as.numeric(trovate$giorno), sep = "\r")
-  )
-  riga[is.na(fornitura)] <- NA_integer_
-  df_letture$manovra_sociale <- trovate$manovra[riga]
   df_letture
 }
 
-#' Colonna con la tipologia della manovra sociale
+#' Dice se la fornitura di ogni lettura ha il potenziamento del secco
 #'
-#' La prima colonna di testo, oltre al codice della fornitura, con almeno un
-#' valore che inizia per `MANOVRA SOCIALE`.
+#' La tabella delle manovre sociali arriva già filtrata: ha solo le
+#' dichiarazioni che danno il potenziamento del secco, una riga per periodo,
+#' dall'inizio alla fine della dichiarazione. Una lettura ha il potenziamento
+#' se nel giorno della lettura la sua fornitura ha almeno una dichiarazione in
+#' vigore, estremi compresi; una fine mancante vuol dire ancora in vigore.
+#' Una lettura senza fornitura, un non censito, resta senza valore.
+#'
+#' Una dichiarazione che finisce prima di cominciare è di solito una
+#' dichiarazione annullata, scritta così per abitudine: non conta, e viene
+#' segnalata con un avviso.
+#'
+#' @param df_letture Letture con `id_fornitura` e `giorno`.
+#' @param df_manovra Dichiarazioni, con `id_fornitura`,
+#'   `data_inizio_dichiarazione` e `data_fine_dichiarazione`, come le
+#'   restituisce `importa_manovre()`.
+#' @return Le letture, con in coda `potenziamento_secco`: `TRUE`, `FALSE`, o
+#'   mancante senza fornitura.
 #' @noRd
-trova_colonna_manovra <- function(df_manovra) {
-  for (campo in setdiff(names(df_manovra), "id_fornitura")) {
-    valori <- df_manovra[[campo]]
-    if (is.character(valori) || is.factor(valori)) {
-      valori <- toupper(stringr::str_squish(as.character(valori)))
-      if (any(startsWith(valori, "MANOVRA SOCIALE"), na.rm = TRUE)) {
-        return(campo)
-      }
-    }
-  }
-  stop(
-    "Nella tabella delle manovre sociali nessuna colonna ha valori che ",
-    "iniziano per MANOVRA SOCIALE: indicala con l'argomento colonna_manovra.",
-    call. = FALSE
+associa_potenziamento <- function(df_letture, df_manovra) {
+  fornitura <- as.character(df_letture$id_fornitura)
+  giorno <- as.Date(df_letture$giorno)
+  dichiarazioni <- data.frame(
+    id_fornitura = as.character(df_manovra$id_fornitura),
+    inizio = as.Date(df_manovra$data_inizio_dichiarazione),
+    fine = as.Date(df_manovra$data_fine_dichiarazione)
   )
+  dichiarazioni$fine[is.na(dichiarazioni$fine)] <- as.Date("2099-12-31")
+
+  rovesciate <- dichiarazioni$fine < dichiarazioni$inizio
+  if (any(rovesciate, na.rm = TRUE)) {
+    warning(
+      sum(rovesciate, na.rm = TRUE),
+      " dichiarazioni di manovra sociale finiscono prima di cominciare, ",
+      "di solito perch\u00e9 annullate: non vengono considerate. Forniture: ",
+      paste(utils::head(unique(dichiarazioni$id_fornitura[rovesciate %in% TRUE]), 10), collapse = ", "),
+      if (length(unique(dichiarazioni$id_fornitura[rovesciate %in% TRUE])) > 10) ", ...",
+      call. = FALSE
+    )
+    dichiarazioni <- dichiarazioni[!rovesciate %in% TRUE, , drop = FALSE]
+  }
+
+  # Coppie distinte di fornitura e giorno con almeno una dichiarazione in
+  # vigore.
+  coppie <- unique(data.frame(id_fornitura = fornitura, giorno = giorno)[!is.na(fornitura), , drop = FALSE])
+  attive <- dplyr::semi_join(
+    coppie,
+    dichiarazioni,
+    by = dplyr::join_by("id_fornitura", "giorno" >= "inizio", "giorno" <= "fine")
+  )
+  potenziamento <- paste(fornitura, as.numeric(giorno), sep = "\r") %in%
+    paste(attive$id_fornitura, as.numeric(attive$giorno), sep = "\r")
+  potenziamento[is.na(fornitura)] <- NA
+  df_letture$potenziamento_secco <- potenziamento
+  df_letture
 }
 
 #' Giri in cui non è chiaro quale rifiuto si raccolga
@@ -565,7 +533,88 @@ servizio_da_giro <- function(servizio_giro) {
   uniforma_servizio(servizio_giro)
 }
 
-# --- Lettura dei CSV degli script -------------------------------------------
+# --- La pipeline di preparazione --------------------------------------------------
+
+#' Toglie le letture che non vanno nel CSV dell'app
+#'
+#' I sacchetti, codici che iniziano per `00BD`, e i codici non validi, che
+#' iniziano con dieci zeri. Togliere i sacchetti è una scelta del proprietario
+#' del progetto: finché resta, il CSV dell'app non ne contiene.
+#'
+#' @param letture Letture con `RFID`.
+#' @noRd
+filtra_codici_app <- function(letture) {
+  scarta <- startsWith(letture$RFID, "00BD") | startsWith(letture$RFID, "0000000000")
+  letture[!scarta, , drop = FALSE]
+}
+
+#' Letture pronte per l'app, dai file estratti dal passo 1
+#'
+#' Importa le tabelle con le funzioni di `R/fct_importa_tabelle.R`, poi
+#' applica le regole nell'ordine: `filtra_letture_post_test()`,
+#' `formatta_rfid()`, `associa_servizio()`,
+#' `associa_servizio_atteso_da_calendario()`, `associa_componenti()`,
+#' `associa_potenziamento()` e `filtra_codici_app()`. Le tabelle intermedie
+#' non vengono salvate: la pipeline di {targets} tiene solo i file finali.
+#'
+#' @param file Lista dei percorsi, con i nomi di `file_origine()`.
+#' @return Le letture, con le 35 colonne del CSV dell'app.
+#' @noRd
+prepara_letture_app <- function(file = file_origine()) {
+  letture <- importa_letture(file$letture)
+  test_mezzi <- importa_test_mezzi(file$test_mezzi)
+  valide <- formatta_rfid(filtra_letture_post_test(letture, test_mezzi))
+  rm(letture)
+  con_servizio <- associa_servizio(
+    valide,
+    importa_contenitori(file$contenitori),
+    importa_sacchetti(file$gruppi_sacchetti, file$servizi_sacchetti)
+  )
+  rm(valide)
+  con_giro <- associa_servizio_atteso_da_calendario(
+    con_servizio,
+    importa_calendario(file$calendario)
+  )
+  rm(con_servizio)
+  con_nucleo <- associa_componenti(con_giro, importa_componenti(file$componenti))
+  rm(con_giro)
+  con_nucleo <- associa_potenziamento(con_nucleo, importa_manovre(file$manovre))
+  filtra_codici_app(con_nucleo)
+}
+
+#' Scrive il CSV dell'app e il suo archivio `.duckdb`
+#'
+#' L'archivio è lo stesso CSV letto e validato come lo legge l'app, con gli
+#' avvisi della validazione: vedi `scrivi_archivio()`.
+#'
+#' @param letture Risultato di `prepara_letture_app()`.
+#' @param cartella Cartella in cui scrivere.
+#' @return I percorsi dei due file: il CSV e l'archivio.
+#' @noRd
+scrivi_letture_app <- function(letture, cartella = "data-raw/output") {
+  dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
+  csv <- file.path(cartella, "letture_app.csv")
+  archivio <- file.path(cartella, "letture_app.duckdb")
+  utils::write.csv(letture, csv, row.names = FALSE)
+  scrivi_archivio(csv, archivio)
+  c(csv, archivio)
+}
+
+#' Scrive il CSV delle letture storiche, per i report
+#'
+#' @param file Lista dei percorsi, con i nomi di `file_origine()`.
+#' @param cartella Cartella in cui scrivere.
+#' @param ... Nomi delle colonne, vedi `importa_letture_storiche()`.
+#' @return Il percorso del CSV.
+#' @noRd
+scrivi_letture_storiche <- function(file = file_origine(), cartella = "data-raw/output", ...) {
+  dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
+  csv <- file.path(cartella, "letture_storiche.csv")
+  utils::write.csv(importa_letture_storiche(file$storiche, ...), csv, row.names = FALSE)
+  csv
+}
+
+# --- Lettura dei CSV estratti ---------------------------------------------------
 
 #' Rileva il separatore del CSV (virgola o punto e virgola)
 #'
@@ -580,37 +629,4 @@ rileva_separatore <- function(path) {
   n_virgole <- stringr::str_count(intestazione, stringr::fixed(","))
   n_punti_virgola <- stringr::str_count(intestazione, stringr::fixed(";"))
   if (n_punti_virgola > n_virgole) ";" else ","
-}
-
-#' Legge un CSV rilevando automaticamente il separatore
-#'
-#' Tutte le colonne vengono lette come testo, così codici come RFID e utenze
-#' non perdono eventuali zeri iniziali. L'app legge le letture con DuckDB,
-#' vedi `carica_archivio()`: questa funzione serve agli script della
-#' preparazione dei dati, come il passo 4 per le letture storiche.
-#'
-#' @param path Percorso del file CSV.
-#' @return Un data frame di sole colonne `character`.
-#' @noRd
-read_csv_auto <- function(path) {
-  separatore <- rileva_separatore(path)
-  tryCatch(
-    data.table::fread(
-      path,
-      sep = separatore,
-      header = TRUE,
-      colClasses = "character",
-      na.strings = c("NA", ""),
-      encoding = "UTF-8",
-      strip.white = TRUE,
-      showProgress = FALSE,
-      data.table = FALSE
-    ),
-    error = function(e) {
-      errore_validazione(paste0(
-        "Impossibile leggere il file come CSV: ",
-        conditionMessage(e)
-      ))
-    }
-  )
 }

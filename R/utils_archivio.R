@@ -912,7 +912,7 @@ apri_file_archivio <- function(path, nome = basename(path)) {
   )$table_name
   if (!all(c("letture", "informazioni") %in% tabelle)) {
     errore_validazione(
-      "Il file .duckdb non contiene un archivio di letture: va scritto con scrivi_archivio() o con il passo 3 della preparazione dei dati."
+      "Il file .duckdb non contiene un archivio di letture: va scritto con scrivi_archivio() o con la pipeline di preparazione dei dati."
     )
   }
   informazioni <- DBI::dbGetQuery(
@@ -922,7 +922,7 @@ apri_file_archivio <- function(path, nome = basename(path)) {
   valore <- function(chiave) informazioni$valore[match(chiave, informazioni$chiave)]
   if (!identical(valore("versione"), as.character(versione_archivio()))) {
     errore_validazione(sprintf(
-      "Il file .duckdb \u00e8 stato scritto con lo schema %s, l'app usa lo schema %s: va rigenerato con il passo 3 della preparazione dei dati.",
+      "Il file .duckdb \u00e8 stato scritto con lo schema %s, l'app usa lo schema %s: va rigenerato con la pipeline di preparazione dei dati.",
       valore("versione") %||% "sconosciuto",
       versione_archivio()
     ))

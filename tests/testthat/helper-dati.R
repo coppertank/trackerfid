@@ -75,7 +75,7 @@ intestazione_csv <- paste(
 )
 
 # Le stesse, con il servizio del contenitore a database prima del servizio
-# atteso, come nel file del passo 3.
+# atteso, come nel file della pipeline.
 intestazione_transponder <- sub(
   "servizio_atteso",
   "servizio_transponder,servizio_atteso",
@@ -244,4 +244,72 @@ dati_reactable <- function(widget) {
 }
 attributi_reactable <- function(widget) {
   widget$x$tag$attribs
+}
+
+# File estratti sintetici, come li scrive il passo 1, in una cartella: tre
+# letture di un contenitore censito, una di un non censito, una di un
+# sacchetto, più righe che la preparazione deve scartare. Restituisce i
+# percorsi, con i nomi di `file_origine()`.
+scrivi_origine_prova <- function(cartella) {
+  dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
+  file <- file_origine(cartella)
+  scrivi <- function(nome, righe) writeLines(righe, file[[nome]], useBytes = TRUE)
+  scrivi("test_mezzi", c(
+    "TARGA_VEICOLO;MATRICOLA_VEICOLO;ESITO TEST SEZIONE B;ULTIMA DATA VERBALE SEZIONE B",
+    "AB123CD;VEH001;POSITIVO;2026-07-31 10.30",
+    "ZZ999ZZ;VEH009;NEGATIVO;2026-07-31 10.30",
+    "XY000XY;VEH002;-;-"
+  ))
+  scrivi("letture", c(
+    "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
+    "VIA ROMA 1, LIMENA;03/08/2026 08.15.00;123;AB123CD;45,4700;11,8400;2",
+    "VIA ROMA 1, LIMENA;17/08/2026 08.20.00;123;AB123CD;45,4701;11,8401;1",
+    "VIA ROMA 1, LIMENA;31/08/2026 08.10.00;123;AB123CD;45,4700;11,8400;1",
+    "VIA PO 3, Limena, PD;03/08/2026 09.00.00;999;AB123CD;45,4710;11,8410;1",
+    "VIA PO 5, LIMENA;03/08/2026 09.05.00;00BD00000000000000000001;AB123CD;45,4711;11,8411;1",
+    # scartate: posizione zero, senza comune, mezzo con test negativo, lettura
+    # prima del test
+    "VIA PO 7, LIMENA;03/08/2026 09.10.00;124;AB123CD;0;0;1",
+    "SENZA COMUNE;03/08/2026 09.15.00;125;AB123CD;45,4712;11,8412;1",
+    "VIA PO 9, LIMENA;03/08/2026 09.20.00;126;ZZ999ZZ;45,4713;11,8413;1",
+    "VIA PO 9, LIMENA;30/07/2026 09.20.00;127;AB123CD;45,4713;11,8413;1"
+  ))
+  scrivi("contenitori", c(
+    "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria",
+    "0000000123,SECCO,120,QUINDICINALE,26,2020-01-01,,F1,APERTO,U1,LIMENA,UD",
+    ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,APERTO,U9,VALSTAGNA,UD"
+  ))
+  scrivi("gruppi_sacchetti", c(
+    "codice_uhf,codice_gruppo_sacchetti",
+    "00BD00000000000000000001,G1"
+  ))
+  scrivi("servizi_sacchetti", c(
+    "codice_gruppo_sacchetti,id_servizio,ultima_variazione",
+    "G1,S_VECCHIA,2024-01-01 10:00:00",
+    "G1,S1,2025-01-01 10:00:00"
+  ))
+  scrivi("calendario", c(
+    "giorno,ora_inizio,ora_fine,matricola_mezzo,id_giro,eseguito,descrizione_servizio,comune",
+    "2026-08-03,06:00:00,12:00:00,XVEH001,10,SI,SECCO PAP,LIMENA",
+    "2026-08-17,06:00:00,12:00:00,XVEH001,10,SI,SECCO PAP,LIMENA",
+    "2026-08-31,06:00:00,12:00:00,XVEH001,10,SI,SECCO PAP,ROSA'",
+    "2026-08-31,06:00:00,12:00:00,,11,SI,SECCO PAP,LIMENA"
+  ))
+  scrivi("componenti", c(
+    "id_servizio,data_inizio_decorrenza,data_fine_decorrenza,nucleo_residenti,nucleo_non_residenti,nucleo_totale,tipo_categoria,categoria,sottocategoria",
+    "F1,2020/01/01 00.00.00,2026/08/15 00.00.00,2,0,2,DOMESTICA,ABITAZIONE,RESIDENTE",
+    "F1,2026/08/15 00.00.00,,3,1,4,DOMESTICA,ABITAZIONE,RESIDENTE"
+  ))
+  scrivi("manovre", c(
+    "id_servizio,data_inizio_dichiarazione,data_fine_dichiarazione",
+    "F1,2026-08-20,"
+  ))
+  scrivi("storiche", c(
+    "codice_transponder,data_lettura",
+    "123,2025-03-01 07:00:00",
+    "123,2025-03-01 07:00:00",
+    "00BD00000000000000000001,2025-03-02 07:00:00",
+    ",2025-03-03 07:00:00"
+  ))
+  file
 }

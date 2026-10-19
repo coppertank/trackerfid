@@ -3,6 +3,9 @@
 data-raw/origine/*
 data-raw/intermedi/*
 data-raw/output/*
+# Archivio della pipeline di {targets}: contiene i percorsi e i metadati dei
+# file aziendali
+data-raw/_targets/
 !data-raw/*/.gitkeep
 
 # Sessioni di R: possono contenere gli stessi dati

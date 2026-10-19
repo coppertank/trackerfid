@@ -14,7 +14,7 @@
 # non deve stare sotto git. I dati sono casuali e non hanno casi particolari:
 # servono a misurare i tempi, non a provare le funzioni.
 #
-# Le colonne sono quelle che scrive il passo 3 della preparazione dei dati
+# Le colonne sono quelle che scrive la pipeline di preparazione dei dati
 # reali. Ogni lettura ha il giro del mezzo che l'ha fatta e il comune di quel
 # giro: `servizio_giro`, `servizio_atteso` e `comune_giro` non mancano mai. Il
 # giro ha il nome del calendario, il servizio atteso quello del database. Il

@@ -10,7 +10,7 @@
 # Come nei dati reali, ogni lettura e' fatta da un mezzo durante un giro: per
 # questo ogni riga ha il giro, con il suo comune, e il servizio atteso dal
 # giro. Per un contenitore non censito sono le sole informazioni sul servizio.
-# Le colonne sono quelle che scrive il passo 3 della preparazione dei dati
+# Le colonne sono quelle che scrive la pipeline di preparazione dei dati
 # reali. Quelle del contenitore che l'app non usa, come frequenza, categoria
 # e stato del servizio, hanno valori inventati ma plausibili.
 #
@@ -941,7 +941,7 @@ letture$id_fornitura[del_contenitore] <- sprintf(
 # cui non e' chiaro quale rifiuto si raccolga, come "SERVIZI MERCATI", e' il
 # servizio a database piu' frequente tra le letture del giro in quel giorno.
 # La coerenza dice se servizio a database e servizio atteso sono dello stesso
-# rifiuto. Sono le regole del passo 3.
+# rifiuto. Sono le regole della pipeline di preparazione.
 giorno <- as.Date(letture$giorno_lettura, tz = "UTC")
 letture$servizio_giro <- letture$servizio_atteso
 letture$servizio_atteso <- servizio_atteso_dal_giro(data.frame(
@@ -985,13 +985,15 @@ letture$data_attivazione_contenitore <- ifelse(
 )
 letture$data_cessazione_contenitore <- NA_character_
 
-# Nucleo familiare, categoria e manovra sociale della fornitura, come li
-# aggiunge il passo 3 con associa_nucleo_e_manovra(): valgono per le
-# forniture dei contenitori. Hanno un seme a parte: le letture non cambiano.
-# Le forniture non domestiche, come nei dati aziendali, non hanno un nucleo.
-# Per provare i valori "al momento della lettura" una fornitura domestica del
-# secco cambia nucleo il primo luglio 2025 e un'altra ottiene la manovra
-# sociale per i neonati il primo giugno 2025.
+# Nucleo familiare e categoria della fornitura, come li aggiunge la pipeline
+# con associa_componenti(), e potenziamento del secco, come lo aggiunge
+# associa_potenziamento(): vero se la fornitura ha una manovra sociale in
+# vigore, falso per le altre forniture, mancante per i non censiti. Nucleo e
+# categoria valgono per le forniture dei contenitori. Hanno un seme a parte:
+# le letture non cambiano. Le forniture non domestiche, come nei dati
+# aziendali, non hanno un nucleo. Per provare i valori "al momento della
+# lettura" una fornitura domestica del secco cambia nucleo il primo luglio
+# 2025 e un'altra ottiene il potenziamento il primo giugno 2025.
 forniture_nucleo <- con_seme(2031, {
   elenco <- sort(unique(stats::na.omit(letture$id_fornitura[con_contenitore])))
   categoria_fornitura <- letture$codice_categoria[con_contenitore][
@@ -1037,6 +1039,7 @@ riga_fornitura <- match(letture$id_fornitura, forniture_nucleo$id_fornitura)
 for (campo in c("nucleo_residenti", "nucleo_non_residenti", "tipo_categoria", "categoria", "sottocategoria", "manovra_sociale")) {
   letture[[campo]] <- forniture_nucleo[[campo]][riga_fornitura]
 }
+# Una manovra qualsiasi dà il potenziamento; senza fornitura il valore manca.
 # Le due forniture del secco che cambiano: le prime domestiche, senza
 # manovra, lette sia prima sia dopo l'estate del 2025.
 secco_2025 <- con_contenitore & letture$servizio_database %in% "SECCO" &
@@ -1049,6 +1052,11 @@ cambia_nucleo <- letture$id_fornitura %in% che_cambiano[1] & giorno >= as.Date("
 letture$nucleo_residenti[cambia_nucleo] <- letture$nucleo_residenti[cambia_nucleo] + 1L
 nuova_manovra <- letture$id_fornitura %in% che_cambiano[2] & giorno >= as.Date("2025-06-01")
 letture$manovra_sociale[nuova_manovra] <- "MANOVRA SOCIALE NEONATI"
+letture$potenziamento_secco <- ifelse(
+  is.na(letture$id_fornitura),
+  NA,
+  !is.na(letture$manovra_sociale)
+)
 letture$nucleo_totale <- letture$nucleo_residenti + letture$nucleo_non_residenti
 
 finale <- data.frame(
@@ -1086,7 +1094,7 @@ finale <- data.frame(
   tipo_categoria = letture$tipo_categoria,
   categoria = letture$categoria,
   sottocategoria = letture$sottocategoria,
-  manovra_sociale = letture$manovra_sociale,
+  potenziamento_secco = letture$potenziamento_secco,
   stringsAsFactors = FALSE
 )
 
@@ -1216,14 +1224,16 @@ stopifnot(
   nrow(unique(finale[, c("targa_veicolo", "matricola_veicolo")])) == 5,
   length(unique(stats::na.omit(finale$id_utenza[!sacchetto]))) == 50,
   !anyNA(finale$latitudine), !anyNA(finale$longitudine),
-  # nucleo, categoria e manovra: solo per le forniture dei contenitori; il
-  # nucleo solo per quelle domestiche
+  # nucleo e categoria: solo per le forniture dei contenitori; il nucleo solo
+  # per quelle domestiche; il potenziamento per ogni fornitura, vero solo per
+  # domestiche
   identical(names(finale)[29:35], colonne_nucleo_manovra()),
   all(is.na(finale$tipo_categoria) == (non_presente | sacchetto)),
   all(is.na(finale$nucleo_residenti) == (is.na(finale$tipo_categoria) | finale$tipo_categoria == "NON DOMESTICA")),
   all(finale$nucleo_totale == finale$nucleo_residenti + finale$nucleo_non_residenti, na.rm = TRUE),
-  all(stats::na.omit(finale$manovra_sociale) %in% manovre_potenziamento()),
-  all(is.na(finale$manovra_sociale[finale$tipo_categoria %in% "NON DOMESTICA"])),
+  all(is.na(finale$potenziamento_secco) == non_presente),
+  !any(finale$potenziamento_secco[finale$tipo_categoria %in% "NON DOMESTICA" | sacchetto], na.rm = TRUE),
+  any(finale$potenziamento_secco, na.rm = TRUE),
   length(che_cambiano) == 2,
   # esempi per l'analisi dei cluster: oltre 300 letture nel 2025
   sum(nel_2025 & finale$RFID == bidoni$RFID[k_deposito]) > 300,

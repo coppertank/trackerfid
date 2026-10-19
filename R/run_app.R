@@ -7,7 +7,7 @@
 #' Con `demo = TRUE` l'app si apre con i dati di esempio già caricati.
 #' Con `letture = "percorso"` l'app legge il file dal disco all'avvio, senza
 #' passare dal caricamento del browser: è il modo più rapido per i file con
-#' milioni di letture, soprattutto con l'archivio `.duckdb` del passo 3 della
+#' milioni di letture, soprattutto con l'archivio `.duckdb` della pipeline di
 #' preparazione dei dati. Il file resta aperto per tutte le sessioni dello
 #' stesso processo.
 #' @inheritParams shiny::shinyApp

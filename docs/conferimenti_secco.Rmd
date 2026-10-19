@@ -20,12 +20,13 @@ output:
 ```{r setup, include=FALSE}
 # Per compilare il report sul dataset di esempio, dalla radice del progetto:
 #   rmarkdown::render("docs/conferimenti_secco.Rmd")
-# Sui dati aziendali: source("data-raw/05_report_conferimenti.R"), che passa
-# i parametri e scrive il report e i CSV in data-raw/output/.
+# Sui dati aziendali lo compila la pipeline di preparazione dei dati,
+# targets::tar_make(): passa i parametri e scrive il report e i CSV in
+# data-raw/output/. Il periodo si cambia in cima a data-raw/_targets.R.
 # Servono i pacchetti rmarkdown, ggplot2 e pkgload.
 #
 # Parametri:
-#   letture       CSV del passo 3; vuoto per il dataset di esempio
+#   letture       CSV della pipeline; vuoto per il dataset di esempio
 #   dal, al       periodo, "AAAA-MM-GG"; vuoti per l'anno dell'ultima lettura
 #   cartella_csv  se indicata, vi scrive le forniture, l'elenco da contattare
 #                 e i non censiti
@@ -283,7 +284,7 @@ L'incertezza della stima è un intervallo: con probabilità `r quota(parametri$l
 
 <p class="formula">conferimenti consentiti = litri consentiti / volume del contenitore<br>conferimenti eccedenti = conferimenti dell'anno − conferimenti consentiti, se positivo</p>
 
-I litri consentiti vengono dal nucleo e dalla manovra in vigore all'ultima lettura del periodo: l'avviso riguarda il comportamento attuale. Un nucleo di zero residenti vale come uno, il primo gradino della tabella.
+I litri consentiti vengono dal nucleo e dal potenziamento in vigore all'ultima lettura del periodo: l'avviso riguarda il comportamento attuale. Un nucleo di zero residenti vale come uno, il primo gradino della tabella.
 
 La **probabilità di superare il limite** è la probabilità che il tasso vero sia più alto del tasso consentito, cioè dei conferimenti consentiti divisi per le raccolte dell'anno. Dice quanto è sicura la stima: una fornitura stimata appena sopra il limite con poche occasioni ha una probabilità vicina al 50%, una stimata molto sopra con molte occasioni vicina al 100%.
 
@@ -330,7 +331,7 @@ Per sapere se il metodo funziona servono bidoni di cui si conosce il comportamen
 
 ```{r simulazione}
 # Territorio simulato: valori veri noti. Le letture hanno le colonne del CSV
-# del passo 3 che servono all'analisi.
+# della pipeline che servono all'analisi.
 simula_conferimenti <- function(
   seme = 1,
   inizio_antenne = as.Date("2026-01-01"),
@@ -412,7 +413,7 @@ simula_conferimenti <- function(
     numero_raccolte_annue_previste = 26,
     nucleo_residenti = b$nucleo[letti$k],
     tipo_categoria = "DOMESTICA",
-    manovra_sociale = b$manovra[letti$k],
+    potenziamento_secco = !is.na(b$manovra[letti$k]),
     latitudine = b$lat[letti$k] + stats::rnorm(nrow(letti), 0, 4) * m_lat,
     longitudine = b$lon[letti$k] + stats::rnorm(nrow(letti), 0, 4) * m_lon,
     matricola_veicolo = "VEH01",
@@ -679,7 +680,7 @@ if (nrow(contattare) > 0) {
       prime$RFID,
       prime$comune_fornitura,
       ifelse(
-        is.na(prime$manovra_sociale),
+        !prime$potenziamento,
         as.character(prime$nucleo_residenti),
         "Potenziamento"
       ),
@@ -800,6 +801,7 @@ if (nrow(mostrati) > 0) {
 L'analisi riguarda le sole forniture domestiche, e lo riconosce dalla tipologia della fornitura con una regola semplice: domestica se la tipologia inizia per «DOMESTIC» o è «UD», non domestica se contiene «NON DOMESTIC» o è «UND». Le tipologie trovate nel periodo, e come sono state lette:
 
 ```{r tabella-tipologie}
+domestiche_tutte <- fornitura_domestica(f$tipo_categoria) %in% TRUE
 tipologie <- as.data.frame(
   table(tipo = f$tipo_categoria, useNA = "ifany"),
   stringsAsFactors = FALSE
@@ -818,17 +820,17 @@ knitr::kable(
   col.names = c("Tipologia", "Letta come", "Forniture"),
   align = "llr"
 )
-manovre <- table(f$manovra_sociale)
+con_potenziamento <- sum(f$potenziamento)
 ```
 
-Le manovre sociali in vigore all'ultima lettura: `r if (length(manovre) > 0) paste(sprintf("%s (%s forniture)", names(manovre), intero(manovre)), collapse = ", ") else "nessuna"`. Danno il potenziamento solo `r paste(manovre_potenziamento(), collapse = ", ")`.
+Forniture con il potenziamento del secco all'ultima lettura: `r intero(con_potenziamento)`, di cui `r intero(sum(f$potenziamento & domestiche_tutte))` domestiche. La tabella delle manovre sociali arriva già filtrata alle sole dichiarazioni del potenziamento; una fornitura lo ha se, nel giorno della lettura, ne ha almeno una in vigore.
 
 ## Limiti e scelte da confermare
 
 - **Una lettura è uno svuotamento.** Un bidone tenuto vicino alla strada, ma non esposto, può essere letto lo stesso: conterebbe come un conferimento. Un'antenna che non legge un bidone esposto fa il contrario. Le due cose si verificano solo sul posto, su un campione di forniture segnalate.
 - **I conferimenti già fatti nell'anno non contano.** L'analisi stima il ritmo attuale e lo riporta a un anno intero: dice chi, continuando così, supererà il limite. Per sapere quanto pagherà una fornitura quest'anno servono anche i conferimenti da gennaio, che le antenne non hanno visto.
 - **Volume e raccolte vengono dall'anagrafica.** Se sono sbagliati, è sbagliato anche il confronto: un carrellato da 120 litri registrato da 240 dimezza i conferimenti consentiti.
-- **Nucleo e manovra sono quelli dell'ultima lettura.** Una fornitura che ha appena ottenuto il potenziamento risulta entro il limite anche se fino a ieri non lo era.
+- **Nucleo e potenziamento sono quelli dell'ultima lettura.** Una fornitura che ha appena ottenuto il potenziamento risulta entro il limite anche se fino a ieri non lo era.
 - **Un nucleo di zero residenti vale come uno.** La tabella della tariffa comincia da un componente.
 - **Parametri.** Raggio dei vicini, peso della media, occasioni minime e soglie di probabilità sono scelti con la simulazione; si cambiano con `parametri_conferimenti()`.
 
@@ -881,7 +883,7 @@ knitr::kable(
 
 Sui dati aziendali, dalla radice del progetto:
 
-1. il passo 3 della preparazione, `source("data-raw/03_crea_letture_app.R")`, scrive `data-raw/output/letture_app.csv` con le colonne della fornitura: nucleo, categoria e manovra sociale in vigore al momento di ogni lettura;
-2. `source("data-raw/05_report_conferimenti.R")` compila questo report sui dati aziendali e scrive in `data-raw/output/` il report in HTML e i tre CSV: tutte le forniture, quelle da contattare e i non censiti. Il periodo si cambia in cima allo script.
+1. il passo 1, `source("data-raw/01_estrai_tabelle.R")`, estrae le tabelle dal database aziendale in `data-raw/origine/`;
+2. la pipeline di preparazione, `targets::tar_make()`, scrive `data-raw/output/letture_app.csv`, con le colonne della fornitura: nucleo e categoria in vigore al momento di ogni lettura, e se la fornitura aveva il potenziamento del secco. Poi compila questo report e scrive in `data-raw/output/` il report in HTML e i tre CSV: tutte le forniture, quelle da contattare e i non censiti. Il periodo si cambia in cima a `data-raw/_targets.R`. Se le estrazioni e le regole non sono cambiate, la pipeline non rifà niente.
 
 Il report compilato sui dati aziendali contiene codici di forniture e utenze: resta in `data-raw/output/`, fuori dal repository.
