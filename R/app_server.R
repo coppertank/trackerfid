@@ -1,26 +1,16 @@
-#' The application server-side
-#'
-#' Collega i moduli: l'archivio delle letture caricato viene ristretto al
-#' periodo di analisi, che alimenta filtri, ricerche e mappe. L'analisi dei
-#' cluster lavora sullo stesso periodo. Il click su un marker o su un cluster
-#' apre il dettaglio del bidone nella barra laterale.
-#'
-#' @param input,output,session Internal parameters for {shiny}.
-#'     DO NOT REMOVE.
+#' Server: collega i moduli, scrive il titolo e il dettaglio del bidone
+#' @param input,output,session Parametri interni di shiny.
 #' @import shiny
 #' @importFrom rlang .data %||%
 #' @noRd
 app_server <- function(input, output, session) {
-  # Un anno di letture supera di molto il limite predefinito di 5 MB: il
-  # limite del caricamento dal browser è di 2 GB, modificabile con l'opzione
-  # `trackerfid.max_upload_mb`.
+  # Limite del caricamento dal browser: 2 GB, opzione `trackerfid.max_upload_mb`.
   options(
     shiny.maxRequestSize = getOption("trackerfid.max_upload_mb", 2048) * 1024^2
   )
 
   dati_caricati <- mod_caricamento_server("caricamento")
   periodo <- mod_periodo_server("periodo", dati = dati_caricati)
-  # Letture del periodo di analisi: da qui in poi tutta l'app lavora su queste.
   dati <- periodo$dati
   filtri <- mod_filtri_server("filtri", dati = dati, azzera = dati_caricati)
   ricerca_rfid <- mod_ricerca_server("ricerca_rfid", dati = dati, tipo = "rfid")
@@ -44,9 +34,8 @@ app_server <- function(input, output, session) {
     toupper(paste("Dashboard RFID -", etichetta))
   })
 
-  # --- Avvisi mostrati sopra le mappe quando non c'è nulla da disegnare -------
+  # --- Avvisi sopra le mappe quando non c'è niente da disegnare ---------------
   vuoto <- function(df) is.null(df) || nrow(df) == 0
-  # Avviso comune a tutte le mappe quando mancano dataset o letture del periodo.
   senza_dati <- reactive({
     if (is.null(dati_caricati())) {
       "Carica un file CSV dal pannello laterale per visualizzare i bidoni sulla mappa."
@@ -83,8 +72,7 @@ app_server <- function(input, output, session) {
     "mappa_principale",
     dati = filtri$dati_filtrati,
     modalita = "cluster",
-    # La vista si adatta al periodo e ai filtri di cantiere e comune, non
-    # agli altri filtri.
+    # La vista segue periodo, cantieri e comuni, non gli altri filtri.
     dati_vista = filtri$area,
     attiva = scheda_attiva("mappa"),
     messaggio = messaggio_principale
@@ -138,7 +126,6 @@ app_server <- function(input, output, session) {
     function(clic) {
       observeEvent(clic(), {
         rfid_selezionato(clic()$rfid)
-        # Porta il pannello in vista dopo che è stato aggiornato.
         session$onFlushed(function() {
           session$sendCustomMessage("trackerfid-mostra", "pannello_info")
         })

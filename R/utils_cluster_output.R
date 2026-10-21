@@ -1,5 +1,4 @@
-# Tabella di output dell'analisi dei cluster spaziali: una riga per ogni
-# cluster di ogni RFID nel periodo di analisi.
+# Tabella dell'analisi dei cluster spaziali: una riga per cluster di ogni RFID.
 
 #' Colonne della tabella di analisi, nell'ordine di esportazione
 #' @noRd
@@ -37,17 +36,10 @@ colonne_analisi_cluster <- function() {
   )
 }
 
-#' Soglie della classificazione dei cluster
+#' Soglie della classificazione dei cluster; quelle sulle letture sono annue
 #'
-#' Le soglie sulle letture si intendono per anno: vengono confrontate con la
-#' frequenza annua dell'RFID, cioè le letture rapportate ai giorni osservati.
-#'
-#' @return Lista con: `letture_min` e `letture_max` (frequenza annua minima e
-#'   massima di un contenitore reale), `compatto_m` (dispersione massima di un
-#'   cluster compatto), `disperso_m` e `rumore_m` (dispersione oltre la quale
-#'   il tag viaggia o le letture sono sparse), `cluster_max` (numero massimo
-#'   di cluster di un contenitore spostato), `prevalenza_atteso` (quota minima
-#'   del servizio atteso prevalente).
+#' @return Lista: `letture_min`, `letture_max`, `compatto_m`, `disperso_m`,
+#'   `rumore_m`, `cluster_max`, `prevalenza_atteso`.
 #' @noRd
 soglie_indicatore <- function() {
   list(
@@ -74,9 +66,7 @@ pesi_fiducia <- function() {
   )
 }
 
-#' Indicatori di cluster: ordine, colore e significato
-#'
-#' L'ordine è fisso e determina i colori in tabella, grafici e mappa.
+#' Indicatori dei cluster: ordine fisso, colore e significato
 #' @noRd
 indicatori_config <- function() {
   data.frame(
@@ -122,17 +112,8 @@ sequenza_valori <- function(x) {
 #' @noRd
 tra_zero_e_uno <- function(x) pmin(pmax(x, 0), 1)
 
-#' Classifica i cluster in categorie
-#'
-#' Le regole sono valutate in ordine, la prima che vale determina l'indicatore.
-#' La frequenza è quella annua dell'RFID; la dispersione è quella del cluster.
-#'
-#' @param frequenza_annua Letture annue dell'RFID.
-#' @param n_cluster Numero di cluster dell'RFID.
-#' @param dispersione_m Dispersione del cluster in metri.
+#' Indicatore di ogni cluster: vale la prima regola, nell'ordine
 #' @param tutti_compatti `TRUE` se tutti i cluster dell'RFID sono compatti.
-#' @param soglie Soglie, vedi `soglie_indicatore()`.
-#' @return Vettore di indicatori.
 #' @noRd
 classifica_cluster <- function(
   frequenza_annua,
@@ -162,21 +143,10 @@ classifica_cluster <- function(
   )
 }
 
-#' Comune di un cluster e sua coerenza con i comuni dichiarati
+#' Comune di un cluster e sua incongruenza, dalle letture del cluster
 #'
-#' Vengono dalle letture del cluster, senza misurare distanze: il comune di
-#' lettura è già quello esatto del punto. Il comune del cluster è il comune
-#' geografico più frequente tra le sue letture. La coerenza è quella più
-#' frequente tra le sue letture, vedi `coerenza_comune()`: `FUORI_COMUNE` per
-#' un censito letto in un comune diverso da quello del database, `FUORI_GIRO`
-#' per un non censito letto in un comune diverso da quello del giro.
-#'
-#' @param dati Letture, con `comune_geografico` o `comune_lettura` e, se c'è,
-#'   `coerenza_comune`.
-#' @param cluster Cluster di ogni lettura, da 1 a `n_cluster`.
-#' @param n_cluster Numero dei cluster.
-#' @return Lista con `comune_geografico` e `incongruenza_comune`, vuota se il
-#'   cluster è coerente o se la coerenza non si può dire.
+#' Il comune geografico più frequente e la coerenza del comune più
+#' frequente: `FUORI_COMUNE`, `FUORI_GIRO` o vuota.
 #' @noRd
 comune_cluster <- function(dati, cluster, n_cluster) {
   geografico <- if (is.null(dati[["comune_geografico"]])) {
@@ -196,7 +166,11 @@ comune_cluster <- function(dati, cluster, n_cluster) {
   )
   stati <- stati_coerenza_comune()
   list(
-    comune_geografico = piu_frequente_per_gruppo(geografico, cluster, n_cluster),
+    comune_geografico = piu_frequente_per_gruppo(
+      geografico,
+      cluster,
+      n_cluster
+    ),
     incongruenza_comune = dplyr::case_when(
       prevalente %in% stati[["fuori_comune"]] ~ "FUORI_COMUNE",
       prevalente %in% stati[["fuori_giro"]] ~ "FUORI_GIRO",
@@ -205,28 +179,14 @@ comune_cluster <- function(dati, cluster, n_cluster) {
   )
 }
 
-#' Indice di fiducia di un cluster (0-1)
+#' Indice di fiducia di un cluster, tra 0 e 1
 #'
-#' Somma pesata di sei componenti, ognuna tra 0 e 1:
-#' - censimento: 1 se il contenitore è a database;
-#' - letture: cresce con le letture del cluster, piena da 10 in su;
-#' - compattezza: 1 fino a 50 m di dispersione, 0 da 500 m, scala logaritmica;
-#' - stabilità del servizio: per i censiti 1 se il servizio non è cambiato
-#'   (0,5 altrimenti),
-#'   per i non censiti cresce con la quota del servizio atteso prevalente
-#'   (0 fino al 50%, 1 dall'80%);
-#' - raccolte: accordo tra raccolte presunte e previste (0,5 se le previste
-#'   non sono note);
-#' - unicità: quota delle letture dell'RFID che cadono nel cluster.
-#'
-#' @param censito `TRUE` se il contenitore è presente a database.
-#' @param cluster_letture,globale_letture Letture del cluster e dell'RFID.
-#' @param dispersione_m Dispersione del cluster in metri.
-#' @param servizio_stabile `TRUE` se il servizio transponder non è cambiato.
-#' @param quota_atteso Quota del servizio atteso prevalente nel cluster.
-#' @param previste,presunte Raccolte annue previste e presunte.
-#' @param soglie,pesi Vedi `soglie_indicatore()` e `pesi_fiducia()`.
-#' @return Indice arrotondato a due decimali.
+#' Somma pesata (`pesi_fiducia()`) di: censimento; letture del cluster,
+#' piena da 10; compattezza, 1 fino a 50 m e 0 da 500 m in scala
+#' logaritmica; stabilità del servizio (censiti: 1 se mai cambiato, 0,5
+#' altrimenti; non censiti: quota del servizio atteso prevalente, da 0 al 50%
+#' a 1 all'80%); accordo tra raccolte presunte e previste (0,5 se ignote);
+#' quota delle letture dell'RFID nel cluster.
 #' @noRd
 indice_fiducia <- function(
   censito,
@@ -251,7 +211,8 @@ indice_fiducia <- function(
     censito,
     ifelse(servizio_stabile, 1, 0.5),
     tra_zero_e_uno(
-      (dplyr::coalesce(quota_atteso, 0) - 0.5) / (soglie$prevalenza_atteso - 0.5)
+      (dplyr::coalesce(quota_atteso, 0) - 0.5) /
+        (soglie$prevalenza_atteso - 0.5)
     )
   )
   rapporto <- presunte / previste
@@ -274,7 +235,7 @@ indice_fiducia <- function(
   )
 }
 
-#' Tabella di analisi senza righe, con le colonne e i tipi corretti
+#' Tabella di analisi senza righe, con colonne e tipi
 #' @noRd
 analisi_cluster_vuota <- function() {
   istante <- as.POSIXct(character(0), tz = "UTC")
@@ -312,34 +273,17 @@ analisi_cluster_vuota <- function() {
   )
 }
 
-#' Calcola la tabella di analisi dei cluster spaziali
+#' Tabella dell'analisi dei cluster spaziali
 #'
-#' Per ogni RFID raggruppa le letture del periodo in cluster spaziali e
-#' descrive ogni cluster: tempi, letture, baricentro, dispersione, servizio,
-#' raccolte annue, indice di fiducia e indicatore.
-#'
-#' I conteggi annui usano i giorni osservati, cioè la parte del periodo di
-#' analisi effettivamente coperta dal dataset: così un dataset che copre solo
-#' alcuni mesi dell'anno non porta a sottostimare frequenze e raccolte.
-#'
-#' I sacchetti restano fuori dall'analisi, vedi `senza_sacchetti()`: sono
-#' monouso, con una lettura sola, e l'analisi riguarda i contenitori.
-#'
-#' I riepiloghi per RFID e per cluster sono calcolati con le funzioni di
-#' `R/utils_gruppi.R`, su tutte le letture insieme: con milioni di letture un
-#' calcolo ripetuto RFID per RFID richiederebbe minuti.
-#'
-#' @param letture Dataset validato (tutte le letture, non solo quelle del periodo).
-#' @param analisi_dal,analisi_al Estremi del periodo di analisi, inclusi.
-#' @param eps_m,min_pts Parametri di DBSCAN, vedi `cluster_dbscan()`.
-#' @param soglie,pesi Vedi `soglie_indicatore()` e `pesi_fiducia()`.
-#' @param durata_minima_giorni Durata minima di un cluster perché le sue
-#'   raccolte annue vengano stimate anche dalla sua durata effettiva.
-#' @param copertura Primo e ultimo giorno coperti dal dataset, per i giorni
-#'   osservati. Se manca vale l'intervallo di `letture`: va indicato quando
-#'   `letture` contiene le sole letture del periodo.
-#' @return Tibble con le colonne di `colonne_analisi_cluster()`, una riga per
-#'   cluster. L'attributo `parametri` riporta i parametri usati.
+#' Per ogni RFID raggruppa le letture del periodo con DBSCAN e descrive ogni
+#' cluster. I conteggi annui usano i giorni osservati, la parte del periodo
+#' coperta dal dataset. Senza sacchetti. Riepiloghi con `R/utils_gruppi.R`.
+#' @param letture Dataset validato.
+#' @param durata_minima_giorni Durata minima perché le raccolte si stimino
+#'   anche dalla durata del cluster.
+#' @param copertura Primo e ultimo giorno del dataset; va data se `letture`
+#'   ha solo il periodo.
+#' @return Colonne di `colonne_analisi_cluster()`, attributo `parametri`.
 #' @noRd
 calcola_analisi_cluster <- function(
   letture,
@@ -368,8 +312,6 @@ calcola_analisi_cluster <- function(
   for (campo in colonne_quantita()) {
     if (!campo %in% names(letture)) letture[[campo]] <- NA_real_
   }
-  # L'analisi riguarda i contenitori: i sacchetti, monouso, restano fuori. Il
-  # risultato è quello di un file che non li contiene.
   letture <- senza_sacchetti(letture)
 
   nel_periodo <- filtra_periodo(letture, c(analisi_dal, analisi_al))
@@ -383,7 +325,6 @@ calcola_analisi_cluster <- function(
     return(structure(analisi_cluster_vuota(), parametri = parametri))
   }
 
-  # Parte del periodo effettivamente coperta dal dataset.
   copertura <- lubridate::as_date(copertura %||% range(letture$giorno_lettura))
   giorni_osservati <- as.numeric(
     min(analisi_al, copertura[2]) - max(analisi_dal, copertura[1])
@@ -391,7 +332,7 @@ calcola_analisi_cluster <- function(
     1
   parametri$giorni_osservati <- giorni_osservati
 
-  # Letture in ordine di RFID e di tempo: i riepiloghi contano su quest'ordine.
+  # Per RFID e tempo: i riepiloghi contano su quest'ordine.
   ordine <- order(
     nel_periodo$RFID,
     nel_periodo$giorno_lettura,
@@ -401,7 +342,6 @@ calcola_analisi_cluster <- function(
   rfid <- indice_gruppi(dati$RFID)
   n_rfid <- max(rfid)
 
-  # Un gruppo per ogni cluster di ogni RFID, in ordine di RFID e di cluster.
   chiave_cluster <- rfid * (max(dati$cluster_id) + 1) + dati$cluster_id
   cluster <- match(chiave_cluster, sort(unique(chiave_cluster)))
   n_cluster <- max(cluster)
@@ -418,7 +358,6 @@ calcola_analisi_cluster <- function(
 
   # --- Valori globali dell'RFID nel periodo -----------------------------------
   n_servizi <- n_distinti_per_gruppo(dati$servizio_transponder, rfid, n_rfid)
-  # La cronologia dei servizi serve solo agli RFID che ne hanno più di uno.
   sequenza_servizi <- rep(NA_character_, n_rfid)
   con_cambi <- which(n_servizi[rfid] > 1)
   if (length(con_cambi) > 0) {
@@ -533,9 +472,7 @@ calcola_analisi_cluster <- function(
   )
   per_cluster$tutti_compatti <- (non_compatti == 0)[rfid_del_cluster]
 
-  # Composizione del servizio atteso nel cluster, dal più al meno frequente.
-  # Contano le sole letture non censite, come per l'icona dei marker: nei
-  # dati reali il giro c'è su ogni lettura, e quello dei censiti non serve.
+  # Composizione del servizio atteso: solo letture non censite, come l'icona.
   con_atteso <- which(
     !is.na(dati$servizio_atteso) & dati$presente_a_database == "Non Presente"
   )
@@ -601,8 +538,7 @@ calcola_analisi_cluster <- function(
           units = "days"
         )
       ),
-      # Massimo tra la stima sul periodo osservato e quella sulla durata del
-      # cluster; la seconda solo se il cluster dura abbastanza da non gonfiarla.
+      # La stima sulla durata del cluster vale solo se dura abbastanza.
       numero_raccolte_annue_presunte = pmax(
         floor(.data$cluster_numero_letture * 365 / giorni_osservati),
         dplyr::if_else(
@@ -653,13 +589,7 @@ nome_file_analisi_cluster <- function(analisi_dal, analisi_al) {
   )
 }
 
-#' Scrive la tabella di analisi in un file CSV
-#'
-#' Data e ora sono scritte come `YYYY-MM-DD HH:MM:SS`, i valori mancanti come
-#' celle vuote.
-#'
-#' @param risultato Tabella prodotta da `calcola_analisi_cluster()`.
-#' @param file Percorso del file da scrivere.
+#' Scrive la tabella in CSV: date `YYYY-MM-DD HH:MM:SS`, mancanti vuoti
 #' @noRd
 esporta_analisi_cluster <- function(risultato, file) {
   tabella <- dplyr::mutate(

@@ -1,34 +1,10 @@
-# Genera il dataset di esempio, inst/extdata/sample_rfid_dataset.csv: le
-# letture con le antenne.
-#
-# Le letture con le antenne coprono 15 mesi (ottobre 2024 - dicembre 2025):
-# l'anno 2025 e' completo, il 2024 parziale, cosi' si puo' provare la selezione
-# dell'anno. Ogni contenitore viene letto a cadenza fissa dal giro del proprio
-# servizio, come accade con un calendario di raccolta reale. Sono inclusi
-# esempi per tutti gli indicatori dell'analisi dei cluster spaziali.
-#
-# Come nei dati reali, ogni lettura e' fatta da un mezzo durante un giro: per
-# questo ogni riga ha il giro, con il suo comune, e il servizio atteso dal
-# giro. Per un contenitore non censito sono le sole informazioni sul servizio.
-# Le colonne sono quelle che scrive la pipeline di preparazione dei dati
-# reali, con i loro formati: codici del mezzo, del giro, della fornitura e
-# dell'utenza numerici, RFID di dieci caratteri esadecimali. Quelle del
-# contenitore e della fornitura che l'app non usa, come volume, frequenza,
-# categoria, stato della fornitura, nucleo e conferma del giro, hanno valori
-# inventati ma plausibili.
-#
-# Oltre ai contenitori ci sono alcuni sacchetti, censiti e non censiti: hanno
-# il codice di 24 caratteri con il prefisso 00BD e nessuna tipologia di
-# rifiuto. Servono a provare la tipologia "Sacchetti" dell'app.
-#
-# I contenitori stanno nei comuni veri del territorio servito, elencati in
-# inst/extdata/comuni_cantieri.csv, attorno al centro abitato e dentro il
-# confine comunale. Le quote dei cantieri sono fissate qui sotto.
-#
-# Lo script e' riproducibile (seed fisso). Usa R base e, per i confini dei
-# comuni, le funzioni geografiche del pacchetto.
-# Eseguire dalla radice del pacchetto:
-#   Rscript data-raw/genera_sample_dataset.R
+# Genera inst/extdata/sample_rfid_dataset.csv: letture simulate con le
+# antenne, ottobre 2024 - dicembre 2025, con le 35 colonne e i formati della
+# pipeline dei dati reali. Ogni contenitore è letto a cadenza fissa dal giro
+# del suo servizio, nei comuni veri del territorio, dentro il confine; ci
+# sono esempi per tutti gli indicatori dei cluster e alcuni sacchetti. Seme
+# fisso. Casi e numeri sono descritti in CLAUDE.md, e i test li citano.
+# Dalla radice del pacchetto: Rscript data-raw/genera_sample_dataset.R
 
 suppressMessages(pkgload::load_all(".", quiet = TRUE))
 set.seed(20250901)
@@ -45,10 +21,8 @@ veicoli <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Calendario dei mezzi: giorni della settimana (1 = lunedi' ... 7 = domenica),
-# fascia oraria [da, a), nome del giro (diventa il `servizio_giro`; PAP =
-# porta a porta) e tipologia di contenitore raccolta nel giro (`s`, NA per i
-# giri che non raccolgono una tipologia precisa).
+# Calendario dei mezzi: giorni (1 = lunedì), fascia oraria [da, a), giro
+# (`servizio_giro`; PAP = porta a porta), tipologia raccolta (`s`, NA se nessuna).
 turno <- function(m, giorni, da, a, giro, s = NA_character_) {
   list(m = m, giorni = giorni, da = da, a = a, giro = giro, s = s)
 }
@@ -71,14 +45,19 @@ turni <- list(
 )
 
 # Servizi del database e loro quota tra i contenitori censiti.
-servizi <- c("SECCO", "CARTA", "VETRO", "UMIDO", "PLASTICA E METALLI", "VERDE E RAMAGLIE")
+servizi <- c(
+  "SECCO",
+  "CARTA",
+  "VETRO",
+  "UMIDO",
+  "PLASTICA E METALLI",
+  "VERDE E RAMAGLIE"
+)
 quote_servizi <- c(0.40, 0.27, 0.11, 0.10, 0.07, 0.05)
 names(quote_servizi) <- servizi
 
-# Volumi estratti per ogni contenitore censito, con le loro probabilita'.
-# Servono solo a tenere ferma la sequenza dei numeri casuali, e con quella le
-# letture: il volume scritto nel file lo sceglie l'anagrafica, alla fine,
-# con i valori dei dati aziendali.
+# Volumi estratti solo per tenere ferma la sequenza casuale: il volume del
+# file lo sceglie l'anagrafica, alla fine.
 volumi <- list(
   "SECCO" = list(v = c(1100, 240), p = c(0.8, 0.2)),
   "CARTA" = list(v = c(240, 1100), p = c(0.5, 0.5)),
@@ -96,14 +75,14 @@ n_non_presenti <- 36
 giorno_settimana <- function(data) (as.POSIXlt(data)$wday + 6) %% 7 + 1
 
 istante <- function(data, ore_decimali) {
-  as.POSIXct(paste(format(data), "00:00:00"), tz = "UTC") + round(ore_decimali * 3600)
+  as.POSIXct(paste(format(data), "00:00:00"), tz = "UTC") +
+    round(ore_decimali * 3600)
 }
 
 estrai <- function(x, n = 1, ...) x[sample.int(length(x), n, ...)]
 
-# Giro in corso per un mezzo in un dato istante: NA se l'istante cade fuori
-# dall'orario dei suoi turni. Serve solo a costruire le letture fuori orario:
-# il giro scritto nel file e' quello di `giro_del_mezzo()`.
+# Giro in corso per un mezzo in un istante, NA fuori orario: serve solo alle
+# letture fuori orario.
 servizio_da_calendario <- function(matricola, quando) {
   gs <- giorno_settimana(as.Date(quando, tz = "UTC"))
   ora <- as.numeric(format(quando, "%H", tz = "UTC")) +
@@ -121,34 +100,42 @@ turni_del_giorno <- function(matricola, gs) {
   Filter(function(t) t$m == matricola && gs %in% t$giorni, turni)
 }
 
-# Giro che il mezzo stava facendo al momento di una lettura: il turno in cui
-# cade l'istante, altrimenti il turno piu' vicino dello stesso mezzo in quel
-# giorno. E' la regola che sui dati reali applica
-# `associa_servizio_atteso_da_calendario()`. Il mezzo deve avere almeno un
-# turno in quel giorno.
+# Giro del mezzo al momento di una lettura: il turno in cui cade, o il più
+# vicino del giorno (come sui dati reali).
 giro_del_mezzo <- function(matricola, quando) {
   gs <- giorno_settimana(as.Date(quando, tz = "UTC"))
   ora <- as.numeric(format(quando, "%H", tz = "UTC")) +
     as.numeric(format(quando, "%M", tz = "UTC")) / 60
   del_giorno <- turni_del_giorno(matricola, gs)
   stopifnot(length(del_giorno) > 0)
-  distanza <- vapply(del_giorno, function(t) {
-    if (ora >= t$da && ora < t$a) 0 else min(abs(ora - t$da), abs(ora - t$a))
-  }, numeric(1))
+  distanza <- vapply(
+    del_giorno,
+    function(t) {
+      if (ora >= t$da && ora < t$a) 0 else min(abs(ora - t$da), abs(ora - t$a))
+    },
+    numeric(1)
+  )
   del_giorno[[which.min(distanza)]]$giro
 }
 
-# Turno che il mezzo stava facendo al momento di una lettura, come posizione
-# nel calendario: stessa regola di `giro_del_mezzo()`.
+# Posizione nel calendario del turno di `giro_del_mezzo()`.
 indice_turno_del_mezzo <- function(matricola, quando) {
   gs <- giorno_settimana(as.Date(quando, tz = "UTC"))
   ora <- as.numeric(format(quando, "%H", tz = "UTC")) +
     as.numeric(format(quando, "%M", tz = "UTC")) / 60
-  del_giorno <- which(vapply(turni, function(t) t$m == matricola && gs %in% t$giorni, logical(1)))
+  del_giorno <- which(vapply(
+    turni,
+    function(t) t$m == matricola && gs %in% t$giorni,
+    logical(1)
+  ))
   stopifnot(length(del_giorno) > 0)
-  distanza <- vapply(turni[del_giorno], function(t) {
-    if (ora >= t$da && ora < t$a) 0 else min(abs(ora - t$da), abs(ora - t$a))
-  }, numeric(1))
+  distanza <- vapply(
+    turni[del_giorno],
+    function(t) {
+      if (ora >= t$da && ora < t$a) 0 else min(abs(ora - t$da), abs(ora - t$a))
+    },
+    numeric(1)
+  )
   del_giorno[which.min(distanza)]
 }
 
@@ -162,9 +149,17 @@ orario_turno <- function(t) t$da + (t$a - t$da) * stats::rbeta(1, 2, 3.2)
 
 # Date di raccolta a cadenza fissa: stesso giorno della settimana ogni
 # `cadenza` giorni, a partire da `dal`, con uno sfasamento in settimane.
-date_raccolta <- function(giorno, cadenza, dal, al = fine_dati, sfasamento = 0) {
+date_raccolta <- function(
+  giorno,
+  cadenza,
+  dal,
+  al = fine_dati,
+  sfasamento = 0
+) {
   candidati <- giorni_periodo[
-    giorni_periodo >= dal & giorni_periodo <= al & giorno_settimana(giorni_periodo) == giorno
+    giorni_periodo >= dal &
+      giorni_periodo <= al &
+      giorno_settimana(giorni_periodo) == giorno
   ]
   if (length(candidati) == 0) {
     return(candidati)
@@ -173,13 +168,14 @@ date_raccolta <- function(giorno, cadenza, dal, al = fine_dati, sfasamento = 0) 
   if (prima > al) candidati[1] else seq(prima, al, by = cadenza)
 }
 
-# Letture di un contenitore secondo il proprio calendario: il contenitore non
-# viene esposto (e quindi letto) a ogni passaggio.
+# Letture di un contenitore dal suo calendario; non è esposto a ogni passaggio.
 letture_calendario <- function(b, dal = b$attivo_dal, al = fine_dati) {
   t <- turni[[b$turno]]
   date <- date_raccolta(b$giorno, b$cadenza, dal, al, b$sfasamento)
   tenute <- date[stats::runif(length(date)) < b$esposizione]
-  if (length(tenute) == 0) tenute <- date[1]
+  if (length(tenute) == 0) {
+    tenute <- date[1]
+  }
   ore <- b$ora_tipica + stats::rnorm(length(tenute), 0, 0.25)
   ore <- pmin(pmax(ore, t$da), t$a - 0.02)
   data.frame(
@@ -192,7 +188,9 @@ letture_calendario <- function(b, dal = b$attivo_dal, al = fine_dati) {
 # Lettura in un giorno e orario casuali di un turno.
 lettura_turno <- function(t, dal = inizio_dati, al = fine_dati) {
   giorni <- giorni_periodo[
-    giorni_periodo >= dal & giorni_periodo <= al & giorno_settimana(giorni_periodo) %in% t$giorni
+    giorni_periodo >= dal &
+      giorni_periodo <= al &
+      giorno_settimana(giorni_periodo) %in% t$giorni
   ]
   data.frame(
     giorno_lettura = istante(estrai(giorni), orario_turno(t)),
@@ -201,24 +199,25 @@ lettura_turno <- function(t, dal = inizio_dati, al = fine_dati) {
   )
 }
 
-# Lettura fuori dall'orario dei turni: il mezzo passa prima dell'inizio o dopo
-# la fine del giro. Il suo giro e' quello piu' vicino nella giornata.
+# Lettura fuori orario: il giro è il più vicino della giornata.
 lettura_fuori_turno <- function(dal = inizio_dati, al = fine_dati) {
   giorni <- giorni_periodo[giorni_periodo >= dal & giorni_periodo <= al]
   repeat {
     m <- estrai(veicoli$matricola)
     quando <- istante(estrai(giorni), stats::runif(1, 6, 19))
     if (is.na(servizio_da_calendario(m, quando))) {
-      return(data.frame(giorno_lettura = quando, matricola_veicolo = m, stringsAsFactors = FALSE))
+      return(data.frame(
+        giorno_lettura = quando,
+        matricola_veicolo = m,
+        stringsAsFactors = FALSE
+      ))
     }
   }
 }
 
 # ---- Posizioni: scarti attorno a centri astratti ------------------------------
-#
-# Le coordinate di questa parte non sono luoghi veri: servono solo a estrarre,
-# per ogni contenitore, uno scarto dal centro abitato. Piu' sotto lo scarto
-# viene riportato attorno al centro del comune assegnato.
+# Servono solo a estrarre lo scarto dal centro abitato, poi riportato
+# attorno al centro del comune assegnato.
 
 zone <- data.frame(
   lat = c(41.880, 41.900, 41.926, 41.928, 41.914, 41.870, 41.862),
@@ -247,7 +246,13 @@ rumore_gps <- function(n, sd = 0.0001) stats::rnorm(n, 0, sd)
 
 bidoni <- data.frame(
   seq = c(1:n_presenti, 201, 201:234, 250, 301:303),
-  presente = c(rep(TRUE, n_presenti), rep(FALSE, n_non_presenti), FALSE, TRUE, TRUE),
+  presente = c(
+    rep(TRUE, n_presenti),
+    rep(FALSE, n_non_presenti),
+    FALSE,
+    TRUE,
+    TRUE
+  ),
   stringsAsFactors = FALSE
 )
 bidoni$chiave <- seq_len(nrow(bidoni))
@@ -265,8 +270,16 @@ k_deposito <- which(bidoni$seq == 301) # tag fermo in deposito
 k_camion <- which(bidoni$seq == 302) # tag rimasto sul camion
 k_sparso <- which(bidoni$seq == 303) # letture sparse / GPS rumoroso
 speciali <- c(
-  k_cambio_servizio, k_esempio_secco, k_cambio_utenza, k_spostato,
-  k_np_esempio, k_np_stima, k_np_incerto, k_deposito, k_camion, k_sparso
+  k_cambio_servizio,
+  k_esempio_secco,
+  k_cambio_utenza,
+  k_spostato,
+  k_np_esempio,
+  k_np_stima,
+  k_np_incerto,
+  k_deposito,
+  k_camion,
+  k_sparso
 )
 censiti <- which(bidoni$presente)
 non_censiti <- which(!bidoni$presente)
@@ -280,9 +293,11 @@ bidoni$servizio[k_sparso] <- "UMIDO"
 primi <- which(bidoni$presente & bidoni$seq <= n_presenti)
 assegnati <- table(factor(bidoni$servizio[primi], levels = servizi))
 da_assegnare <- primi[is.na(bidoni$servizio[primi])]
-bidoni$servizio[da_assegnare] <- sample(rep(servizi, times = conteggi - as.integer(assegnati)))
-# Per i non censiti il servizio "reale" e' ignoto all'azienda: serve solo a
-# simulare letture plausibili. Tipologie bilanciate, cosi' compaiono tutti i giri.
+bidoni$servizio[da_assegnare] <- sample(rep(
+  servizi,
+  times = conteggi - as.integer(assegnati)
+))
+# Il servizio "reale" dei non censiti serve solo a simulare letture plausibili.
 bidoni$servizio[non_censiti] <- sample(rep_len(servizi, length(non_censiti)))
 bidoni$servizio[c(k_np_esempio, k_np_stima)] <- "SECCO"
 
@@ -294,7 +309,12 @@ bidoni$utenza[k_esempio_secco] <- "58590002"
 da_assegnare <- censiti[is.na(bidoni$utenza[censiti])]
 pool <- c(
   utenze[3:50],
-  sample(utenze[1:35], length(da_assegnare) - 48, replace = TRUE, prob = 1 / (1:35)^0.8)
+  sample(
+    utenze[1:35],
+    length(da_assegnare) - 48,
+    replace = TRUE,
+    prob = 1 / (1:35)^0.8
+  )
 )
 bidoni$utenza[da_assegnare] <- sample(pool)
 
@@ -305,7 +325,11 @@ for (k in censiti) {
   vol <- volumi[[bidoni$servizio[k]]]
   bidoni$volume[k] <- vol$v[sample.int(length(vol$v), 1, prob = vol$p)]
   # bisettimanale; il vetro puo' essere mensile
-  bidoni$raccolte[k] <- if (bidoni$servizio[k] == "VETRO") estrai(c(13L, 26L)) else 26L
+  bidoni$raccolte[k] <- if (bidoni$servizio[k] == "VETRO") {
+    estrai(c(13L, 26L))
+  } else {
+    26L
+  }
 }
 
 # Calendario di ogni contenitore: turno, giorno, cadenza, orario tipico.
@@ -318,15 +342,24 @@ for (k in seq_len(nrow(bidoni))) {
   bidoni$giorno[k] <- estrai(turni[[indice]]$giorni)
   bidoni$ora_tipica[k] <- orario_turno(turni[[indice]])
 }
-bidoni$cadenza <- ifelse(!is.na(bidoni$raccolte) & bidoni$raccolte == 13L, 28L, 14L)
-bidoni$sfasamento <- vapply(bidoni$cadenza, function(cd) sample.int(cd / 7, 1) - 1, numeric(1))
+bidoni$cadenza <- ifelse(
+  !is.na(bidoni$raccolte) & bidoni$raccolte == 13L,
+  28L,
+  14L
+)
+bidoni$sfasamento <- vapply(
+  bidoni$cadenza,
+  function(cd) sample.int(cd / 7, 1) - 1,
+  numeric(1)
+)
 # Quota di passaggi in cui il contenitore e' esposto e viene letto.
 bidoni$esposizione <- stats::runif(nrow(bidoni), 0.75, 0.98)
 # Data di attivazione: quasi tutti presenti dall'inizio, alcuni arrivano nel 2025.
 bidoni$attivo_dal <- inizio_dati
 tardivi <- sample(setdiff(seq_len(nrow(bidoni)), speciali), 34)
 bidoni$attivo_dal[tardivi] <- estrai(
-  seq(as.Date("2025-01-15"), as.Date("2025-10-15"), by = "day"), length(tardivi)
+  seq(as.Date("2025-01-15"), as.Date("2025-10-15"), by = "day"),
+  length(tardivi)
 )
 
 # Contenitori censiti ma quasi mai esposti: poche letture in un anno.
@@ -339,15 +372,30 @@ np_regolari <- sample(np_ordinari, 17)
 np_sporadici <- setdiff(np_ordinari, np_regolari)
 # Quota di letture avvenute in un giro diverso dal proprio (stima meno netta).
 bidoni$rumore <- 0
-bidoni$rumore[np_regolari] <- sample(rep_len(c(0.04, 0.04, 0.08, 0.35, 0.50), length(np_regolari)))
+bidoni$rumore[np_regolari] <- sample(rep_len(
+  c(0.04, 0.04, 0.08, 0.35, 0.50),
+  length(np_regolari)
+))
 
 # Posizione "di casa" di ogni contenitore, per ora come scarto astratto.
-pos <- t(vapply(seq_len(nrow(bidoni)), function(i) posizione_casuale(), numeric(2)))
+pos <- t(vapply(
+  seq_len(nrow(bidoni)),
+  function(i) posizione_casuale(),
+  numeric(2)
+))
 bidoni$lat <- pos[, "lat"]
 bidoni$lng <- pos[, "lng"]
 
 # Casi con calendario fissato: prime letture scritte a mano, poi il calendario.
-imposta <- function(k, turno, giorno, ora, dal, sfasamento = 0, esposizione = 0.95) {
+imposta <- function(
+  k,
+  turno,
+  giorno,
+  ora,
+  dal,
+  sfasamento = 0,
+  esposizione = 0.95
+) {
   bidoni$turno[k] <<- turno
   bidoni$giorno[k] <<- giorno
   bidoni$ora_tipica[k] <<- ora
@@ -361,21 +409,31 @@ imposta(k_esempio_secco, turno = 1, giorno = 1, ora = 6.3, dal = "2025-09-15")
 imposta(k_cambio_utenza, turno = 10, giorno = 6, ora = 13.0, dal = "2025-10-11")
 imposta(k_spostato, turno = 4, giorno = 5, ora = 10.5, dal = "2025-10-03")
 imposta(k_np_esempio, turno = 1, giorno = 1, ora = 6.5, dal = "2025-09-15")
-bidoni$raccolte[c(k_cambio_servizio, k_esempio_secco, k_cambio_utenza, k_spostato)] <- 26L
+bidoni$raccolte[c(
+  k_cambio_servizio,
+  k_esempio_secco,
+  k_cambio_utenza,
+  k_spostato
+)] <- 26L
 
-# ---- Geografia: comuni e cantieri del territorio servito ----------------------
-#
-# Come nei dati reali, il calendario dei mezzi dice in quale comune lavora
-# ogni giro: qui un giro e' un turno in uno dei suoi giorni della settimana.
-# Ogni contenitore sta nel comune del proprio giro. Le estrazioni di questa
-# parte hanno un seme proprio e non toccano la sequenza casuale principale:
-# cambiare la geografia non cambia date, mezzi e servizi delle letture.
+# ---- Geografia: comuni e cantieri ---------------------------------------------
+# Un giro è un turno in un giorno della settimana, con il suo comune; ogni
+# contenitore sta nel comune del suo giro. Semi propri: cambiare la
+# geografia non cambia date, mezzi e servizi.
 
-comuni <- utils::read.csv("inst/extdata/comuni_cantieri.csv", stringsAsFactors = FALSE)
+comuni <- utils::read.csv(
+  "inst/extdata/comuni_cantieri.csv",
+  stringsAsFactors = FALSE
+)
 # Confini dei comuni: i vertici di ogni comune, pronti per il controllo.
 confini <- split(poligoni_comuni(), poligoni_comuni()$comune)
 stopifnot(setequal(names(confini), comuni$comune))
-quote_cantieri <- c(ASIAGO = 0.12, BASSANO = 0.26, CAMPOSAMPIERO = 0.37, RUBANO = 0.25)
+quote_cantieri <- c(
+  ASIAGO = 0.12,
+  BASSANO = 0.26,
+  CAMPOSAMPIERO = 0.37,
+  RUBANO = 0.25
+)
 stopifnot(setequal(names(quote_cantieri), unique(comuni$cantiere)))
 
 # Valuta un'espressione con un seme proprio, poi ripristina la sequenza casuale.
@@ -397,15 +455,11 @@ nel_comune <- function(lat, lng, comune) {
   dentro_poligoni(lng, lat, confini[[comune]])
 }
 
-# Il comune in cui cade un punto lo da' comune_del_punto() del pacchetto,
-# mancante fuori dai comuni serviti: nei dati reali lo da' il sistema di
-# localizzazione dei mezzi, qui vengono dai confini.
+# Il comune di un punto lo dà comune_del_punto() del pacchetto.
 
-# Il punto ha attorno, a circa 50 metri, solo comuni serviti? Il rumore del GPS
-# e l'arrotondamento a quattro decimali spostano le letture di qualche metro:
-# un contenitore troppo vicino al confine del territorio avrebbe letture fuori
-# dai comuni serviti. Vicino al confine tra due comuni serviti invece puo'
-# stare, ed e' voluto: le sue letture possono cadere nel comune accanto.
+# Attorno al punto, a circa 50 m, solo comuni serviti: GPS e arrotondamento
+# non devono portare letture fuori dal territorio. Vicino al confine tra due
+# comuni serviti invece può stare.
 nel_territorio <- function(lat, lng, margine = 0.0005) {
   !anyNA(comune_del_punto(
     lat + c(-1, 1, 0, 0) * margine,
@@ -414,9 +468,12 @@ nel_territorio <- function(lat, lng, margine = 0.0005) {
 }
 
 # Giri del calendario: una riga per turno e giorno della settimana.
-giri <- do.call(rbind, lapply(seq_along(turni), function(indice) {
-  data.frame(turno = indice, giorno = turni[[indice]]$giorni)
-}))
+giri <- do.call(
+  rbind,
+  lapply(seq_along(turni), function(indice) {
+    data.frame(turno = indice, giorno = turni[[indice]]$giorni)
+  })
+)
 giro_di <- function(turno, giorno) {
   match(paste(turno, giorno), paste(giri$turno, giri$giorno))
 }
@@ -440,37 +497,42 @@ giri$comune[giro_di(4, 5)] <- "CITTADELLA"
 fissati <- !is.na(giri$comune)
 giri$cantiere <- comuni$cantiere[match(giri$comune, comuni$comune)]
 
-# Cantiere degli altri giri. Si parte dai giri con piu' contenitori, e ognuno
-# va al cantiere a cui ne mancano di piu' per arrivare alla propria quota.
+# Cantiere degli altri giri: dai più carichi, al cantiere più lontano dalla quota.
 obiettivo <- quote_cantieri * nrow(bidoni)
-assegnati <- vapply(names(quote_cantieri), function(cantiere) {
-  sum(giri$bidoni[fissati & giri$cantiere %in% cantiere])
-}, numeric(1))
+assegnati <- vapply(
+  names(quote_cantieri),
+  function(cantiere) {
+    sum(giri$bidoni[fissati & giri$cantiere %in% cantiere])
+  },
+  numeric(1)
+)
 for (g in setdiff(order(-giri$bidoni, seq_len(nrow(giri))), which(fissati))) {
   scelto <- names(which.max(obiettivo - assegnati))
   giri$cantiere[g] <- scelto
   assegnati[scelto] <- assegnati[scelto] + giri$bidoni[g]
 }
 
-# Comune degli altri giri: a sorte tra quelli del cantiere non ancora usati,
-# senza ripetizioni finche' ce ne sono, con peso quadruplo per il comune che
-# da' il nome al cantiere.
+# Comune degli altri giri: a sorte nel cantiere, senza ripetizioni finché si
+# può, con peso quadruplo per il comune che dà il nome al cantiere.
 giri$comune[!fissati] <- con_seme(2027, {
   comune <- rep(NA_character_, nrow(giri))
   for (cantiere in names(quote_cantieri)) {
     quali <- which(!fissati & giri$cantiere == cantiere)
-    scelta <- setdiff(comuni$comune[comuni$cantiere == cantiere], giri$comune[fissati])
-    ordine <- scelta[sample.int(length(scelta), prob = ifelse(startsWith(scelta, cantiere), 4, 1))]
+    scelta <- setdiff(
+      comuni$comune[comuni$cantiere == cantiere],
+      giri$comune[fissati]
+    )
+    ordine <- scelta[sample.int(
+      length(scelta),
+      prob = ifelse(startsWith(scelta, cantiere), 4, 1)
+    )]
     comune[quali] <- rep_len(ordine, length(quali))
   }
   comune[!fissati]
 })
 
-# Un giro di zona: il calendario chiama a volte un giro con il nome di una
-# zona, non di un comune, come il Massiccio del Grappa. I contenitori del
-# giro stanno nel suo comune, Pove del Grappa; nel file il comune del giro e'
-# il nome della zona, che la tabella dei comuni non contiene. Per i non
-# censiti letti in quel giro la coerenza del comune e' ignota.
+# Giro di zona: i contenitori stanno a Pove del Grappa, nel file il comune
+# del giro è MASSICCIO DEL GRAPPA, fuori tabella.
 giro_di_zona <- which(giri$comune == "POVE DEL GRAPPA")
 stopifnot(length(giro_di_zona) == 1)
 giri$nome_calendario <- giri$comune
@@ -479,25 +541,29 @@ stopifnot(!anyNA(giri$comune), !anyNA(giri$cantiere))
 
 # Ogni contenitore sta nel comune del proprio giro.
 bidoni$comune <- giri$comune[bidoni$giro]
-# Casi speciali con il comune fissato: il contenitore spostato e' registrato a
-# Limena, il tag rimasto sul mezzo gira a Marostica, il deposito e' a
-# Camposampiero.
+# Il contenitore spostato è registrato a Limena, il tag sul mezzo gira a
+# Marostica, il deposito è a Camposampiero.
 bidoni$comune[k_spostato] <- "LIMENA"
 bidoni$comune[k_camion] <- "MAROSTICA"
 bidoni$comune[k_deposito] <- "CAMPOSAMPIERO"
 bidoni$cantiere <- comuni$cantiere[match(bidoni$comune, comuni$comune)]
 
-# Lo scarto dal centro astratto piu' vicino, limitato a 1,5 km circa, viene
-# riportato attorno al centro del comune. Se porta il contenitore fuori dal
-# confine comunale, o troppo vicino al confine del territorio servito, si
-# dimezza, finche' il punto rientra.
+# Scarto dal centro astratto, fino a 1,5 km, riportato attorno al centro del
+# comune; dimezzato finché il punto sta nel comune e lontano dal confine del
+# territorio.
 for (i in seq_len(nrow(bidoni))) {
   zona <- which.min((zone$lat - bidoni$lat[i])^2 + (zone$lng - bidoni$lng[i])^2)
   scarto <- c(bidoni$lat[i] - zone$lat[zona], bidoni$lng[i] - zone$lng[zona])
   scarto <- scarto * min(1, 0.015 / sqrt(sum(scarto^2)))
   centro <- centro_comune(bidoni$comune[i])
-  while (!(nel_comune(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2], bidoni$comune[i]) &&
-    nel_territorio(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2]))) {
+  while (
+    !(nel_comune(
+      centro[["lat"]] + scarto[1],
+      centro[["lng"]] + scarto[2],
+      bidoni$comune[i]
+    ) &&
+      nel_territorio(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2]))
+  ) {
     scarto <- scarto / 2
   }
   bidoni$lat[i] <- centro[["lat"]] + scarto[1]
@@ -514,20 +580,25 @@ stopifnot(nel_comune(deposito[["lat"]], deposito[["lng"]], "CAMPOSAMPIERO"))
 
 # ---- Generazione delle letture ----------------------------------------------
 
-# Percorso del mezzo su cui e' rimasto un tag: le letture si distribuiscono
-# lungo tutto il giro. Meno di 6 km: da Marostica a Nove, poi verso Bassano
-# fino a poco meno di meta' strada. Cosi' le letture formano un'unica scia.
-verso_bassano <- centro_comune("NOVE") + 0.45 * (centro_comune("BASSANO DEL GRAPPA") - centro_comune("NOVE"))
+# Il tag sul mezzo: una scia di meno di 6 km da Marostica a Nove e verso Bassano.
+verso_bassano <- centro_comune("NOVE") +
+  0.45 * (centro_comune("BASSANO DEL GRAPPA") - centro_comune("NOVE"))
 tappe <- cbind(centro_comune("MAROSTICA"), centro_comune("NOVE"), verso_bassano)
 percorso <- data.frame(lat = tappe["lat", ], lng = tappe["lng", ])
 punto_sul_percorso <- function(n) {
   tratti <- nrow(percorso) - 1
-  lunghezze <- sqrt(diff(percorso$lat)^2 + (diff(percorso$lng) * cos(45.75 * pi / 180))^2)
+  lunghezze <- sqrt(
+    diff(percorso$lat)^2 + (diff(percorso$lng) * cos(45.75 * pi / 180))^2
+  )
   tratto <- sample.int(tratti, n, replace = TRUE, prob = lunghezze)
   f <- stats::runif(n)
   data.frame(
-    latitudine = percorso$lat[tratto] + f * diff(percorso$lat)[tratto] + rumore_gps(n),
-    longitudine = percorso$lng[tratto] + f * diff(percorso$lng)[tratto] + rumore_gps(n)
+    latitudine = percorso$lat[tratto] +
+      f * diff(percorso$lat)[tratto] +
+      rumore_gps(n),
+    longitudine = percorso$lng[tratto] +
+      f * diff(percorso$lng)[tratto] +
+      rumore_gps(n)
   )
 }
 
@@ -541,8 +612,12 @@ manuali <- function(quando, matricola, ...) {
 }
 aggiungi <- function(prime, altre, ...) {
   extra <- list(...)
-  for (campo in names(extra)) altre[[campo]] <- extra[[campo]]
-  for (campo in setdiff(names(prime), names(altre))) altre[[campo]] <- NA
+  for (campo in names(extra)) {
+    altre[[campo]] <- extra[[campo]]
+  }
+  for (campo in setdiff(names(prime), names(altre))) {
+    altre[[campo]] <- NA
+  }
   rbind(prime, altre[, names(prime), drop = FALSE])
 }
 
@@ -553,7 +628,8 @@ genera_letture <- function(b) {
     # CARTA -> SECCO -> CARTA, poi resta CARTA.
     out <- aggiungi(
       manuali(
-        c("2025-09-01 06:00:00", "2025-09-15 08:42:17", "2025-09-28 09:21:44"), "1601",
+        c("2025-09-01 06:00:00", "2025-09-15 08:42:17", "2025-09-28 09:21:44"),
+        "1601",
         servizio_database = c("CARTA", "SECCO", "CARTA")
       ),
       letture_calendario(b),
@@ -563,7 +639,12 @@ genera_letture <- function(b) {
     # Passa da 58590001 a 58590025 il 20 settembre.
     out <- aggiungi(
       manuali(
-        c("2025-09-01 12:48:05", "2025-09-08 13:10:31", "2025-09-20 12:52:49", "2025-09-27 13:05:12"),
+        c(
+          "2025-09-01 12:48:05",
+          "2025-09-08 13:10:31",
+          "2025-09-20 12:52:49",
+          "2025-09-27 13:05:12"
+        ),
         "1604",
         id_utenza = c("58590001", "58590001", "58590025", "58590025")
       ),
@@ -575,7 +656,8 @@ genera_letture <- function(b) {
     altre <- letture_calendario(b)
     out <- aggiungi(
       manuali(
-        c("2025-09-05 08:14:26", "2025-09-19 10:37:53"), c("1601", "1602"),
+        c("2025-09-05 08:14:26", "2025-09-19 10:37:53"),
+        c("1601", "1602"),
         latitudine = c(spostato_da[["lat"]], spostato_a[["lat"]]),
         longitudine = c(spostato_da[["lng"]], spostato_a[["lng"]])
       ),
@@ -585,26 +667,49 @@ genera_letture <- function(b) {
     )
   } else if (b$chiave == k_np_stima) {
     out <- manuali(
-      c("2025-09-15 07:26:40", "2025-09-17 07:31:08", "2025-09-22 14:12:55", "2025-09-26 07:19:33"),
+      c(
+        "2025-09-15 07:26:40",
+        "2025-09-17 07:31:08",
+        "2025-09-22 14:12:55",
+        "2025-09-26 07:19:33"
+      ),
       c("1601", "1601", "1604", "1601")
     )
   } else if (b$chiave == k_np_incerto) {
     # Letto un sabato dal giro del secco e il sabato dopo dal mezzo della
     # carta: due tipologie alla pari, la stima resta incerta.
-    out <- manuali(c("2025-09-20 15:44:02", "2025-09-27 16:08:37"), c("1604", "1601"))
+    out <- manuali(
+      c("2025-09-20 15:44:02", "2025-09-27 16:08:37"),
+      c("1604", "1601")
+    )
   } else if (b$chiave %in% c(k_esempio_secco, k_np_esempio)) {
-    prima <- if (b$chiave == k_esempio_secco) "2025-09-01 06:15:00" else "2025-09-01 06:30:00"
+    prima <- if (b$chiave == k_esempio_secco) {
+      "2025-09-01 06:15:00"
+    } else {
+      "2025-09-01 06:30:00"
+    }
     out <- aggiungi(manuali(prima, "1601"), letture_calendario(b))
   } else if (b$chiave == k_deposito) {
     # Tag fermo vicino al lettore del deposito: letto ogni giorno lavorativo
     # dai mezzi in uscita o al rientro.
     feriali <- giorni_periodo[giorno_settimana(giorni_periodo) <= 6]
-    giorni <- rep(feriali, times = sample(1:2, length(feriali), replace = TRUE, prob = c(0.65, 0.35)))
+    giorni <- rep(
+      feriali,
+      times = sample(1:2, length(feriali), replace = TRUE, prob = c(0.65, 0.35))
+    )
     uscita <- stats::runif(length(giorni)) < 0.7
-    ore <- ifelse(uscita, stats::runif(length(giorni), 6.0, 6.4), stats::runif(length(giorni), 18.5, 18.98))
+    ore <- ifelse(
+      uscita,
+      stats::runif(length(giorni), 6.0, 6.4),
+      stats::runif(length(giorni), 18.5, 18.98)
+    )
     out <- data.frame(
       giorno_lettura = istante(giorni, ore),
-      matricola_veicolo = sample(veicoli$matricola, length(giorni), replace = TRUE),
+      matricola_veicolo = sample(
+        veicoli$matricola,
+        length(giorni),
+        replace = TRUE
+      ),
       latitudine = deposito[["lat"]] + rumore_gps(length(giorni), 0.00004),
       longitudine = deposito[["lng"]] + rumore_gps(length(giorni), 0.00004),
       stringsAsFactors = FALSE
@@ -612,11 +717,17 @@ genera_letture <- function(b) {
   } else if (b$chiave == k_camion) {
     # Tag rimasto nel cassone di 1604: due letture per giorno lavorativo,
     # ogni volta in un punto diverso del giro.
-    feriali <- giorni_periodo[giorni_periodo >= as.Date("2025-02-03") & giorno_settimana(giorni_periodo) <= 6]
+    feriali <- giorni_periodo[
+      giorni_periodo >= as.Date("2025-02-03") &
+        giorno_settimana(giorni_periodo) <= 6
+    ]
     giorni <- rep(feriali, each = 2)
     out <- cbind(
       data.frame(
-        giorno_lettura = istante(giorni, stats::runif(length(giorni), 12, 18.98)),
+        giorno_lettura = istante(
+          giorni,
+          stats::runif(length(giorni), 12, 18.98)
+        ),
         matricola_veicolo = "1604",
         stringsAsFactors = FALSE
       ),
@@ -646,13 +757,16 @@ genera_letture <- function(b) {
       }
     } else {
       n <- sample(0:3, 1)
-      altre <- do.call(rbind, lapply(seq_len(n), function(i) {
-        if (stats::runif(1) < 0.2) {
-          lettura_fuori_turno(b$attivo_dal)
-        } else {
-          lettura_turno(turni[[b$turno]], b$attivo_dal)
-        }
-      }))
+      altre <- do.call(
+        rbind,
+        lapply(seq_len(n), function(i) {
+          if (stats::runif(1) < 0.2) {
+            lettura_fuori_turno(b$attivo_dal)
+          } else {
+            lettura_turno(turni[[b$turno]], b$attivo_dal)
+          }
+        })
+      )
     }
     out <- rbind(prima, altre)
   }
@@ -661,7 +775,9 @@ genera_letture <- function(b) {
   out <- out[!duplicated(out$giorno_lettura), , drop = FALSE]
   n <- nrow(out)
   completa <- function(campo, valore) {
-    if (is.null(out[[campo]])) out[[campo]] <<- valore
+    if (is.null(out[[campo]])) {
+      out[[campo]] <<- valore
+    }
     mancanti <- is.na(out[[campo]])
     out[[campo]][mancanti] <<- rep_len(valore, n)[mancanti]
   }
@@ -672,12 +788,21 @@ genera_letture <- function(b) {
   out$chiave <- b$chiave
   out$presente <- b$presente
   out[, c(
-    "giorno_lettura", "matricola_veicolo", "servizio_database", "id_utenza",
-    "latitudine", "longitudine", "chiave", "presente"
+    "giorno_lettura",
+    "matricola_veicolo",
+    "servizio_database",
+    "id_utenza",
+    "latitudine",
+    "longitudine",
+    "chiave",
+    "presente"
   )]
 }
 
-letture <- do.call(rbind, lapply(seq_len(nrow(bidoni)), function(i) genera_letture(bidoni[i, ])))
+letture <- do.call(
+  rbind,
+  lapply(seq_len(nrow(bidoni)), function(i) genera_letture(bidoni[i, ]))
+)
 rownames(letture) <- NULL
 
 # Coordinate esatte delle righe di esempio della specifica: tre contenitori
@@ -685,8 +810,16 @@ rownames(letture) <- NULL
 bassano <- round(centro_comune("BASSANO DEL GRAPPA"), 4)
 coord_esempio <- list(
   list(k = k_cambio_servizio, lat = bassano[["lat"]], lng = bassano[["lng"]]),
-  list(k = k_esempio_secco, lat = bassano[["lat"]] + 0.0007, lng = bassano[["lng"]] + 0.0007),
-  list(k = k_np_esempio, lat = bassano[["lat"]] + 0.0014, lng = bassano[["lng"]] + 0.0014)
+  list(
+    k = k_esempio_secco,
+    lat = bassano[["lat"]] + 0.0007,
+    lng = bassano[["lng"]] + 0.0007
+  ),
+  list(
+    k = k_np_esempio,
+    lat = bassano[["lat"]] + 0.0014,
+    lng = bassano[["lng"]] + 0.0014
+  )
 )
 for (ce in coord_esempio) {
   righe <- which(letture$chiave == ce$k)
@@ -707,7 +840,9 @@ giorni_svolta <- seq(as.Date("2025-03-01"), as.Date("2025-10-15"), by = "day")
 # Indici delle letture di un contenitore successive a una data casuale del 2025.
 dopo_svolta <- function(k) {
   svolta <- estrai(giorni_svolta)
-  which(letture$chiave == k & as.Date(letture$giorno_lettura, tz = "UTC") >= svolta)
+  which(
+    letture$chiave == k & as.Date(letture$giorno_lettura, tz = "UTC") >= svolta
+  )
 }
 
 # Altri 6 contenitori che cambiano utenza (7 in totale con il caso speciale).
@@ -719,55 +854,80 @@ for (k in k_utenza) {
 # Altri 2 contenitori che cambiano servizio in modo definitivo.
 k_servizio <- sample(setdiff(candidati(12), k_utenza), 2)
 for (k in k_servizio) {
-  letture$servizio_database[dopo_svolta(k)] <- estrai(setdiff(servizi, bidoni$servizio[k]))
+  letture$servizio_database[dopo_svolta(k)] <- estrai(setdiff(
+    servizi,
+    bidoni$servizio[k]
+  ))
 }
 
 # 8 contenitori spostati di qualche centinaio di metri.
 k_mossi <- sample(setdiff(candidati(12), c(k_utenza, k_servizio)), 8)
 for (k in k_mossi) {
   righe <- dopo_svolta(k)
-  letture$latitudine[righe] <- letture$latitudine[righe] + stats::runif(1, 0.003, 0.009) * estrai(c(-1, 1))
-  letture$longitudine[righe] <- letture$longitudine[righe] + stats::runif(1, 0.003, 0.009) * estrai(c(-1, 1))
+  letture$latitudine[righe] <- letture$latitudine[righe] +
+    stats::runif(1, 0.003, 0.009) * estrai(c(-1, 1))
+  letture$longitudine[righe] <- letture$longitudine[righe] +
+    stats::runif(1, 0.003, 0.009) * estrai(c(-1, 1))
 }
 
 # ---- Sacchetti ----------------------------------------------------------------
-#
-# I mezzi leggono anche i sacchetti, che portano un tag a perdere. Si
-# riconoscono dal codice: 24 caratteri, con il prefisso 00BD. A database un
-# sacchetto ha solo la fornitura del gruppo di sacchetti a cui appartiene:
-# niente utenza, tipologia di rifiuto, volume, raccolte previste o comune. Un sacchetto e' monouso: il
-# mezzo lo legge quando lo raccoglie, durante un giro del secco, e dopo lo
-# svuotamento non puo' piu' essere letto. Ha quindi una sola lettura.
-#
-# Le estrazioni di questa parte hanno semi propri e non toccano la sequenza
-# casuale principale: i sacchetti non cambiano le letture dei contenitori.
+# Codice di 24 caratteri con prefisso 00BD, solo la fornitura del gruppo a
+# database, una lettura in un giro del secco. Semi propri.
 
 sacchetti <- data.frame(
   # progressivo nel codice: da 1 i censiti, da 101 i non censiti
   n = c(1:8, 101:104),
   fornitura = c(
-    "200000001", "200000001", "200000001", "200000002", "200000002", "200000003", "200000003", "200000004",
+    "200000001",
+    "200000001",
+    "200000001",
+    "200000002",
+    "200000002",
+    "200000003",
+    "200000003",
+    "200000004",
     rep(NA_character_, 4)
   ),
   # i due giri "SECCO PAP" del calendario
   turno = c(1, 1, 1, 10, 10, 10, 10, 1, 1, 10, 10, 1),
   # giorno della raccolta, cioe' dell'unica lettura
   giorno = as.Date(c(
-    "2024-11-18", "2025-03-17", "2025-06-09", "2025-04-08", "2025-09-16", "2025-05-22",
-    "2025-10-30", "2025-07-11", "2024-10-23", "2025-08-05", "2025-11-13", "2025-12-05"
+    "2024-11-18",
+    "2025-03-17",
+    "2025-06-09",
+    "2025-04-08",
+    "2025-09-16",
+    "2025-05-22",
+    "2025-10-30",
+    "2025-07-11",
+    "2024-10-23",
+    "2025-08-05",
+    "2025-11-13",
+    "2025-12-05"
   )),
   stringsAsFactors = FALSE
 )
 sacchetti$RFID <- sprintf("00BD%020d", sacchetti$n)
 # Un sacchetto sta nel comune del giro che lo raccoglie.
-sacchetti$comune <- giri$comune[giro_di(sacchetti$turno, giorno_settimana(sacchetti$giorno))]
+sacchetti$comune <- giri$comune[giro_di(
+  sacchetti$turno,
+  giorno_settimana(sacchetti$giorno)
+)]
 # I sacchetti di una fornitura vengono lasciati davanti alla stessa porta, in
 # giorni diversi.
-sacchetti$porta <- ifelse(is.na(sacchetti$fornitura), sacchetti$RFID, sacchetti$fornitura)
+sacchetti$porta <- ifelse(
+  is.na(sacchetti$fornitura),
+  sacchetti$RFID,
+  sacchetti$fornitura
+)
 stopifnot(
   all(nchar(sacchetti$RFID) == 24),
   all(vapply(turni[sacchetti$turno], function(t) t$giro, "") == "SECCO PAP"),
-  all(mapply(function(g, t) g %in% turni[[t]]$giorni, giorno_settimana(sacchetti$giorno), sacchetti$turno)),
+  all(mapply(
+    function(g, t) g %in% turni[[t]]$giorni,
+    giorno_settimana(sacchetti$giorno),
+    sacchetti$turno
+  )),
   all(sacchetti$giorno >= inizio_dati & sacchetti$giorno <= fine_dati)
 )
 
@@ -779,8 +939,17 @@ porte <- con_seme(2028, {
   for (i in seq_len(nrow(porte))) {
     centro <- centro_comune(porte$comune[i])
     scarto <- stats::rnorm(2, 0, 0.004)
-    while (!(nel_comune(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2], porte$comune[i]) &&
-      nel_territorio(centro[["lat"]] + scarto[1], centro[["lng"]] + scarto[2]))) {
+    while (
+      !(nel_comune(
+        centro[["lat"]] + scarto[1],
+        centro[["lng"]] + scarto[2],
+        porte$comune[i]
+      ) &&
+        nel_territorio(
+          centro[["lat"]] + scarto[1],
+          centro[["lng"]] + scarto[2]
+        ))
+    ) {
       scarto <- scarto / 2
     }
     porte$lat[i] <- centro[["lat"]] + scarto[1]
@@ -790,46 +959,53 @@ porte <- con_seme(2028, {
   porte
 })
 
-letture_sacchetti <- con_seme(2029, do.call(rbind, lapply(seq_len(nrow(sacchetti)), function(i) {
-  s <- sacchetti[i, ]
-  p <- porte[match(s$porta, porte$porta), ]
-  t <- turni[[s$turno]]
-  ora <- p$ora + stats::rnorm(1, 0, 0.25)
-  data.frame(
-    giorno_lettura = istante(s$giorno, min(max(ora, t$da), t$a - 0.02)),
-    matricola_veicolo = t$m,
-    servizio_database = NA_character_,
-    id_utenza = NA_character_,
-    id_fornitura = s$fornitura,
-    latitudine = p$lat + rumore_gps(1),
-    longitudine = p$lng + rumore_gps(1),
-    chiave = NA_integer_,
-    presente = !is.na(s$fornitura),
-    RFID = s$RFID,
-    stringsAsFactors = FALSE
+letture_sacchetti <- con_seme(
+  2029,
+  do.call(
+    rbind,
+    lapply(seq_len(nrow(sacchetti)), function(i) {
+      s <- sacchetti[i, ]
+      p <- porte[match(s$porta, porte$porta), ]
+      t <- turni[[s$turno]]
+      ora <- p$ora + stats::rnorm(1, 0, 0.25)
+      data.frame(
+        giorno_lettura = istante(s$giorno, min(max(ora, t$da), t$a - 0.02)),
+        matricola_veicolo = t$m,
+        servizio_database = NA_character_,
+        id_utenza = NA_character_,
+        id_fornitura = s$fornitura,
+        latitudine = p$lat + rumore_gps(1),
+        longitudine = p$lng + rumore_gps(1),
+        chiave = NA_integer_,
+        presente = !is.na(s$fornitura),
+        RFID = s$RFID,
+        stringsAsFactors = FALSE
+      )
+    })
   )
-})))
+)
 
-# Le letture dei sacchetti si aggiungono a quelle dei contenitori: non hanno
-# la chiave di un contenitore e portano gia' il proprio codice.
+# Le letture dei sacchetti portano già il loro codice.
 letture$RFID <- NA_character_
 letture$id_fornitura <- NA_character_
 letture <- rbind(letture, letture_sacchetti[, names(letture)])
 rownames(letture) <- NULL
 
-# ---- Campi derivati -----------------------------------------------------------
-#
-# Da qui in poi non si usano numeri casuali: una modifica a questa parte non
-# cambia date, posizioni e servizi delle letture.
+# ---- Campi derivati: da qui niente numeri casuali -----------------------------
 
-# Una lettura esiste solo se un mezzo passa durante un giro. La domenica nel
-# calendario lavora un solo mezzo: le poche letture attribuite a sorte a un
-# mezzo che quel giorno e' fermo passano al primo mezzo in servizio.
-giorno_lettura_gs <- giorno_settimana(as.Date(letture$giorno_lettura, tz = "UTC"))
-fermo <- which(!mapply(
-  function(m, gs) length(turni_del_giorno(m, gs)) > 0,
-  letture$matricola_veicolo, giorno_lettura_gs
+# La domenica lavora un solo mezzo: le letture date a un mezzo fermo passano
+# al primo in servizio.
+giorno_lettura_gs <- giorno_settimana(as.Date(
+  letture$giorno_lettura,
+  tz = "UTC"
 ))
+fermo <- which(
+  !mapply(
+    function(m, gs) length(turni_del_giorno(m, gs)) > 0,
+    letture$matricola_veicolo,
+    giorno_lettura_gs
+  )
+)
 for (i in fermo) {
   letture$matricola_veicolo[i] <- Find(
     function(m) length(turni_del_giorno(m, giorno_lettura_gs[i])) > 0,
@@ -837,47 +1013,53 @@ for (i in fermo) {
   )
 }
 
-letture$targa_veicolo <- veicoli$targa[match(letture$matricola_veicolo, veicoli$matricola)]
-letture$presente_a_database <- ifelse(letture$presente, "Presente", "Non Presente")
+letture$targa_veicolo <- veicoli$targa[match(
+  letture$matricola_veicolo,
+  veicoli$matricola
+)]
+letture$presente_a_database <- ifelse(
+  letture$presente,
+  "Presente",
+  "Non Presente"
+)
 letture$volume_previsto <- bidoni$volume[letture$chiave]
 letture$numero_raccolte_annue_previste <- bidoni$raccolte[letture$chiave]
 
-# Giro: quello che il mezzo stava facendo al momento della lettura, con il
-# nome del calendario. C'e' per ogni lettura, come nei dati reali; da qui
-# viene il servizio atteso, che l'app usa per stimare il servizio dei
-# contenitori non censiti.
-letture$servizio_atteso <- vapply(seq_len(nrow(letture)), function(i) {
-  giro_del_mezzo(letture$matricola_veicolo[i], letture$giorno_lettura[i])
-}, character(1))
+# Giro del mezzo al momento della lettura, con il nome del calendario.
+letture$servizio_atteso <- vapply(
+  seq_len(nrow(letture)),
+  function(i) {
+    giro_del_mezzo(letture$matricola_veicolo[i], letture$giorno_lettura[i])
+  },
+  character(1)
+)
 
-# Colonne geografiche.
-# - comune_fornitura: comune della fornitura del contenitore. Lo hanno solo
-#   i contenitori censiti e non cambia se il contenitore viene spostato. Un
-#   sacchetto non lo ha nemmeno da censito.
-# - comune_giro: comune in cui il calendario mandava il mezzo che ha fatto la
-#   lettura. C'e' per ogni lettura. Di norma il contenitore sta in quel
-#   comune; un non censito letto altrove e' fuori giro.
-# - comune_lettura: comune in cui cade il punto della lettura. Nei dati reali
-#   lo scrive il sistema di localizzazione dei mezzi.
-# - coerenza_comune: comune di lettura contro comune del database, per un
-#   censito, o comune del giro, per un non censito. La calcola la stessa
-#   funzione usata dall'app e dalla preparazione dei dati reali.
-# - cantiere: quello del comune di lettura.
-letture$comune_fornitura <- ifelse(letture$presente, bidoni$comune[letture$chiave], NA_character_)
-turno_lettura <- vapply(seq_len(nrow(letture)), function(i) {
-  indice_turno_del_mezzo(letture$matricola_veicolo[i], letture$giorno_lettura[i])
-}, numeric(1))
-# Il giro del calendario: una riga della tabella `giri`, cioe' un turno in un
-# giorno della settimana. Il suo numero e' `id_giro`.
+# Comune della fornitura (solo censiti, non cambia se il bidone è spostato),
+# del giro, di lettura (dal punto), coerenza e cantiere con le funzioni
+# dell'app.
+letture$comune_fornitura <- ifelse(
+  letture$presente,
+  bidoni$comune[letture$chiave],
+  NA_character_
+)
+turno_lettura <- vapply(
+  seq_len(nrow(letture)),
+  function(i) {
+    indice_turno_del_mezzo(
+      letture$matricola_veicolo[i],
+      letture$giorno_lettura[i]
+    )
+  },
+  numeric(1)
+)
+# Il giro è una riga della tabella `giri`; il suo numero dà `id_giro`.
 letture$id_giro <- giro_di(
   turno_lettura,
   giorno_settimana(as.Date(letture$giorno_lettura, tz = "UTC"))
 )
 letture$comune_giro <- giri$nome_calendario[letture$id_giro]
-# Un giro sbagliato: mercoledi' 24 settembre 2025 il calendario dava al turno
-# 1 il giro del venerdi', a Limena, ma il mezzo ha fatto quello solito del
-# mercoledi'. Tutte le sue letture di quella mattina sono fatte in un comune
-# diverso da quello del giro.
+# Giro sbagliato: il 24/9/2025 il calendario dava al turno 1 il giro del
+# venerdì, a Limena, ma il mezzo ha fatto quello del mercoledì.
 giro_sbagliato <- list(giorno = as.Date("2025-09-24"), turno = 1, previsto = 5)
 del_giro_sbagliato <- turno_lettura == giro_sbagliato$turno &
   as.Date(letture$giorno_lettura, tz = "UTC") == giro_sbagliato$giorno
@@ -891,13 +1073,12 @@ letture$comune_giro[del_giro_sbagliato] <- giri$nome_calendario[
 stopifnot(
   giorno_settimana(giro_sbagliato$giorno) == 3,
   sum(del_giro_sbagliato) >= 8,
-  giri$comune[giro_di(giro_sbagliato$turno, giro_sbagliato$previsto)] == "LIMENA",
+  giri$comune[giro_di(giro_sbagliato$turno, giro_sbagliato$previsto)] ==
+    "LIMENA",
   giri$comune[giro_di(giro_sbagliato$turno, 3)] != "LIMENA"
 )
-# Il comune di lettura viene dalla posizione scritta nel file, cioe' dalle
-# coordinate con quattro decimali. La distanza dal comune dichiarato la
-# calcola la funzione della pipeline; cantiere e coerenza del comune, con la
-# tolleranza dal confine, la funzione dell'app.
+# Comune di lettura dalle coordinate del file; distanza con la funzione della
+# pipeline, cantiere e coerenza con quella dell'app.
 geografia <- data.frame(
   presente_a_database = letture$presente_a_database,
   comune_fornitura = letture$comune_fornitura,
@@ -906,7 +1087,10 @@ geografia <- data.frame(
   longitudine = as.numeric(sprintf("%.4f", letture$longitudine)),
   stringsAsFactors = FALSE
 )
-geografia$comune_lettura <- comune_del_punto(geografia$latitudine, geografia$longitudine)
+geografia$comune_lettura <- comune_del_punto(
+  geografia$latitudine,
+  geografia$longitudine
+)
 geografia$distanza_comune_dichiarato <- distanza_comune_dichiarato(geografia)
 con_geografia <- aggiungi_geografia(geografia)
 letture$distanza_comune_dichiarato <- geografia$distanza_comune_dichiarato
@@ -914,9 +1098,7 @@ letture$comune_lettura <- con_geografia$comune_lettura
 letture$coerenza_comune <- con_geografia$coerenza_comune
 letture$cantiere <- con_geografia$cantiere
 
-# Codice RFID: dieci caratteri esadecimali, come i transponder dei bidoni
-# nei dati aziendali. "D" + data della prima lettura con le antenne, AAMMGG,
-# + progressivo del contenitore: D250901001.
+# RFID: "D" + AAMMGG della prima lettura + progressivo: D250901001.
 prima_lettura <- tapply(letture$giorno_lettura, letture$chiave, min)
 prima_lettura <- as.POSIXct(prima_lettura, origin = "1970-01-01", tz = "UTC")
 bidoni$RFID <- sprintf(
@@ -929,24 +1111,20 @@ letture$RFID[dei_bidoni] <- bidoni$RFID[letture$chiave[dei_bidoni]]
 
 letture <- letture[order(letture$giorno_lettura, letture$RFID), ]
 
-# La fornitura lega un contenitore censito a un'utenza, per un servizio: un
-# contenitore che cambia utenza o servizio passa a un'altra fornitura, e
-# un'utenza puo' averne piu' di una. Le forniture dei contenitori sono
-# numerate nell'ordine della loro prima lettura; quelle dei sacchetti vengono
-# dalla tabella dei sacchetti.
+# Una fornitura per contenitore, utenza e servizio, numerate per prima lettura.
 del_contenitore <- letture$presente & !is.na(letture$chiave)
-chiave_fornitura <- paste(letture$RFID, letture$id_utenza, letture$servizio_database, sep = "|")
+chiave_fornitura <- paste(
+  letture$RFID,
+  letture$id_utenza,
+  letture$servizio_database,
+  sep = "|"
+)
 forniture <- unique(chiave_fornitura[del_contenitore])
 letture$id_fornitura[del_contenitore] <- sprintf(
   "11600%04d",
   match(chiave_fornitura[del_contenitore], forniture)
 )
-# Come nei dati reali, il giro resta scritto come nel calendario: "SECCO PAP".
-# Il servizio atteso e' il giro con il nome del database, "SECCO"; nei giri in
-# cui non e' chiaro quale rifiuto si raccolga, come "SERVIZI MERCATI", e' il
-# servizio a database piu' frequente tra le letture del giro in quel giorno.
-# La coerenza dice se servizio a database e servizio atteso sono dello stesso
-# rifiuto. Sono le regole della pipeline di preparazione.
+# Servizio atteso e coerenza con le regole della pipeline.
 giorno <- as.Date(letture$giorno_lettura, tz = "UTC")
 letture$servizio_giro <- letture$servizio_atteso
 letture$servizio_atteso <- servizio_atteso_dal_giro(data.frame(
@@ -959,10 +1137,7 @@ letture$servizio_atteso <- servizio_atteso_dal_giro(data.frame(
 letture$servizio_transponder <- letture$servizio_database
 letture$coerenza_servizio <- coerenza_servizio(letture)
 
-# Dati del contenitore e della fornitura che l'app non usa, nei formati dei
-# dati aziendali. Valgono per i contenitori censiti: un sacchetto, anche
-# censito, a database ha solo la fornitura. Hanno semi a parte: le letture
-# non cambiano.
+# Anagrafica che l'app non usa, nei formati aziendali, con semi a parte.
 con_contenitore <- !is.na(letture$servizio_database)
 letture$frequenza <- ifelse(
   con_contenitore,
@@ -975,16 +1150,18 @@ letture$frequenza <- ifelse(
 numero_utenza <- suppressWarnings(as.integer(substr(letture$id_utenza, 6, 8)))
 domestica_utenza <- ifelse(con_contenitore, numero_utenza %% 5 != 0, NA)
 
-# Volume del contenitore, con i valori dell'anagrafica aziendale: 40, 60, 120
-# o 1100 litri. Una fornitura domestica ha i bidoni piccoli: 40 litri per
-# umido e vetro, 120 per carta, plastica e verde, da 40 a 120 per il secco.
-# Una non domestica ha il cassonetto da 1100 litri, salvo l'umido. Il volume
-# e' del contenitore: vale quello della sua prima fornitura.
+# Volume: domestiche 40 (umido, vetro), 120 (carta, plastica, verde), 40-120
+# (secco); non domestiche 1100, salvo l'umido. Vale quello della prima fornitura.
 volume_contenitore <- con_seme(2032, {
   righe <- which(con_contenitore)
   prima <- righe[!duplicated(letture$RFID[righe])]
   servizio <- letture$servizio_database[prima]
-  secco_domestico <- sample(c(120, 60, 40), length(prima), replace = TRUE, prob = c(0.7, 0.2, 0.1))
+  secco_domestico <- sample(
+    c(120, 60, 40),
+    length(prima),
+    replace = TRUE,
+    prob = c(0.7, 0.2, 0.1)
+  )
   volume <- ifelse(
     domestica_utenza[prima],
     ifelse(
@@ -1002,35 +1179,44 @@ letture$volume_previsto <- ifelse(
   NA_real_
 )
 
-# Fornitura e date del contenitore. Un contenitore che cambia utenza o
-# servizio passa a un'altra fornitura, e quella di prima e' cessata. Ogni
-# associazione del contenitore a una fornitura ha le sue date: la prima
-# comincia un mese prima della prima lettura del contenitore, le altre il
-# giorno della loro prima lettura. Quella ancora in corso, l'ultima letta, e'
-# aperta: la pipeline scrive 2099-12-31 come data di cessazione. Le altre
-# finiscono il giorno della loro ultima lettura.
+# Date di ogni associazione contenitore-fornitura: la prima da un mese prima
+# della prima lettura, le altre dalla loro prima lettura; l'ultima è aperta
+# (2099-12-31), le altre finiscono all'ultima lettura.
 righe <- which(con_contenitore)
 chiave_associazione <- paste(letture$RFID, letture$id_fornitura, sep = "|")
 estremi <- function(funzione) {
-  valori <- tapply(as.numeric(giorno[righe]), chiave_associazione[righe], funzione)
-  stats::setNames(as.Date(as.numeric(valori), origin = "1970-01-01"), names(valori))
+  valori <- tapply(
+    as.numeric(giorno[righe]),
+    chiave_associazione[righe],
+    funzione
+  )
+  stats::setNames(
+    as.Date(as.numeric(valori), origin = "1970-01-01"),
+    names(valori)
+  )
 }
 inizio_associazione <- estremi(min)
 fine_associazione <- estremi(max)[names(inizio_associazione)]
 rfid_associazione <- sub("[|].*$", "", names(inizio_associazione))
-prima_associazione <- inizio_associazione == as.Date(
-  stats::ave(as.numeric(inizio_associazione), rfid_associazione, FUN = min),
-  origin = "1970-01-01"
-)
-ultima_associazione <- fine_associazione == as.Date(
-  stats::ave(as.numeric(fine_associazione), rfid_associazione, FUN = max),
-  origin = "1970-01-01"
-)
+prima_associazione <- inizio_associazione ==
+  as.Date(
+    stats::ave(as.numeric(inizio_associazione), rfid_associazione, FUN = min),
+    origin = "1970-01-01"
+  )
+ultima_associazione <- fine_associazione ==
+  as.Date(
+    stats::ave(as.numeric(fine_associazione), rfid_associazione, FUN = max),
+    origin = "1970-01-01"
+  )
 a <- match(chiave_associazione, names(inizio_associazione))
 letture$data_attivazione_contenitore <- ifelse(
   con_contenitore,
-  format(ifelse(prima_associazione, inizio_associazione - 30, inizio_associazione)[a] +
-    as.Date("1970-01-01")),
+  format(
+    ifelse(prima_associazione, inizio_associazione - 30, inizio_associazione)[
+      a
+    ] +
+      as.Date("1970-01-01")
+  ),
   NA_character_
 )
 letture$data_cessazione_contenitore <- ifelse(
@@ -1044,25 +1230,23 @@ letture$stato_fornitura <- ifelse(
   NA_character_
 )
 
-# Nucleo familiare e categoria della fornitura, come li aggiunge la pipeline
-# con associa_componenti(), e potenziamento del secco, come lo aggiunge
-# associa_potenziamento(): vero se la fornitura ha una manovra sociale in
-# vigore, falso per le altre forniture, mancante per i non censiti. Nucleo e
-# categoria valgono per le forniture dei contenitori. Hanno un seme a parte:
-# le letture non cambiano. Come nei dati aziendali una fornitura domestica ha
-# la categoria 31, `IA_31`, e la sottocategoria D; una non domestica una
-# delle altre categorie, `IA_50`, la sottocategoria ND e il nucleo a zero.
-# Qualche fornitura domestica non ha una decorrenza dei componenti: nucleo,
-# categoria e sottocategoria mancano. Per provare i valori "al momento della
-# lettura" una fornitura domestica del secco cambia nucleo il primo luglio
-# 2025 e un'altra ottiene il potenziamento il primo giugno 2025.
+# Nucleo e categoria (come associa_componenti()) e potenziamento (come
+# associa_potenziamento()), con un seme a parte. Domestica: 31, IA_31, D;
+# non domestica: altra categoria, IA_50, ND, nucleo 0. Qualche domestica
+# senza decorrenza. Una domestica del secco cambia nucleo il 1/7/2025,
+# un'altra ha il potenziamento dal 1/6/2025.
 forniture_nucleo <- con_seme(2031, {
   elenco <- sort(unique(stats::na.omit(letture$id_fornitura[con_contenitore])))
   domestica <- domestica_utenza[con_contenitore][
     match(elenco, letture$id_fornitura[con_contenitore])
   ]
   n <- length(elenco)
-  residenti <- sample(0:6, n, replace = TRUE, prob = c(0.04, 0.28, 0.28, 0.18, 0.14, 0.05, 0.03))
+  residenti <- sample(
+    0:6,
+    n,
+    replace = TRUE,
+    prob = c(0.04, 0.28, 0.28, 0.18, 0.14, 0.05, 0.03)
+  )
   non_residenti <- ifelse(
     residenti == 0,
     sample(1:3, n, replace = TRUE),
@@ -1071,7 +1255,11 @@ forniture_nucleo <- con_seme(2031, {
   manovra <- ifelse(
     domestica & stats::runif(n) < 0.15,
     sample(
-      c("MANOVRA SOCIALE NEONATI", "MANOVRA SOCIALE ANZIANI", "MANOVRA SOCIALE DISABILI"),
+      c(
+        "MANOVRA SOCIALE NEONATI",
+        "MANOVRA SOCIALE ANZIANI",
+        "MANOVRA SOCIALE DISABILI"
+      ),
       n,
       replace = TRUE
     ),
@@ -1092,21 +1280,40 @@ forniture_nucleo <- con_seme(2031, {
   )
 })
 riga_fornitura <- match(letture$id_fornitura, forniture_nucleo$id_fornitura)
-for (campo in c("nucleo_residenti", "nucleo_non_residenti", "tipo_categoria", "categoria", "sottocategoria", "manovra_sociale")) {
+for (campo in c(
+  "nucleo_residenti",
+  "nucleo_non_residenti",
+  "tipo_categoria",
+  "categoria",
+  "sottocategoria",
+  "manovra_sociale"
+)) {
   letture[[campo]] <- forniture_nucleo[[campo]][riga_fornitura]
 }
-# Una manovra qualsiasi dà il potenziamento; senza fornitura il valore manca.
-# Le due forniture del secco che cambiano: le prime domestiche, senza
-# manovra, lette sia prima sia dopo l'estate del 2025.
-secco_2025 <- con_contenitore & letture$servizio_database %in% "SECCO" &
-  format(giorno, "%Y") == "2025" & letture$sottocategoria %in% "D" &
+# Le due forniture del secco che cambiano: le prime domestiche senza manovra
+# lette prima e dopo l'estate 2025.
+secco_2025 <- con_contenitore &
+  letture$servizio_database %in% "SECCO" &
+  format(giorno, "%Y") == "2025" &
+  letture$sottocategoria %in% "D" &
   is.na(letture$manovra_sociale)
-prima_estate <- unique(letture$id_fornitura[secco_2025 & giorno < as.Date("2025-06-01")])
-dopo_estate <- unique(letture$id_fornitura[secco_2025 & giorno >= as.Date("2025-07-01")])
+prima_estate <- unique(letture$id_fornitura[
+  secco_2025 & giorno < as.Date("2025-06-01")
+])
+dopo_estate <- unique(letture$id_fornitura[
+  secco_2025 & giorno >= as.Date("2025-07-01")
+])
 che_cambiano <- utils::head(sort(intersect(prima_estate, dopo_estate)), 2)
-cambia_nucleo <- letture$id_fornitura %in% che_cambiano[1] & giorno >= as.Date("2025-07-01")
-letture$nucleo_residenti[cambia_nucleo] <- letture$nucleo_residenti[cambia_nucleo] + 1L
-nuova_manovra <- letture$id_fornitura %in% che_cambiano[2] & giorno >= as.Date("2025-06-01")
+cambia_nucleo <- letture$id_fornitura %in%
+  che_cambiano[1] &
+  giorno >= as.Date("2025-07-01")
+letture$nucleo_residenti[cambia_nucleo] <- letture$nucleo_residenti[
+  cambia_nucleo
+] +
+  1L
+nuova_manovra <- letture$id_fornitura %in%
+  che_cambiano[2] &
+  giorno >= as.Date("2025-06-01")
 letture$manovra_sociale[nuova_manovra] <- "MANOVRA SOCIALE NEONATI"
 letture$potenziamento_secco <- ifelse(
   is.na(letture$id_fornitura),
@@ -1115,11 +1322,8 @@ letture$potenziamento_secco <- ifelse(
 )
 letture$nucleo_totale <- letture$nucleo_residenti + letture$nucleo_non_residenti
 
-# Conferma dei giri, `eseguito`: il calendario dice se un giro e' stato
-# confermato. Gli ultimi sette giorni non lo sono ancora, NO; qualche giro
-# non ha l'informazione. Vale per tutte le letture dello stesso giro nello
-# stesso giorno. Il codice del giro, come nei dati aziendali, e' un numero di
-# quattro cifre: 1800 piu' la riga della tabella `giri`.
+# Conferma dei giri: NO negli ultimi sette giorni, a volte mancante, uguale
+# per un giro in un giorno. id_giro = 1800 + riga di `giri`.
 giro_giorno <- paste(letture$id_giro, format(giorno))
 elenco_giri <- unique(giro_giorno)
 eseguito_giro <- con_seme(2033, {
@@ -1131,7 +1335,11 @@ eseguito_giro <- con_seme(2033, {
 letture$eseguito <- eseguito_giro[match(giro_giorno, elenco_giri)]
 
 finale <- data.frame(
-  giorno_lettura = format(letture$giorno_lettura, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+  giorno_lettura = format(
+    letture$giorno_lettura,
+    "%Y-%m-%d %H:%M:%S",
+    tz = "UTC"
+  ),
   giorno = format(giorno),
   targa_veicolo = letture$targa_veicolo,
   matricola_veicolo = letture$matricola_veicolo,
@@ -1182,7 +1390,8 @@ n_bidoni <- sum(!rfid_sacchetto(names(per_rfid)))
 stime_2025 <- servizio_prevalente_non_censiti(finale[nel_2025, ])
 stopifnot(
   nrow(finale) >= 600,
-  n_bidoni >= 200, n_bidoni <= 250,
+  n_bidoni >= 200,
+  n_bidoni <= 250,
   !anyDuplicated(bidoni$RFID),
   !any(rfid_sacchetto(bidoni$RFID)),
   # sacchetti: riconosciuti tutti dal codice, letti una volta da un giro del
@@ -1192,30 +1401,51 @@ stopifnot(
   sum(sacchetto) == nrow(sacchetti),
   !anyDuplicated(finale$RFID[sacchetto]),
   all(finale$servizio_atteso[sacchetto] == "SECCO"),
-  all(finale$comune_giro[sacchetto] == sacchetti$comune[match(finale$RFID[sacchetto], sacchetti$RFID)]),
+  all(
+    finale$comune_giro[sacchetto] ==
+      sacchetti$comune[match(finale$RFID[sacchetto], sacchetti$RFID)]
+  ),
   all(finale$comune_lettura[sacchetto] == finale$comune_giro[sacchetto]),
   identical(
     sort(unique(finale$RFID[sacchetto & !non_presente])),
     sacchetti$RFID[!is.na(sacchetti$fornitura)]
   ),
-  setequal(stats::na.omit(finale$id_fornitura[sacchetto]), stats::na.omit(sacchetti$fornitura)),
+  setequal(
+    stats::na.omit(finale$id_fornitura[sacchetto]),
+    stats::na.omit(sacchetti$fornitura)
+  ),
   all(is.na(finale$id_utenza[sacchetto])),
   setequal(unique(substr(finale$giorno_lettura, 1, 4)), c("2024", "2025")),
   all(substr(finale$giorno_lettura, 12, 19) >= "06:00:00"),
   all(substr(finale$giorno_lettura, 12, 19) <= "19:00:00"),
   # righe di esempio e casi speciali della prima specifica
-  finale$giorno_lettura[finale$RFID == "D250901001"][1] == "2025-09-01 06:00:00",
-  finale$giorno_lettura[finale$RFID == "D250901002"][1] == "2025-09-01 06:15:00",
-  finale$giorno_lettura[finale$RFID == "D250901201"][1] == "2025-09-01 06:30:00",
-  identical(per_rfid$D250901001$servizio_transponder[1:4], c("CARTA", "SECCO", "CARTA", "CARTA")),
-  identical(substr(per_rfid$D250901001$giorno_lettura[1:3], 1, 10), c("2025-09-01", "2025-09-15", "2025-09-28")),
-  identical(per_rfid$D250901050$id_utenza[1:4], c("58590001", "58590001", "58590025", "58590025")),
+  finale$giorno_lettura[finale$RFID == "D250901001"][1] ==
+    "2025-09-01 06:00:00",
+  finale$giorno_lettura[finale$RFID == "D250901002"][1] ==
+    "2025-09-01 06:15:00",
+  finale$giorno_lettura[finale$RFID == "D250901201"][1] ==
+    "2025-09-01 06:30:00",
+  identical(
+    per_rfid$D250901001$servizio_transponder[1:4],
+    c("CARTA", "SECCO", "CARTA", "CARTA")
+  ),
+  identical(
+    substr(per_rfid$D250901001$giorno_lettura[1:3], 1, 10),
+    c("2025-09-01", "2025-09-15", "2025-09-28")
+  ),
+  identical(
+    per_rfid$D250901050$id_utenza[1:4],
+    c("58590001", "58590001", "58590025", "58590025")
+  ),
   all(per_rfid$D250901050$id_utenza[-(1:2)] == "58590025"),
   identical(per_rfid$D250915201$servizio_atteso, rep("SECCO", 4)),
   # il non censito con la stima incerta: due letture, due tipologie
   identical(per_rfid$D250920250$servizio_atteso, c("SECCO", "CARTA")),
   is.na(stime_2025$servizio_prevalente[stime_2025$RFID == "D250920250"]),
-  identical(stime_2025$servizio_prevalente[stime_2025$RFID == "D250915201"], "SECCO"),
+  identical(
+    stime_2025$servizio_prevalente[stime_2025$RFID == "D250915201"],
+    "SECCO"
+  ),
   identical(
     per_rfid$D250905100$latitudine[1:2],
     sprintf("%.4f", c(spostato_da[["lat"]], spostato_a[["lat"]]))
@@ -1277,17 +1507,44 @@ stopifnot(
   # geografia: comuni della tabella, un comune del database per contenitore
   # censito, comune del giro e comune di lettura per ogni lettura
   all(is.na(finale$comune_fornitura) == (non_presente | sacchetto)),
-  all(stats::na.omit(c(finale$comune_fornitura, finale$comune_giro)) %in% c(comuni$comune, "MASSICCIO DEL GRAPPA")),
+  all(
+    stats::na.omit(c(finale$comune_fornitura, finale$comune_giro)) %in%
+      c(comuni$comune, "MASSICCIO DEL GRAPPA")
+  ),
   # il giro di zona: per i non censiti la coerenza e' ignota
   any(finale$comune_giro == "MASSICCIO DEL GRAPPA" & non_presente),
-  all(finale$coerenza_comune[finale$comune_giro == "MASSICCIO DEL GRAPPA" & non_presente] == "Coerenza ignota"),
+  all(
+    finale$coerenza_comune[
+      finale$comune_giro == "MASSICCIO DEL GRAPPA" & non_presente
+    ] ==
+      "Coerenza ignota"
+  ),
   # la distanza dal comune dichiarato c'e' solo per le letture fatte in un
   # altro comune; quelle entro la tolleranza sono coerenti
-  all(!is.na(finale$distanza_comune_dichiarato[finale$coerenza_comune %in% c("Fuori comune", "Fuori giro")])),
-  all(finale$distanza_comune_dichiarato[finale$coerenza_comune %in% c("Fuori comune", "Fuori giro")] > tolleranza_confine_m()),
-  any(finale$coerenza_comune == "Coerente" & !is.na(finale$distanza_comune_dichiarato)),
-  all(is.na(finale$distanza_comune_dichiarato[finale$comune_lettura == ifelse(non_presente, finale$comune_giro, finale$comune_fornitura)])),
-  all(vapply(per_rfid, function(x) length(unique(x$comune_fornitura)) == 1, logical(1))),
+  all(
+    !is.na(finale$distanza_comune_dichiarato[
+      finale$coerenza_comune %in% c("Fuori comune", "Fuori giro")
+    ])
+  ),
+  all(
+    finale$distanza_comune_dichiarato[
+      finale$coerenza_comune %in% c("Fuori comune", "Fuori giro")
+    ] >
+      tolleranza_confine_m()
+  ),
+  any(
+    finale$coerenza_comune == "Coerente" &
+      !is.na(finale$distanza_comune_dichiarato)
+  ),
+  all(is.na(finale$distanza_comune_dichiarato[
+    finale$comune_lettura ==
+      ifelse(non_presente, finale$comune_giro, finale$comune_fornitura)
+  ])),
+  all(vapply(
+    per_rfid,
+    function(x) length(unique(x$comune_fornitura)) == 1,
+    logical(1)
+  )),
   !anyNA(finale$comune_giro),
   # il comune di lettura viene dalla posizione: ogni lettura cade in un
   # comune servito, e ha il suo cantiere
@@ -1301,29 +1558,47 @@ stopifnot(
   !any(finale$coerenza_comune[!non_presente] == "Fuori giro"),
   !any(finale$coerenza_comune[non_presente] == "Fuori comune"),
   setequal(unique(finale$cantiere), names(quote_cantieri)),
-  max(abs(prop.table(table(bidoni$cantiere))[names(quote_cantieri)] - quote_cantieri)) < 0.05,
+  max(abs(
+    prop.table(table(bidoni$cantiere))[names(quote_cantieri)] - quote_cantieri
+  )) <
+    0.05,
   # il contenitore spostato e' registrato a Limena e letto a Cittadella
   all(per_rfid$D250905100$comune_fornitura == "LIMENA"),
   identical(per_rfid$D250905100$comune_lettura[1:2], c("LIMENA", "CITTADELLA")),
-  identical(per_rfid$D250905100$coerenza_comune[1:2], c("Coerente", "Fuori comune")),
+  identical(
+    per_rfid$D250905100$coerenza_comune[1:2],
+    c("Coerente", "Fuori comune")
+  ),
   identical(per_rfid$D250905100$comune_giro[1:2], c("LIMENA", "CITTADELLA")),
   # il cantiere segue la posizione: Limena e' di Rubano, Cittadella di Camposampiero
   identical(per_rfid$D250905100$cantiere[1:2], c("RUBANO", "CAMPOSAMPIERO")),
   # tutte le letture cadono nella zona servita
-  all(letture$latitudine > riquadro_zona()$lat_min & letture$latitudine < riquadro_zona()$lat_max),
-  all(letture$longitudine > riquadro_zona()$lng_min & letture$longitudine < riquadro_zona()$lng_max),
+  all(
+    letture$latitudine > riquadro_zona()$lat_min &
+      letture$latitudine < riquadro_zona()$lat_max
+  ),
+  all(
+    letture$longitudine > riquadro_zona()$lng_min &
+      letture$longitudine < riquadro_zona()$lng_max
+  ),
   nrow(unique(finale[, c("targa_veicolo", "matricola_veicolo")])) == 5,
   # fornitura: aperta o cessata; le date del contenitore comprendono le sue
   # letture, e l'associazione aperta finisce il 2099-12-31
   all(finale$stato_fornitura %in% c("ATTIVA", "CESSATA", NA)),
   any(finale$stato_fornitura %in% "CESSATA"),
-  all(is.na(finale$data_cessazione_contenitore) == is.na(finale$stato_fornitura)),
-  all((finale$data_cessazione_contenitore == "2099-12-31") ==
-    (finale$stato_fornitura == "ATTIVA"), na.rm = TRUE),
+  all(
+    is.na(finale$data_cessazione_contenitore) == is.na(finale$stato_fornitura)
+  ),
+  all(
+    (finale$data_cessazione_contenitore == "2099-12-31") ==
+      (finale$stato_fornitura == "ATTIVA"),
+    na.rm = TRUE
+  ),
   all(finale$giorno >= finale$data_attivazione_contenitore, na.rm = TRUE),
   all(finale$giorno <= finale$data_cessazione_contenitore, na.rm = TRUE),
   length(unique(stats::na.omit(finale$id_utenza[!sacchetto]))) == 50,
-  !anyNA(finale$latitudine), !anyNA(finale$longitudine),
+  !anyNA(finale$latitudine),
+  !anyNA(finale$longitudine),
   # nucleo e categoria: solo per le forniture dei contenitori; il nucleo solo
   # per quelle domestiche; il potenziamento per ogni fornitura, vero solo per
   # domestiche
@@ -1334,12 +1609,25 @@ stopifnot(
   all(is.na(finale$sottocategoria) == is.na(finale$tipo_categoria)),
   all(is.na(finale$nucleo_residenti) == is.na(finale$tipo_categoria)),
   all(finale$sottocategoria %in% c("D", "ND", NA)),
-  all((finale$sottocategoria == "D") == (finale$tipo_categoria == "IA_31"), na.rm = TRUE),
-  all((finale$sottocategoria == "D") == (finale$categoria == "31"), na.rm = TRUE),
+  all(
+    (finale$sottocategoria == "D") == (finale$tipo_categoria == "IA_31"),
+    na.rm = TRUE
+  ),
+  all(
+    (finale$sottocategoria == "D") == (finale$categoria == "31"),
+    na.rm = TRUE
+  ),
   all(finale$nucleo_totale[finale$sottocategoria %in% "ND"] == 0),
-  all(finale$nucleo_totale == finale$nucleo_residenti + finale$nucleo_non_residenti, na.rm = TRUE),
+  all(
+    finale$nucleo_totale ==
+      finale$nucleo_residenti + finale$nucleo_non_residenti,
+    na.rm = TRUE
+  ),
   all(is.na(finale$potenziamento_secco) == non_presente),
-  !any(finale$potenziamento_secco[finale$sottocategoria %in% "ND" | sacchetto], na.rm = TRUE),
+  !any(
+    finale$potenziamento_secco[finale$sottocategoria %in% "ND" | sacchetto],
+    na.rm = TRUE
+  ),
   any(finale$potenziamento_secco, na.rm = TRUE),
   length(che_cambiano) == 2,
   # esempi per l'analisi dei cluster: oltre 300 letture nel 2025
@@ -1351,18 +1639,27 @@ dir.create("inst/extdata", recursive = TRUE, showWarnings = FALSE)
 utils::write.csv(
   finale,
   "inst/extdata/sample_rfid_dataset.csv",
-  row.names = FALSE, quote = FALSE, na = "NA", fileEncoding = "UTF-8"
+  row.names = FALSE,
+  quote = FALSE,
+  na = "NA",
+  fileEncoding = "UTF-8"
 )
 
 message(sprintf(
   "Scritte %d letture di %d RFID in inst/extdata/sample_rfid_dataset.csv",
-  nrow(finale), length(per_rfid)
+  nrow(finale),
+  length(per_rfid)
 ))
 message(sprintf(
   "Di cui %d letture di %d sacchetti, %d censiti e %d non censiti",
-  sum(sacchetto), nrow(sacchetti), sum(!is.na(sacchetti$fornitura)), sum(is.na(sacchetti$fornitura))
+  sum(sacchetto),
+  nrow(sacchetti),
+  sum(!is.na(sacchetti$fornitura)),
+  sum(is.na(sacchetti$fornitura))
 ))
 message(sprintf(
   "Esempi cluster: deposito %s, camion %s, letture sparse %s",
-  bidoni$RFID[k_deposito], bidoni$RFID[k_camion], bidoni$RFID[k_sparso]
+  bidoni$RFID[k_deposito],
+  bidoni$RFID[k_camion],
+  bidoni$RFID[k_sparso]
 ))

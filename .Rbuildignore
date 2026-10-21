@@ -5,3 +5,4 @@
 ^docs$
 ^CLAUDE\.md$
 ^_targets\.yaml$
+^\.claude$

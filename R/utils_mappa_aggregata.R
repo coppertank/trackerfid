@@ -1,22 +1,9 @@
-# Bolle del territorio e fasce di zoom della mappa principale.
-#
-# Da lontano la mappa mostra una bolla per cantiere, avvicinandosi una bolla
-# per comune, da vicino i singoli bidoni: i gruppi che si vedono sono quelli
-# del territorio, non raggruppamenti casuali di marker vicini. Le bolle le
-# calcola il server, una volta per ogni cambio di filtro; il passaggio da una
-# fascia di zoom all'altra lo fa il browser, che mostra ogni livello solo
-# nella sua fascia, senza chiedere niente al server. Da vicino i bidoni
-# vicini si raggruppano nei cluster calcolati dal browser.
+# Bolle per cantiere e per comune, calcolate dal server a ogni filtro; il
+# browser mostra ogni livello nella sua fascia di zoom.
 
-#' Limiti del disegno delle mappe
+#' Limiti del disegno delle ricerche: letture in tutto e per RFID
 #'
-#' Si possono cambiare con le opzioni `trackerfid.max_letture_ricerca` e
-#' `trackerfid.letture_per_rfid`.
-#'
-#' @return Lista con `letture_ricerca`, il numero massimo di letture
-#'   disegnate dalla ricerca RFID e dalla ricerca dei giri, e
-#'   `letture_per_rfid`, le letture più recenti di ogni RFID che la ricerca
-#'   RFID disegna: le altre stanno solo nella tabella delle letture.
+#' Opzioni `trackerfid.max_letture_ricerca` e `trackerfid.letture_per_rfid`.
 #' @noRd
 limiti_mappa <- function() {
   list(
@@ -25,34 +12,15 @@ limiti_mappa <- function() {
   )
 }
 
-#' Zoom fino a cui la mappa mostra le bolle di cantieri e comuni
+#' Ultimo zoom di MapLibre con le bolle dei cantieri (10) e dei comuni (13)
 #'
-#' Sono zoom di MapLibre, che disegna tessere da 512 pixel: lo zoom `z` di
-#' MapLibre mostra la scala dello zoom `z + 1` di Leaflet. Le fasce sono
-#' quelle scelte dal proprietario del progetto con Leaflet, cantieri fino a
-#' zoom 11 e comuni fino a zoom 14, alla stessa scala sullo schermo.
-#'
-#' @return Lista con `cantiere` e `comune`: l'ultimo zoom intero a cui si
-#'   vede una bolla per cantiere e l'ultimo a cui se ne vede una per comune.
+#' Lo zoom `z` di MapLibre ha la scala dello zoom `z + 1` di Leaflet.
 #' @noRd
 soglie_zoom <- function() {
   list(cantiere = 10, comune = 13)
 }
 
-#' Livello di aggregazione adatto a uno zoom
-#'
-#' Con la zona servita inquadrata per intero lo zoom è 9 o meno: si vedono
-#' i cantieri, e restano anche a zoom 10, quando un cantiere occupa buona
-#' parte della mappa. Da zoom 11 a zoom 13 si vedono i comuni: a 11 un comune
-#' occupa un paio di centinaia di pixel, a 13 più della mappa. Da 14 in su si
-#' vedono i singoli bidoni. Lo zoom di MapLibre ha anche i decimali: la fascia
-#' dei cantieri arriva fin sotto lo zoom 11. Le soglie stanno in
-#' `soglie_zoom()`; il browser le applica ai livelli della mappa, vedi
-#' `livelli_mappa()`.
-#'
-#' @param zoom Zoom della mappa.
-#' @return `"cantiere"` sotto lo zoom 11, `"comune"` sotto lo zoom 14, poi
-#'   `"bidoni"`.
+#' Livello di uno zoom: `"cantiere"`, `"comune"` o `"bidoni"`, da `soglie_zoom()`
 #' @noRd
 livello_aggregazione <- function(zoom) {
   soglie <- soglie_zoom()
@@ -65,15 +33,7 @@ livello_aggregazione <- function(zoom) {
   }
 }
 
-#' Zoom minimo a cui porta il click su una bolla
-#'
-#' Il click su una bolla deve aprirla: quella di un cantiere mostra i suoi
-#' comuni, quella di un comune i suoi bidoni. Lo zoom a cui i bidoni della
-#' bolla entrano nella mappa può non bastare: un cantiere entra per intero a
-#' uno zoom a cui si vedono ancora i cantieri.
-#'
-#' @param livello `"cantiere"` oppure `"comune"`.
-#' @return Il primo zoom del livello successivo.
+#' Zoom a cui porta il click su una bolla: il primo del livello successivo
 #' @noRd
 zoom_minimo_bolla <- function(livello) {
   soglie <- soglie_zoom()
@@ -85,21 +45,13 @@ zoom_minimo_bolla <- function(livello) {
   )
 }
 
-#' Raggruppa i bidoni in bolle
+#' Bolle dei bidoni per cantiere o per comune
 #'
-#' Ogni bolla riporta il numero dei suoi bidoni, i censiti e il riquadro che
-#' li contiene. La bolla di un comune sta nel baricentro del comune, vedi
-#' `baricentri_comuni()`: resta ferma qualunque siano i bidoni filtrati, in
-#' mezzo al confine disegnato sulla mappa. Le bolle dei cantieri, e quelle di
-#' un comune che non è nella tabella dei comuni, stanno nel punto medio dei
-#' loro bidoni.
-#'
-#' @param df Una riga per bidone, con stato a database, coordinate, `cantiere`
-#'   e `comune_assegnato`.
-#' @param livello `"cantiere"` oppure `"comune"`.
-#' @return Tibble con `livello`, `nome`, `latitudine`, `longitudine`, `n`,
-#'   `censiti`, `lat_min`, `lat_max`, `lng_min`, `lng_max`. I bidoni senza
-#'   cantiere o senza comune formano una bolla con nome mancante.
+#' La bolla di un comune sta nel suo baricentro (`baricentri_comuni()`);
+#' quelle dei cantieri, e dei comuni fuori tabella, nel punto medio dei
+#' bidoni. I bidoni senza cantiere o comune fanno una bolla senza nome.
+#' @return Tibble con `livello`, `nome`, coordinate, `n`, `censiti` e
+#'   riquadro.
 #' @noRd
 aggrega_marker <- function(df, livello = c("cantiere", "comune")) {
   livello <- match.arg(livello)
@@ -153,9 +105,7 @@ aggrega_marker <- function(df, livello = c("cantiere", "comune")) {
   )
 }
 
-#' Frase che descrive la vista della mappa, per la sua intestazione
-#'
-#' @param livello Livello di `livello_aggregazione()`.
+#' Frase dell'intestazione sulla fascia di zoom
 #' @noRd
 descrizione_vista <- function(livello) {
   switch(
@@ -166,18 +116,10 @@ descrizione_vista <- function(livello) {
   )
 }
 
-#' Tiene le letture da disegnare nella ricerca RFID
+#' Letture da disegnare nella ricerca RFID: le ultime `per_rfid` di ogni RFID
 #'
-#' Per ogni RFID restano le sue letture più recenti, al massimo `per_rfid`:
-#' con centinaia di letture nello stesso punto i marker si coprono, e la
-#' storia completa sta nella tabella delle letture. Se sono ancora troppe,
-#' restano l'ultima lettura di ogni RFID e, fino a `massimo`, le più recenti.
-#'
-#' @param df Letture trovate, con la colonna `is_ultimo`.
-#' @param per_rfid Numero massimo di letture disegnate per ogni RFID.
-#' @param massimo Numero massimo di letture da disegnare.
-#' @return Le letture da disegnare, nell'ordine di partenza. L'attributo
-#'   `totale` riporta quante erano.
+#' Se sono ancora più di `massimo`, l'ultima di ogni RFID e le più recenti.
+#' @return Nell'ordine di partenza, con l'attributo `totale`.
 #' @noRd
 limita_letture_ricerca <- function(
   df,

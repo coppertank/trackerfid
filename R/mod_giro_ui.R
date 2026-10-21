@@ -1,9 +1,4 @@
-#' Ricerca dei giri: controlli nella barra laterale
-#'
-#' Si sceglie un mezzo, o tutti, e un giorno o un intervallo di giorni. Le
-#' letture si possono restringere a quelle fuori giro o fuori comune.
-#'
-#' @param id Identificativo del modulo.
+#' Ricerca dei giri: mezzo, giorni, caselle «Fuori giro» e «Fuori comune»
 #' @noRd
 mod_giro_sidebar_ui <- function(id) {
   ns <- NS(id)
@@ -42,15 +37,9 @@ mod_giro_sidebar_ui <- function(id) {
   )
 }
 
-#' Ricerca dei giri: tabella dei giri trovati
+#' Tabella dei giri, da passare come `sovrapposto` a `mod_mappa_ui()`
 #'
-#' Sta sopra la mappa della scheda, in basso a sinistra, in un riquadro che
-#' si chiude come la legenda: va passata come `sovrapposto` a
-#' `mod_mappa_ui()`. Un click su una riga mostra sulla mappa le letture di
-#' quel giro: senza una scelta la mappa non ha marker. Ogni colonna ha il suo
-#' filtro.
-#'
-#' @param id Identificativo del modulo.
+#' Un click su una riga sceglie il giro da disegnare.
 #' @noRd
 mod_giro_ui <- function(id) {
   ns <- NS(id)

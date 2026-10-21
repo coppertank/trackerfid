@@ -1,9 +1,4 @@
-#' Modulo analisi cluster spaziale: contenuto della scheda
-#'
-#' Tre viste dello stesso risultato: tabella interattiva, grafici e mappa.
-#' I filtri della tabella valgono anche per grafici e mappa.
-#'
-#' @param id Identificativo del modulo.
+#' Analisi dei cluster spaziali: tabella, grafici e mappa, con i filtri della tabella
 #' @noRd
 mod_cluster_analysis_ui <- function(id) {
   ns <- NS(id)
@@ -63,9 +58,7 @@ mod_cluster_analysis_ui <- function(id) {
   )
 }
 
-#' Modulo analisi cluster spaziale: controlli nella barra laterale
-#'
-#' @param id Identificativo del modulo.
+#' Analisi dei cluster spaziali: parametri e pulsante nella barra laterale
 #' @noRd
 mod_cluster_analysis_sidebar_ui <- function(id) {
   ns <- NS(id)

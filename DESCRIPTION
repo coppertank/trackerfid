@@ -18,7 +18,6 @@ License: What license is it under?
 Depends:
     R (>= 4.1.0)
 Imports: 
-    data.table,
     DBI,
     dbscan,
     dplyr (>= 1.1.0),
@@ -40,13 +39,16 @@ Imports:
     stringr,
     tidyr (>= 1.3.0)
 Suggests:
+    data.table,
     geosphere,
     ggplot2,
     knitr,
     nanoparquet,
+    odbc,
     pkgload,
     rmarkdown,
     sf,
+    targets,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

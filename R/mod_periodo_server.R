@@ -1,16 +1,8 @@
-#' Modulo periodo di analisi: logica
+#' Periodo di analisi: stato sul server, all'avvio l'anno più recente del file
 #'
-#' Il periodo è un intervallo di date. Al caricamento di un file vale l'anno
-#' solare più recente del file, dal primo gennaio al 31 dicembre. Lo stato
-#' vive sul server, come per i filtri: al caricamento di un nuovo dataset il
-#' periodo si riallinea subito, senza attendere il browser.
-#'
-#' @param id Identificativo del modulo.
-#' @param dati Reactive con l'archivio delle letture (o `NULL`).
+#' @param dati Reactive con l'archivio, o `NULL`.
 #' @return Lista di reactive: `periodo` (due date, `NULL` se non valido),
-#'   `etichetta` (descrizione breve: "Anno 2025" per un anno intero, vedi
-#'   `etichetta_periodo()`) e `dati` (selezione delle letture del periodo,
-#'   vedi `seleziona_periodo()`; `NULL` senza dataset o periodo).
+#'   `etichetta` (`etichetta_periodo()`), `dati` (`seleziona_periodo()`).
 #' @noRd
 mod_periodo_server <- function(id, dati) {
   moduleServer(id, function(input, output, session) {
@@ -19,8 +11,8 @@ mod_periodo_server <- function(id, dati) {
     output$caricato <- reactive(!is.null(dati()))
     outputOptions(output, "caricato", suspendWhenHidden = FALSE)
 
-    # Nuovo dataset: l'anno più recente. Il calendario va dal primo gennaio
-    # dell'anno più vecchio al 31 dicembre del più recente.
+    # Nuovo dataset: l'anno più recente; calendario dal primo gennaio del più
+    # vecchio al 31 dicembre del più recente.
     observeEvent(
       dati(),
       {
@@ -74,9 +66,7 @@ mod_periodo_server <- function(id, dati) {
       seleziona_periodo(d, p)
     })
 
-    # Nella barra in alto compare solo un avviso: un intervallo non valido o
-    # un periodo senza letture. Il numero delle letture lo riporta
-    # l'intestazione della mappa principale.
+    # Solo un avviso: intervallo non valido o periodo senza letture.
     output$riepilogo <- renderUI({
       req(dati(), !is.null(stato$intervallo))
       p <- periodo()

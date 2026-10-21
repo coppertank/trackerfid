@@ -1,27 +1,13 @@
-# Mappe WebGL con mapgl (MapLibre GL JS).
-#
-# La mappa di base si disegna una volta: sfondo vettoriale, confini dei
-# comuni e i livelli vuoti della modalità. I dati arrivano dopo, con un
-# messaggio al browser, e il codice di `inst/app/www/mappa.js` li mette nelle
-# sorgenti della mappa. Così filtri e ricerche non ricaricano lo sfondo, e
-# zoom e spostamenti non chiedono niente al server.
-#
-# Sorgenti, livelli, icone e messaggi si costruiscono qui, in R, con funzioni
-# senza reattività; `mappa.js` li applica così come arrivano.
+# Mappe WebGL (mapgl, MapLibre GL JS): base disegnata una volta, dati con i
+# messaggi a `inst/app/www/mappa.js`. Sorgenti, livelli, icone e messaggi si
+# costruiscono qui, senza reattività.
 
 # Dati delle mappe preparati una volta per sessione di R.
 memoria_mappa <- new.env(parent = emptyenv())
 
-#' Stile dello sfondo delle mappe
+#' Stile dello sfondo: `bright` di OpenFreeMap, o l'opzione `trackerfid.stile_mappa`
 #'
-#' Lo stile «bright» di OpenFreeMap, vettoriale e senza chiave di accesso,
-#' con i colori della mappa di OpenStreetMap: l'ha scelto il proprietario del
-#' progetto. Disegnato in WebGL, è nitido a ogni zoom. Ha anche i caratteri
-#' usati dai numeri di cluster e bolle, vedi `carattere_mappa()`. Si può cambiare con
-#' l'opzione `trackerfid.stile_mappa`, ad esempio per uno sfondo servito
-#' dalla rete aziendale.
-#'
-#' @return Indirizzo dello stile, oppure lo stile come lista.
+#' Deve avere il carattere di `carattere_mappa()`.
 #' @noRd
 stile_mappa <- function() {
   getOption(
@@ -30,15 +16,9 @@ stile_mappa <- function() {
   )
 }
 
-#' Sfondo di ripiego, quando lo stile dello sfondo non si scarica
+#' Sfondo chiaro senza tessere, per quando lo stile non si scarica
 #'
-#' Senza la rete, o con il servizio dello sfondo fuori uso, lo stile di
-#' `stile_mappa()` non arriva e MapLibre non disegnerebbe niente: `mappa.js`
-#' passa allora a questo sfondo, un fondo chiaro senza tessere, e confini,
-#' bolle, cluster e marker si disegnano lo stesso. I numeri di cluster e
-#' bolle usano i caratteri del servizio dello sfondo: senza la rete mancano.
-#'
-#' @return Stile MapLibre, come lista.
+#' I numeri di cluster e bolle, senza la rete, mancano.
 #' @noRd
 stile_ripiego <- function() {
   list(
@@ -53,22 +33,14 @@ stile_ripiego <- function() {
   )
 }
 
-#' Carattere dei testi disegnati sulla mappa
-#'
-#' Deve essere tra quelli dello stile dello sfondo, vedi `stile_mappa()`.
+#' Carattere dei testi sulla mappa: deve essere nello stile dello sfondo
 #' @noRd
 carattere_mappa <- function() list("Noto Sans Bold")
 
-#' Indirizzo da cui il browser scarica i confini dei comuni
+#' Indirizzo da cui MapLibre scarica i confini dei comuni
 #'
-#' I confini sono quelli della Regione, non semplificati: il file pesa più di
-#' un megabyte. Non viaggia dentro la configurazione di ogni mappa, che lo
-#' ripeterebbe per le cinque mappe della pagina: il server lo espone come
-#' risorsa statica, vedi `golem_add_external_resources()`, e MapLibre lo
-#' scarica da sé, una volta, nel suo worker. Il parametro `v` cambia con il
-#' file, così il browser non tiene in memoria confini superati.
-#'
-#' @return Indirizzo relativo alla pagina.
+#' Risorsa statica, non nella configurazione: 1,25 MB per cinque mappe. `v`
+#' cambia con il file.
 #' @noRd
 indirizzo_confini <- function() {
   file <- percorso_confini_comuni()
@@ -84,11 +56,7 @@ indirizzo_confini <- function() {
 #' @noRd
 risorsa_confini <- function() "trackerfid-confini"
 
-#' Espressione MapLibre con il colore del cantiere di ogni comune
-#'
-#' Il file dei confini dice il cantiere di ogni comune; il colore lo sceglie
-#' la mappa, con i colori di `colori_cantieri()`. Un cantiere senza colore è
-#' grigio, come in `colore_cantiere()`.
+#' Espressione MapLibre del colore del cantiere di ogni comune; grigio se manca
 #' @noRd
 espressione_colore_cantiere <- function() {
   colori <- colori_cantieri()
@@ -101,15 +69,9 @@ espressione_colore_cantiere <- function() {
 
 # --- Icone ----------------------------------------------------------------------
 
-#' Icone dei marker: tutte le combinazioni disegnabili
+#' Icone dei marker: ogni combinazione di stato, glifo, stile e segnali
 #'
-#' Una per ogni combinazione di stato a database, glifo del servizio (icona e
-#' colore, vedi `info_servizio()`), stile del bordo e segnali di coerenza del
-#' comune. Il browser le disegna una volta, all'apertura della mappa: i dati
-#' portano solo il numero dell'icona.
-#'
-#' @return Tibble con `id`, `svg`, `presente`, `icona`, `colore`, `stile`,
-#'   `fuori_comune` e `fuori_giro`.
+#' Il browser le registra all'apertura; i punti portano solo il numero.
 #' @noRd
 icone_mappa <- function() {
   if (is.null(memoria_mappa$icone)) {
@@ -149,7 +111,13 @@ icone_mappa <- function() {
           combinazioni$fuori_giro
         ),
         function(servizio, presente, stile, fc, fg) {
-          svg_marker(servizio, presente, stile, fuori_comune = fc, fuori_giro = fg)
+          svg_marker(
+            servizio,
+            presente,
+            stile,
+            fuori_comune = fc,
+            fuori_giro = fg
+          )
         }
       ),
       presente = combinazioni$presente,
@@ -163,16 +131,8 @@ icone_mappa <- function() {
   memoria_mappa$icone
 }
 
-#' Numero dell'icona di ogni marker, in `icone_mappa()`
-#'
-#' @param servizio Servizio con cui il marker compare, vedi
-#'   `servizio_mostrato()`. Un servizio mancante o sconosciuto ha il punto di
-#'   domanda.
-#' @param presente Stato a database.
-#' @param stile Stile del bordo, vedi `svg_marker()`.
-#' @param fuori_comune,fuori_giro Segnali di coerenza del comune.
-#' @return Vettore intero, da 0: è la posizione dell'icona nell'elenco che
-#'   riceve il browser.
+#' Numero dell'icona di ogni marker in `icone_mappa()`, da 0
+#' @param servizio Da `servizio_mostrato()`; mancante: punto di domanda.
 #' @noRd
 indice_icona <- function(
   servizio,
@@ -210,16 +170,9 @@ indice_icona <- function(
 #' @noRd
 oggetto_vuoto <- function() stats::setNames(list(), character(0))
 
-#' Espressioni MapLibre di colore, raggio e testo di un gruppo di bidoni
+#' Espressioni MapLibre di colore, raggio e testo di un cluster o di una bolla
 #'
-#' Cluster e bolle hanno l'aspetto dei cluster di marker di prima: colore
-#' secondo la quota di censiti, da rosso a verde passando per l'arancio, vedi
-#' `genera_colore_cluster()`; lato che cresce con i bidoni, vedi
-#' `lato_bolla()`; il numero e, sotto, la percentuale di censiti.
-#'
-#' @param n Espressione con il numero dei bidoni del gruppo.
-#' @param censiti Espressione con il numero dei censiti.
-#' @return Lista con `colore`, `raggio` e `testo`.
+#' Colore dalla quota di censiti, lato da `lato_bolla()`.
 #' @noRd
 espressioni_gruppo <- function(n, censiti) {
   colori <- colori_stato()
@@ -248,21 +201,27 @@ espressioni_gruppo <- function(n, censiti) {
       oggetto_vuoto(),
       "\n",
       oggetto_vuoto(),
-      list("concat", list("to-string", list("round", list("*", 100, quota))), "%"),
+      list(
+        "concat",
+        list("to-string", list("round", list("*", 100, quota))),
+        "%"
+      ),
       list("font-scale" = 0.7)
     )
   )
 }
 
-#' Livelli di un gruppo di bidoni: cerchio e numeri
-#'
-#' @param id Prefisso degli identificativi dei livelli.
-#' @param sorgente Sorgente dei dati.
-#' @param n,censiti Espressioni dei conteggi, vedi `espressioni_gruppo()`.
-#' @param filtro Filtro MapLibre, oppure `NULL`.
-#' @param minzoom,maxzoom Fascia di zoom in cui il livello si vede.
+#' Livelli di un gruppo di bidoni: cerchio e numeri, in una fascia di zoom
 #' @noRd
-livelli_gruppo <- function(id, sorgente, n, censiti, filtro = NULL, minzoom = 0, maxzoom = 24) {
+livelli_gruppo <- function(
+  id,
+  sorgente,
+  n,
+  censiti,
+  filtro = NULL,
+  minzoom = 0,
+  maxzoom = 24
+) {
   espressioni <- espressioni_gruppo(n, censiti)
   comuni <- list(source = sorgente, minzoom = minzoom, maxzoom = maxzoom)
   if (!is.null(filtro)) {
@@ -306,19 +265,16 @@ livelli_gruppo <- function(id, sorgente, n, censiti, filtro = NULL, minzoom = 0,
   )
 }
 
-#' Livello di marker con le icone di `icone_mappa()`
-#'
-#' La punta del marker cade sul punto della lettura. I marker non si
-#' nascondono a vicenda: due bidoni vicini restano visibili tutti e due.
-#'
-#' @param id Identificativo del livello.
-#' @param sorgente Sorgente dei dati.
-#' @param filtro Filtro MapLibre, oppure `NULL`.
-#' @param ordinati `TRUE` se la proprietà `u` decide quali marker stanno
-#'   sopra e quali sono attenuati, come nella ricerca RFID.
-#' @param minzoom Zoom da cui il livello si vede.
+#' Livello dei marker; la punta cade sul punto, nessuno nasconde gli altri
+#' @param ordinati `TRUE` se la proprietà `u` mette sopra l'ultima lettura.
 #' @noRd
-livello_marker <- function(id, sorgente, filtro = NULL, ordinati = FALSE, minzoom = 0) {
+livello_marker <- function(
+  id,
+  sorgente,
+  filtro = NULL,
+  ordinati = FALSE,
+  minzoom = 0
+) {
   layout <- list(
     "icon-image" = list("get", "k"),
     "icon-anchor" = "bottom",
@@ -329,7 +285,12 @@ livello_marker <- function(id, sorgente, filtro = NULL, ordinati = FALSE, minzoo
   paint <- list()
   if (ordinati) {
     layout[["symbol-sort-key"]] <- list("get", "u")
-    paint[["icon-opacity"]] <- list("case", list("==", list("get", "u"), 1), 1, 0.6)
+    paint[["icon-opacity"]] <- list(
+      "case",
+      list("==", list("get", "u"), 1),
+      1,
+      0.6
+    )
   }
   livello <- list(
     id = id,
@@ -349,29 +310,18 @@ livello_marker <- function(id, sorgente, filtro = NULL, ordinati = FALSE, minzoo
 
 #' Sorgenti e livelli di una mappa
 #'
-#' Tutte le mappe hanno i confini dei comuni, sotto le etichette dello
-#' sfondo, colorati per cantiere: riempimento appena accennato e bordo
-#' tratteggiato, vedi `stile_confini()`. I confini non rispondono al mouse.
-#' Sopra stanno i livelli della modalità:
-#'
-#' - `"cluster"`: una bolla per cantiere sotto lo zoom 11, una per comune
-#'   sotto lo zoom 14, i singoli bidoni da zoom 14, con quelli vicini
-#'   raggruppati in cluster colorati secondo la quota di censiti. Le fasce
-#'   vengono da `soglie_zoom()`; senza cantieri né comuni i bidoni si vedono
-#'   a ogni zoom, e lo decide il browser all'arrivo dei dati.
-#' - `"rfid"`: tutte le letture degli RFID cercati, l'ultima in evidenza e
-#'   sopra le altre, con il riquadro degli spostamenti di ogni RFID.
-#' - `"utenza"`: l'ultima lettura di ogni bidone.
-#' - `"giro"`: tutte le letture dei giri, con il contorno dei comuni dei giri.
-#' - `"analisi"`: il baricentro di ogni cluster spaziale e il cerchio della
-#'   sua dispersione, in metri, nel colore dell'indicatore.
-#'
-#' @param modalita Modalità della mappa.
-#' @return Lista con `sorgenti`, `livelli` e `interattivi`: per ogni livello
-#'   che risponde al mouse, che cosa fa il click (`punto`, `cluster`,
-#'   `bolla`) e quale proprietà dà il testo al passaggio.
+#' Sempre i confini dei comuni, sotto le etichette dello sfondo. Poi, per
+#' modalità: `"cluster"` bolle per cantiere e per comune e bidoni, nelle
+#' fasce di `soglie_zoom()`; `"rfid"` le letture cercate, l'ultima in
+#' evidenza, con il riquadro di ogni RFID; `"utenza"` l'ultima lettura;
+#' `"giro"` le letture con il contorno dei comuni dei giri; `"analisi"`
+#' baricentri e cerchi di dispersione.
+#' @return Lista con `sorgenti`, `livelli` e `interattivi` (click e testo al
+#'   passaggio).
 #' @noRd
-livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "analisi")) {
+livelli_mappa <- function(
+  modalita = c("cluster", "rfid", "utenza", "giro", "analisi")
+) {
   modalita <- match.arg(modalita)
   stile <- stile_confini()
   vuota <- list(type = "FeatureCollection", features = list())
@@ -402,13 +352,14 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
     )
   )
   soglie <- soglie_zoom()
-  # La licenza dei confini, IODL 2.0, chiede di citare la fonte: la mappa la
-  # scrive nell'attribuzione in basso.
-  sorgenti <- list(confini = list(
-    type = "geojson",
-    data = "confini",
-    attribution = "Confini dei comuni: Regione del Veneto, IODL 2.0"
-  ))
+  # Attribuzione chiesta dalla licenza dei confini, IODL 2.0.
+  sorgenti <- list(
+    confini = list(
+      type = "geojson",
+      data = "confini",
+      attribution = "Confini dei comuni: Regione del Veneto, IODL 2.0"
+    )
+  )
   interattivi <- list()
   livelli <- switch(
     modalita,
@@ -518,8 +469,7 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
     analisi = {
       sorgenti$cluster <- geojson()
       interattivi <- list(baricentri = list(click = "punto", testo = "r"))
-      # Il raggio della dispersione è in metri: a ogni livello di zoom un
-      # metro occupa il doppio dei pixel. `r22` è il raggio in pixel a zoom 22.
+      # Raggio in metri: `r22` è il raggio in pixel a zoom 22.
       list(
         list(
           id = "dispersione",
@@ -564,12 +514,6 @@ livelli_mappa <- function(modalita = c("cluster", "rfid", "utenza", "giro", "ana
 }
 
 #' Configurazione che `mappa.js` riceve all'apertura di una mappa
-#'
-#' @param modalita Modalità della mappa, vedi `livelli_mappa()`.
-#' @return Lista con `modalita`, l'indirizzo dello stile dello sfondo e lo
-#'   sfondo di ripiego, `icone` (identificativi e SVG), sorgenti, livelli e
-#'   livelli interattivi, l'indirizzo dei confini dei comuni, lo zoom a cui portano i click
-#'   sulle bolle e lo zoom massimo di un inquadramento.
 #' @noRd
 configurazione_mappa <- function(modalita) {
   livelli <- livelli_mappa(modalita)
@@ -595,13 +539,7 @@ configurazione_mappa <- function(modalita) {
   )
 }
 
-#' Mappa di base: sfondo, confini dei comuni, livelli vuoti della modalità
-#'
-#' I dati arrivano dopo, con `invia_mappa()`. La legenda sta nell'interfaccia
-#' del modulo, sopra la mappa, vedi `mod_mappa_ui()`.
-#'
-#' @param modalita Modalità della mappa, vedi `livelli_mappa()`.
-#' @return Widget mapgl che inquadra tutta la zona servita.
+#' Mappa di base (widget mapgl): sfondo, confini, livelli vuoti, vista sulla zona servita
 #' @noRd
 mappa_base <- function(modalita = "cluster") {
   zona <- riquadro_zona()
@@ -619,24 +557,14 @@ mappa_base <- function(modalita = "cluster") {
 
 # --- Dati inviati alla mappa -----------------------------------------------------------
 
-#' Coordinate come interi, in centomillesimi di grado
-#'
-#' Cinque decimali sono circa un metro. Gli interi pesano meno dei decimali
-#' nel messaggio al browser, che li divide per centomila.
+#' Coordinate intere in centomillesimi di grado: messaggi più leggeri
 #' @noRd
 coordinate_intere <- function(x) as.integer(round(x * 1e5))
 
 #' Punti da disegnare, in colonne
 #'
-#' Ogni punto ha le coordinate (`x`, `y`), il numero dell'icona (`k`, vedi
-#' `indice_icona()`), lo stato a database (`c`, 1 per un censito), l'RFID
-#' (`r`, per il testo al passaggio del mouse) e, nella ricerca RFID,
-#' l'ultima lettura (`u`, 1 per l'ultima). La posizione di un punto
-#' nell'elenco è il numero di riga delle letture disegnate, da 0: il click
-#' torna al server con quella.
-#'
-#' @param df Letture da disegnare.
-#' @param modalita Modalità della mappa.
+#' `x`, `y`, icona `k`, censito `c`, RFID `r`, ultima lettura `u` (ricerca
+#' RFID). La posizione nell'elenco, da 0, torna al server con il click.
 #' @noRd
 punti_mappa <- function(df, modalita) {
   incongruenze <- incongruenze_comune(df)
@@ -664,13 +592,7 @@ punti_mappa <- function(df, modalita) {
   punti
 }
 
-#' Bolle di un livello del territorio, in colonne
-#'
-#' @param bolle Risultato di `aggrega_marker()`.
-#' @return Lista con le coordinate (`x`, `y`, vedi `coordinate_intere()`),
-#'   `n`, `censiti`, il nome (`nome`), il testo al passaggio del mouse (`d`),
-#'   il riquadro dei bidoni (`ovest`, `sud`, `est`, `nord`) e il `livello`,
-#'   una voce per bolla.
+#' Bolle di `aggrega_marker()`, in colonne per il browser
 #' @noRd
 bolle_mappa <- function(bolle) {
   nome <- dplyr::coalesce(bolle$nome, senza_cantiere())
@@ -694,13 +616,7 @@ bolle_mappa <- function(bolle) {
   )
 }
 
-#' Riquadri degli spostamenti degli RFID cercati
-#'
-#' Gli RFID letti sempre nello stesso punto non hanno riquadro.
-#'
-#' @param df Letture degli RFID cercati.
-#' @return Lista con `r` e gli estremi `ovest`, `sud`, `est`, `nord`, una
-#'   voce per riquadro.
+#' Riquadri degli spostamenti degli RFID cercati; nessuno per un RFID fermo
 #' @noRd
 riquadri_rfid <- function(df) {
   if (nrow(df) == 0) {
@@ -726,18 +642,8 @@ riquadri_rfid <- function(df) {
   )
 }
 
-#' Contorni dei comuni dei giri
-#'
-#' Un contorno scuro e continuo attorno ai comuni in cui i giri dovevano
-#' lavorare: le letture che stanno fuori si vedono a colpo d'occhio. Con molti
-#' comuni, come in una ricerca su tutti i mezzi, il contorno non aiuta e non
-#' viene disegnato.
-#'
-#' @param comuni Comuni dei giri, anche ripetuti.
-#' @param massimo Numero massimo di comuni messi in evidenza.
-#' @return Lista di anelli, ognuno con `x` e `y` in gradi; vuota oltre il
-#'   massimo. Gli anelli di un comune con più parti, come `VALBRENTA`, sono
-#'   separati.
+#' Contorni dei comuni dei giri, se non sono più di `massimo`
+#' @return Lista di anelli con `x` e `y`, uno per parte di comune.
 #' @noRd
 contorni_comuni_giro <- function(comuni, massimo = 6) {
   indici <- unique(stats::na.omit(indice_comune(unique(comuni))))
@@ -757,24 +663,29 @@ contorni_comuni_giro <- function(comuni, massimo = 6) {
 
 #' Dati di una mappa, pronti per il browser
 #'
-#' @param df Letture da disegnare, oppure `NULL`.
-#' @param modalita Modalità della mappa, vedi `livelli_mappa()`.
-#' @param riquadri Letture su cui calcolare i riquadri della ricerca RFID e i
-#'   comuni dei giri: tutte quelle trovate, anche quando `df` ne contiene solo
-#'   una parte.
-#' @return Lista con `punti`, vedi `punti_mappa()`, e i dati propri della
-#'   modalità: per la mappa principale le bolle di cantieri e comuni e
-#'   `territorio` (`TRUE` se i bidoni hanno cantiere o comune); per la
-#'   ricerca RFID i riquadri; per i giri i contorni dei comuni.
+#' @param riquadri Letture su cui calcolare riquadri RFID e comuni dei
+#'   giri: tutte quelle trovate, anche se `df` ne ha solo una parte.
+#' @return Lista con `punti` e i dati della modalità: bolle e `territorio`,
+#'   riquadri, contorni.
 #' @noRd
-dati_mappa <- function(df, modalita = c("cluster", "rfid", "utenza", "giro"), riquadri = df) {
+dati_mappa <- function(
+  df,
+  modalita = c("cluster", "rfid", "utenza", "giro"),
+  riquadri = df
+) {
   modalita <- match.arg(modalita)
   if (is.null(df) || nrow(df) == 0) {
     df <- NULL
   }
   dati <- list(
     punti = if (is.null(df)) {
-      list(x = integer(0), y = integer(0), k = integer(0), c = integer(0), r = character(0))
+      list(
+        x = integer(0),
+        y = integer(0),
+        k = integer(0),
+        c = integer(0),
+        r = character(0)
+      )
     } else {
       punti_mappa(df, modalita)
     }
@@ -803,18 +714,11 @@ dati_mappa <- function(df, modalita = c("cluster", "rfid", "utenza", "giro"), ri
   dati
 }
 
-#' Campi dei dati della mappa principale che partono con le bolle
-#'
-#' Il modulo della mappa li manda in un messaggio a sé, `"bolle"`, prima di
-#' quello con i bidoni: vedi `mod_mappa_server()`.
+#' Campi che partono nel messaggio `"bolle"`, prima dei bidoni
 #' @noRd
 campi_bolle <- function() c("bolle_cantiere", "bolle_comune", "territorio")
 
-#' Riquadro su cui inquadrare la mappa
-#'
-#' @param df Punti da inquadrare, con `latitudine` e `longitudine`.
-#' @param margine Margine attorno ai punti, in gradi.
-#' @return Vettore con ovest, sud, est e nord; `NULL` senza punti.
+#' Riquadro da inquadrare: ovest, sud, est, nord; `NULL` senza punti
 #' @noRd
 riquadro_vista <- function(df, margine = 0.0015) {
   if (is.null(df) || nrow(df) == 0) {
@@ -829,15 +733,8 @@ riquadro_vista <- function(df, margine = 0.0015) {
   )
 }
 
-#' Invia un messaggio a una mappa nel browser
-#'
-#' `mappa.js` lo applica quando la mappa è pronta: un messaggio che arriva
-#' prima resta in attesa, e di ogni tipo vale l'ultimo.
-#'
-#' @param session Sessione Shiny.
-#' @param id Identificativo della mappa nella pagina, con lo spazio dei nomi.
-#' @param tipo `"dati"`, `"inquadra"` o `"popup"`.
-#' @param ... Contenuto del messaggio.
+#' Messaggio a una mappa nel browser; prima che sia pronta vale l'ultimo di ogni tipo
+#' @param tipo `"bolle"`, `"dati"`, `"inquadra"` o `"popup"`.
 #' @noRd
 invia_mappa <- function(session, id, tipo, ...) {
   session$sendCustomMessage(
@@ -846,11 +743,7 @@ invia_mappa <- function(session, id, tipo, ...) {
   )
 }
 
-#' Testo del popup di una lettura
-#'
-#' @param df Letture disegnate.
-#' @param riga Numero di riga della lettura.
-#' @return HTML del popup, vedi `create_popup_html()`.
+#' Popup di una lettura disegnata, vedi `create_popup_html()`
 #' @noRd
 popup_lettura <- function(df, riga) {
   r <- df[riga, , drop = FALSE]

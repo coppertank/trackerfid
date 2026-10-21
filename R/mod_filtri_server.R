@@ -1,36 +1,13 @@
-#' Modulo filtri della mappa principale: logica
+#' Filtri della mappa principale: stato sul server, interrogazioni su DuckDB
 #'
-#' Lo stato dei filtri vive sul server e viene riallineato agli input: al
-#' caricamento di un nuovo dataset i filtri tornano subito ai valori
-#' predefiniti, senza attendere la risposta del browser.
-#'
-#' I servizi e i cantieri deselezionati sono memorizzati per esclusione, così
-#' le scelte dell'utente sopravvivono quando l'elenco cambia con il periodo.
-#' I comuni si scelgono tra quelli dei cantieri selezionati: uno, più di uno,
-#' anche di cantieri diversi. Nessuna scelta vale per tutti i comuni.
-#'
-#' I servizi stanno in due elenchi, che valgono per i bidoni di tutti e due
-#' gli stati a database. Il primo riporta il servizio del contenitore: per un
-#' censito quello a database, per un non censito quello stimato. Sono gli
-#' stessi che danno l'icona ai marker. I non censiti con la stima incerta, che
-#' sulla mappa hanno il punto di domanda, hanno una casella a parte. Il
-#' secondo riporta i giri del calendario, con il loro nome. "Tutti" e
-#' "Nessuno" spuntano o tolgono in un colpo tutte le voci di un elenco. Un
-#' terzo filtro riguarda la coerenza tra servizio a database e servizio
-#' atteso dal giro; un quarto, tra quelli geografici, la coerenza tra il
-#' comune di lettura e il comune dichiarato.
-#'
-#' Filtri, ultima lettura e statistiche sono interrogazioni su DuckDB, vedi
-#' `ultime_letture()`: in R arriva solo una riga per bidone.
-#'
-#' @param id Identificativo del modulo.
-#' @param dati Reactive con la selezione delle letture del periodo di analisi,
-#'   vedi `seleziona_periodo()` (o `NULL`).
-#' @param azzera Reactive il cui cambiamento riporta i filtri ai valori
-#'   predefiniti: di norma il dataset caricato.
+#' Servizi, cantieri e coerenze si memorizzano come esclusi, così le scelte
+#' restano valide quando l'elenco cambia con il periodo; i comuni come
+#' scelti (nessuno: tutti). Il servizio è quello di `servizio_mostrato()`.
+#' @param dati Reactive con la selezione del periodo, o `NULL`.
+#' @param azzera Reactive che, cambiando, riporta i filtri ai valori iniziali.
 #' @return Lista di reactive: `dati_filtrati`, l'ultima lettura di ogni RFID
-#'   tra quelle che superano i filtri, e `area`, gli angoli del riquadro delle
-#'   letture dei cantieri e dei comuni scelti, su cui inquadrare la mappa.
+#'   che supera i filtri, con l'attributo `letture`; `area`, il riquadro dei
+#'   cantieri e comuni scelti.
 #' @noRd
 mod_filtri_server <- function(id, dati, azzera = dati) {
   moduleServer(id, function(input, output, session) {
@@ -80,9 +57,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
     observeEvent(azzera(), reimposta(), ignoreNULL = FALSE, priority = 100)
     observeEvent(input$reset, reimposta(), priority = 100)
 
-    # --- Valori presenti nel periodo, per le voci dei filtri -------------------
-    # Il servizio: per i censiti quello del contenitore a database, per i non
-    # censiti quello stimato. Il giro: quello del calendario, con il suo nome.
+    # --- Voci dei filtri presenti nel periodo -------------------------------------
     scelte <- reactive({
       d <- dati()
       if (is.null(d)) {
@@ -119,8 +94,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       )
     })
 
-    # --- Scelte geografiche: cantieri e comuni presenti nel periodo -------------
-    # Una riga per ogni comune, con il suo cantiere.
+    # --- Cantieri e comuni presenti nel periodo ----------------------------------
     comuni_presenti <- reactive(scelte()$comuni)
     scelte_cantieri <- reactive(scelte()$cantieri %||% character(0))
 
@@ -185,8 +159,8 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ignoreInit = TRUE
     )
 
-    # Una voce visibile è esclusa se non è spuntata; le voci fuori dal periodo
-    # corrente conservano lo stato precedente.
+    # Una voce visibile è esclusa se non è spuntata; quelle fuori dal periodo
+    # tengono lo stato precedente.
     aggiorna_esclusi <- function(esclusi, scelte, selezionati) {
       sort(union(
         setdiff(esclusi, scelte),
@@ -228,11 +202,9 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ignoreNULL = FALSE,
       ignoreInit = TRUE
     )
-    # --- Scelte rapide: tutte le voci di un elenco di servizi, o nessuna ---------
-    # Lo stato cambia subito, senza attendere che il browser rimandi le spunte.
-    # "Tutti" toglie ogni esclusione. "Nessuno" esclude le voci in elenco e
-    # tutti i servizi noti: così la scelta resta "nessuno" anche in un periodo
-    # in cui l'elenco ha voci diverse.
+    # --- "Tutti" e "Nessuno" -----------------------------------------------------
+    # Lo stato cambia subito. "Nessuno" esclude anche i servizi noti fuori
+    # elenco, così resta "nessuno" in un periodo con voci diverse.
     spunta_elenco <- function(campo, id_input, scelte, tutti) {
       stato[[campo]] <- if (tutti) {
         character(0)
@@ -315,8 +287,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       if (is.null(d)) {
         return(NULL)
       }
-      # L'ultima lettura di ogni RFID, con il numero di tutte le letture che
-      # superano i filtri: lo riporta l'intestazione della mappa.
+      # Con il numero delle letture che superano i filtri, per l'intestazione.
       structure(
         do.call(ultime_letture, c(list(d), filtri())),
         letture = do.call(conta_letture, c(list(d), filtri()))
@@ -332,8 +303,7 @@ mod_filtri_server <- function(id, dati, azzera = dati) {
       ))
     })
 
-    # Area da inquadrare: cambia con cantieri e comuni, non con gli altri
-    # filtri, così la mappa non si sposta a ogni spunta sui servizi.
+    # Cambia solo con cantieri e comuni: la mappa non si sposta a ogni spunta.
     area <- reactive({
       d <- dati()
       if (is.null(d)) {

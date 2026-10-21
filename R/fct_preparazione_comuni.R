@@ -1,24 +1,9 @@
-# Confini dei comuni serviti, dai file della Regione del Veneto.
-#
-# Queste funzioni preparano un file del pacchetto,
-# `inst/extdata/comuni_confini.geojson`, e non fanno parte dell'app: l'app
-# legge solo il file già scritto. I confini vengono dallo strato dei comuni
-# del geoportale della Regione del Veneto, scaricato come shapefile in
-# `data-raw/rvccomuni/`. Non sono semplificati: sono quelli ufficiali della
-# Regione, vertice per vertice.
-#
-# Quando la Regione pubblica confini nuovi basta sostituire la cartella degli
-# shapefile e rieseguire, dalla radice del progetto:
-#   Rscript data-raw/prepara_comuni.R
-#
-# Servono il pacchetto `sf`, che arriva comunque con `mapgl`, e nient'altro:
-# niente connessione a internet.
+# Confini dei comuni serviti dallo shapefile della Regione del Veneto
+# (`data-raw/rvccomuni/`, non semplificati) a
+# `inst/extdata/comuni_confini.geojson`. Fuori dall'app; serve `sf`.
+# Con confini nuovi: sostituire la cartella e `Rscript data-raw/prepara_comuni.R`.
 
-#' Fonte dei confini dei comuni
-#'
-#' @return Lista con `fonte`, `licenza`, `indirizzo` (la richiesta WFS da cui
-#'   viene lo shapefile) e `cartella`, la cartella in cui lo shapefile sta nel
-#'   progetto.
+#' Fonte dei confini: `fonte`, `licenza`, `indirizzo` della richiesta WFS, `cartella`
 #' @noRd
 origine_confini <- function() {
   list(
@@ -29,45 +14,48 @@ origine_confini <- function() {
   )
 }
 
-#' Legge i confini dei comuni di una cartella di shapefile
+#' Legge l'unico shapefile di una cartella e lo restituisce in WGS84, come `FeatureCollection`
 #'
-#' Passaggi:
-#' 1. trova lo shapefile della cartella: deve essercene uno solo, così una
-#'    cartella nuova della Regione si usa senza cambiare nomi di file;
-#' 2. lo legge con `sf`, con la codifica dei caratteri scritta nel file
-#'    `.cst` o `.cpg` accanto allo shapefile, se c'è: la Regione usa
-#'    ISO-8859-1;
-#' 3. riporta le coordinate dal sistema della Regione, Monte Mario fuso
-#'    ovest, a longitudine e latitudine in WGS84, quelle della mappa;
-#' 4. passa per un GeoJSON temporaneo e lo rilegge con `jsonlite`, nella
-#'    stessa forma di lista che usano le altre funzioni sui confini.
-#'
-#' @param cartella Cartella con lo shapefile, oppure il percorso del file
-#'   `.shp`.
-#' @return `FeatureCollection` con un comune per elemento e le proprietà
-#'   dello shapefile: tra queste `nomcom`, `codistat` e `provincia`.
+#' Codifica dal file `.cpg` o `.cst`; da Monte Mario (o dal `.prj`) a WGS84;
+#' passa da un GeoJSON temporaneo letto con `jsonlite`.
+#' @param cartella Cartella, o percorso del `.shp`.
 #' @noRd
 leggi_confini_regione <- function(cartella = origine_confini()$cartella) {
   if (!requireNamespace("sf", quietly = TRUE)) {
-    stop("Per leggere gli shapefile serve il pacchetto sf: install.packages(\"sf\").")
+    stop(
+      "Per leggere gli shapefile serve il pacchetto sf: install.packages(\"sf\")."
+    )
   }
   # 1. Lo shapefile della cartella.
   shp <- if (grepl("\\.shp$", cartella, ignore.case = TRUE)) {
     cartella
   } else {
-    list.files(cartella, pattern = "\\.shp$", full.names = TRUE, ignore.case = TRUE)
+    list.files(
+      cartella,
+      pattern = "\\.shp$",
+      full.names = TRUE,
+      ignore.case = TRUE
+    )
   }
   if (length(shp) != 1 || !file.exists(shp)) {
     stop(
-      "Serve uno e un solo shapefile in ", cartella, ": trovati ",
-      length(shp), "."
+      "Serve uno e un solo shapefile in ",
+      cartella,
+      ": trovati ",
+      length(shp),
+      "."
     )
   }
 
   # 2. Lettura, con la codifica dichiarata accanto al file.
   codifica <- NULL
   for (estensione in c("cpg", "cst")) {
-    dichiarazione <- sub("\\.shp$", paste0(".", estensione), shp, ignore.case = TRUE)
+    dichiarazione <- sub(
+      "\\.shp$",
+      paste0(".", estensione),
+      shp,
+      ignore.case = TRUE
+    )
     if (file.exists(dichiarazione)) {
       codifica <- trimws(readLines(dichiarazione, n = 1, warn = FALSE))
       break
@@ -76,12 +64,18 @@ leggi_confini_regione <- function(cartella = origine_confini()$cartella) {
   comuni <- sf::st_read(
     shp,
     quiet = TRUE,
-    options = if (!is.null(codifica)) paste0("ENCODING=", codifica) else character(0)
+    options = if (!is.null(codifica)) {
+      paste0("ENCODING=", codifica)
+    } else {
+      character(0)
+    }
   )
 
   # 3. Da Monte Mario, o da qualunque sistema dichiarato nel .prj, a WGS84.
   if (is.na(sf::st_crs(comuni))) {
-    stop("Lo shapefile non dichiara il suo sistema di coordinate: manca il file .prj.")
+    stop(
+      "Lo shapefile non dichiara il suo sistema di coordinate: manca il file .prj."
+    )
   }
   comuni <- sf::st_transform(comuni, 4326)
 
@@ -92,28 +86,12 @@ leggi_confini_regione <- function(cartella = origine_confini()$cartella) {
   jsonlite::fromJSON(temporaneo, simplifyVector = FALSE)
 }
 
-#' Sceglie i confini dei comuni serviti
+#' Associa ogni comune della tabella al suo confine, o si ferma elencando quelli mancanti
 #'
-#' I nomi si confrontano con `chiave_comune()`, quindi senza badare a
-#' maiuscole, accenti e apostrofi: `ROSÀ` della tabella trova `Rosa'` della
-#' Regione, `SAN PIETRO IN GU` trova `San Pietro in Gu'`. Tra due comuni con
-#' lo stesso nome vale quello che contiene il centro abitato indicato nella
-#' tabella dei comuni. Per lo stesso motivo un confine che non contiene il
-#' centro del suo comune è un errore: vuol dire che il nome ha trovato un
-#' altro comune, oppure che le coordinate sono sbagliate.
-#'
-#' Il risultato ha un confine per ogni riga della tabella dei comuni, nello
-#' stesso ordine. Se anche un solo comune non si trova la funzione si ferma e
-#' li elenca: un comune che manca non deve sparire in silenzio dalla mappa.
-#'
-#' @param geojson Confini della Regione, vedi `leggi_confini_regione()`: una
-#'   `FeatureCollection` in cui ogni comune ha le proprietà `nomcom`,
-#'   `codistat` e `provincia`.
-#' @param comuni Tabella dei comuni serviti: `comune`, `cantiere`,
-#'   `latitudine`, `longitudine`.
-#' @return `FeatureCollection` con i soli comuni serviti. Ogni comune ha le
-#'   proprietà `comune` e `cantiere`, come nella tabella, e `nome_istat`,
-#'   `codice_istat`, di sei cifre, e `provincia`, come nella fonte.
+#' Nomi confrontati con `chiave_comune()`; tra omonimi vale quello che
+#' contiene il centro abitato, e un confine che non lo contiene è un errore.
+#' @return `FeatureCollection` nell'ordine della tabella, con `comune`,
+#'   `cantiere`, `nome_istat`, `codice_istat` (sei cifre), `provincia`.
 #' @noRd
 seleziona_confini_comuni <- function(geojson, comuni = comuni_cantieri()) {
   elementi <- geojson$features
@@ -203,8 +181,7 @@ seleziona_confini_comuni <- function(geojson, comuni = comuni_cantieri()) {
     licenza = origine$licenza,
     features = lapply(seq_along(scelti), function(i) {
       elemento <- elementi[[scelti[i]]]
-      # La Regione scrive il codice ISTAT come numero, senza lo zero iniziale
-      # della provincia: 24009 per 024009.
+      # Il codice ISTAT della Regione perde lo zero iniziale: 24009 per 024009.
       codice <- suppressWarnings(as.integer(elemento$properties$codistat))
       list(
         type = "Feature",
@@ -212,7 +189,11 @@ seleziona_confini_comuni <- function(geojson, comuni = comuni_cantieri()) {
           comune = comuni$comune[i],
           cantiere = comuni$cantiere[i],
           nome_istat = elemento$properties$nomcom,
-          codice_istat = if (is.na(codice)) NA_character_ else sprintf("%06d", codice),
+          codice_istat = if (is.na(codice)) {
+            NA_character_
+          } else {
+            sprintf("%06d", codice)
+          },
           provincia = elemento$properties$provincia
         ),
         geometry = elemento$geometry[c("type", "coordinates")]
@@ -221,15 +202,7 @@ seleziona_confini_comuni <- function(geojson, comuni = comuni_cantieri()) {
   )
 }
 
-#' Scrive i confini dei comuni in un file GeoJSON
-#'
-#' Un comune per riga, così una modifica al confine di un comune cambia una
-#' riga sola del file. Le coordinate hanno sei decimali, circa dieci
-#' centimetri: i vertici sono tutti quelli della fonte, senza
-#' semplificazioni.
-#'
-#' @param confini Risultato di `seleziona_confini_comuni()`.
-#' @param file Percorso del file da scrivere.
+#' Scrive il GeoJSON, un comune per riga, sei decimali
 #' @noRd
 scrivi_confini_comuni <- function(confini, file) {
   in_json <- function(x) {
@@ -254,44 +227,35 @@ scrivi_confini_comuni <- function(confini, file) {
   invisible(file)
 }
 
-#' Prepara il file dei confini dei comuni serviti
+#' Prepara `inst/extdata/comuni_confini.geojson`; chiamata da `data-raw/prepara_comuni.R`
 #'
-#' È il punto di ingresso, richiamato da `data-raw/prepara_comuni.R`:
-#' 1. legge i confini della Regione, vedi `leggi_confini_regione()`;
-#' 2. tiene i soli comuni della tabella dei comuni, con il loro cantiere,
-#'    vedi `seleziona_confini_comuni()`: si ferma, senza scrivere niente, se
-#'    anche un solo comune non si trova;
-#' 3. annota nel file la fonte, la licenza e la data dello shapefile, cioè
-#'    del giorno in cui è stato scaricato;
-#' 4. scrive il file, un comune per riga, vedi `scrivi_confini_comuni()`.
-#'
-#' Dopo aver cambiato i confini va rigenerato il dataset di esempio, che
-#' mette i contenitori dentro il confine del loro comune.
-#'
-#' @param cartella Cartella dello shapefile della Regione.
-#' @param file File da scrivere. Il valore predefinito è quello del pacchetto,
-#'   a partire dalla radice del progetto.
-#' @param comuni Tabella dei comuni serviti.
-#' @return Il percorso del file scritto, in modo invisibile.
+#' Annota fonte, licenza e data dello shapefile. Poi va rigenerato il
+#' dataset di esempio.
+#' @return Il percorso, invisibile.
 #' @noRd
 prepara_confini_comuni <- function(
   cartella = origine_confini()$cartella,
   file = file.path("inst", "extdata", "comuni_confini.geojson"),
   comuni = comuni_cantieri()
 ) {
-  # 1. Confini della Regione.
   regione <- leggi_confini_regione(cartella)
-  # 2. Solo i comuni serviti, nell'ordine della tabella.
   confini <- seleziona_confini_comuni(regione, comuni)
-  # 3. Fonte, licenza e data dello shapefile.
-  shp <- list.files(cartella, pattern = "\\.shp$", full.names = TRUE, ignore.case = TRUE)
-  versione <- if (length(shp) == 1) format(file.info(shp)$mtime, "%Y-%m-%d") else format(Sys.Date())
+  shp <- list.files(
+    cartella,
+    pattern = "\\.shp$",
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+  versione <- if (length(shp) == 1) {
+    format(file.info(shp)$mtime, "%Y-%m-%d")
+  } else {
+    format(Sys.Date())
+  }
   confini <- c(
     confini[c("type", "origine", "licenza")],
     list(versione = versione),
     confini["features"]
   )
-  # 4. Il file, un comune per riga.
   scrivi_confini_comuni(confini, file)
   message(sprintf(
     "Scritti i confini di %d comuni in %s, dallo shapefile del %s.",

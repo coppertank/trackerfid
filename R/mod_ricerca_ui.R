@@ -20,10 +20,8 @@ testi_ricerca <- function(tipo) {
   )
 }
 
-#' Modulo ricerca avanzata (RFID o utenza): interfaccia
-#'
-#' @param id Identificativo del modulo.
-#' @param tipo `"rfid"` oppure `"utenza"`.
+#' Ricerca per RFID o per utenza: campo di testo, Cerca, Pulisci
+#' @param tipo `"rfid"` o `"utenza"`.
 #' @noRd
 mod_ricerca_ui <- function(id, tipo = c("rfid", "utenza")) {
   tipo <- match.arg(tipo)
@@ -54,14 +52,7 @@ mod_ricerca_ui <- function(id, tipo = c("rfid", "utenza")) {
   )
 }
 
-#' Ricerca per RFID: tabella delle letture trovate
-#'
-#' Sta sopra la mappa della scheda, in basso a sinistra, in un riquadro che
-#' si chiude come la legenda: va passata come `sovrapposto` a
-#' `mod_mappa_ui()`. Riporta tutte le letture del periodo degli RFID cercati,
-#' anche quelle che la mappa non disegna.
-#'
-#' @param id Identificativo del modulo di ricerca.
+#' Tabella delle letture degli RFID cercati, da passare come `sovrapposto` a `mod_mappa_ui()`
 #' @noRd
 mod_ricerca_tabella_ui <- function(id) {
   ns <- NS(id)

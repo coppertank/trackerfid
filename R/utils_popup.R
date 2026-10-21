@@ -1,4 +1,4 @@
-# Creazione di popup, pannello di dettaglio e riquadro delle statistiche.
+# Popup dei marker, dettaglio del bidone e riquadro delle statistiche.
 
 #' Formatta data e ora nel formato italiano
 #' @noRd
@@ -6,9 +6,7 @@ formatta_data_ora <- function(x, formato = "%d/%m/%Y %H:%M:%S") {
   format(x, formato, tz = "UTC")
 }
 
-#' Formatta un conteggio con il separatore delle migliaia italiano
-#'
-#' Mai in notazione scientifica: centomila resta "100.000", non "1e+05".
+#' Conteggio con il separatore delle migliaia, mai in notazione scientifica
 #' @noRd
 formatta_numero <- function(x) {
   format(
@@ -26,38 +24,16 @@ conta <- function(n, singolare, plurale) {
   paste(formatta_numero(n), if (n == 1) singolare else plurale)
 }
 
-#' Crea HTML popup per marker
+#' Popup dei marker, uno per lettura, con i valori del file in escape HTML
 #'
-#' La funzione è vettoriale: restituisce un popup per ogni lettura. I valori
-#' provenienti dal file vengono sempre sottoposti a escape HTML.
-#'
-#' @param rfid Character
-#' @param servizio_atteso Character: servizio atteso dal giro, con il nome del
-#'   database.
-#' @param targa Character
-#' @param matricola Character
-#' @param giorno_lettura POSIXct
-#' @param id_utenza Character
-#' @param presente Character
-#' @param comune Character, facoltativo: comune della fornitura, secondo il
-#'   database.
-#' @param comune_lettura Character, facoltativo: comune in cui è stata fatta
-#'   la lettura.
-#' @param comune_giro Character, facoltativo: comune in cui il calendario
-#'   mandava il mezzo. Compare solo se è diverso dal comune di lettura.
-#' @param cantiere Character, facoltativo.
-#' @param coerenza_comune Character, facoltativo: valori di
-#'   `stati_coerenza_comune()`. Una lettura fuori comune o fuori giro ha una
-#'   riga che dice dove era dichiarata e dove è stata fatta.
-#' @param servizio_transponder Character, facoltativo: servizio del contenitore
-#'   a database. Compare solo se c'è.
-#' @param servizio_giro Character, facoltativo: giro del calendario.
-#' @param coerenza_servizio Character, facoltativo: valori di
-#'   `stati_coerenza()`. Una lettura non coerente ha una riga sua.
-#' @param distanza_comune_dichiarato Numeric, facoltativo: metri dal comune
-#'   dichiarato, vedi `colonna_distanza()`. Una lettura fatta in un altro
-#'   comune ma coerente perché vicina al confine ha una riga che lo dice.
-#' @return HTML string
+#' I campi facoltativi compaiono solo se ci sono. Righe in più per una
+#' lettura fuori comune o fuori giro, «Al confine» per una lettura in un
+#' altro comune ma entro la tolleranza, e una per i servizi non coerenti.
+#' @param servizio_atteso Servizio atteso dal giro.
+#' @param comune Comune della fornitura.
+#' @param comune_giro Mostrato solo se diverso dal comune di lettura.
+#' @param coerenza_comune,coerenza_servizio Valori delle due coerenze.
+#' @param distanza_comune_dichiarato Metri dal comune dichiarato.
 #' @noRd
 create_popup_html <- function(
   rfid,
@@ -81,7 +57,6 @@ create_popup_html <- function(
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
   }
   data_formattata <- formatta_data_ora(giorno_lettura)
-  # Le righe geografiche compaiono solo nei popup delle letture che hanno il dato.
   riga_facoltativa <- function(etichetta, valori, mostra = TRUE) {
     if (is.null(valori)) {
       return("")
@@ -106,15 +81,22 @@ create_popup_html <- function(
     )
   )
   riga_cantiere <- riga_facoltativa("Cantiere", cantiere)
-  # Una lettura fatta in un altro comune, ma coerente perché vicina al confine
-  # del comune dichiarato.
-  riga_confine <- if (is.null(distanza_comune_dichiarato) || is.null(coerenza_comune)) {
+  # In un altro comune, ma coerente perché vicina al confine.
+  riga_confine <- if (
+    is.null(distanza_comune_dichiarato) || is.null(coerenza_comune)
+  ) {
     ""
   } else {
     distanza <- suppressWarnings(as.numeric(distanza_comune_dichiarato))
-    di <- ifelse(presente %in% "Presente", "del comune a database", "del comune del giro")
+    di <- ifelse(
+      presente %in% "Presente",
+      "del comune a database",
+      "del comune del giro"
+    )
     ifelse(
-      coerenza_comune %in% stati_coerenza_comune()[["coerente"]] & !is.na(distanza),
+      coerenza_comune %in%
+        stati_coerenza_comune()[["coerente"]] &
+        !is.na(distanza),
       paste0(
         "<b>Al confine:</b> letto ",
         ifelse(
@@ -127,8 +109,7 @@ create_popup_html <- function(
       ""
     )
   }
-  # Una lettura fuori comune o fuori giro ha una riga sua, che dice dove era
-  # dichiarata e dove è stata fatta.
+  # Fuori comune o fuori giro: dove era dichiarata e dove è stata fatta.
   riga_incongruenza <- function(etichetta, dichiarato) {
     n <- length(rfid)
     if (is.null(coerenza_comune)) {
@@ -149,7 +130,11 @@ create_popup_html <- function(
         " ",
         testo(rep_len(dichiarato_da(etichetta), n)),
         ", letto ",
-        ifelse(is.na(dove), "in un comune sconosciuto", paste("a", testo(dove))),
+        ifelse(
+          is.na(dove),
+          "in un comune sconosciuto",
+          paste("a", testo(dove))
+        ),
         "<br>"
       ),
       ""
@@ -171,8 +156,7 @@ create_popup_html <- function(
   riga_fuori_giro <- riga_incongruenza(stati_comune[["fuori_giro"]], "giro a")
   riga_database <- riga_facoltativa("Servizio a Database", servizio_transponder)
   riga_giro <- riga_facoltativa("Servizio Giro", servizio_giro)
-  # Il servizio del contenitore e quello atteso dal giro che non concordano
-  # hanno una riga loro, che li riporta tutti e due.
+  # Servizio a database e servizio atteso che non concordano.
   riga_coerenza <- if (is.null(coerenza_servizio)) {
     ""
   } else {
@@ -231,14 +215,7 @@ create_popup_html <- function(
   )
 }
 
-#' Servizi di una lettura, per popup e dettaglio
-#'
-#' @param database Servizio del contenitore a database.
-#' @param atteso Servizio atteso dal giro.
-#' @param giro Giro del calendario.
-#' @return Un testo per lettura, ad esempio
-#'   `"a database CARTA, atteso SECCO, giro SECCO PAP"`. Le parti che mancano
-#'   non vengono scritte.
+#' Servizi di una lettura in un testo: "a database CARTA, atteso SECCO, giro SECCO PAP"
 #' @noRd
 descrivi_servizi <- function(database = NULL, atteso = NULL, giro = NULL) {
   parti <- list(
@@ -268,7 +245,7 @@ blocco_info <- function(tipo, titolo, ...) {
   )
 }
 
-#' Elenco cronologico delle transizioni (servizio o utenza)
+#' Elenco cronologico dei cambi di servizio o di utenza
 #' @noRd
 elenco_cronologia <- function(cronologia, etichetta_attuale) {
   tags <- htmltools::tags
@@ -291,7 +268,7 @@ elenco_cronologia <- function(cronologia, etichetta_attuale) {
   tags$ul(class = "info-cronologia", voci)
 }
 
-#' Barre con la stima percentuale del servizio di un bidone non censito
+#' Barre della stima del servizio di un non censito
 #' @noRd
 barre_stima <- function(stima) {
   tags <- htmltools::tags
@@ -315,12 +292,7 @@ barre_stima <- function(stima) {
   tags$div(class = "info-stima", righe)
 }
 
-#' Blocco del pannello di dettaglio per un bidone
-#'
-#' Sceglie il messaggio in base alla storia dell'RFID: censito con servizio
-#' coerente, censito con cambio di servizio, non censito con o senza stima.
-#'
-#' @param analisi Risultato di `analizza_rfid()`.
+#' Dettaglio di un bidone secondo il caso di `analizza_rfid()`
 #' @noRd
 blocco_bidone <- function(analisi) {
   tags <- htmltools::tags
@@ -371,13 +343,7 @@ blocco_bidone <- function(analisi) {
   )
 }
 
-#' Blocco del pannello di dettaglio per un sacchetto
-#'
-#' Un sacchetto si riconosce dal codice RFID e non ha una tipologia di
-#' rifiuto. Se è censito il blocco lo conferma. Se non lo è riporta i giri
-#' che lo hanno letto, senza presentarli come stima di un servizio.
-#'
-#' @param analisi Risultato di `analizza_rfid()`.
+#' Dettaglio di un sacchetto: censito, o i giri che lo hanno letto
 #' @noRd
 blocco_sacchetto <- function(analisi) {
   tags <- htmltools::tags
@@ -406,15 +372,8 @@ blocco_sacchetto <- function(analisi) {
   )
 }
 
-#' Pannello di dettaglio di un bidone
-#'
-#' Sceglie il messaggio da mostrare in base alla storia dell'RFID, vedi
-#' `blocco_bidone()`; per un sacchetto, vedi `blocco_sacchetto()`. In più
-#' segnala le letture fuori dai comuni dichiarati, quelle non coerenti e
-#' l'eventuale cambio di utenza.
-#'
+#' Pannello di dettaglio: blocco del bidone o del sacchetto, incongruenze, cambi di utenza
 #' @param analisi Risultato di `analizza_rfid()`.
-#' @return Tag HTML.
 #' @noRd
 crea_info_panel <- function(analisi) {
   tags <- htmltools::tags
@@ -462,11 +421,8 @@ crea_info_panel <- function(analisi) {
   )
 }
 
-#' Blocchi del dettaglio sulle letture fuori dai comuni dichiarati
-#'
+#' Blocchi del dettaglio sulle letture fuori comune e fuori giro
 #' @param coerenza Risultato di `coerenza_comune_rfid()`.
-#' @param n_letture Letture dell'RFID nel periodo.
-#' @return Elenco di blocchi, vuoto se tutte le letture sono coerenti.
 #' @noRd
 blocco_coerenza_comune <- function(coerenza, n_letture) {
   tags <- htmltools::tags
@@ -533,11 +489,8 @@ blocco_coerenza_comune <- function(coerenza, n_letture) {
   unname(blocchi)
 }
 
-#' Blocco del dettaglio sulle letture con i servizi che non concordano
-#'
+#' Blocco del dettaglio sulle letture non coerenti, o `NULL`
 #' @param coerenza Risultato di `coerenza_rfid()`.
-#' @param n_letture Numero delle letture dell'RFID.
-#' @return Un blocco, oppure `NULL` se tutte le letture sono coerenti.
 #' @noRd
 blocco_coerenza <- function(coerenza, n_letture) {
   tags <- htmltools::tags
@@ -599,11 +552,7 @@ righe_servizi <- function(conteggi) {
   )
 }
 
-#' Righe "cantiere: RFID e letture" del riquadro statistiche
-#'
-#' @param rfid Numero di RFID per cantiere, vedi `conta_cantieri()`.
-#' @param letture Numero di letture per cantiere, facoltativo.
-#' @return Lista di tag, oppure `NULL` se il dataset non ha cantieri.
+#' Righe "cantiere: RFID e letture" del riquadro statistiche, o `NULL`
 #' @noRd
 righe_cantieri <- function(rfid, letture = NULL) {
   if (length(rfid) == 0) {
@@ -637,14 +586,10 @@ righe_cantieri <- function(rfid, letture = NULL) {
   )
 }
 
-#' Riquadro con le statistiche del dataset filtrato
+#' Riquadro delle statistiche, da `calcola_statistiche()`
 #'
-#' Il servizio conta i censiti con il servizio del database, e i non
-#' censiti: una riga per servizio stimato e, in fondo, quelli con la stima
-#' incerta, che sulla mappa hanno il punto di domanda.
-#'
-#' @param stat Risultato di `calcola_statistiche()`.
-#' @return Tag HTML.
+#' I non censiti stanno sotto il servizio stimato o, in fondo, la stima
+#' incerta.
 #' @noRd
 crea_box_statistiche <- function(stat) {
   tags <- htmltools::tags

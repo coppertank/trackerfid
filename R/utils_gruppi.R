@@ -1,25 +1,14 @@
-# Calcoli per gruppo su vettori interi, senza un ciclo sui gruppi.
-#
-# Con centinaia di migliaia di RFID un riepilogo valutato un gruppo alla volta
-# costa decine di secondi: queste funzioni fanno lo stesso lavoro con poche
-# operazioni vettoriali. Il gruppo è sempre un intero da 1 al numero dei
-# gruppi, come quello restituito da `indice_gruppi()`.
+# Calcoli per gruppo su vettori interi, senza cicli sui gruppi: con centinaia
+# di migliaia di RFID un riepilogo gruppo per gruppo costa decine di
+# secondi. Il gruppo è un intero da 1 al numero dei gruppi (`indice_gruppi()`).
 
 #' Numera i gruppi nell'ordine in cui compaiono
-#'
-#' @param chiave Vettore con il valore che identifica il gruppo di ogni riga.
-#' @return Vettore intero: 1 per il primo valore incontrato, 2 per il secondo.
 #' @noRd
 indice_gruppi <- function(chiave) {
   match(chiave, unique(chiave))
 }
 
 #' Primo e ultimo elemento di ogni gruppo, nell'ordine delle righe
-#'
-#' @param x Vettore dei valori.
-#' @param gruppo Gruppo di ogni riga.
-#' @param n_gruppi Numero dei gruppi.
-#' @return Un valore per gruppo.
 #' @noRd
 primo_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito <- x[rep(NA_integer_, n_gruppi)]
@@ -37,9 +26,7 @@ ultimo_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito
 }
 
-#' Ultimo valore non mancante di ogni gruppo, nell'ordine delle righe
-#'
-#' Un gruppo senza valori ha un mancante dello stesso tipo.
+#' Ultimo valore non mancante di ogni gruppo
 #' @noRd
 ultimo_valido_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito <- x[rep(NA_integer_, n_gruppi)]
@@ -49,9 +36,7 @@ ultimo_valido_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito
 }
 
-#' Somma dei valori di ogni gruppo
-#'
-#' Un gruppo senza righe ha somma zero.
+#' Somma di ogni gruppo; zero senza righe
 #' @noRd
 somma_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito <- numeric(n_gruppi)
@@ -60,10 +45,7 @@ somma_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito
 }
 
-#' Media dei valori di ogni gruppo
-#'
-#' Come `mean()`, corregge la prima stima con la media degli scarti: senza
-#' questo passaggio l'ultima cifra può differire da quella di `mean()`.
+#' Media di ogni gruppo, con la stessa correzione di `mean()`
 #' @noRd
 media_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   n <- tabulate(gruppo, n_gruppi)
@@ -71,10 +53,7 @@ media_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   media + somma_per_gruppo(x - media[gruppo], gruppo, n_gruppi) / n
 }
 
-#' Minimo e massimo di ogni gruppo
-#'
-#' @return Lista con `minimo` e `massimo`, un valore per gruppo. Ogni gruppo
-#'   deve avere almeno una riga.
+#' Minimo e massimo di ogni gruppo, che deve avere almeno una riga
 #' @noRd
 estremi_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   n <- tabulate(gruppo, n_gruppi)
@@ -83,12 +62,7 @@ estremi_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   list(minimo = ordinati[fine - n + 1], massimo = ordinati[fine])
 }
 
-#' Quantile di ogni gruppo
-#'
-#' Stessa regola di `stats::quantile()` con il tipo predefinito: interpolazione
-#' lineare tra i due valori più vicini. Ogni gruppo deve avere almeno una riga.
-#'
-#' @param prob Probabilità del quantile, tra 0 e 1.
+#' Quantile di ogni gruppo, come `stats::quantile()` con il tipo predefinito
 #' @noRd
 quantile_per_gruppo <- function(x, gruppo, prob, n_gruppi = max(gruppo)) {
   n <- tabulate(gruppo, n_gruppi)
@@ -106,7 +80,7 @@ quantile_per_gruppo <- function(x, gruppo, prob, n_gruppi = max(gruppo)) {
   quantile
 }
 
-#' Numero di valori distinti e non mancanti di ogni gruppo
+#' Valori distinti non mancanti di ogni gruppo
 #' @noRd
 n_distinti_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   validi <- !is.na(x)
@@ -114,10 +88,7 @@ n_distinti_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   tabulate(coppie$g, n_gruppi)
 }
 
-#' Valore più frequente di ogni gruppo
-#'
-#' I mancanti non contano. A parità di frequenza vince il valore comparso per
-#' ultimo nell'ordine delle righe.
+#' Valore più frequente di ogni gruppo; a parità vince l'ultimo comparso
 #' @noRd
 piu_frequente_per_gruppo <- function(x, gruppo, n_gruppi = max(gruppo)) {
   esito <- x[rep(NA_integer_, n_gruppi)]

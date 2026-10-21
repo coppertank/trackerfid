@@ -2,7 +2,7 @@
 % Please edit documentation in R/run_app.R
 \name{run_app}
 \alias{run_app}
-\title{Run the Shiny Application}
+\title{Avvia l'app}
 \usage{
 run_app(
   onStart = NULL,
@@ -33,21 +33,15 @@ request to determine whether the \code{ui} should be used to handle the
 request. Note that the entire request path must match the regular
 expression in order for the match to be considered successful.}
 
-\item{...}{arguments to pass to golem_opts.
-See \code{?golem::get_golem_options} for more details.
-Con \code{demo = TRUE} l'app si apre con i dati di esempio già caricati.
-Con \code{letture = "percorso"} l'app legge il file dal disco all'avvio, senza
-passare dal caricamento del browser: è il modo più rapido per i file con
-milioni di letture, soprattutto con l'archivio \code{.duckdb} della pipeline di
-preparazione dei dati. Il file resta aperto per tutte le sessioni dello
-stesso processo.}
+\item{...}{Opzioni di golem: \code{demo = TRUE} apre i dati di esempio;
+\code{letture = "percorso"} legge un file dal disco all'avvio (CSV, Parquet o
+\code{.duckdb} della pipeline), condiviso da tutte le sessioni del processo.}
 }
 \description{
-Avvia la dashboard RFID dei bidoni per rifiuti.
+Avvia l'app
 }
 \examples{
 if (interactive()) {
-  run_app()
   run_app(demo = TRUE)
   run_app(letture = "data-raw/output/letture_app.duckdb")
 }

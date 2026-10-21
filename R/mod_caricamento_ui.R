@@ -1,11 +1,6 @@
-#' Modulo caricamento dati: interfaccia
+#' Caricamento delle letture: CSV, CSV gzip, Parquet o `.duckdb`
 #'
-#' Pannello per il caricamento del file con le letture RFID: CSV, CSV
-#' compresso con gzip, Parquet o archivio `.duckdb`, vedi `scrivi_archivio()`.
-#' Si chiude con un click sul titolo, una volta caricati i dati: chiuso, il
-#' titolo riporta il nome del file caricato.
-#'
-#' @param id Identificativo del modulo.
+#' Sezione collassabile; chiusa mostra il nome del file.
 #' @noRd
 mod_caricamento_ui <- function(id) {
   ns <- NS(id)

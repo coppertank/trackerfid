@@ -1,31 +1,15 @@
-# Archivio delle letture in DuckDB: lettura del file, validazione, file .duckdb.
-#
-# Le letture non stanno in un data frame di R ma in una tabella di DuckDB, in
-# memoria. La validazione è scritta in SQL: con milioni di righe è molto più
-# veloce di quella in R e non tiene in memoria due copie delle letture. Le
-# funzioni di R che lavorano su poche righe, come il dettaglio di un bidone o
-# il riepilogo dei giri, ricevono i data frame estratti dall'archivio: vedi
+# Archivio delle letture in DuckDB, in memoria: lettura del file, validazione
+# in SQL, file .duckdb. In R arrivano solo le righe estratte da
 # `R/utils_selezione.R`.
 
-#' Versione dello schema dell'archivio
-#'
-#' Va aumentata quando cambiano le colonne della tabella delle letture: un
-#' file `.duckdb` con un'altra versione va rigenerato.
+#' Versione dello schema dell'archivio: va aumentata se cambiano le colonne
 #' @noRd
 versione_archivio <- function() 4L
 
-#' Apre un database DuckDB in memoria per un archivio
+#' Database DuckDB in memoria, senza estensioni, con la tabella `servizi_tipologie`
 #'
-#' Il database ha già la tabella `servizi_tipologie`, che dà la tipologia di
-#' ogni servizio noto: la usano coerenza dei servizi e stima del servizio dei
-#' non censiti. Un nome che la tabella non conosce fa tipologia a sé, come in
+#' La tabella dà la tipologia di ogni servizio noto, come
 #' `tipologia_servizio()`.
-#'
-#' Le estensioni di DuckDB restano spente: l'app non ne usa, e così non
-#' tenta mai di scaricarne dalla rete. Lettura di CSV, CSV compressi e
-#' Parquet sono già nel pacchetto.
-#'
-#' @return Connessione DBI.
 #' @noRd
 connessione_duckdb <- function() {
   con <- DBI::dbConnect(
@@ -46,22 +30,14 @@ connessione_duckdb <- function() {
   con
 }
 
-#' Crea l'oggetto archivio attorno a una connessione
+#' Oggetto archivio attorno a una connessione
 #'
-#' La connessione si chiude quando l'archivio non serve più: alla chiamata di
-#' `chiudi_archivio()` oppure, per un archivio dimenticato, quando R libera la
+#' La connessione si chiude con `chiudi_archivio()` o quando R libera la
 #' memoria.
-#'
-#' @param con Connessione DuckDB.
-#' @param tabella Nome della tabella delle letture, eventualmente con lo
-#'   schema: `"letture"` oppure `"archivio_file.letture"`.
-#' @param origine Nome del file da cui vengono le letture.
-#' @param condiviso `TRUE` per un archivio usato da più sessioni, che
-#'   `chiudi_archivio()` non chiude.
-#' @return Lista di classe `archivio_letture` con `con`, `tabella`,
-#'   `colonne`, le colonne di `colonne_dataset()` che la tabella contiene,
-#'   `origine`, `condiviso` e il riepilogo: `n`, `n_rfid`, `primo` e `ultimo`
-#'   istante.
+#' @param tabella `"letture"` o, per un file, `"archivio_file.letture"`.
+#' @param condiviso `TRUE` per un archivio delle sessioni, che non si chiude.
+#' @return Lista di classe `archivio_letture`: `con`, `tabella`, `colonne`,
+#'   `origine`, `condiviso`, `n`, `n_rfid`, `primo`, `ultimo`.
 #' @noRd
 nuovo_archivio <- function(con, tabella, origine = NULL, condiviso = FALSE) {
   risorsa <- new.env(parent = emptyenv())
@@ -82,7 +58,10 @@ nuovo_archivio <- function(con, tabella, origine = NULL, condiviso = FALSE) {
       tabella
     )
   )
-  presenti <- names(DBI::dbGetQuery(con, sprintf("SELECT * FROM %s LIMIT 0", tabella)))
+  presenti <- names(DBI::dbGetQuery(
+    con,
+    sprintf("SELECT * FROM %s LIMIT 0", tabella)
+  ))
   structure(
     list(
       con = con,
@@ -100,9 +79,7 @@ nuovo_archivio <- function(con, tabella, origine = NULL, condiviso = FALSE) {
   )
 }
 
-#' Chiude la connessione di un archivio
-#'
-#' Un archivio condiviso tra le sessioni resta aperto.
+#' Chiude la connessione di un archivio, se non è condiviso
 #' @noRd
 chiudi_archivio <- function(archivio) {
   if (is.null(archivio) || isTRUE(archivio$condiviso)) {
@@ -122,24 +99,17 @@ interroga <- function(archivio, sql) {
   dplyr::as_tibble(DBI::dbGetQuery(archivio$con, sql))
 }
 
-#' Testi tra apici per una query SQL
-#'
-#' @param con Connessione.
-#' @param valori Vettore di testo.
-#' @return Testo con i valori separati da virgole, pronto per `IN (...)`.
+#' Testi tra apici, separati da virgole, per `IN (...)`
 #' @noRd
 sql_elenco <- function(con, valori) {
   paste(DBI::dbQuoteString(con, as.character(valori)), collapse = ", ")
 }
 
-#' Colonne della tabella delle letture, nell'ordine in cui sono salvate
+#' Colonne della tabella delle letture: quelle del dataset più `riga`
 #'
-#' Sono quelle del dataset validato, più `riga`, la posizione della lettura
-#' nel file: decide quale lettura resta tra due dello stesso istante.
-#'
-#' @param colonne `"app"` per le sole colonne che l'app usa, quelle di
-#'   `colonne_app()`; `"tutte"` per tutte quelle della pipeline, di
-#'   `colonne_dataset()`.
+#' `riga` è la posizione nel file: tra due letture dello stesso istante
+#' resta l'ultima.
+#' @param colonne `"app"` (`colonne_app()`) o `"tutte"` (`colonne_dataset()`).
 #' @noRd
 colonne_archivio <- function(colonne = c("app", "tutte")) {
   colonne <- match.arg(colonne)
@@ -148,26 +118,18 @@ colonne_archivio <- function(colonne = c("app", "tutte")) {
 
 #' Legge e valida un file di letture in un archivio DuckDB
 #'
-#' Accetta CSV, CSV compresso con gzip (`.csv.gz`), Parquet e il file
-#' `.duckdb` scritto da `scrivi_archivio()`. Un CSV, compresso o no, e un
-#' Parquet vengono letti in DuckDB e validati in SQL, con le stesse regole e
-#' gli stessi messaggi della validazione descritta in `colonne_dataset()`:
-#' vedi `valida_archivio()`. Un file `.duckdb` è già validato e si apre senza
-#' rileggere niente: vedi `apri_file_archivio()`.
-#'
-#' L'app tiene le sole colonne che usa: è il modo più veloce, e quello che
-#' occupa meno memoria. Con `colonne = "tutte"` restano anche le colonne della
-#' pipeline che l'app non usa, come nucleo e potenziamento del secco: servono
-#' all'analisi dei conferimenti. Un file `.duckdb` ha le colonne con cui è
-#' stato scritto, e `colonne` non conta.
-#'
-#' @param path Percorso del file.
-#' @param nome Nome originale del file: dà l'estensione quando `path` è il
-#'   percorso temporaneo di un file caricato dal browser.
-#' @param colonne `"app"` oppure `"tutte"`, vedi `colonne_archivio()`.
-#' @return Lista con `archivio`, vedi `nuovo_archivio()`, e `avvisi`.
+#' CSV, CSV gzip e Parquet si validano in SQL con `valida_archivio()`; un
+#' `.duckdb` di `scrivi_archivio()` si apre già validato. `colonne = "tutte"`
+#' tiene anche le colonne della pipeline (analisi dei conferimenti); un
+#' `.duckdb` ha le colonne con cui è stato scritto.
+#' @param nome Nome originale: dà l'estensione di un file caricato dal browser.
+#' @return Lista con `archivio` e `avvisi`.
 #' @noRd
-carica_archivio <- function(path, nome = basename(path), colonne = c("app", "tutte")) {
+carica_archivio <- function(
+  path,
+  nome = basename(path),
+  colonne = c("app", "tutte")
+) {
   colonne <- match.arg(colonne)
   estensione <- tolower(tools::file_ext(nome))
   if (estensione == "duckdb") {
@@ -177,35 +139,41 @@ carica_archivio <- function(path, nome = basename(path), colonne = c("app", "tut
   riuscito <- FALSE
   on.exit(if (!riuscito) DBI::dbDisconnect(con, shutdown = TRUE))
   leggi_grezze(con, path, estensione)
-  avvisi <- valida_archivio(con, csv = estensione != "parquet", tutte = colonne == "tutte")
+  avvisi <- valida_archivio(
+    con,
+    csv = estensione != "parquet",
+    tutte = colonne == "tutte"
+  )
   riuscito <- TRUE
-  list(archivio = nuovo_archivio(con, "letture", origine = nome), avvisi = avvisi)
+  list(
+    archivio = nuovo_archivio(con, "letture", origine = nome),
+    avvisi = avvisi
+  )
 }
 
-#' Legge e valida un file di letture e ne restituisce un data frame
+#' Come `carica_archivio()`, ma restituisce le letture in un data frame
 #'
-#' È `carica_archivio()` seguita dall'estrazione di tutte le letture: serve a
-#' script, report e test. L'app usa l'archivio senza estrarlo.
-#'
+#' Per script, report e test.
 #' @inheritParams carica_archivio
-#' @return Lista con `dati`, le letture validate in un tibble con le colonne
-#'   dell'archivio, e `avvisi`.
+#' @return Lista con `dati` e `avvisi`.
 #' @noRd
-carica_dataset <- function(path, nome = basename(path), colonne = c("app", "tutte")) {
+carica_dataset <- function(
+  path,
+  nome = basename(path),
+  colonne = c("app", "tutte")
+) {
   esito <- carica_archivio(path, nome, colonne)
   on.exit(chiudi_archivio(esito$archivio))
   list(dati = letture_archivio(esito$archivio), avvisi = esito$avvisi)
 }
 
-#' Tutte le letture di un archivio, o quelle che soddisfano una condizione
-#'
-#' @param archivio Archivio delle letture.
-#' @param condizione Condizione SQL, oppure `NULL` per tutte le letture.
-#' @param colonne Colonne da estrarre: tutte quelle dell'archivio, se non
-#'   indicate.
-#' @return Tibble con le colonne indicate, nell'ordine del file.
+#' Letture di un archivio, tutte o quelle di una condizione SQL, nell'ordine del file
 #' @noRd
-letture_archivio <- function(archivio, condizione = NULL, colonne = archivio$colonne) {
+letture_archivio <- function(
+  archivio,
+  condizione = NULL,
+  colonne = archivio$colonne
+) {
   interroga(
     archivio,
     sprintf(
@@ -221,9 +189,8 @@ letture_archivio <- function(archivio, condizione = NULL, colonne = archivio$col
 
 #' Carica il file nella tabella `grezze`, senza conversioni
 #'
-#' Un CSV si legge tutto come testo, con il separatore più frequente nella
-#' riga di intestazione, come `rileva_separatore()`: codici come RFID e utenze
-#' non perdono gli zeri iniziali. Un Parquet arriva con i tipi del file.
+#' Un CSV si legge tutto come testo, con il separatore più frequente
+#' nell'intestazione: i codici tengono gli zeri iniziali.
 #' @noRd
 leggi_grezze <- function(con, path, estensione) {
   if (!file.exists(path)) {
@@ -236,8 +203,7 @@ leggi_grezze <- function(con, path, estensione) {
     )
     formato <- "Parquet"
   } else {
-    # La compressione si riconosce dai primi due byte, non dall'estensione:
-    # un CSV non compresso chiamato .gz si legge lo stesso.
+    # Compressione riconosciuta dai primi due byte, non dall'estensione.
     compresso <- identical(
       readBin(path, "raw", n = 2),
       as.raw(c(0x1f, 0x8b))
@@ -286,13 +252,7 @@ leggi_grezze <- function(con, path, estensione) {
   invisible(NULL)
 }
 
-#' Espressione SQL che pulisce un campo di testo
-#'
-#' Come `stringr::str_squish()`: spazi ai margini tolti, spazi interni ridotti
-#' a uno, testo vuoto mancante. In un CSV anche il testo `NA` è mancante.
-#'
-#' @param colonna Espressione SQL del campo, già di tipo testo.
-#' @param csv `TRUE` per un campo letto da un CSV.
+#' Espressione SQL che pulisce un testo come `stringr::str_squish()`; vuoto e, in un CSV, `NA` mancano
 #' @noRd
 sql_pulito <- function(colonna, csv = TRUE) {
   pulito <- sprintf(
@@ -302,10 +262,7 @@ sql_pulito <- function(colonna, csv = TRUE) {
   if (csv) sprintf("nullif(%s, 'NA')", pulito) else pulito
 }
 
-#' Formati di data e ora accettati per `giorno_lettura`
-#'
-#' Anno-mese-giorno o giorno/mese/anno,
-#' con ore, minuti ed eventuali secondi, oppure la sola data.
+#' Formati accettati per `giorno_lettura`: anno-mese-giorno o giorno/mese/anno, con o senza ora
 #' @noRd
 formati_data_ora <- function() {
   c(
@@ -331,40 +288,26 @@ formati_data_ora <- function() {
 
 # --- Validazione --------------------------------------------------------------
 
-#' Valida la tabella `grezze` e scrive la tabella `letture`
+#' Valida la tabella `grezze` e scrive la tabella `letture`, in SQL
 #'
-#' Applica in SQL le regole della validazione delle letture:
-#'
-#' - le colonne obbligatorie devono esserci, con i nomi alternativi di
-#'   `alias_colonne()`; le facoltative mancanti diventano vuote, con un
-#'   avviso;
-#' - i testi sono puliti come da `sql_pulito()`; servizi e cantiere passano
-#'   in maiuscolo, i comuni nella grafia della tabella dei comuni;
-#' - data e ora, coordinate e quantità non interpretabili, e valori di
-#'   `presente_a_database` diversi da `Presente` e `Non Presente`, fermano il
-#'   caricamento con un messaggio che indica le righe del file;
-#' - le righe senza un campo essenziale vengono scartate, con un avviso;
-#' - comune geografico, comune assegnato, cantiere e coerenza del comune
-#'   seguono `aggiungi_geografia()` e `coerenza_comune()`, con la tolleranza
-#'   dal confine di `distanza_comune_dichiarato`; la coerenza dei servizi
-#'   segue `coerenza_servizio()`;
-#' - con `tutte`, le colonne di `tipi_colonne_preparazione()`, che l'app non
-#'   usa, restano nel dataset, convertite nel loro tipo; un valore che non si
-#'   converte resta vuoto, con un avviso. Senza, non vengono lette;
-#' - un file con `origine_servizio` e senza `servizio_transponder`, preparato
-#'   tra il 13 e il 15 ottobre 2026, riporta il servizio del database nella
-#'   sua colonna.
-#'
-#' @param con Connessione con la tabella `grezze`.
+#' Le stesse regole delle funzioni in R (`aggiungi_geografia()`,
+#' `coerenza_comune()`, `coerenza_servizio()`): nomi alternativi; testi
+#' puliti, servizi e cantiere in maiuscolo, comuni nella grafia della
+#' tabella; valori non interpretabili fermano il caricamento, con le righe;
+#' righe senza un campo essenziale scartate, con un avviso. Con `tutte`
+#' tiene le colonne di `tipi_colonne_preparazione()`. Un file con
+#' `origine_servizio` (13-15 ottobre 2026) riporta il servizio del database
+#' nella sua colonna.
 #' @param csv `TRUE` se le letture vengono da un CSV.
-#' @param tutte `TRUE` per tenere anche le colonne della pipeline che l'app
-#'   non usa.
-#' @return Gli avvisi, un vettore di testo.
+#' @return Gli avvisi.
 #' @noRd
 valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   descrizione <- DBI::dbGetQuery(con, "DESCRIBE grezze")
   nomi <- stringr::str_trim(descrizione$column_name)
-  tipi_file <- stats::setNames(toupper(descrizione$column_type), descrizione$column_name)
+  tipi_file <- stats::setNames(
+    toupper(descrizione$column_type),
+    descrizione$column_name
+  )
   # Nomi alternativi: valgono se il file non ha la colonna con il nome dell'app.
   nomi_app <- nomi
   alias <- alias_colonne()
@@ -392,7 +335,9 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     errore_validazione("Il file non contiene righe di dati.")
   }
 
-  identificatore <- function(colonna) as.character(DBI::dbQuoteIdentifier(con, colonna))
+  identificatore <- function(colonna) {
+    as.character(DBI::dbQuoteIdentifier(con, colonna))
+  }
   # Testo pulito di un campo, oppure NULL se il file non ha la colonna.
   testo <- function(campo) {
     colonna <- colonna_di(campo)
@@ -411,7 +356,10 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   numero <- function(campo) {
     colonna <- colonna_di(campo)
     if (is.na(colonna)) {
-      return(c(testo = "CAST(NULL AS VARCHAR)", valore = "CAST(NULL AS DOUBLE)"))
+      return(c(
+        testo = "CAST(NULL AS VARCHAR)",
+        valore = "CAST(NULL AS DOUBLE)"
+      ))
     }
     if (tipi_file[[colonna]] != "VARCHAR") {
       return(c(
@@ -456,83 +404,140 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   con_contenitore <- !is.na(colonna_di(colonne_contenitore()))
   con_origine <- !con_contenitore && !is.na(colonna_di("origine_servizio"))
   con_giro <- !is.na(colonna_di(colonne_calendario()))
-  # Colonne della pipeline che l'app non usa, solo se richieste: il testo di
-  # partenza, se serve a contare i valori non convertiti, e il valore nel tipo
-  # voluto.
+  # Colonne della pipeline, solo se richieste.
   preparazione <- if (tutte) tipi_colonne_preparazione() else character(0)
   # Elenco SQL da aggiungere in coda a un altro, con la virgola davanti.
-  in_coda <- function(x) if (length(x) > 0) paste0(", ", paste(x, collapse = ", ")) else ""
-  sql_preparazione <- vapply(names(preparazione), function(campo) {
-    tipo <- preparazione[[campo]]
-    colonna <- colonna_di(campo)
-    if (is.na(colonna)) {
-      valore <- sprintf("CAST(NULL AS %s)", tipo)
-      return(paste0("CAST(NULL AS VARCHAR) AS testo_", campo, ", ", valore, " AS ", campo))
-    }
-    if (tipo == "VARCHAR") {
-      return(paste0("CAST(NULL AS VARCHAR) AS testo_", campo, ", ", testo(campo), " AS ", campo))
-    }
-    if (tipi_file[[colonna]] != "VARCHAR") {
-      valore <- sprintf("TRY_CAST(%s AS %s)", identificatore(colonna), tipo)
-      return(paste0("CAST(NULL AS VARCHAR) AS testo_", campo, ", ", valore, " AS ", campo))
-    }
-    pulito <- testo(campo)
-    valore <- switch(
-      tipo,
-      # Il formato della pipeline con un cast diretto; gli altri formati,
-      # molto più lenti, solo per i valori che il cast non riconosce.
-      DATE = sprintf(
-        "coalesce(TRY_CAST(%s AS DATE), CAST(try_strptime(%s, [%s]) AS DATE))",
-        pulito,
-        pulito,
-        sql_elenco(con, formati_data_ora())
-      ),
-      INTEGER = sprintf(
-        "TRY_CAST(TRY_CAST(regexp_replace(%s, ',', '.') AS DOUBLE) AS INTEGER)",
-        pulito
-      ),
-      BOOLEAN = sprintf(
-        "CASE upper(%s) WHEN 'SI' THEN TRUE WHEN 'NO' THEN FALSE ELSE TRY_CAST(%s AS BOOLEAN) END",
-        pulito,
-        pulito
+  in_coda <- function(x) {
+    if (length(x) > 0) paste0(", ", paste(x, collapse = ", ")) else ""
+  }
+  sql_preparazione <- vapply(
+    names(preparazione),
+    function(campo) {
+      tipo <- preparazione[[campo]]
+      colonna <- colonna_di(campo)
+      if (is.na(colonna)) {
+        valore <- sprintf("CAST(NULL AS %s)", tipo)
+        return(paste0(
+          "CAST(NULL AS VARCHAR) AS testo_",
+          campo,
+          ", ",
+          valore,
+          " AS ",
+          campo
+        ))
+      }
+      if (tipo == "VARCHAR") {
+        return(paste0(
+          "CAST(NULL AS VARCHAR) AS testo_",
+          campo,
+          ", ",
+          testo(campo),
+          " AS ",
+          campo
+        ))
+      }
+      if (tipi_file[[colonna]] != "VARCHAR") {
+        valore <- sprintf("TRY_CAST(%s AS %s)", identificatore(colonna), tipo)
+        return(paste0(
+          "CAST(NULL AS VARCHAR) AS testo_",
+          campo,
+          ", ",
+          valore,
+          " AS ",
+          campo
+        ))
+      }
+      pulito <- testo(campo)
+      valore <- switch(
+        tipo,
+        # Cast diretto per il formato della pipeline; gli altri formati, lenti,
+        # solo per i valori che il cast non riconosce.
+        DATE = sprintf(
+          "coalesce(TRY_CAST(%s AS DATE), CAST(try_strptime(%s, [%s]) AS DATE))",
+          pulito,
+          pulito,
+          sql_elenco(con, formati_data_ora())
+        ),
+        INTEGER = sprintf(
+          "TRY_CAST(TRY_CAST(regexp_replace(%s, ',', '.') AS DOUBLE) AS INTEGER)",
+          pulito
+        ),
+        BOOLEAN = sprintf(
+          "CASE upper(%s) WHEN 'SI' THEN TRUE WHEN 'NO' THEN FALSE ELSE TRY_CAST(%s AS BOOLEAN) END",
+          pulito,
+          pulito
+        )
       )
-    )
-    paste0(pulito, " AS testo_", campo, ", ", valore, " AS ", campo)
-  }, character(1))
+      paste0(pulito, " AS testo_", campo, ", ", valore, " AS ", campo)
+    },
+    character(1)
+  )
 
-  # Tabella di lavoro: testi puliti, valori convertiti e, per i campi che
-  # possono non essere interpretabili, il testo di partenza.
+  # Tabella di lavoro: testi puliti, valori convertiti, testo di partenza dei
+  # campi che possono non essere interpretabili.
   DBI::dbExecute(
     con,
     paste0(
       "CREATE TEMP TABLE lavoro AS SELECT rowid + 1 AS riga, ",
-      data_ora[["testo"]], " AS t_giorno, ",
-      data_ora[["valore"]], " AS giorno_lettura, ",
-      testo("targa_veicolo"), " AS targa_veicolo, ",
-      testo("matricola_veicolo"), " AS matricola_veicolo, ",
-      testo("RFID"), " AS RFID, ",
-      testo("presente_a_database"), " AS t_presente, ",
-      "upper(", testo("servizio_atteso"), ") AS servizio_atteso, ",
-      "upper(", testo(colonne_contenitore()), ") AS servizio_transponder, ",
-      "upper(", if (con_giro) testo(colonne_calendario()) else testo("servizio_atteso"), ") AS servizio_giro, ",
-      if (con_origine) testo("origine_servizio") else "CAST(NULL AS VARCHAR)", " AS origine_servizio, ",
-      testo("id_utenza"), " AS id_utenza, ",
-      latitudine[["testo"]], " AS t_latitudine, ",
-      latitudine[["valore"]], " AS latitudine, ",
-      longitudine[["testo"]], " AS t_longitudine, ",
-      longitudine[["valore"]], " AS longitudine, ",
-      volume[["testo"]], " AS t_volume, ",
-      volume[["valore"]], " AS volume_previsto, ",
-      raccolte[["testo"]], " AS t_raccolte, ",
-      raccolte[["valore"]], " AS numero_raccolte_annue_previste, ",
-      distanza[["testo"]], " AS t_distanza, ",
-      distanza[["valore"]], " AS distanza_comune_dichiarato, ",
-      "upper(", testo(colonna_conferma()), ") AS eseguito, ",
-      testo("comune_fornitura"), " AS comune_fornitura, ",
-      testo("comune_giro"), " AS comune_giro, ",
-      testo("comune_lettura"), " AS comune_lettura, ",
-      "upper(", testo("cantiere"), ") AS cantiere",
-      in_coda(sql_preparazione), " ",
+      data_ora[["testo"]],
+      " AS t_giorno, ",
+      data_ora[["valore"]],
+      " AS giorno_lettura, ",
+      testo("targa_veicolo"),
+      " AS targa_veicolo, ",
+      testo("matricola_veicolo"),
+      " AS matricola_veicolo, ",
+      testo("RFID"),
+      " AS RFID, ",
+      testo("presente_a_database"),
+      " AS t_presente, ",
+      "upper(",
+      testo("servizio_atteso"),
+      ") AS servizio_atteso, ",
+      "upper(",
+      testo(colonne_contenitore()),
+      ") AS servizio_transponder, ",
+      "upper(",
+      if (con_giro) testo(colonne_calendario()) else testo("servizio_atteso"),
+      ") AS servizio_giro, ",
+      if (con_origine) testo("origine_servizio") else "CAST(NULL AS VARCHAR)",
+      " AS origine_servizio, ",
+      testo("id_utenza"),
+      " AS id_utenza, ",
+      latitudine[["testo"]],
+      " AS t_latitudine, ",
+      latitudine[["valore"]],
+      " AS latitudine, ",
+      longitudine[["testo"]],
+      " AS t_longitudine, ",
+      longitudine[["valore"]],
+      " AS longitudine, ",
+      volume[["testo"]],
+      " AS t_volume, ",
+      volume[["valore"]],
+      " AS volume_previsto, ",
+      raccolte[["testo"]],
+      " AS t_raccolte, ",
+      raccolte[["valore"]],
+      " AS numero_raccolte_annue_previste, ",
+      distanza[["testo"]],
+      " AS t_distanza, ",
+      distanza[["valore"]],
+      " AS distanza_comune_dichiarato, ",
+      "upper(",
+      testo(colonna_conferma()),
+      ") AS eseguito, ",
+      testo("comune_fornitura"),
+      " AS comune_fornitura, ",
+      testo("comune_giro"),
+      " AS comune_giro, ",
+      testo("comune_lettura"),
+      " AS comune_lettura, ",
+      "upper(",
+      testo("cantiere"),
+      ") AS cantiere",
+      in_coda(sql_preparazione),
+      " ",
       "FROM grezze"
     )
   )
@@ -665,7 +670,11 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   avvisi <- character(0)
   # Colonne della pipeline: un valore che non si converte resta vuoto.
   for (campo in names(preparazione)[preparazione != "VARCHAR"]) {
-    problema <- righe_con(sprintf("testo_%s IS NOT NULL AND %s IS NULL", campo, campo))
+    problema <- righe_con(sprintf(
+      "testo_%s IS NOT NULL AND %s IS NULL",
+      campo,
+      campo
+    ))
     if (problema$n > 0) {
       avvisi <- c(
         avvisi,
@@ -711,7 +720,10 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       valore = as.character(distinti),
       comune = as.character(normalizzati),
       chiave = as.character(chiavi),
-      servito = as.character(tabella_comuni[match(normalizzati, tabella_comuni)]),
+      servito = as.character(tabella_comuni[match(
+        normalizzati,
+        tabella_comuni
+      )]),
       cantiere = as.character(cantiere_di_comune(normalizzati)),
       stringsAsFactors = FALSE
     )
@@ -734,8 +746,8 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   on.exit(duckdb::duckdb_unregister(con, "mappa_giri"), add = TRUE)
 
   # --- Tabella delle letture ---------------------------------------------------
-  # Un file con l'origine del servizio: il servizio del database torna nella
-  # sua colonna, e il servizio atteso torna quello del giro.
+  # Un file con `origine_servizio`: servizio del database nella sua colonna,
+  # servizio atteso dal giro.
   dal_database <- if (con_origine) {
     sprintf(
       "(%s = 'Presente' AND upper(l.origine_servizio) = 'DATABASE')",
@@ -752,16 +764,22 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     paste0(
       "CREATE TABLE letture AS ",
       "WITH base AS (SELECT l.riga, l.giorno_lettura, l.targa_veicolo, l.matricola_veicolo, l.RFID, ",
-      presente, " AS presente_a_database, ",
-      "CASE WHEN ", dal_database, " THEN g.uniforme ELSE l.servizio_atteso END AS servizio_atteso, ",
+      presente,
+      " AS presente_a_database, ",
+      "CASE WHEN ",
+      dal_database,
+      " THEN g.uniforme ELSE l.servizio_atteso END AS servizio_atteso, ",
       "l.id_utenza, l.latitudine, l.longitudine, ",
-      "CASE WHEN ", dal_database, " THEN l.servizio_atteso ELSE l.servizio_transponder END AS servizio_transponder, ",
+      "CASE WHEN ",
+      dal_database,
+      " THEN l.servizio_atteso ELSE l.servizio_transponder END AS servizio_transponder, ",
       "l.volume_previsto, l.numero_raccolte_annue_previste, ",
       "cd.comune AS comune_fornitura, cg.comune AS comune_giro, cl.comune AS comune_lettura, ",
       "l.cantiere AS cantiere_file, l.servizio_giro, l.eseguito, l.distanza_comune_dichiarato, ",
       "cg.servito AS giro_servito, ",
       "cl.servito AS comune_geografico, cd.chiave AS chiave_database, cg.chiave AS chiave_giro, cl.chiave AS chiave_lettura",
-      in_coda(sprintf("l.%s", names(preparazione))), " ",
+      in_coda(sprintf("l.%s", names(preparazione))),
+      " ",
       "FROM lavoro l ",
       "LEFT JOIN mappa_comuni cd ON cd.valore = l.comune_fornitura ",
       "LEFT JOIN mappa_comuni cg ON cg.valore = l.comune_giro ",
@@ -777,19 +795,36 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       "c.comune_lettura, coalesce(ca.cantiere, c.cantiere_file) AS cantiere, c.servizio_giro, ",
       "c.eseguito, c.distanza_comune_dichiarato, ",
       "c.comune_assegnato, c.comune_geografico, ",
-      # Un non censito letto in un giro di una zona, non di un comune servito:
-      # niente confronto. Una lettura entro la tolleranza dal confine del
-      # comune dichiarato e' coerente.
-      "CASE WHEN c.presente_a_database <> 'Presente' AND c.chiave_giro IS NOT NULL AND c.giro_servito IS NULL THEN ", q(stati_comune[["ignota"]]), " ",
-      "WHEN c.chiave_lettura IS NULL OR c.chiave_dichiarata IS NULL THEN ", q(stati_comune[["ignota"]]), " ",
-      "WHEN c.chiave_lettura = c.chiave_dichiarata THEN ", q(stati_comune[["coerente"]]), " ",
-      "WHEN c.distanza_comune_dichiarato <= ", tolleranza_confine_m(), " THEN ", q(stati_comune[["coerente"]]), " ",
-      "WHEN c.presente_a_database = 'Presente' THEN ", q(stati_comune[["fuori_comune"]]), " ",
-      "ELSE ", q(stati_comune[["fuori_giro"]]), " END AS coerenza_comune, ",
+      # Giro di zona di un non censito: ignota. Entro la tolleranza: coerente.
+      "CASE WHEN c.presente_a_database <> 'Presente' AND c.chiave_giro IS NOT NULL AND c.giro_servito IS NULL THEN ",
+      q(stati_comune[["ignota"]]),
+      " ",
+      "WHEN c.chiave_lettura IS NULL OR c.chiave_dichiarata IS NULL THEN ",
+      q(stati_comune[["ignota"]]),
+      " ",
+      "WHEN c.chiave_lettura = c.chiave_dichiarata THEN ",
+      q(stati_comune[["coerente"]]),
+      " ",
+      "WHEN c.distanza_comune_dichiarato <= ",
+      tolleranza_confine_m(),
+      " THEN ",
+      q(stati_comune[["coerente"]]),
+      " ",
+      "WHEN c.presente_a_database = 'Presente' THEN ",
+      q(stati_comune[["fuori_comune"]]),
+      " ",
+      "ELSE ",
+      q(stati_comune[["fuori_giro"]]),
+      " END AS coerenza_comune, ",
       "CASE WHEN c.servizio_transponder IS NULL OR c.servizio_atteso IS NULL THEN NULL ",
-      "WHEN coalesce(tt.tipologia, c.servizio_transponder) = coalesce(ta.tipologia, c.servizio_atteso) THEN ", q(stati[["coerente"]]), " ",
-      "ELSE ", q(stati[["non_coerente"]]), " END AS coerenza_servizio",
-      in_coda(sprintf("c.%s", names(preparazione))), ", ",
+      "WHEN coalesce(tt.tipologia, c.servizio_transponder) = coalesce(ta.tipologia, c.servizio_atteso) THEN ",
+      q(stati[["coerente"]]),
+      " ",
+      "ELSE ",
+      q(stati[["non_coerente"]]),
+      " END AS coerenza_servizio",
+      in_coda(sprintf("c.%s", names(preparazione))),
+      ", ",
       "c.riga ",
       "FROM completa c ",
       "LEFT JOIN (SELECT DISTINCT comune, cantiere FROM mappa_comuni) ca ON ca.comune = c.comune_assegnato ",
@@ -843,8 +878,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       )
     )
   }
-  # Una targa con più matricole, o una matricola con più targhe. Il valore
-  # mancante conta come un valore.
+  # Una targa con più matricole, o il contrario; il mancante conta come valore.
   mezzi <- DBI::dbGetQuery(
     con,
     paste(
@@ -899,8 +933,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       )
     )
   }
-  # Un comune del giro con un nome che la tabella non conosce: forse scritto
-  # male, e allora non coincide con il comune di lettura.
+  # Un comune del giro sconosciuto fa risultare fuori giro i non censiti.
   giri_ignoti <- ignoti("comune_giro")
   if (length(giri_ignoti) > 0) {
     avvisi <- c(
@@ -918,22 +951,21 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
 
 #' Scrive un archivio in un file `.duckdb`
 #'
-#' Il file contiene la tabella `letture`, già validata, e la tabella
-#' `informazioni`, con la versione dello schema, il file d'origine e gli
-#' avvisi della validazione. L'app lo apre con `carica_archivio()` senza
-#' rileggere né validare niente. Un file con lo stesso nome viene sostituito.
-#'
-#' @param archivio Archivio da scrivere, oppure il percorso di un file di
-#'   letture da leggere con `carica_archivio()`.
-#' @param percorso Percorso del file `.duckdb` da scrivere.
-#' @param avvisi Avvisi della validazione, da mostrare quando l'app apre il
-#'   file. Con un percorso come `archivio` vengono da `carica_archivio()`.
-#' @param colonne Con un percorso come `archivio`: `"app"`, il file per
-#'   l'app, oppure `"tutte"`. Un archivio già aperto si scrive con le colonne
-#'   che ha.
+#' Tabelle `letture`, già validata, e `informazioni` (versione dello schema,
+#' origine, avvisi). Un file con lo stesso nome viene sostituito.
+#' @param archivio Archivio, o percorso di un file da leggere con
+#'   `carica_archivio()`.
+#' @param avvisi Avvisi da mostrare all'apertura; con un percorso vengono da
+#'   `carica_archivio()`.
+#' @param colonne Con un percorso: `"app"` o `"tutte"`.
 #' @return Il percorso, invisibile.
 #' @noRd
-scrivi_archivio <- function(archivio, percorso, avvisi = character(0), colonne = c("app", "tutte")) {
+scrivi_archivio <- function(
+  archivio,
+  percorso,
+  avvisi = character(0),
+  colonne = c("app", "tutte")
+) {
   if (is.character(archivio)) {
     esito <- carica_archivio(archivio, colonne = match.arg(colonne))
     on.exit(chiudi_archivio(esito$archivio), add = TRUE)
@@ -976,14 +1008,8 @@ scrivi_archivio <- function(archivio, percorso, avvisi = character(0), colonne =
   invisible(percorso)
 }
 
-#' Apre un file `.duckdb` scritto da `scrivi_archivio()`
-#'
-#' Il file viene collegato in sola lettura a un database in memoria: le
-#' letture non vengono copiate.
-#'
-#' @param path Percorso del file.
-#' @param nome Nome del file, per l'origine delle letture.
-#' @return Lista con `archivio` e `avvisi`, come `carica_archivio()`.
+#' Apre in sola lettura un file `.duckdb` di `scrivi_archivio()`, senza copiare le letture
+#' @return Lista con `archivio` e `avvisi`.
 #' @noRd
 apri_file_archivio <- function(path, nome = basename(path)) {
   if (!file.exists(path)) {
@@ -1020,7 +1046,9 @@ apri_file_archivio <- function(path, nome = basename(path)) {
     con,
     "SELECT chiave, valore FROM archivio_file.informazioni"
   )
-  valore <- function(chiave) informazioni$valore[match(chiave, informazioni$chiave)]
+  valore <- function(chiave) {
+    informazioni$valore[match(chiave, informazioni$chiave)]
+  }
   if (!identical(valore("versione"), as.character(versione_archivio()))) {
     errore_validazione(sprintf(
       "Il file .duckdb \u00e8 stato scritto con lo schema %s, l'app usa lo schema %s: va rigenerato con la pipeline di preparazione dei dati.",

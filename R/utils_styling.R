@@ -1,11 +1,8 @@
-# Stile di marker, cluster e legenda.
-#
-# I marker sono icone SVG generate al volo: il colore dello sfondo indica lo
-# stato a database (verde = Presente, rosso = Non Presente), il glifo Font
-# Awesome al centro indica il servizio. Per chi non distingue rosso e verde lo
-# stato è ripetuto dalla forma (goccia = censito, quadrato = non censito).
+# Servizi e tipologie, colori, marker SVG e legenda. Marker: colore e forma
+# dicono lo stato (verde a goccia censito, rosso quadrato non censito), il
+# glifo Font Awesome il servizio.
 
-#' Colori usati per lo stato a database
+#' Verde e rosso dello stato a database
 #' @noRd
 colori_stato <- function() {
   list(
@@ -16,15 +13,10 @@ colori_stato <- function() {
   )
 }
 
-#' Colori dei cantieri sulla mappa
+#' Colore di ogni cantiere, per nome: confini e legenda
 #'
-#' Una tinta per cantiere, usata dai confini dei comuni e dalla legenda. Le
-#' quattro tinte si distinguono a coppie anche per chi non distingue rosso e
-#' verde, e stanno lontane dal verde e dal rosso dello stato a database e dai
-#' colori dei cluster. Il colore segue il nome del cantiere, non la sua
-#' posizione nell'elenco.
-#'
-#' @return Vettore di colori con i nomi dei cantieri.
+#' Distinguibili a coppie anche con un difetto della visione dei colori, e
+#' lontani da verde, rosso e arancio di stato e cluster.
 #' @noRd
 colori_cantieri <- function() {
   c(
@@ -35,11 +27,7 @@ colori_cantieri <- function() {
   )
 }
 
-#' Colore di un cantiere
-#'
-#' @param cantiere Nomi di cantiere.
-#' @return Il colore di `colori_cantieri()`, grigio per un cantiere che non ne
-#'   ha uno.
+#' Colore di un cantiere; grigio se non ne ha uno
 #' @noRd
 colore_cantiere <- function(cantiere) {
   dplyr::coalesce(
@@ -48,34 +36,18 @@ colore_cantiere <- function(cantiere) {
   )
 }
 
-#' Stile dei confini dei comuni sulle mappe
-#'
-#' Bordo sottile e riempimento appena accennato, nel colore del cantiere: i
-#' confini devono leggersi senza coprire lo sfondo né i marker. Il bordo è
-#' tratteggiato, come i confini amministrativi sulle carte: così non si
-#' confonde con le strade dello sfondo.
-#'
-#' @return Lista con `weight`, `opacity`, `fillOpacity` e `dashArray`.
+#' Stile dei confini dei comuni: bordo tratteggiato sottile, riempimento appena accennato
 #' @noRd
 stile_confini <- function() {
   list(weight = 1.5, opacity = 0.75, fillOpacity = 0.1, dashArray = "5 4")
 }
 
-#' Tipologie di servizio: icona Font Awesome, colore del glifo, emoji
+#' Tipologie di servizio: nomi, icona Font Awesome, colore, emoji. Unico elenco
 #'
-#' PUNTO UNICO DA MODIFICARE per aggiungere servizi o cambiare icone.
-#' Ogni tipologia raggruppa i nomi che condividono la stessa icona: i nomi
-#' del database, usati in `servizio_transponder`, e i nomi dei giri del
-#' calendario, usati in `servizio_giro` (PAP = porta a porta). Il nome della
-#' tipologia, in maiuscolo, è il nome uniforme a cui la tabella di conversione
-#' riporta tutti gli altri, vedi `conversione_servizi()`: è quello di
-#' `servizio_atteso`, ed è sempre un nome riconosciuto. I sacchetti hanno una
-#' tipologia loro: non hanno un servizio a database, e l'app li riconosce dal
-#' codice RFID, vedi `rfid_sacchetto()`. Per un nuovo nome basta aggiungerlo
-#' al vettore `servizi` della tipologia giusta; per una nuova tipologia si
-#' aggiunge una voce alla lista. I nomi vanno scritti in maiuscolo, come dopo
-#' il caricamento del CSV. Le icone sono nomi Font Awesome
-#' (https://fontawesome.com/icons). L'ordine qui è anche l'ordine di filtri,
+#' Ogni tipologia raggruppa i nomi del database (`servizio_transponder`) e
+#' del calendario (`servizio_giro`, PAP = porta a porta). Il nome della
+#' tipologia in maiuscolo è il nome uniforme della tabella di conversione e
+#' del servizio atteso. Nomi in maiuscolo; l'ordine è quello di filtri,
 #' statistiche e legenda.
 #' @noRd
 tipologie_servizio <- function() {
@@ -156,11 +128,7 @@ tipologie_servizio <- function() {
   )
 }
 
-#' Configurazione dei servizi: una riga per nome di servizio
-#'
-#' Tabella derivata da `tipologie_servizio()`. Il nome uniforme di una
-#' tipologia, cioè il suo nome in maiuscolo, è sempre tra i nomi: è quello
-#' del servizio atteso, vedi `conversione_servizi()`.
+#' Una riga per nome di servizio, da `tipologie_servizio()`, compreso il nome uniforme
 #' @noRd
 servizi_config <- function() {
   righe <- purrr::map(tipologie_servizio(), function(tp) {
@@ -176,12 +144,7 @@ servizi_config <- function() {
   do.call(rbind, righe)
 }
 
-#' Icona, colore ed emoji di uno o più servizi
-#'
-#' I servizi mancanti (non censiti) o non previsti usano il punto di domanda.
-#'
-#' @param servizio Vettore di servizi.
-#' @return Data frame con una riga per elemento di `servizio`.
+#' Icona, colore ed emoji di ogni servizio; punto di domanda per mancanti e sconosciuti
 #' @noRd
 info_servizio <- function(servizio) {
   config <- servizi_config()
@@ -196,10 +159,7 @@ info_servizio <- function(servizio) {
   )
 }
 
-#' Tipologia di uno o più servizi
-#'
-#' @param servizio Vettore di servizi.
-#' @return La tipologia di ciascun servizio; un nome non previsto fa tipologia a sé.
+#' Tipologia di ogni servizio; un nome sconosciuto fa tipologia a sé
 #' @noRd
 tipologia_servizio <- function(servizio) {
   config <- servizi_config()
@@ -207,22 +167,10 @@ tipologia_servizio <- function(servizio) {
   ifelse(is.na(indice), servizio, config$tipologia[indice])
 }
 
-#' Tabella di conversione dei nomi dei servizi
+#' Tabella di conversione: ogni nome di servizio o di giro al nome uniforme della tipologia
 #'
-#' Il calendario dei mezzi chiama i giri con nomi suoi, ad esempio
-#' `CARTA/CARTONE PAP` e `CARTA CONT.STRADALI`. Il database chiama il rifiuto
-#' in un modo solo: `CARTA`. La tabella riporta ogni nome a quello della sua
-#' tipologia, così il servizio di un giro e quello di un contenitore si
-#' confrontano senza passaggi.
-#'
-#' Viene da `tipologie_servizio()`: il nome uniforme è il nome della
-#' tipologia, in maiuscolo. Per le sei tipologie di rifiuto è anche il nome
-#' del database; i giri che non raccolgono un rifiuto diventano ad esempio
-#' `PULIZIA TERRITORIO` e `SERVIZI`. Per aggiungere un nome del calendario
-#' basta aggiungerlo ai `servizi` della sua tipologia.
-#'
-#' @return Tibble con `servizio_calendario`, il nome da convertire,
-#'   `servizio`, il nome uniforme, e `tipologia`.
+#' Ad esempio `CARTA/CARTONE PAP` e `CARTA CONT.STRADALI` diventano `CARTA`.
+#' @return Tibble con `servizio_calendario`, `servizio`, `tipologia`.
 #' @noRd
 conversione_servizi <- function() {
   righe <- purrr::map(tipologie_servizio(), function(tp) {
@@ -235,13 +183,7 @@ conversione_servizi <- function() {
   dplyr::bind_rows(righe)
 }
 
-#' Riporta i nomi dei servizi a quelli del database
-#'
-#' Maiuscole e spazi ai margini non contano. Un nome che la tabella di
-#' `conversione_servizi()` non contiene resta com'è.
-#'
-#' @param servizio Nomi di servizi o di giri.
-#' @return I nomi uniformi, uno per elemento.
+#' Nomi uniformi dei servizi; un nome assente dalla conversione resta com'è
 #' @noRd
 uniforma_servizio <- function(servizio) {
   per_valori_distinti(as.character(servizio), function(nomi) {
@@ -254,10 +196,7 @@ uniforma_servizio <- function(servizio) {
   })
 }
 
-#' Colore del marker in base allo stato a database
-#'
-#' @param presente Vettore con i valori di `presente_a_database`.
-#' @return Colori HEX: verde per "Presente", rosso negli altri casi.
+#' Colore dello stato a database: verde "Presente", rosso altrimenti
 #' @noRd
 get_color <- function(presente) {
   colori <- colori_stato()
@@ -268,12 +207,7 @@ get_color <- function(presente) {
   )
 }
 
-#' Genera colore cluster basato su percentuale Presente
-#'
-#' Interpolazione lineare rosso (0%) - giallo (50%) - verde (100%).
-#'
-#' @param pct_presente Numeric tra 0 e 1
-#' @return Colore HEX string
+#' Colore di un cluster dalla quota di censiti: rosso, giallo, verde
 #' @noRd
 genera_colore_cluster <- function(pct_presente) {
   colori <- colori_stato()
@@ -299,10 +233,9 @@ genera_colore_cluster <- function(pct_presente) {
   })
 }
 
-# Cache dei glifi Font Awesome già estratti.
 .cache_glifi <- new.env(parent = emptyenv())
 
-#' Estrae viewBox e tracciato di un'icona Font Awesome
+#' viewBox e tracciato di un'icona Font Awesome, in memoria
 #' @noRd
 glifo_fa <- function(nome) {
   if (!is.null(.cache_glifi[[nome]])) {
@@ -360,14 +293,11 @@ svg_icona_servizio <- function(servizio, lato = 16) {
   )
 }
 
-#' Disegna il marker SVG di un contenitore
+#' Marker SVG di un contenitore
 #'
-#' @param servizio Servizio del contenitore (un solo valore, anche `NA`).
-#' @param presente Valore di `presente_a_database`.
 #' @param stile `"normale"`, `"ultimo"` (bordo spesso) o `"precedente"`
-#'   (bordo sottile tratteggiato): gli ultimi due servono nella ricerca RFID.
-#' @param glifo Se `FALSE` il marker non riporta l'icona del servizio.
-#' @return Stringa SVG.
+#'   (tratteggiato), per la ricerca RFID.
+#' @param glifo `FALSE` per un marker senza icona del servizio.
 #' @noRd
 svg_marker <- function(
   servizio,
@@ -410,14 +340,7 @@ svg_marker <- function(
   )
 }
 
-#' Segnale di incongruenza sul marker
-#'
-#' Un bollino scuro con una lettera, in un angolo del marker: `C` per una
-#' lettura fuori comune, `G` per una fuori giro. Non cambia colore, forma né
-#' icona del marker, che continuano a dire stato e servizio.
-#'
-#' @param lettera Lettera del segnale.
-#' @param x Ascissa del centro del bollino, nel riquadro del marker.
+#' Bollino scuro con una lettera in un angolo del marker: `C` fuori comune, `G` fuori giro
 #' @noRd
 svg_segnale <- function(lettera, x) {
   sprintf(
@@ -442,9 +365,7 @@ uri_svg <- function(svg) {
   )
 }
 
-#' Lato in pixel della bolla di un gruppo di bidoni
-#'
-#' Cresce con il numero dei bidoni, come i cluster disegnati dal browser.
+#' Lato in pixel della bolla di un gruppo, crescente con i bidoni
 #' @noRd
 lato_bolla <- function(n) {
   dplyr::case_when(
@@ -456,10 +377,7 @@ lato_bolla <- function(n) {
   )
 }
 
-#' Legenda della mappa
-#'
-#' @param modalita `"cluster"`, `"rfid"` o `"utenza"`.
-#' @return Stringa HTML.
+#' Legenda della mappa, in HTML
 #' @noRd
 html_legenda <- function(modalita = "cluster") {
   tags <- htmltools::tags
@@ -536,7 +454,6 @@ html_legenda <- function(modalita = "cluster") {
     ),
     NULL
   )
-  # Segnali sui marker: comune di lettura diverso da quello dichiarato.
   segnale <- function(...) {
     immagine(svg_marker(NA, "Presente", glifo = FALSE, ...), 15, 20)
   }
@@ -572,8 +489,7 @@ html_legenda <- function(modalita = "cluster") {
     )
   })
 
-  # La legenda nasce chiusa, a ogni avvio dell'app, e si apre con un click
-  # sull'intestazione: `script.js` applica la scelta a tutte le mappe.
+  # Nasce chiusa a ogni avvio; `script.js` apre e chiude tutte le legende.
   as.character(tags$details(
     class = "legenda-dettagli",
     tags$summary(

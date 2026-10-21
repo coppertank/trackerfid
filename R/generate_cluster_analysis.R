@@ -1,38 +1,20 @@
-#' Analisi dei cluster spaziali da un file CSV di letture RFID
+#' Analisi dei cluster spaziali da un file di letture RFID
 #'
-#' Legge e valida un file di letture, raggruppa le letture di ogni RFID in
-#' cluster spaziali con DBSCAN e restituisce una riga per ogni cluster, con
-#' tempi, numero di letture, baricentro, dispersione, servizio, raccolte
-#' annue, indice di fiducia e indicatore.
+#' Valida il file, raggruppa con DBSCAN le letture di ogni RFID e
+#' restituisce una riga per cluster: tempi, letture, baricentro,
+#' dispersione, servizio, raccolte annue, indice di fiducia e indicatore. I
+#' sacchetti (codici `00BD...` di 24 caratteri) restano fuori. Da riga di
+#' comando: `system.file("scripts", "generate_cluster_analysis.R", package =
+#' "trackerfid")`.
 #'
-#' L'analisi riguarda i contenitori. I sacchetti, riconosciuti dal codice RFID
-#' di 24 caratteri che inizia per `00BD`, sono monouso e restano fuori: il
-#' risultato è quello di un file che non li contiene.
-#'
-#' La funzione non richiede l'app Shiny. Lo script
-#' `system.file("scripts", "generate_cluster_analysis.R", package = "trackerfid")`
-#' la rende disponibile anche da riga di comando.
-#'
-#' @param csv_path Percorso del file CSV, nello stesso formato accettato dall'app.
-#' @param data_inizio,data_fine Estremi del periodo di analisi, inclusi. Se
-#'   mancano entrambi si analizza l'anno solare più recente del dataset; se ne
-#'   manca uno, si completa con l'inizio o la fine dell'anno dell'altro.
-#' @param eps_m Raggio di ricerca di DBSCAN in metri: due letture entro questa
-#'   distanza appartengono allo stesso cluster.
-#' @param min_pts Numero minimo di letture per formare un cluster. Con 1 ogni
-#'   lettura appartiene a un cluster; con valori maggiori le letture isolate
-#'   finiscono nel cluster 0.
-#'
-#' @return Un tibble con 29 colonne, una riga per cluster di ogni RFID:
-#'   identificazione (`RFID`, `cluster_id`, `globale_conteggio_cluster`),
-#'   tempi globali e del cluster, `presente_a_database`, `cantiere` e
-#'   `comune` dell'RFID, `comune_geografico` in cui è letto il cluster,
-#'   `incongruenza_comune` rispetto al comune dichiarato,
-#'   servizio transponder
-#'   (attuale e cronologia dei cambi), servizio atteso (prevalente e
-#'   composizione), volumi, periodo di analisi, raccolte annue previste e
-#'   presunte, numero di letture, baricentro, `cluster_dispersione_90th_m`,
-#'   `cluster_indice_fiducia` e `indicatore_cluster`.
+#' @param csv_path File di letture, in un formato accettato dall'app.
+#' @param data_inizio,data_fine Periodo di analisi, inclusi. Senza tutti e
+#'   due: l'anno più recente del dataset; con uno solo, completato con
+#'   l'anno dell'altro.
+#' @param eps_m Raggio di DBSCAN in metri.
+#' @param min_pts Letture minime di un cluster; oltre 1 le isolate vanno nel
+#'   cluster 0.
+#' @return Tibble di 29 colonne, una riga per cluster.
 #'
 #' @examples
 #' csv <- system.file("extdata", "sample_rfid_dataset.csv", package = "trackerfid")
@@ -81,15 +63,11 @@ genera_analisi_cluster <- function(
   )
 }
 
-#' Salva l'analisi dei cluster in un file CSV
+#' Salva l'analisi dei cluster in `cluster_analysis_[dal]_[al].csv`
 #'
-#' Il nome del file segue lo schema `cluster_analysis_[dal]_[al].csv`, con le
-#' date del periodo di analisi.
-#'
-#' @param risultato Tabella restituita da [genera_analisi_cluster()].
-#' @param cartella Cartella di destinazione, creata se non esiste.
-#'
-#' @return Il percorso del file scritto, in modo invisibile.
+#' @param risultato Tabella di [genera_analisi_cluster()].
+#' @param cartella Cartella di destinazione, creata se manca.
+#' @return Il percorso del file, invisibile.
 #'
 #' @examples
 #' csv <- system.file("extdata", "sample_rfid_dataset.csv", package = "trackerfid")

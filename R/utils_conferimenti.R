@@ -1,28 +1,13 @@
-# Conferimenti del secco: quanto conferisce ogni fornitura in un anno, a
-# confronto con il limite della tariffa.
-#
-# Il secco è l'unico rifiuto che l'azienda fattura. Ogni fornitura domestica
-# può conferire in un anno un certo numero di litri, secondo i componenti
-# residenti del nucleo, oppure 6240 litri se ha diritto al potenziamento del
-# secco; i conferimenti oltre il limite si pagano a parte. Le letture delle
-# antenne dicono quando un contenitore è stato svuotato, ma non tutte: le
-# antenne ci sono da poco e solo su una parte dei mezzi. Per questo non si
-# contano le letture e basta: si misura, per ogni fornitura, quante volte ha
-# esposto il bidone sulle volte in cui un mezzo con l'antenna è passato
-# davanti, e si riporta quella frequenza alle raccolte di un anno.
-#
-# Le regole e le ragioni delle scelte sono spiegate nel report
-# `docs/conferimenti_secco.Rmd`. Le funzioni non usano reattività: l'app le
-# potrà richiamare così come sono.
+# Conferimenti del secco, l'unico rifiuto fatturato: quanto conferisce ogni
+# fornitura in un anno rispetto al limite della tariffa. Le antenne sono solo
+# su una parte dei mezzi: per ogni fornitura si misura la quota di passaggi
+# di un mezzo con l'antenna in cui il bidone era esposto, e la si riporta
+# alle raccolte di un anno. Metodo e ragioni nel report
+# `docs/conferimenti_secco.Rmd`; l'app non usa queste funzioni.
 
 # --- Tariffa ----------------------------------------------------------------
 
-#' Litri di secco conferibili in un anno, per componenti del nucleo
-#'
-#' Tabella della tariffa: vale per le forniture domestiche, secondo i
-#' componenti residenti. Da cinque componenti in su il limite non cresce più.
-#'
-#' @return Data frame con `componenti` e `litri`.
+#' Litri annui per componenti residenti (fornitura domestica); da cinque in su non cresce
 #' @noRd
 litri_conferibili <- function() {
   data.frame(
@@ -31,24 +16,16 @@ litri_conferibili <- function() {
   )
 }
 
-#' Litri di secco conferibili in un anno con il potenziamento del secco
-#'
-#' Sostituisce il limite del nucleo, qualunque sia il numero dei componenti.
+#' Litri annui con il potenziamento del secco, al posto del limite del nucleo
 #' @noRd
 litri_potenziamento <- function() {
   6240
 }
 
-#' Litri di secco che una fornitura può conferire in un anno
+#' Litri annui consentiti a una fornitura
 #'
-#' Con il potenziamento valgono `litri_potenziamento()` litri. Altrimenti il
-#' limite dipende dai componenti residenti: un nucleo di zero residenti vale
-#' come uno, uno di cinque o più come cinque. Senza il nucleo, e senza
-#' potenziamento, il limite manca.
-#'
-#' @param nucleo_residenti Componenti residenti del nucleo.
-#' @param potenziamento `TRUE` se la fornitura ha il potenziamento.
-#' @return I litri, uno per elemento.
+#' Con il potenziamento `litri_potenziamento()`; altrimenti dal nucleo (zero
+#' residenti come uno, cinque o più come cinque); senza nucleo, mancante.
 #' @noRd
 litri_consentiti <- function(nucleo_residenti, potenziamento = FALSE) {
   tabella <- litri_conferibili()
@@ -62,14 +39,7 @@ litri_consentiti <- function(nucleo_residenti, potenziamento = FALSE) {
   litri
 }
 
-#' Dice se una fornitura è domestica, dalla sottocategoria
-#'
-#' La sottocategoria vale `D` per le forniture domestiche e `ND` per le non
-#' domestiche; è vuota per i non censiti. `TRUE` per `D`, `FALSE` per `ND`,
-#' mancante per gli altri valori, che l'analisi non sa classificare: il
-#' report li elenca.
-#'
-#' @param sottocategoria Sottocategoria della fornitura.
+#' Fornitura domestica dalla sottocategoria: `D` vero, `ND` falso, altro mancante
 #' @noRd
 fornitura_domestica <- function(sottocategoria) {
   valori <- toupper(stringr::str_squish(as.character(sottocategoria)))
@@ -83,29 +53,12 @@ fornitura_domestica <- function(sottocategoria) {
 
 #' Parametri dell'analisi dei conferimenti
 #'
-#' - `raggio_vicini_m`: distanza massima, in metri, tra un contenitore e i
-#'   vicini le cui letture dicono che il mezzo è passato.
-#' - `vicini_massimi`: vicini considerati, i più vicini.
-#' - `vicini_minimi`: vicini che servono perché i passaggi si possano
-#'   contare; con meno, le occasioni si stimano dalle raccolte previste.
-#' - `distanza_anomala_m`: una lettura più lontana di così dalla posizione
-#'   abituale del contenitore non conta.
-#' - `quota_giorni_anomala`: un contenitore letto in una quota maggiore dei
-#'   giorni tra la sua prima e la sua ultima lettura non è un bidone esposto
-#'   per la raccolta, ma un tag fermo in deposito o su un mezzo.
-#' - `peso_prior`: peso, in occasioni, della frequenza media nella stima del
-#'   tasso di esposizione.
-#' - `occasioni_minime`: occasioni osservate sotto le quali la stima non
-#'   basta per contattare una fornitura.
-#' - `livello_intervallo`: probabilità dell'intervallo di stima.
-#' - `soglie_probabilita`: probabilità di superare il limite oltre cui una
-#'   fornitura è «Oltre il limite», «Probabile superamento», «Vicino al
-#'   limite».
-#' - `raggio_sostituzione_m`: distanza massima tra un non censito e un
-#'   contenitore censito che potrebbe aver sostituito.
-#'
+#' `raggio_vicini_m`, `vicini_massimi`, `vicini_minimi` (sotto, occasioni
+#' dalle raccolte previste); `distanza_anomala_m` dalla posizione abituale;
+#' `quota_giorni_anomala` per i tag fermi; `peso_prior` della media nel
+#' tasso; `occasioni_minime` per contattare; `livello_intervallo`;
+#' `soglie_probabilita` delle classi; `raggio_sostituzione_m`.
 #' @param ... Valori da cambiare.
-#' @return Lista dei parametri.
 #' @noRd
 parametri_conferimenti <- function(...) {
   base <- list(
@@ -123,15 +76,16 @@ parametri_conferimenti <- function(...) {
   modifiche <- list(...)
   ignoti <- setdiff(names(modifiche), names(base))
   if (length(ignoti) > 0) {
-    stop("Parametri sconosciuti: ", paste(ignoti, collapse = ", "), call. = FALSE)
+    stop(
+      "Parametri sconosciuti: ",
+      paste(ignoti, collapse = ", "),
+      call. = FALSE
+    )
   }
   utils::modifyList(base, modifiche)
 }
 
-#' Classi delle forniture, dalla più urgente
-#'
-#' Le prime quattro dicono quanto è probabile che la fornitura superi il
-#' limite; le altre perché non si può dire.
+#' Classi delle forniture, dalla più urgente: probabilità di superare il limite, poi i casi indecidibili
 #' @noRd
 classi_conferimenti <- function() {
   c(
@@ -149,21 +103,13 @@ classi_conferimenti <- function() {
 
 # --- Posizioni, vicini e occasioni -------------------------------------------------
 
-#' Posizione abituale di ogni contenitore e letture anomale
+#' Posizione abituale di ogni contenitore, letture lontane e tag anomali
 #'
-#' La posizione abituale è la mediana delle letture del contenitore nei giri
-#' del secco: poche letture lontane, di un mezzo che lo porta via o di un GPS
-#' impreciso, non la spostano. Una lettura più lontana di
-#' `distanza_anomala_m` è anomala. Un contenitore letto in almeno cinque
-#' giorni, e in più di `quota_giorni_anomala` dei giorni tra la sua prima e
-#' la sua ultima lettura, è un tag anomalo: un giro passa al più una o due
-#' volte alla settimana.
-#'
-#' @param rfid,lat,lon,giorno Una riga per lettura nei giri del secco.
-#' @param parametri Vedi `parametri_conferimenti()`.
-#' @return Lista: `contenitori`, data frame con `RFID`, `lat`, `lon`,
-#'   `giorni` e `tag_anomalo`; `indice`, il contenitore di ogni lettura;
-#'   `lontana`, se ogni lettura è anomala.
+#' Posizione: mediana delle letture nei giri del secco. Lontana: oltre
+#' `distanza_anomala_m`. Tag anomalo: letto in almeno cinque giorni e in più
+#' di `quota_giorni_anomala` dei giorni tra prima e ultima lettura.
+#' @return Lista: `contenitori` (`RFID`, `lat`, `lon`, `giorni`,
+#'   `tag_anomalo`), `indice` e `lontana` per lettura.
 #' @noRd
 posizioni_contenitori <- function(rfid, lat, lon, giorno, parametri) {
   indice <- indice_gruppi(rfid)
@@ -193,7 +139,8 @@ posizioni_contenitori <- function(rfid, lat, lon, giorno, parametri) {
       lat = lat_casa,
       lon = lon_casa,
       giorni = giorni,
-      tag_anomalo = giorni > parametri$quota_giorni_anomala * arco & giorni >= 5,
+      tag_anomalo = giorni > parametri$quota_giorni_anomala * arco &
+        giorni >= 5,
       stringsAsFactors = FALSE
     ),
     indice = indice,
@@ -201,15 +148,8 @@ posizioni_contenitori <- function(rfid, lat, lon, giorno, parametri) {
   )
 }
 
-#' Vicini di ogni contenitore
-#'
-#' Per ogni contenitore, fino a `massimo` altri contenitori entro `raggio_m`
-#' metri dalla sua posizione abituale, dal più vicino.
-#'
-#' @param lat,lon Posizioni abituali.
-#' @param raggio_m Distanza massima.
-#' @param massimo Vicini al massimo.
-#' @return Data frame con `da`, `a` e `distanza`: indici delle posizioni.
+#' Fino a `massimo` contenitori entro `raggio_m` da ognuno, dal più vicino
+#' @return Data frame con `da`, `a`, `distanza`.
 #' @noRd
 vicini_contenitori <- function(lat, lon, raggio_m, massimo) {
   if (length(lat) < 2) {
@@ -220,7 +160,12 @@ vicini_contenitori <- function(lat, lon, raggio_m, massimo) {
   quanti <- pmin(lengths(vicini$id), massimo)
   da <- rep(seq_along(quanti), quanti)
   presi <- function(elenco) {
-    unlist(lapply(seq_along(elenco), function(i) utils::head(elenco[[i]], quanti[i])), use.names = FALSE)
+    unlist(
+      lapply(seq_along(elenco), function(i) {
+        utils::head(elenco[[i]], quanti[i])
+      }),
+      use.names = FALSE
+    )
   }
   data.frame(
     da = da,
@@ -232,24 +177,21 @@ vicini_contenitori <- function(lat, lon, raggio_m, massimo) {
 #' Occasioni di conferimento di ogni unità
 #'
 #' Un'occasione è un giorno in cui un mezzo con l'antenna, in un giro del
-#' secco, è passato davanti al contenitore: lo dice la lettura, quel giorno,
-#' del contenitore stesso o di uno dei suoi vicini. Contano solo i vicini
-#' letti almeno una volta nello stesso giorno del contenitore: sono sul suo
-#' stesso percorso. Un vicino su un'altra strada, raccolta in un altro
-#' giorno, aggiungerebbe giorni in cui il mezzo non passava.
-#'
-#' @param unita Data frame con `contenitore`, l'indice del contenitore, e
-#'   `inizio` e `fine`, i giorni della finestra, come interi.
-#' @param giorni_unita Data frame con `u`, l'indice dell'unità, e `giorno`:
-#'   i giorni in cui l'unità è stata letta, anche fuori dalla finestra.
-#' @param evidenza Data frame con `c`, l'indice del contenitore, e `giorno`:
-#'   i giorni in cui ogni contenitore è stato letto in un giro del secco.
-#' @param vicini Risultato di `vicini_contenitori()`.
-#' @param n_contenitori Numero dei contenitori.
-#' @return Lista con `occasioni`, i giorni di passaggio nella finestra, e
-#'   `vicini`, i vicini sullo stesso percorso: uno per unità.
+#' secco, è passato: lo dice la lettura del contenitore o di un vicino sullo
+#' stesso percorso, cioè letto almeno una volta lo stesso giorno del
+#' contenitore.
+#' @param unita `contenitore`, `inizio`, `fine` (giorni interi).
+#' @param giorni_unita `u`, `giorno`: giorni di lettura di ogni unità.
+#' @param evidenza `c`, `giorno`: giorni di lettura di ogni contenitore.
+#' @return Lista con `occasioni` e `vicini` per unità.
 #' @noRd
-occasioni_conferimento <- function(unita, giorni_unita, evidenza, vicini, n_contenitori) {
+occasioni_conferimento <- function(
+  unita,
+  giorni_unita,
+  evidenza,
+  vicini,
+  n_contenitori
+) {
   quante <- nrow(unita)
   if (quante == 0) {
     return(list(occasioni = integer(0), vicini = integer(0)))
@@ -301,21 +243,10 @@ occasioni_conferimento <- function(unita, giorni_unita, evidenza, vicini, n_cont
 
 # --- Stima --------------------------------------------------------------------
 
-#' Tasso di esposizione: stima e intervallo
+#' Tasso di esposizione: stima Beta, avvicinata alla media con il peso di `peso` occasioni
 #'
-#' Il tasso è la quota di occasioni in cui il bidone è stato esposto. Con
-#' poche occasioni la quota osservata oscilla molto: due esposizioni su due
-#' non vogliono dire che il bidone esce sempre. La stima avvicina allora la
-#' quota alla media `media` di tutte le forniture, con il peso di `peso`
-#' occasioni: è la media di una distribuzione Beta di parametri `alfa` e
-#' `beta`. Con molte occasioni il peso della media scompare.
-#'
-#' @param k Esposizioni osservate.
-#' @param n Occasioni osservate.
-#' @param media Tasso medio.
-#' @param peso Peso della media, in occasioni.
-#' @param livello Probabilità dell'intervallo.
-#' @return Data frame con `tasso`, `basso`, `alto`, `alfa` e `beta`.
+#' @param k,n Esposizioni e occasioni.
+#' @return Data frame con `tasso`, `basso`, `alto`, `alfa`, `beta`.
 #' @noRd
 stima_tasso <- function(k, n, media, peso, livello = 0.8) {
   alfa <- k + media * peso
@@ -330,29 +261,29 @@ stima_tasso <- function(k, n, media, peso, livello = 0.8) {
   )
 }
 
-#' Fasce di litri annui, dalla tabella della tariffa
-#'
-#' Un limite per fascia: fino a 720 litri basta un componente, fino a 1680 un
-#' nucleo di cinque, fino a 6240 il potenziamento.
-#'
-#' @param litri Litri annui stimati.
-#' @return Fattore ordinato.
+#' Fascia di litri annui della tariffa, come fattore ordinato
 #' @noRd
 fascia_litri <- function(litri) {
   limiti <- c(litri_conferibili()$litri, litri_potenziamento())
   etichette <- c(
     sprintf("fino a %s", formatta_numero(limiti[1])),
-    sprintf("%s-%s", formatta_numero(limiti[-length(limiti)] + 1), formatta_numero(limiti[-1])),
+    sprintf(
+      "%s-%s",
+      formatta_numero(limiti[-length(limiti)] + 1),
+      formatta_numero(limiti[-1])
+    ),
     sprintf("oltre %s", formatta_numero(limiti[length(limiti)]))
   )
-  cut(litri, c(-Inf, limiti, Inf), labels = etichette, right = TRUE, ordered_result = TRUE)
+  cut(
+    litri,
+    c(-Inf, limiti, Inf),
+    labels = etichette,
+    right = TRUE,
+    ordered_result = TRUE
+  )
 }
 
-#' Nucleo più piccolo il cui limite copre i litri stimati
-#'
-#' @param litri Litri annui stimati.
-#' @return Testo: `"1"`, ..., `"5 o più"`, `"Solo con potenziamento"`
-#'   oppure `"Oltre il potenziamento"`.
+#' Nucleo più piccolo il cui limite copre i litri: "1"..."5 o più", o con potenziamento
 #' @noRd
 nucleo_minimo_compatibile <- function(litri) {
   tabella <- litri_conferibili()
@@ -370,31 +301,19 @@ nucleo_minimo_compatibile <- function(litri) {
 
 #' Analisi dei conferimenti del secco
 #'
-#' I passaggi, spiegati nel report `docs/conferimenti_secco.Rmd`:
-#' 1. tiene le letture del periodo nei giri del secco, senza i sacchetti, e
-#'    toglie le letture lontane dalla posizione abituale e i tag anomali;
-#' 2. per ogni contenitore censito del secco, in ogni sua fornitura, e per
-#'    ogni non censito stimato del secco conta i giorni in cui è stato letto,
-#'    le esposizioni, e le occasioni, vedi `occasioni_conferimento()`;
-#' 3. stima il tasso di esposizione e lo riporta alle raccolte di un anno;
-#' 4. per ogni fornitura confronta i conferimenti stimati con quelli
-#'    consentiti e calcola la probabilità di superare il limite;
-#' 5. per ogni non censito dice quale nucleo basterebbe e quanto è probabile
-#'    che abbia il potenziamento, dalle forniture censite con conferimenti
-#'    simili, e cerca il contenitore censito che potrebbe aver sostituito.
-#'
-#' @param letture Letture validate con tutte le colonne della pipeline, come
-#'   le restituisce `carica_dataset(percorso, colonne = "tutte")` dal CSV
-#'   della pipeline. Le sole colonne dell'app non bastano.
-#' @param dal,al Primo e ultimo giorno del periodo. Senza, dal primo giorno
-#'   dell'anno dell'ultima lettura all'ultima lettura. Il periodo comincia
-#'   comunque dal primo giorno con letture.
-#' @param parametri Vedi `parametri_conferimenti()`.
+#' 1. letture del periodo nei giri del secco, senza sacchetti, letture
+#'    lontane e tag anomali; 2. per ogni unità (contenitore censito in una
+#'    fornitura, o non censito stimato del secco) esposizioni e occasioni;
+#'    3. tasso di esposizione riportato a un anno; 4. per fornitura,
+#'    probabilità di superare il limite; 5. per non censito, nucleo minimo,
+#'    probabilità del potenziamento e contenitore forse sostituito.
+#' @param letture Letture con tutte le colonne della pipeline:
+#'   `carica_dataset(percorso, colonne = "tutte")`.
+#' @param dal,al Periodo; senza, dal primo gennaio dell'anno dell'ultima
+#'   lettura. Non prima del primo giorno con letture.
 #' @return Lista con `forniture`, `non_censiti`, `unita`,
-#'   `manovra_per_fascia`, `riepilogo`, `periodo`, `tasso_medio` e
-#'   `parametri`. `tasso_medio` ha due attributi: `unita`, quante unità lo
-#'   determinano, e `tutte`, `TRUE` se nessuna fornitura domestica aveva
-#'   abbastanza occasioni contate dai vicini e la media è su tutte le unità.
+#'   `manovra_per_fascia`, `riepilogo`, `periodo`, `tasso_medio` (attributi
+#'   `unita` e `tutte`) e `parametri`.
 #' @noRd
 analisi_conferimenti <- function(
   letture,
@@ -403,23 +322,39 @@ analisi_conferimenti <- function(
   parametri = parametri_conferimenti()
 ) {
   usate <- c(
-    "giorno_lettura", "RFID", "presente_a_database", "servizio_transponder",
-    "servizio_atteso", "latitudine", "longitudine", "id_utenza",
-    "volume_previsto", "numero_raccolte_annue_previste", "comune_fornitura",
-    "comune_lettura", "id_fornitura", "stato_fornitura",
-    "data_attivazione_contenitore", "data_cessazione_contenitore",
-    "nucleo_residenti", "tipo_categoria", "categoria", "sottocategoria",
+    "giorno_lettura",
+    "RFID",
+    "presente_a_database",
+    "servizio_transponder",
+    "servizio_atteso",
+    "latitudine",
+    "longitudine",
+    "id_utenza",
+    "volume_previsto",
+    "numero_raccolte_annue_previste",
+    "comune_fornitura",
+    "comune_lettura",
+    "id_fornitura",
+    "stato_fornitura",
+    "data_attivazione_contenitore",
+    "data_cessazione_contenitore",
+    "nucleo_residenti",
+    "tipo_categoria",
+    "categoria",
+    "sottocategoria",
     "potenziamento_secco"
   )
   mancanti <- setdiff(usate, names(letture))
   if (length(mancanti) > 0) {
     stop(
-      "Mancano le colonne: ", paste(mancanti, collapse = ", "),
+      "Mancano le colonne: ",
+      paste(mancanti, collapse = ", "),
       ". Le letture vanno lette con carica_dataset(percorso, colonne = \"tutte\").",
       call. = FALSE
     )
   }
-  censite <- letture$presente_a_database == "Presente" & !rfid_sacchetto(letture$RFID)
+  censite <- letture$presente_a_database == "Presente" &
+    !rfid_sacchetto(letture$RFID)
   if (any(censite) && all(is.na(letture$id_fornitura[censite]))) {
     stop(
       "Le letture dei censiti non hanno la fornitura: il file va rigenerato con la pipeline di preparazione dei dati.",
@@ -429,7 +364,11 @@ analisi_conferimenti <- function(
   giorno <- as.integer(as.Date(letture$giorno_lettura))
   al <- as.integer(as.Date(al %||% as.Date(max(giorno), origin = "1970-01-01")))
   dal <- as.integer(as.Date(
-    dal %||% as.Date(sprintf("%s-01-01", format(as.Date(al, origin = "1970-01-01"), "%Y")))
+    dal %||%
+      as.Date(sprintf(
+        "%s-01-01",
+        format(as.Date(al, origin = "1970-01-01"), "%Y")
+      ))
   ))
   nel_periodo <- giorno >= dal & giorno <= al
   riepilogo <- list(letture = sum(nel_periodo))
@@ -440,8 +379,7 @@ analisi_conferimenti <- function(
   if (nrow(letture) == 0) {
     stop("Nessuna lettura di contenitori nel periodo.", call. = FALSE)
   }
-  # Il periodo comincia dal primo giorno con letture: prima le antenne non
-  # c'erano.
+  # Prima del primo giorno con letture le antenne non c'erano.
   dal <- max(dal, min(giorno))
 
   # 1. Letture nei giri del secco.
@@ -449,7 +387,13 @@ analisi_conferimenti <- function(
   riepilogo$fuori_dai_giri_secco <- sum(!secco)
   ls <- letture[secco, , drop = FALSE]
   gs <- giorno[secco]
-  posizioni <- posizioni_contenitori(ls$RFID, ls$latitudine, ls$longitudine, gs, parametri)
+  posizioni <- posizioni_contenitori(
+    ls$RFID,
+    ls$latitudine,
+    ls$longitudine,
+    gs,
+    parametri
+  )
   contenitori <- posizioni$contenitori
   ci <- posizioni$indice
   valida <- !posizioni$lontana & !contenitori$tag_anomalo[ci]
@@ -464,21 +408,37 @@ analisi_conferimenti <- function(
     parametri$raggio_vicini_m,
     parametri$vicini_massimi
   )
-  vicini <- vicini[vicini$da != vicini$a & !contenitori$tag_anomalo[vicini$a], , drop = FALSE]
+  vicini <- vicini[
+    vicini$da != vicini$a & !contenitori$tag_anomalo[vicini$a],
+    ,
+    drop = FALSE
+  ]
 
-  # 2. Unità: un contenitore censito del secco in una sua fornitura, oppure un
-  # non censito il cui servizio stimato è il secco.
-  censita <- valida & ls$presente_a_database == "Presente" &
-    servizio_secco(ls$servizio_transponder) & !is.na(ls$id_fornitura)
+  # 2. Unità: contenitore censito del secco in una fornitura, o non censito
+  # stimato del secco.
+  censita <- valida &
+    ls$presente_a_database == "Presente" &
+    servizio_secco(ls$servizio_transponder) &
+    !is.na(ls$id_fornitura)
   stime <- servizio_prevalente_non_censiti(letture)
   rfid_nc <- stime$RFID[servizio_secco(stime$servizio_prevalente)]
-  non_censita <- valida & ls$presente_a_database == "Non Presente" & ls$RFID %in% rfid_nc
+  non_censita <- valida &
+    ls$presente_a_database == "Non Presente" &
+    ls$RFID %in% rfid_nc
   riepilogo$contenitori_censiti <- length(unique(ls$RFID[censita]))
   riepilogo$non_censiti <- length(unique(ls$RFID[non_censita]))
 
-  chiave <- ifelse(censita, paste(ls$RFID, ls$id_fornitura, sep = "\r"), ls$RFID)
+  chiave <- ifelse(
+    censita,
+    paste(ls$RFID, ls$id_fornitura, sep = "\r"),
+    ls$RFID
+  )
   presa <- censita | non_censita
-  ordine <- which(presa)[order(gs[presa], ls$giorno_lettura[presa], method = "radix")]
+  ordine <- which(presa)[order(
+    gs[presa],
+    ls$giorno_lettura[presa],
+    method = "radix"
+  )]
   u <- indice_gruppi(chiave[ordine])
   quante <- max(c(u, 0L))
   r <- ls[ordine, , drop = FALSE]
@@ -495,24 +455,33 @@ analisi_conferimenti <- function(
     comune_fornitura = ultimo_valido_per_gruppo(r$comune_fornitura, u, quante),
     comune_lettura = piu_frequente_per_gruppo(r$comune_lettura, u, quante),
     volume = ultimo_valido_per_gruppo(r$volume_previsto, u, quante),
-    raccolte = ultimo_valido_per_gruppo(r$numero_raccolte_annue_previste, u, quante),
+    raccolte = ultimo_valido_per_gruppo(
+      r$numero_raccolte_annue_previste,
+      u,
+      quante
+    ),
     nucleo_residenti = ultimo_valido_per_gruppo(r$nucleo_residenti, u, quante),
     tipo_categoria = ultimo_valido_per_gruppo(r$tipo_categoria, u, quante),
     categoria = ultimo_valido_per_gruppo(r$categoria, u, quante),
     sottocategoria = ultimo_valido_per_gruppo(r$sottocategoria, u, quante),
     # Il potenziamento dell'ultima lettura: falso se la manovra è finita.
     potenziamento = ultimo_per_gruppo(r$potenziamento_secco, u, quante),
-    attivazione = estremi_per_gruppo(as.integer(r$data_attivazione_contenitore), u, quante)$minimo,
-    cessazione = estremi_per_gruppo(as.integer(r$data_cessazione_contenitore), u, quante)$massimo,
+    attivazione = estremi_per_gruppo(
+      as.integer(r$data_attivazione_contenitore),
+      u,
+      quante
+    )$minimo,
+    cessazione = estremi_per_gruppo(
+      as.integer(r$data_cessazione_contenitore),
+      u,
+      quante
+    )$massimo,
     prima_lettura = primo_per_gruppo(gu, u, quante),
     ultima_lettura = ultimo_per_gruppo(gu, u, quante),
     stringsAsFactors = FALSE
   )
-  # Finestra: dal giorno dopo la prima lettura, e non prima dell'attivazione
-  # del contenitore nella fornitura. Un bidone compare nei dati solo se è
-  # stato letto almeno una volta: contare quella prima lettura, e le
-  # occasioni prima, gonfierebbe il tasso, tanto più quanto meno occasioni ci
-  # sono. Dopo la prima lettura ogni occasione è una prova a sé.
+  # Finestra dal giorno dopo la prima lettura: contare la prima gonfierebbe il
+  # tasso, perché un bidone compare nei dati solo se è stato letto.
   unita$inizio <- pmax(
     dal,
     dplyr::coalesce(unita$attivazione, dal),
@@ -523,17 +492,25 @@ analisi_conferimenti <- function(
   dentro <- giorni_unita$giorno >= unita$inizio[giorni_unita$u] &
     giorni_unita$giorno <= unita$fine[giorni_unita$u]
   unita$esposizioni <- tabulate(giorni_unita$u[dentro], quante)
-  occasioni <- occasioni_conferimento(unita, giorni_unita, evidenza, vicini, nrow(contenitori))
+  occasioni <- occasioni_conferimento(
+    unita,
+    giorni_unita,
+    evidenza,
+    vicini,
+    nrow(contenitori)
+  )
   unita$vicini <- occasioni$vicini
   unita$giorni_finestra <- pmax(unita$fine - unita$inizio + 1L, 0L)
 
-  # Raccolte e volume: per un non censito quelli più frequenti tra i censiti
-  # vicini, poi nel suo comune, poi tra tutti.
+  # Per un non censito: dai censiti vicini, poi dal comune, poi da tutti.
   unita <- completa_non_censiti(unita, vicini, contenitori)
 
-  # Senza vicini sul percorso le occasioni si stimano dalle raccolte previste,
-  # come se tutti i mezzi avessero l'antenna: la stima del tasso è prudente.
-  unita$metodo <- ifelse(unita$vicini >= parametri$vicini_minimi, "passaggi", "raccolte previste")
+  # Senza vicini sul percorso, occasioni dalle raccolte previste: stima prudente.
+  unita$metodo <- ifelse(
+    unita$vicini >= parametri$vicini_minimi,
+    "passaggi",
+    "raccolte previste"
+  )
   dalle_raccolte <- round(unita$raccolte * unita$giorni_finestra / 365)
   unita$occasioni <- ifelse(
     unita$metodo == "passaggi",
@@ -543,7 +520,8 @@ analisi_conferimenti <- function(
   unita$occasioni <- pmax(unita$occasioni, unita$esposizioni)
 
   # 3. Tasso medio: le forniture domestiche censite con occasioni contate.
-  base <- unita$tipo == "censito" & unita$metodo == "passaggi" &
+  base <- unita$tipo == "censito" &
+    unita$metodo == "passaggi" &
     unita$occasioni >= parametri$occasioni_minime &
     fornitura_domestica(unita$sottocategoria) %in% TRUE
   base_ridotta <- !any(base)
@@ -557,7 +535,12 @@ analisi_conferimenti <- function(
   }
   tasso_medio <- min(max(tasso_medio, 0.01), 0.99)
 
-  forniture <- stima_forniture(unita[unita$tipo == "censito", , drop = FALSE], tasso_medio, al, parametri)
+  forniture <- stima_forniture(
+    unita[unita$tipo == "censito", , drop = FALSE],
+    tasso_medio,
+    al,
+    parametri
+  )
   manovra <- manovra_per_fascia(forniture)
   non_censiti <- stima_non_censiti(
     unita[unita$tipo == "non censito", , drop = FALSE],
@@ -575,27 +558,24 @@ analisi_conferimenti <- function(
     manovra_per_fascia = manovra,
     riepilogo = riepilogo,
     periodo = as.Date(c(dal, al), origin = "1970-01-01"),
-    tasso_medio = structure(tasso_medio, unita = sum(base), tutte = base_ridotta),
+    tasso_medio = structure(
+      tasso_medio,
+      unita = sum(base),
+      tutte = base_ridotta
+    ),
     parametri = parametri
   )
 }
 
-#' Dice se un servizio è del secco
-#'
-#' Confronta la tipologia, come `coerenza_servizio()`: `SECCO PAP` è secco.
+#' Il servizio è del secco? Per tipologia: `SECCO PAP` lo è
 #' @noRd
 servizio_secco <- function(servizio) {
   uniforma_servizio(servizio) %in% "SECCO"
 }
 
-#' Raccolte e volume dei non censiti, dai censiti vicini
+#' Raccolte e volume dei non censiti: i più frequenti tra i censiti vicini, poi nel comune, poi tra tutti
 #'
-#' Di un non censito non si conoscono le raccolte previste né il volume. Si
-#' prendono quelli più frequenti tra i contenitori censiti vicini: nella
-#' stessa via i bidoni sono di solito dello stesso tipo e raccolti con la
-#' stessa frequenza. Senza censiti vicini valgono quelli più frequenti nel
-#' suo comune di lettura, poi tra tutti i censiti. `origine_ipotesi` dice da
-#' dove vengono.
+#' `origine_ipotesi` dice da dove vengono.
 #' @noRd
 completa_non_censiti <- function(unita, vicini, contenitori) {
   censite <- unita$tipo == "censito"
@@ -619,7 +599,11 @@ completa_non_censiti <- function(unita, vicini, contenitori) {
     coppie <- vicini[!is.na(del_contenitore[vicini$a]), , drop = FALSE]
     dai_vicini <- rep(NA_real_, nrow(contenitori))
     if (nrow(coppie) > 0) {
-      dai_vicini <- piu_frequente_per_gruppo(del_contenitore[coppie$a], coppie$da, nrow(contenitori))
+      dai_vicini <- piu_frequente_per_gruppo(
+        del_contenitore[coppie$a],
+        coppie$da,
+        nrow(contenitori)
+      )
     }
     # dal comune
     comuni <- unita$comune_lettura
@@ -643,17 +627,11 @@ completa_non_censiti <- function(unita, vicini, contenitori) {
   unita
 }
 
-#' Stima dei conferimenti di ogni fornitura censita
+#' Conferimenti stimati di ogni fornitura censita
 #'
-#' Somma esposizioni e occasioni dei contenitori del secco della fornitura,
-#' stima il tasso e lo riporta alle raccolte di un anno, per i contenitori
-#' attivi alla fine del periodo: un contenitore sostituito non conta due
-#' volte, due contenitori attivi insieme sì.
-#'
-#' @param unita Unità censite di `analisi_conferimenti()`.
-#' @param tasso_medio Tasso medio, vedi `stima_tasso()`.
-#' @param al Ultimo giorno del periodo, come intero.
-#' @param parametri Vedi `parametri_conferimenti()`.
+#' Somma esposizioni e occasioni dei suoi contenitori del secco e riporta il
+#' tasso alle raccolte annue dei contenitori attivi alla fine del periodo.
+#' @param al Ultimo giorno, come intero.
 #' @return Una riga per fornitura.
 #' @noRd
 stima_forniture <- function(unita, tasso_medio, al, parametri) {
@@ -662,7 +640,7 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
   }
   f <- indice_gruppi(unita$id_fornitura)
   quante <- max(f)
-  # Le unità in ordine di ultima lettura: gli attributi sono quelli più recenti.
+  # Per ultima lettura: valgono gli attributi più recenti.
   ordine <- order(f, unita$ultima_lettura, method = "radix")
   unita <- unita[ordine, , drop = FALSE]
   f <- f[ordine]
@@ -690,7 +668,8 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
   esposizioni <- somma_per_gruppo(unita$esposizioni, f, quante)
   occasioni <- somma_per_gruppo(unita$occasioni, f, quante)
   giorni <- estremi_per_gruppo(unita$fine, f, quante)$massimo -
-    estremi_per_gruppo(unita$inizio, f, quante)$minimo + 1
+    estremi_per_gruppo(unita$inizio, f, quante)$minimo +
+    1
   metodo <- ifelse(
     tabulate(f[unita$metodo != "passaggi"], quante) > 0,
     "raccolte previste",
@@ -698,7 +677,13 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
   )
   contenitori_attivi <- pmax(attive, 1L)
 
-  stima <- stima_tasso(esposizioni, occasioni, tasso_medio, parametri$peso_prior, parametri$livello_intervallo)
+  stima <- stima_tasso(
+    esposizioni,
+    occasioni,
+    tasso_medio,
+    parametri$peso_prior,
+    parametri$livello_intervallo
+  )
   annui <- raccolte * contenitori_attivi
   nucleo <- ultimo_valido_per_gruppo(unita$nucleo_residenti, f, quante)
   potenziamento <- ultimo_per_gruppo(unita$potenziamento, f, quante) %in% TRUE
@@ -716,8 +701,16 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
   forniture <- data.frame(
     id_fornitura = unita$id_fornitura[!duplicated(f)],
     id_utenza = ultimo_valido_per_gruppo(unita$id_utenza, f, quante),
-    RFID = vapply(split(unita$RFID, f), function(x) paste(unique(rev(x)), collapse = ", "), ""),
-    comune_fornitura = ultimo_valido_per_gruppo(unita$comune_fornitura, f, quante),
+    RFID = vapply(
+      split(unita$RFID, f),
+      function(x) paste(unique(rev(x)), collapse = ", "),
+      ""
+    ),
+    comune_fornitura = ultimo_valido_per_gruppo(
+      unita$comune_fornitura,
+      f,
+      quante
+    ),
     tipo_categoria = ultimo_valido_per_gruppo(unita$tipo_categoria, f, quante),
     categoria = ultimo_valido_per_gruppo(unita$categoria, f, quante),
     sottocategoria = ultimo_valido_per_gruppo(unita$sottocategoria, f, quante),
@@ -747,20 +740,21 @@ stima_forniture <- function(unita, tasso_medio, al, parametri) {
   )
   rownames(forniture) <- NULL
   forniture$classe <- classe_fornitura(forniture, parametri)
-  forniture[order(
-    match(forniture$classe, classi_conferimenti()),
-    -forniture$conferimenti_eccedenti,
-    -forniture$probabilita_oltre,
-    method = "radix"
-  ), , drop = FALSE]
+  forniture[
+    order(
+      match(forniture$classe, classi_conferimenti()),
+      -forniture$conferimenti_eccedenti,
+      -forniture$probabilita_oltre,
+      method = "radix"
+    ),
+    ,
+    drop = FALSE
+  ]
 }
 
-#' Classe di ogni fornitura
+#' Classe di ogni fornitura: prima i casi indecidibili, poi la probabilità di superare il limite
 #'
-#' Prima le ragioni per cui non si può dire niente, poi la probabilità di
-#' superare il limite. Vedi `classi_conferimenti()`. Una fornitura cessata o
-#' annullata, o senza contenitori attivi alla fine del periodo, non è attiva:
-#' nei dati aziendali lo stato vale `ATTIVA`, `CESSATA` o `ANNULLATA`.
+#' Non attiva: `CESSATA`, `ANNULLATA`, o senza contenitori attivi.
 #' @noRd
 classe_fornitura <- function(forniture, parametri) {
   soglie <- parametri$soglie_probabilita
@@ -771,10 +765,12 @@ classe_fornitura <- function(forniture, parametri) {
     forniture$contenitori_attivi == 0 |
       toupper(dplyr::coalesce(forniture$stato_fornitura, "")) %in%
         c("CESSATA", "CESSATO", "ANNULLATA", "ANNULLATO") ~ "Non attiva",
-    is.na(forniture$litri_consentiti) | is.na(forniture$volume) ~ "Nucleo mancante",
+    is.na(forniture$litri_consentiti) |
+      is.na(forniture$volume) ~ "Nucleo mancante",
     forniture$occasioni < parametri$occasioni_minime ~ "Dati insufficienti",
     forniture$probabilita_oltre >= soglie[["oltre"]] ~ "Oltre il limite",
-    forniture$probabilita_oltre >= soglie[["probabile"]] ~ "Probabile superamento",
+    forniture$probabilita_oltre >=
+      soglie[["probabile"]] ~ "Probabile superamento",
     forniture$probabilita_oltre >= soglie[["vicino"]] ~ "Vicino al limite",
     .default = "Entro il limite"
   )
@@ -818,23 +814,19 @@ forniture_vuote <- function() {
   )
 }
 
-#' Quota di forniture con il potenziamento, per fascia di litri annui
+#' Quota di forniture domestiche stimate con il potenziamento, per fascia di litri
 #'
-#' Tra le forniture domestiche censite con una stima, cioè non in «Dati
-#' insufficienti», quante hanno il potenziamento in ogni fascia di
-#' `fascia_litri()`. La quota è avvicinata a un mezzo quando le forniture
-#' sono poche: (con potenziamento + 0,5) / (forniture + 1).
-#'
-#' @param forniture Risultato di `stima_forniture()`.
-#' @return Data frame con `fascia`, `forniture`, `con_potenziamento` e
-#'   `quota`.
+#' Quota avvicinata a un mezzo: (con potenziamento + 0,5) / (forniture + 1).
 #' @noRd
 manovra_per_fascia <- function(forniture) {
   stimate <- forniture$classe %in% classi_conferimenti()[1:4]
   fascia <- fascia_litri(forniture$litri_annui[stimate])
   livelli <- levels(fascia_litri(numeric(0)))
   totale <- as.vector(table(factor(fascia, levels = livelli)))
-  con <- as.vector(table(factor(fascia[forniture$potenziamento[stimate]], levels = livelli)))
+  con <- as.vector(table(factor(
+    fascia[forniture$potenziamento[stimate]],
+    levels = livelli
+  )))
   data.frame(
     fascia = factor(livelli, levels = livelli, ordered = TRUE),
     forniture = totale,
@@ -844,25 +836,21 @@ manovra_per_fascia <- function(forniture) {
   )
 }
 
-#' Stima dei conferimenti dei non censiti
+#' Conferimenti stimati dei non censiti
 #'
-#' Come per una fornitura, ma con raccolte e volume presi dai censiti vicini:
-#' vedi `completa_non_censiti()`. Dai litri annui stimati vengono il nucleo
-#' più piccolo che li coprirebbe e la quota di forniture censite con il
-#' potenziamento nella stessa fascia di litri. Il contenitore censito più
-#' vicino, entro `raggio_sostituzione_m`, letto l'ultima volta prima della
-#' prima lettura del non censito è il candidato che potrebbe aver
-#' sostituito.
-#'
-#' @param unita Unità non censite di `analisi_conferimenti()`.
-#' @param censite Unità censite.
-#' @param contenitori Contenitori di `posizioni_contenitori()`.
-#' @param tasso_medio Tasso medio.
-#' @param manovra Risultato di `manovra_per_fascia()`.
-#' @param parametri Vedi `parametri_conferimenti()`.
+#' Come per le forniture, con raccolte e volume da `completa_non_censiti()`;
+#' in più nucleo minimo, quota del potenziamento nella fascia e candidato
+#' sostituito (`candidati_sostituzione()`).
 #' @return Una riga per non censito.
 #' @noRd
-stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra, parametri) {
+stima_non_censiti <- function(
+  unita,
+  censite,
+  contenitori,
+  tasso_medio,
+  manovra,
+  parametri
+) {
   stima <- stima_tasso(
     unita$esposizioni,
     unita$occasioni,
@@ -873,7 +861,12 @@ stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra,
   conferimenti <- stima$tasso * unita$raccolte
   litri <- conferimenti * unita$volume
   fascia <- fascia_litri(litri)
-  sostituzione <- candidati_sostituzione(unita, censite, contenitori, parametri$raggio_sostituzione_m)
+  sostituzione <- candidati_sostituzione(
+    unita,
+    censite,
+    contenitori,
+    parametri$raggio_sostituzione_m
+  )
   esito <- data.frame(
     RFID = unita$RFID,
     comune_lettura = unita$comune_lettura,
@@ -884,7 +877,11 @@ stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra,
     metodo = unita$metodo,
     occasioni = unita$occasioni,
     esposizioni = unita$esposizioni,
-    tasso_osservato = ifelse(unita$occasioni > 0, unita$esposizioni / unita$occasioni, NA),
+    tasso_osservato = ifelse(
+      unita$occasioni > 0,
+      unita$esposizioni / unita$occasioni,
+      NA
+    ),
     tasso = stima$tasso,
     raccolte_annue_ipotizzate = unita$raccolte,
     volume_ipotizzato = unita$volume,
@@ -895,7 +892,10 @@ stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra,
     litri_annui = litri,
     fascia_litri = as.character(fascia),
     nucleo_minimo = nucleo_minimo_compatibile(litri),
-    quota_potenziamento = manovra$quota[match(as.character(fascia), as.character(manovra$fascia))],
+    quota_potenziamento = manovra$quota[match(
+      as.character(fascia),
+      as.character(manovra$fascia)
+    )],
     dati_sufficienti = unita$occasioni >= parametri$occasioni_minime,
     fornitura_candidata = sostituzione$id_fornitura,
     utenza_candidata = sostituzione$id_utenza,
@@ -905,21 +905,17 @@ stima_non_censiti <- function(unita, censite, contenitori, tasso_medio, manovra,
     potenziamento_candidato = sostituzione$potenziamento,
     stringsAsFactors = FALSE
   )
-  esito[order(!esito$dati_sufficienti, -esito$litri_annui, method = "radix"), , drop = FALSE]
+  esito[
+    order(!esito$dati_sufficienti, -esito$litri_annui, method = "radix"),
+    ,
+    drop = FALSE
+  ]
 }
 
 #' Contenitore censito che un non censito potrebbe aver sostituito
 #'
-#' Un bidone rotto o perso viene sostituito con uno nuovo, che a volte non
-#' viene legato alla fornitura: il vecchio smette di essere letto e il nuovo
-#' comincia, nello stesso punto. Per ogni non censito si cercano i
-#' contenitori censiti del secco entro `raggio_m` dalla sua posizione,
-#' letti l'ultima volta prima della sua prima lettura, e si tiene il più
-#' vicino.
-#'
-#' @return Data frame, una riga per unità non censita, con `id_fornitura`,
-#'   `id_utenza`, `RFID`, `distanza`, `ultima_lettura` e `potenziamento`
-#'   del candidato, vuoti se non ce n'è.
+#' Il più vicino entro `raggio_m`, del secco, letto l'ultima volta prima
+#' della prima lettura del non censito.
 #' @noRd
 candidati_sostituzione <- function(unita, censite, contenitori, raggio_m) {
   vuoto <- rep(NA_character_, nrow(unita))
@@ -963,56 +959,59 @@ candidati_sostituzione <- function(unita, censite, contenitori, raggio_m) {
   esito$id_utenza[q] <- censite$id_utenza[candidato]
   esito$RFID[q] <- censite$RFID[candidato]
   esito$distanza[q] <- distanza[primo]
-  esito$ultima_lettura[q] <- as.Date(censite$ultima_lettura[candidato], origin = "1970-01-01")
+  esito$ultima_lettura[q] <- as.Date(
+    censite$ultima_lettura[candidato],
+    origin = "1970-01-01"
+  )
   esito$potenziamento[q] <- censite$potenziamento[candidato] %in% TRUE
   esito
 }
 
 # --- Elenchi ------------------------------------------------------------------
 
-#' Forniture da contattare
-#'
-#' Le forniture domestiche attive «Oltre il limite» o con un «Probabile
-#' superamento», dalla più alta stima dei conferimenti eccedenti, con le sole
-#' colonne che servono a chi le contatta.
-#'
-#' @param analisi Risultato di `analisi_conferimenti()`.
-#' @return Data frame.
+#' Forniture domestiche attive da contattare: oltre il limite o probabile superamento
 #' @noRd
 elenco_da_contattare <- function(analisi) {
   forniture <- analisi$forniture
   scelte <- forniture$classe %in% classi_conferimenti()[1:2]
-  elenco <- forniture[scelte, c(
-    "id_fornitura",
-    "id_utenza",
-    "RFID",
-    "comune_fornitura",
-    "nucleo_residenti",
-    "potenziamento",
-    "volume",
-    "raccolte_annue",
-    "occasioni",
-    "esposizioni",
-    "conferimenti_annui",
-    "conferimenti_annui_basso",
-    "conferimenti_annui_alto",
-    "conferimenti_consentiti",
-    "conferimenti_eccedenti",
-    "probabilita_oltre",
-    "classe"
-  ), drop = FALSE]
-  elenco[order(-elenco$conferimenti_eccedenti, -elenco$probabilita_oltre, method = "radix"), , drop = FALSE]
+  elenco <- forniture[
+    scelte,
+    c(
+      "id_fornitura",
+      "id_utenza",
+      "RFID",
+      "comune_fornitura",
+      "nucleo_residenti",
+      "potenziamento",
+      "volume",
+      "raccolte_annue",
+      "occasioni",
+      "esposizioni",
+      "conferimenti_annui",
+      "conferimenti_annui_basso",
+      "conferimenti_annui_alto",
+      "conferimenti_consentiti",
+      "conferimenti_eccedenti",
+      "probabilita_oltre",
+      "classe"
+    ),
+    drop = FALSE
+  ]
+  elenco[
+    order(
+      -elenco$conferimenti_eccedenti,
+      -elenco$probabilita_oltre,
+      method = "radix"
+    ),
+    ,
+    drop = FALSE
+  ]
 }
 
-#' Scrive i risultati dell'analisi dei conferimenti in CSV
+#' Scrive tre CSV (forniture, da contattare, non censiti) per Excel in italiano
 #'
-#' Tre file, con il periodo nel nome: tutte le forniture, le forniture da
-#' contattare e i non censiti. Separatore punto e virgola e virgola
-#' decimale, per aprirli con Excel in italiano; numeri con due decimali.
-#'
-#' @param analisi Risultato di `analisi_conferimenti()`.
-#' @param cartella Cartella in cui scriverli.
-#' @return I percorsi dei file, invisibili.
+#' Punto e virgola, virgola decimale, due decimali.
+#' @return I percorsi, invisibili.
 #' @noRd
 esporta_analisi_conferimenti <- function(analisi, cartella) {
   dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
@@ -1023,7 +1022,11 @@ esporta_analisi_conferimenti <- function(analisi, cartella) {
     non_censiti = sprintf("conferimenti_non_censiti_%s.csv", periodo)
   )
   percorsi <- file.path(cartella, file)
-  tabelle <- list(analisi$forniture, elenco_da_contattare(analisi), analisi$non_censiti)
+  tabelle <- list(
+    analisi$forniture,
+    elenco_da_contattare(analisi),
+    analisi$non_censiti
+  )
   # Due decimali bastano; le coordinate ne tengono sei.
   arrotonda <- function(tabella) {
     for (campo in names(tabella)) {
@@ -1035,7 +1038,12 @@ esporta_analisi_conferimenti <- function(analisi, cartella) {
     tabella
   }
   for (i in seq_along(tabelle)) {
-    utils::write.csv2(arrotonda(tabelle[[i]]), percorsi[i], row.names = FALSE, na = "")
+    utils::write.csv2(
+      arrotonda(tabelle[[i]]),
+      percorsi[i],
+      row.names = FALSE,
+      na = ""
+    )
   }
   invisible(stats::setNames(percorsi, names(file)))
 }

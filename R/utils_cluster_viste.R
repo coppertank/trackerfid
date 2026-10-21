@@ -1,7 +1,5 @@
-# Viste dell'analisi dei cluster: tabella interattiva, grafici e mappa.
-#
-# I colori degli indicatori sono quelli di `indicatori_config()`, sempre nello
-# stesso ordine: ogni indicatore mantiene il suo colore in tutte le viste.
+# Viste dell'analisi dei cluster: tabella DT, grafici plotly, mappa. Ogni
+# indicatore ha sempre il colore di `indicatori_config()`.
 
 # Colori neutri di testo, assi e griglia dei grafici.
 inchiostro_grafici <- function() {
@@ -31,12 +29,7 @@ lingua_dt <- function() {
   )
 }
 
-#' Tabella interattiva dell'analisi dei cluster
-#'
-#' Ogni colonna ha il proprio filtro; le colonne categoriche si filtrano da
-#' un elenco. L'indicatore è evidenziato dal bordo colorato della cella.
-#'
-#' @param risultato Tabella prodotta da `calcola_analisi_cluster()`.
+#' Tabella DT dell'analisi, un filtro per colonna
 #' @noRd
 tabella_cluster_dt <- function(risultato) {
   config <- indicatori_config()
@@ -50,7 +43,7 @@ tabella_cluster_dt <- function(risultato) {
   tabella <- as.data.frame(risultato) |>
     dplyr::mutate(
       dplyr::across(dplyr::all_of(categoriche), as.factor),
-      # Come testo: il formato data del browser sposterebbe il giorno con il fuso orario.
+      # Come testo: il formato data del browser sposterebbe il giorno.
       dplyr::across(
         dplyr::all_of(c("analisi_dal", "analisi_al")),
         ~ format(.x, "%d/%m/%Y")
@@ -118,34 +111,18 @@ tabella_cluster_dt <- function(risultato) {
     )
 }
 
-#' Numero massimo di cluster disegnati nel grafico a dispersione e sulla mappa
-#'
-#' Oltre questi numeri il browser riceverebbe decine di megabyte e
-#' rallenterebbe senza mostrare di più: i punti si sovrappongono. La mappa,
-#' disegnata in WebGL, ne regge molti più del grafico.
+#' Cluster disegnati al massimo dal grafico a dispersione e dalla mappa
 #' @noRd
 limiti_viste_cluster <- function() list(grafico = 20000, mappa = 50000)
 
-#' Attesa prima di credere alle righe comunicate dalla tabella, in millisecondi
+#' Millisecondi per cui un elenco di righe della tabella deve restare uguale per valere
 #'
-#' A ogni ridisegno la tabella comunica per qualche centesimo di secondo un
-#' elenco vuoto, lo stesso di un filtro che non lascia righe: grafici e mappa
-#' seguono l'elenco solo se dura più di questa attesa. Il margine copre anche
-#' un collegamento lento tra browser e server.
+#' A ogni ridisegno arriva per poco un elenco vuoto.
 #' @noRd
 attesa_righe_tabella <- function() 300
 
-#' Sceglie i cluster da disegnare quando sono troppi
-#'
-#' Tiene per primi i cluster anomali, cioè quelli con un indicatore diverso
-#' da `VALID_TARGET`, che sono pochi e sono quelli da guardare. Lo spazio
-#' che resta va a un campione dei regolari, preso a intervalli costanti:
-#' la scelta non cambia da un disegno all'altro.
-#'
-#' @param righe Righe dell'analisi.
-#' @param massimo Numero massimo di righe da tenere.
-#' @return Le righe scelte, nell'ordine di partenza. L'attributo `totale`
-#'   riporta il numero di righe ricevute.
+#' Cluster da disegnare quando sono troppi: tutti gli anomali, poi un campione fisso dei regolari
+#' @return Nell'ordine di partenza, con l'attributo `totale`.
 #' @noRd
 campiona_cluster <- function(righe, massimo) {
   totale <- nrow(righe)
@@ -162,7 +139,7 @@ campiona_cluster <- function(righe, massimo) {
   structure(righe, totale = totale)
 }
 
-#' Avviso da mostrare quando una vista disegna solo una parte dei cluster
+#' Avviso per una vista che disegna solo una parte dei cluster
 #' @noRd
 nota_campione <- function(righe) {
   totale <- attr(righe, "totale")
@@ -176,12 +153,7 @@ nota_campione <- function(righe) {
   )
 }
 
-#' Grafico a barre: numero di cluster per indicatore
-#'
-#' Le barre seguono l'ordine fisso degli indicatori e riportano il conteggio;
-#' gli indicatori senza cluster restano visibili con valore zero.
-#'
-#' @param risultato Tabella dell'analisi, anche filtrata.
+#' Barre del numero di cluster per indicatore, anche a zero
 #' @noRd
 grafico_indicatori <- function(risultato) {
   config <- indicatori_config()
@@ -243,15 +215,9 @@ grafico_indicatori <- function(risultato) {
     plotly::config(displayModeBar = FALSE)
 }
 
-#' Grafici a dispersione: letture dell'RFID e dispersione dei cluster
+#' Dispersione contro letture dell'RFID, un riquadro per indicatore, assi logaritmici
 #'
-#' Un riquadro per indicatore, tutti con gli stessi assi logaritmici: in colore
-#' i cluster dell'indicatore, in grigio gli altri come contesto. Le linee della
-#' griglia coincidono con le soglie della classificazione.
-#'
-#' @param risultato Tabella dell'analisi, anche filtrata.
-#' @param soglie Soglie della classificazione.
-#' @param giorni_osservati Giorni del periodo coperti dal dataset.
+#' La griglia segue le soglie della classificazione.
 #' @noRd
 grafico_dispersione <- function(
   risultato,
@@ -273,7 +239,7 @@ grafico_dispersione <- function(
   dati <- dplyr::mutate(
     as.data.frame(risultato),
     x = .data$globale_numero_letture,
-    # Asse logaritmico: le dispersioni sotto il metro sono riportate a 1 m.
+    # Asse logaritmico: sotto il metro vale 1 m.
     y = pmax(.data$cluster_dispersione_90th_m, 1),
     testo = sprintf(
       "<b>%s</b> \u00b7 cluster %d di %d<br>Letture: %s nel cluster, %s in tutto<br>Dispersione: %s m<br>Indice di fiducia: %s",
@@ -293,7 +259,7 @@ grafico_dispersione <- function(
     )
   )
 
-  # Tacche degli assi sulle soglie: letture per anno riportate al periodo osservato.
+  # Tacche sulle soglie, con le letture annue riportate al periodo osservato.
   soglie_letture <- round(
     c(soglie$letture_min, soglie$letture_max) * giorni_osservati / 365
   )
@@ -473,20 +439,11 @@ popup_cluster <- function(righe) {
   )
 }
 
-#' Dati della mappa dei cluster: baricentri e cerchi di dispersione
+#' Dati della mappa dei cluster: baricentro e cerchio di dispersione al 90°
 #'
-#' Ogni cluster è un punto sul baricentro, circondato da un cerchio il cui
-#' raggio è la dispersione al 90° percentile, in metri. Il raggio viaggia come
-#' raggio in pixel a zoom 22 (`r22`): MapLibre lo dimezza a ogni zoom in meno,
-#' vedi `livelli_mappa()`. Gli indicatori si accendono e spengono dal riquadro
-#' in alto a destra, che fa anche da legenda. Oltre il limite di
-#' `limiti_viste_cluster()` la mappa disegna un campione, vedi
-#' `campiona_cluster()`.
-#'
-#' @param righe Righe dell'analisi da mostrare, già campionate.
-#' @return Lista con `punti` (coordinate, colore e nome dell'indicatore,
-#'   `r22` e RFID), `indicatori` (nomi e colori di quelli presenti) e `nota`,
-#'   l'avviso sul campione.
+#' Il raggio viaggia in pixel a zoom 22 (`r22`). Oltre `limiti_viste_cluster()`
+#' un campione.
+#' @return Lista con `punti`, `indicatori` e `nota`.
 #' @noRd
 dati_mappa_cluster <- function(righe) {
   vuoto <- list(
@@ -511,16 +468,20 @@ dati_mappa_cluster <- function(righe) {
     drop = FALSE
   ]
   lat <- righe$lat_baricentro_cluster
-  # Metri per pixel di MapLibre a zoom 0, all'equatore: tessere da 512 pixel.
+  # Metri per pixel a zoom 0, all'equatore, con tessere da 512 pixel.
   metri_pixel <- 2 * pi * raggio_terra_m() / 512
   list(
     punti = list(
       x = coordinate_intere(righe$lon_baricentro_cluster),
       y = coordinate_intere(lat),
-      colore = config$colore[match(righe$indicatore_cluster, config$indicatore)],
+      colore = config$colore[match(
+        righe$indicatore_cluster,
+        config$indicatore
+      )],
       ind = righe$indicatore_cluster,
       r22 = round(
-        pmax(righe$cluster_dispersione_90th_m, 1) * 2^22 /
+        pmax(righe$cluster_dispersione_90th_m, 1) *
+          2^22 /
           (metri_pixel * cos(lat * pi / 180)),
         1
       ),
@@ -531,10 +492,7 @@ dati_mappa_cluster <- function(righe) {
   )
 }
 
-#' Riquadro su cui inquadrare la mappa dei cluster
-#'
-#' @param righe Righe dell'analisi disegnate.
-#' @return Vettore con ovest, sud, est e nord; `NULL` senza righe.
+#' Riquadro della mappa dei cluster; `NULL` senza righe
 #' @noRd
 riquadro_cluster <- function(righe) {
   if (is.null(righe) || nrow(righe) == 0) {

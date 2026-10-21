@@ -40,13 +40,20 @@ radice_progetto <- function(partenze) {
     repeat {
       descrizione <- file.path(cartella, "DESCRIPTION")
       # Solo i sorgenti hanno i file .R: un pacchetto installato non va ricaricato.
-      if (file.exists(descrizione) &&
-        any(grepl("^Package:\\s*trackerfid\\s*$", readLines(descrizione, warn = FALSE))) &&
-        length(list.files(file.path(cartella, "R"), pattern = "\\.R$")) > 0) {
+      if (
+        file.exists(descrizione) &&
+          any(grepl(
+            "^Package:\\s*trackerfid\\s*$",
+            readLines(descrizione, warn = FALSE)
+          )) &&
+          length(list.files(file.path(cartella, "R"), pattern = "\\.R$")) > 0
+      ) {
         return(cartella)
       }
       superiore <- dirname(cartella)
-      if (identical(superiore, cartella)) break
+      if (identical(superiore, cartella)) {
+        break
+      }
       cartella <- superiore
     }
   }
@@ -54,7 +61,10 @@ radice_progetto <- function(partenze) {
 }
 
 carica_trackerfid <- function() {
-  radice <- radice_progetto(c(normalizePath(getwd(), mustWork = FALSE), cartella_script()))
+  radice <- radice_progetto(c(
+    normalizePath(getwd(), mustWork = FALSE),
+    cartella_script()
+  ))
   if (!is.null(radice) && requireNamespace("pkgload", quietly = TRUE)) {
     pkgload::load_all(radice, quiet = TRUE)
     return(invisible("sorgenti"))
@@ -87,7 +97,14 @@ principale <- function(argomenti = commandArgs(trailingOnly = TRUE)) {
       return(NULL)
     }
     data <- as.Date(testo, format = "%Y-%m-%d")
-    if (is.na(data)) stop("Data non valida: ", testo, " (formato atteso YYYY-MM-DD).", call. = FALSE)
+    if (is.na(data)) {
+      stop(
+        "Data non valida: ",
+        testo,
+        " (formato atteso YYYY-MM-DD).",
+        call. = FALSE
+      )
+    }
     data
   }
   risultato <- genera_analisi_cluster(
@@ -99,7 +116,9 @@ principale <- function(argomenti = commandArgs(trailingOnly = TRUE)) {
   file <- scrivi_analisi_cluster(risultato, cartella)
   cat(sprintf(
     "Scritti %d cluster di %d RFID in %s\n",
-    nrow(risultato), length(unique(risultato$RFID)), file
+    nrow(risultato),
+    length(unique(risultato$RFID)),
+    file
   ))
   print(table(risultato$indicatore_cluster))
   invisible(file)

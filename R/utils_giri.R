@@ -1,18 +1,8 @@
-# Giri dei mezzi: che cosa ha letto un mezzo in un giorno, e dove.
-#
-# Un giro è il lavoro di un mezzo in un giorno, per un servizio e in un
-# comune: lo dice il calendario dei mezzi, e nel file sta su ogni lettura come
-# `servizio_giro` e `comune_giro`. Le funzioni di questo file servono
-# alla scheda "Ricerca Giro": riassumono giro per giro le letture trovate da
-# `cerca_giri()`, con le letture fuori giro e quelle fuori comune, vedi
-# `coerenza_comune()`. Le ricerche nell'archivio stanno in
-# `R/utils_selezione.R`.
+# Scheda «Ricerca Giro»: riepilogo giro per giro delle letture di
+# `cerca_giri()`, tabella e mappa. Un giro è il lavoro di un mezzo in un
+# giorno per un servizio e un comune (`servizio_giro`, `comune_giro`).
 
-#' Servizio del giro di ogni lettura, secondo il calendario
-#'
-#' È `servizio_giro`. Il servizio atteso di una lettura può essere
-#' diverso: per un non censito può venire dai censiti letti dallo stesso
-#' mezzo. Senza quella colonna vale `servizio_atteso`.
+#' Giro del calendario di ogni lettura: `servizio_giro` o, se manca, `servizio_atteso`
 #' @noRd
 servizio_del_giro <- function(letture) {
   as.character(
@@ -44,18 +34,10 @@ colonne_riepilogo_giri <- function() {
 
 #' Riepilogo dei giri: una riga per giorno, mezzo, servizio e comune del giro
 #'
-#' Di ogni giro dice che cosa il mezzo doveva fare, cioè servizio atteso e
-#' comune del calendario, se il giro è stato confermato, e che cosa ha fatto:
-#' quante letture, di quanti bidoni, quante fuori giro e quante fuori comune,
-#' vedi `coerenza_comune()`, e in quali comuni sono state fatte le letture.
-#' La conferma, `eseguito`, è `NO` se una lettura del giro la ha a `NO`,
-#' altrimenti `SI` se una la ha a `SI`, altrimenti manca: vedi
-#' `colonna_conferma()`.
-#'
-#' @param letture Letture trovate da `cerca_giri()`.
-#' @return Tibble con le colonne di `colonne_riepilogo_giri()`, in ordine di
-#'   giorno, mezzo e prima lettura. `letto_in` riporta il comune di lettura
-#'   della gran parte delle letture e quanti altri comuni compaiono.
+#' Letture, bidoni, fuori giro, fuori comune, comuni di lettura e conferma:
+#' `NO` se una lettura ha `NO`, poi `SI`, altrimenti mancante.
+#' @return Colonne di `colonne_riepilogo_giri()`, per giorno, mezzo e prima
+#'   lettura.
 #' @noRd
 riepilogo_giri <- function(letture) {
   if (is.null(letture) || nrow(letture) == 0) {
@@ -98,7 +80,12 @@ riepilogo_giri <- function(letture) {
   letto_in <- dplyr::case_when(
     is.na(comune_prevalente) ~ "comune sconosciuto",
     altri_comuni == 1 ~ paste(comune_prevalente, "e un altro comune"),
-    altri_comuni > 1 ~ paste(comune_prevalente, "e altri", altri_comuni, "comuni"),
+    altri_comuni > 1 ~ paste(
+      comune_prevalente,
+      "e altri",
+      altri_comuni,
+      "comuni"
+    ),
     .default = comune_prevalente
   )
   bidoni <- n_distinti_per_gruppo(letture$RFID, gruppo, n)
@@ -119,8 +106,8 @@ riepilogo_giri <- function(letture) {
     eseguito = eseguito,
     prima_lettura = primo_per_gruppo(letture$giorno_lettura, gruppo, n),
     ultima_lettura = ultimo_per_gruppo(letture$giorno_lettura, gruppo, n),
-    # Calcolato qui sopra: dentro `tibble()` la colonna `letture` nasconderebbe
-    # le letture.
+    # Calcolato prima: dentro `tibble()` la colonna `letture` nasconderebbe il
+    # data frame.
     bidoni = bidoni,
     letture = tabulate(gruppo, n),
     fuori_giro = as.integer(
@@ -142,11 +129,7 @@ riepilogo_giri <- function(letture) {
   ]
 }
 
-#' Letture di un giro del riepilogo
-#'
-#' @param letture Letture trovate da `cerca_giri()`.
-#' @param giro Una riga di `riepilogo_giri()`.
-#' @return Le letture di quel giorno, mezzo, servizio e comune del giro.
+#' Letture di una riga di `riepilogo_giri()`
 #' @noRd
 letture_del_giro <- function(letture, giro) {
   uguale <- function(valori, valore) {
@@ -165,24 +148,16 @@ letture_del_giro <- function(letture, giro) {
   ]
 }
 
-#' Area da inquadrare nella ricerca dei giri
-#'
-#' Le letture trovate e, se i giri lavorano in pochi comuni, anche quei
-#' comuni: così si vedono insieme le letture e il confine del comune in cui
-#' il mezzo doveva lavorare, anche quando sono lontani.
-#'
-#' @param letture Letture trovate.
-#' @param massimo Numero massimo di comuni dei giri: oltre, valgono le sole
-#'   letture, come per `aggiungi_comuni_giro()`.
-#' @return Punti da inquadrare, con `latitudine` e `longitudine`; `NULL`
-#'   senza letture.
+#' Punti da inquadrare: le letture e, se sono al più `massimo`, i comuni dei giri
 #' @noRd
 area_giri <- function(letture, massimo = 6) {
   if (is.null(letture) || nrow(letture) == 0) {
     return(NULL)
   }
   punti <- letture[, c("latitudine", "longitudine")]
-  indici <- unique(stats::na.omit(indice_comune(unique(letture[["comune_giro"]]))))
+  indici <- unique(stats::na.omit(indice_comune(unique(letture[[
+    "comune_giro"
+  ]]))))
   if (length(indici) == 0 || length(indici) > massimo) {
     return(punti)
   }
@@ -196,14 +171,8 @@ area_giri <- function(letture, massimo = 6) {
   )
 }
 
-#' Tiene le letture da disegnare nella ricerca dei giri quando sono troppe
-#'
-#' Restano per prime le letture fuori giro o fuori comune, poi le più recenti.
-#'
-#' @param df Letture trovate.
-#' @param massimo Numero massimo di letture da disegnare.
-#' @return Le letture da disegnare, in ordine di tempo. L'attributo `totale`
-#'   riporta quante erano.
+#' Letture da disegnare nella ricerca dei giri: prima le incongruenze, poi le più recenti
+#' @return In ordine di tempo, con l'attributo `totale`.
 #' @noRd
 limita_letture_giro <- function(df, massimo = limiti_mappa()$letture_ricerca) {
   if (is.null(df)) {
@@ -222,10 +191,7 @@ limita_letture_giro <- function(df, massimo = limiti_mappa()$letture_ricerca) {
   structure(df, totale = totale)
 }
 
-#' Frase che riassume le letture trovate nella ricerca dei giri
-#'
-#' @param letture Letture trovate.
-#' @return Testo per l'intestazione della mappa, vuoto senza letture.
+#' Frase dell'intestazione della mappa dei giri
 #' @noRd
 descrizione_giri <- function(letture) {
   if (is.null(letture) || nrow(letture) == 0) {
@@ -244,20 +210,11 @@ descrizione_giri <- function(letture) {
   )
 }
 
-#' Tabella interattiva dei giri
+#' Tabella dei giri (reactable), un filtro per colonna
 #'
-#' Una riga per giro, in ordine di letture fuori giro: i giri da guardare
-#' stanno in cima. Un click su una riga la sceglie, e la mappa mostra le
-#' letture di quel giro; un secondo click toglie la scelta. Ogni colonna ha un
-#' filtro: i testi cercano una parte del valore, senza badare alle maiuscole;
-#' la data si cerca come si vede, `24/09`, o come `2025-09`; i numeri
-#' accettano un valore o un confronto, `>0`, `<5`, `>=2`, vedi
-#' `filtro_numerico_js()`. Le righe restano
-#' nell'ordine di `riepilogo`: il numero della riga scelta, che reactable
-#' comunica al server, è la riga del riepilogo anche dopo un ordinamento.
-#'
-#' @param riepilogo Risultato di `riepilogo_giri()`.
-#' @return Widget reactable.
+#' In cima i giri con più letture fuori giro. Un click sceglie un giro, un
+#' secondo lo toglie. Le righe restano nell'ordine di `riepilogo`: reactable
+#' comunica il numero di riga dei dati, non della vista.
 #' @noRd
 tabella_giri <- function(riepilogo) {
   ora <- function(x) format(x, "%H:%M", tz = "UTC")
@@ -268,7 +225,11 @@ tabella_giri <- function(riepilogo) {
     `Comune del giro` = riepilogo$comune_giro,
     # Un giro senza l'informazione ha un trattino: si filtra come gli altri.
     Confermato = dplyr::coalesce(riepilogo$eseguito, "\u2013"),
-    Orario = paste(ora(riepilogo$prima_lettura), ora(riepilogo$ultima_lettura), sep = "\u2013"),
+    Orario = paste(
+      ora(riepilogo$prima_lettura),
+      ora(riepilogo$ultima_lettura),
+      sep = "\u2013"
+    ),
     Letture = riepilogo$letture,
     Bidoni = riepilogo$bidoni,
     `Fuori giro` = riepilogo$fuori_giro,
@@ -277,13 +238,11 @@ tabella_giri <- function(riepilogo) {
     check.names = FALSE,
     stringsAsFactors = FALSE
   )
-  # Le incongruenze in rosso. La data arriva al browser come AAAA-MM-GG, che
-  # si ordina come data, e si mostra come GG/MM/AAAA.
+  # Incongruenze in rosso. La data arriva come AAAA-MM-GG e si mostra GG/MM/AAAA.
   incongruenze <- function(valore) {
     if (isTRUE(valore > 0)) list(color = "#b03a2e", fontWeight = 700)
   }
-  # Un giro non ancora confermato in arancio: non e' un errore, ma va
-  # guardato se resta cosi' a lungo.
+  # Non ancora confermato: arancio.
   non_confermato <- function(valore) {
     if (identical(valore, "NO")) list(color = "#b35c00", fontWeight = 700)
   }
@@ -310,11 +269,19 @@ tabella_giri <- function(riepilogo) {
     tabella,
     columns = list(
       .selection = reactable::colDef(show = FALSE),
-      Data = reactable::colDef(cell = data_italiana, filterMethod = filtro_data, minWidth = 85),
+      Data = reactable::colDef(
+        cell = data_italiana,
+        filterMethod = filtro_data,
+        minWidth = 85
+      ),
       Mezzo = reactable::colDef(minWidth = 115),
       `Giro previsto` = reactable::colDef(minWidth = 120),
       `Comune del giro` = reactable::colDef(minWidth = 110),
-      Confermato = reactable::colDef(style = non_confermato, align = "center", minWidth = 85),
+      Confermato = reactable::colDef(
+        style = non_confermato,
+        align = "center",
+        minWidth = 85
+      ),
       Orario = reactable::colDef(minWidth = 85),
       Letture = numero(minWidth = 60),
       Bidoni = numero(minWidth = 60),
@@ -338,10 +305,7 @@ tabella_giri <- function(riepilogo) {
   )
 }
 
-#' Filtro di reactable per le colonne di numeri
-#'
-#' Accetta un valore, `3`, oppure un confronto: `>0`, `<5`, `>=2`, `<=10`,
-#' `=4`. Un testo che non è nessuno dei due non filtra niente.
+#' Filtro reactable per i numeri: un valore o un confronto (`>0`, `<5`, `>=2`)
 #' @noRd
 filtro_numerico_js <- function() {
   reactable::JS(paste(

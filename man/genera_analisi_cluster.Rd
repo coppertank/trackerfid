@@ -2,7 +2,7 @@
 % Please edit documentation in R/generate_cluster_analysis.R
 \name{genera_analisi_cluster}
 \alias{genera_analisi_cluster}
-\title{Analisi dei cluster spaziali da un file CSV di letture RFID}
+\title{Analisi dei cluster spaziali da un file di letture RFID}
 \usage{
 genera_analisi_cluster(
   csv_path,
@@ -13,45 +13,26 @@ genera_analisi_cluster(
 )
 }
 \arguments{
-\item{csv_path}{Percorso del file CSV, nello stesso formato accettato dall'app.}
+\item{csv_path}{File di letture, in un formato accettato dall'app.}
 
-\item{data_inizio, data_fine}{Estremi del periodo di analisi, inclusi. Se
-mancano entrambi si analizza l'anno solare più recente del dataset; se ne
-manca uno, si completa con l'inizio o la fine dell'anno dell'altro.}
+\item{data_inizio, data_fine}{Periodo di analisi, inclusi. Senza tutti e
+due: l'anno più recente del dataset; con uno solo, completato con
+l'anno dell'altro.}
 
-\item{eps_m}{Raggio di ricerca di DBSCAN in metri: due letture entro questa
-distanza appartengono allo stesso cluster.}
+\item{eps_m}{Raggio di DBSCAN in metri.}
 
-\item{min_pts}{Numero minimo di letture per formare un cluster. Con 1 ogni
-lettura appartiene a un cluster; con valori maggiori le letture isolate
-finiscono nel cluster 0.}
+\item{min_pts}{Letture minime di un cluster; oltre 1 le isolate vanno nel
+cluster 0.}
 }
 \value{
-Un tibble con 29 colonne, una riga per cluster di ogni RFID:
-identificazione (\code{RFID}, \code{cluster_id}, \code{globale_conteggio_cluster}),
-tempi globali e del cluster, \code{presente_a_database}, \code{cantiere} e
-\code{comune} dell'RFID, \code{comune_geografico} in cui è letto il cluster,
-\code{incongruenza_comune} rispetto al comune dichiarato,
-servizio transponder
-(attuale e cronologia dei cambi), servizio atteso (prevalente e
-composizione), volumi, periodo di analisi, raccolte annue previste e
-presunte, numero di letture, baricentro, \code{cluster_dispersione_90th_m},
-\code{cluster_indice_fiducia} e \code{indicatore_cluster}.
+Tibble di 29 colonne, una riga per cluster.
 }
 \description{
-Legge e valida un file di letture, raggruppa le letture di ogni RFID in
-cluster spaziali con DBSCAN e restituisce una riga per ogni cluster, con
-tempi, numero di letture, baricentro, dispersione, servizio, raccolte
-annue, indice di fiducia e indicatore.
-}
-\details{
-L'analisi riguarda i contenitori. I sacchetti, riconosciuti dal codice RFID
-di 24 caratteri che inizia per \verb{00BD}, sono monouso e restano fuori: il
-risultato è quello di un file che non li contiene.
-
-La funzione non richiede l'app Shiny. Lo script
-\code{system.file("scripts", "generate_cluster_analysis.R", package = "trackerfid")}
-la rende disponibile anche da riga di comando.
+Valida il file, raggruppa con DBSCAN le letture di ogni RFID e
+restituisce una riga per cluster: tempi, letture, baricentro,
+dispersione, servizio, raccolte annue, indice di fiducia e indicatore. I
+sacchetti (codici \verb{00BD...} di 24 caratteri) restano fuori. Da riga di
+comando: \code{system.file("scripts", "generate_cluster_analysis.R", package = "trackerfid")}.
 }
 \examples{
 csv <- system.file("extdata", "sample_rfid_dataset.csv", package = "trackerfid")

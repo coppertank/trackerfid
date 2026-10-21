@@ -1,31 +1,13 @@
-#' Modulo mappa WebGL: logica
+#' Mappa WebGL: base disegnata una volta, dati con i messaggi di `invia_mappa()`
 #'
-#' La mappa di base viene disegnata una sola volta, vedi `mappa_base()`; i
-#' dati e l'inquadratura arrivano dopo, con i messaggi di `invia_mappa()`,
-#' così filtri e ricerche non ricaricano lo sfondo. I messaggi partono solo
-#' quando la scheda della mappa è visibile: una mappa nascosta non riceve
-#' dati che nessuno guarda. Nel browser `mappa.js` tiene in attesa quelli che
-#' arrivano prima che la mappa sia pronta.
-#'
-#' Sulla mappa principale zoom e spostamenti restano nel browser: le bolle di
-#' cantieri e comuni arrivano con i dati, e ogni livello si vede solo nella
-#' sua fascia di zoom, vedi `livelli_mappa()`. Le bolle partono in un
-#' messaggio a sé, prima dei bidoni: con centinaia di migliaia di bidoni il
-#' browser impiega qualche decimo di secondo a raggrupparli, e le bolle, che
-#' da lontano sono le sole visibili, non devono aspettarli.
-#'
-#' Il click su un bidone apre il dettaglio e il popup: il server lo costruisce
-#' con `popup_lettura()`, dalla lettura disegnata.
-#'
-#' @param id Identificativo del modulo.
-#' @param dati Reactive con le letture da disegnare (o `NULL`).
-#' @param modalita `"cluster"`, `"rfid"`, `"utenza"` o `"giro"`, vedi
-#'   `livelli_mappa()`.
-#' @param dati_vista Reactive con i punti su cui inquadrare la mappa: la vista
-#'   si adatta solo quando questo valore cambia.
-#' @param attiva Reactive: `TRUE` quando la scheda della mappa è visibile.
-#' @param messaggio Reactive con un eventuale avviso da mostrare sulla mappa.
-#' @return Reactive con l'ultimo marker cliccato: lista con `rfid` e `quando`.
+#' I messaggi partono solo con la scheda visibile. Sulla mappa principale le
+#' bolle partono prima dei bidoni; zoom e spostamenti restano nel browser.
+#' @param dati Reactive con le letture da disegnare, o `NULL`.
+#' @param dati_vista Reactive con i punti da inquadrare: la vista cambia solo
+#'   quando cambia questo.
+#' @param attiva Reactive: `TRUE` con la scheda visibile.
+#' @param messaggio Reactive con un avviso da mostrare sulla mappa.
+#' @return Reactive con l'ultimo marker cliccato: `rfid` e `quando`.
 #' @noRd
 mod_mappa_server <- function(
   id,
@@ -44,8 +26,7 @@ mod_mappa_server <- function(
     observeEvent(dati(), in_attesa$dati <- TRUE, ignoreNULL = FALSE)
     observeEvent(dati_vista(), in_attesa$vista <- TRUE, ignoreNULL = FALSE)
 
-    # Letture disegnate: la posizione di un marker nel messaggio è il suo
-    # numero di riga qui, da 0.
+    # Letture disegnate: un marker porta il suo numero di riga, da 0.
     disegnati <- reactiveVal(NULL)
 
     observe({
@@ -61,9 +42,7 @@ mod_mappa_server <- function(
         disegnati(righe)
         dati <- dati_mappa(righe, modalita, riquadri = df)
         if (modalita == "cluster") {
-          # Prima le bolle, poche e le sole visibili da lontano; poi i
-          # bidoni, che il browser raggruppa in qualche decimo di secondo:
-          # così le bolle non aspettano i bidoni.
+          # Prima le bolle, le sole visibili da lontano, poi i bidoni.
           invia_mappa(session, id_mappa, "bolle", dati = dati[campi_bolle()])
           dati <- dati["punti"]
         }
@@ -109,8 +88,6 @@ mod_mappa_server <- function(
           descrizione <- if (territorio) {
             descrizione_vista(livello_aggregazione(input$mappa_zoom))
           }
-          # Le letture che superano i filtri, se il modulo dei filtri le ha
-          # contate, e gli RFID sulla mappa, ognuno nella sua ultima lettura.
           letture <- attr(df, "letture")
           paste0(
             if (!is.null(letture)) {
@@ -122,7 +99,6 @@ mod_mappa_server <- function(
           )
         },
         rfid = {
-          # Sulla mappa le ultime letture di ogni RFID; tutte nella tabella.
           limiti <- limiti_mappa()
           sulla_mappa <- nrow(limita_letture_ricerca(df))
           paste0(

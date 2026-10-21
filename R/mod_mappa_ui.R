@@ -1,14 +1,6 @@
-#' Modulo mappa WebGL: interfaccia
-#'
-#' La legenda sta sopra la mappa, in basso a destra, in un riquadro che si
-#' apre e si chiude con un click sul titolo. In basso a sinistra può stare un
-#' altro riquadro, ad esempio la tabella di una ricerca: vedi
-#' `riquadro_tabella_mappa()`.
-#'
-#' @param id Identificativo del modulo.
-#' @param modalita `"cluster"` (mappa principale), `"rfid"`, `"utenza"` o
-#'   `"giro"`.
-#' @param sovrapposto Contenuto facoltativo da mettere sopra la mappa.
+#' Mappa WebGL con legenda collassabile e un riquadro facoltativo sopra
+#' @param modalita `"cluster"`, `"rfid"`, `"utenza"` o `"giro"`.
+#' @param sovrapposto Contenuto in basso a sinistra, ad esempio una tabella.
 #' @noRd
 mod_mappa_ui <- function(
   id,

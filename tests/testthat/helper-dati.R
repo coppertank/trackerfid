@@ -15,7 +15,10 @@ dati_esempio_completi <- local({
   cache <- NULL
   function() {
     if (is.null(cache)) {
-      cache <<- carica_dataset(percorso_dataset_esempio(), colonne = "tutte")$dati
+      cache <<- carica_dataset(
+        percorso_dataset_esempio(),
+        colonne = "tutte"
+      )$dati
     }
     cache
   }
@@ -194,7 +197,12 @@ tipi_archivio <- function(colonne = "app") {
     colonne_archivio(colonne)
   )
   tipi[["giorno_lettura"]] <- "TIMESTAMP"
-  tipi[c("latitudine", "longitudine", colonne_quantita(), colonna_distanza())] <- "DOUBLE"
+  tipi[c(
+    "latitudine",
+    "longitudine",
+    colonne_quantita(),
+    colonna_distanza()
+  )] <- "DOUBLE"
   tipi[["riga"]] <- "BIGINT"
   preparazione <- intersect(names(tipi), colonne_preparazione())
   tipi[preparazione] <- tipi_colonne_preparazione()[preparazione]
@@ -250,15 +258,27 @@ archivio_da_letture <- function(letture, origine = "letture") {
         converti_data_ora(valori)
       },
       DOUBLE = if (is.null(valori)) rep(NA_real_, n) else as.numeric(valori),
-      DATE = if (is.null(valori)) as.Date(rep(NA_real_, n)) else as.Date(valori),
-      INTEGER = if (is.null(valori)) rep(NA_integer_, n) else as.integer(valori),
+      DATE = if (is.null(valori)) {
+        as.Date(rep(NA_real_, n))
+      } else {
+        as.Date(valori)
+      },
+      INTEGER = if (is.null(valori)) {
+        rep(NA_integer_, n)
+      } else {
+        as.integer(valori)
+      },
       BOOLEAN = if (is.null(valori)) rep(NA, n) else as.logical(valori),
       BIGINT = seq_len(n),
       if (is.null(valori)) rep(NA_character_, n) else as.character(valori)
     )
   })
   con <- connessione_duckdb()
-  DBI::dbWriteTable(con, "letture", as.data.frame(tabella, stringsAsFactors = FALSE))
+  DBI::dbWriteTable(
+    con,
+    "letture",
+    as.data.frame(tabella, stringsAsFactors = FALSE)
+  )
   nuovo_archivio(con, "letture", origine = origine)
 }
 
@@ -285,68 +305,105 @@ attributi_reactable <- function(widget) {
 scrivi_origine_prova <- function(cartella) {
   dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
   file <- file_origine(cartella)
-  scrivi <- function(nome, righe) writeLines(righe, file[[nome]], useBytes = TRUE)
-  scrivi("test_mezzi", c(
-    "TARGA_VEICOLO;MATRICOLA_VEICOLO;ESITO TEST SEZIONE B;ULTIMA DATA VERBALE SEZIONE B",
-    "AB123CD;1601;POSITIVO;2026-07-31 10.30",
-    "ZZ999ZZ;1609;NEGATIVO;2026-07-31 10.30",
-    "XY000XY;1602;-;-"
-  ))
-  scrivi("letture", c(
-    "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
-    "VIA ROMA 1, LIMENA;03/08/2026 08.15.00;123;AB123CD;45,4700;11,8400;2",
-    "VIA ROMA 1, LIMENA;17/08/2026 08.20.00;123;AB123CD;45,4701;11,8401;1",
-    "VIA ROMA 1, LIMENA;31/08/2026 08.10.00;123;AB123CD;45,4700;11,8400;1",
-    "VIA PO 3, Limena, PD;03/08/2026 09.00.00;999;AB123CD;45,4710;11,8410;1",
-    "VIA PO 5, LIMENA;03/08/2026 09.05.00;00BD00000000000000000001;AB123CD;45,4711;11,8411;1",
-    "VIA DEI CAMPI 2, TAGGI DI PROVA;03/08/2026 09.25.00;128;AB123CD;45,4705;11,8405;1",
-    "CANNAREGIO 1, VENEZIA;03/08/2026 09.30.00;129;AB123CD;45,4400;12,3300;1",
-    # scartate: posizione zero, senza comune, mezzo con test negativo, lettura
-    # prima del test
-    "VIA PO 7, LIMENA;03/08/2026 09.10.00;124;AB123CD;0;0;1",
-    "SENZA COMUNE;03/08/2026 09.15.00;125;AB123CD;45,4712;11,8412;1",
-    "VIA PO 9, LIMENA;03/08/2026 09.20.00;126;ZZ999ZZ;45,4713;11,8413;1",
-    "VIA PO 9, LIMENA;30/07/2026 09.20.00;127;AB123CD;45,4713;11,8413;1"
-  ))
-  scrivi("contenitori", c(
-    "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria",
-    "0000000123,SECCO,120,QUINDICINALE,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,31",
-    ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,ATTIVA,U9,VALSTAGNA,31"
-  ))
-  scrivi("gruppi_sacchetti", c(
-    "codice_uhf,codice_gruppo_sacchetti",
-    "00BD00000000000000000001,G1"
-  ))
-  scrivi("servizi_sacchetti", c(
-    "codice_gruppo_sacchetti,id_servizio,ultima_variazione",
-    "G1,S_VECCHIA,2024-01-01 10:00:00",
-    "G1,S1,2025-01-01 10:00:00"
-  ))
-  scrivi("calendario", c(
-    "giorno,ora_inizio,ora_fine,matricola_mezzo,id_giro,eseguito,descrizione_servizio,comune",
-    "2026-08-03,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
-    "2026-08-05,06:00:00,12:00:00,X1601,12,NO,CARTA/CARTONE PAP,LIMENA",
-    "2026-08-10,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
-    "2026-08-10,06:00:00,12:00:00,X1602,13,SI,VETRO PAP,LIMENA",
-    "2026-08-17,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
-    "2026-08-31,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,ROSA'",
-    "2026-08-31,06:00:00,12:00:00,,11,SI,SECCO PAP,LIMENA"
-  ))
-  scrivi("componenti", c(
-    "ID_SERVIZIO,DATA_INIZIO_DECORRENZA,DATA_FINE_DECORRENZA,NUCLEO_RESIDENTI,NUCLEO_NON_RESIDENTI,NUCLEO_TOTALE,TIPO_CATEGORIA,CATEGORIA,SOTTOCATEGORIA",
-    "F1,2020-01-01 00:00:00,2026-08-15 00:00:00,2,0,2,DOMESTICA,ABITAZIONE,D",
-    "F1,2026-08-15 00:00:00,,3,1,4,DOMESTICA,ABITAZIONE,D"
-  ))
-  scrivi("manovre", c(
-    "id_servizio,data_inizio_dichiarazione,data_fine_dichiarazione",
-    "F1,2026-08-20,"
-  ))
-  scrivi("storiche", c(
-    "codice_transponder,data_lettura",
-    "123,2025-03-01 07:00:00",
-    "123,2025-03-01 07:00:00",
-    "00BD00000000000000000001,2025-03-02 07:00:00",
-    ",2025-03-03 07:00:00"
-  ))
+  scrivi <- function(nome, righe) {
+    writeLines(righe, file[[nome]], useBytes = TRUE)
+  }
+  scrivi(
+    "test_mezzi",
+    c(
+      "TARGA_VEICOLO;MATRICOLA_VEICOLO;ESITO TEST SEZIONE B;ULTIMA DATA VERBALE SEZIONE B",
+      "AB123CD;1601;POSITIVO;2026-07-31 10.30",
+      "ZZ999ZZ;1609;NEGATIVO;2026-07-31 10.30",
+      "XY000XY;1602;-;-"
+    )
+  )
+  scrivi(
+    "letture",
+    c(
+      "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
+      "VIA ROMA 1, LIMENA;03/08/2026 08.15.00;123;AB123CD;45,4700;11,8400;2",
+      "VIA ROMA 1, LIMENA;17/08/2026 08.20.00;123;AB123CD;45,4701;11,8401;1",
+      "VIA ROMA 1, LIMENA;31/08/2026 08.10.00;123;AB123CD;45,4700;11,8400;1",
+      "VIA PO 3, Limena, PD;03/08/2026 09.00.00;999;AB123CD;45,4710;11,8410;1",
+      "VIA PO 5, LIMENA;03/08/2026 09.05.00;00BD00000000000000000001;AB123CD;45,4711;11,8411;1",
+      "VIA DEI CAMPI 2, TAGGI DI PROVA;03/08/2026 09.25.00;128;AB123CD;45,4705;11,8405;1",
+      "CANNAREGIO 1, VENEZIA;03/08/2026 09.30.00;129;AB123CD;45,4400;12,3300;1",
+      # scartate: posizione zero, senza comune, mezzo con test negativo, lettura
+      # prima del test
+      "VIA PO 7, LIMENA;03/08/2026 09.10.00;124;AB123CD;0;0;1",
+      "SENZA COMUNE;03/08/2026 09.15.00;125;AB123CD;45,4712;11,8412;1",
+      "VIA PO 9, LIMENA;03/08/2026 09.20.00;126;ZZ999ZZ;45,4713;11,8413;1",
+      "VIA PO 9, LIMENA;30/07/2026 09.20.00;127;AB123CD;45,4713;11,8413;1"
+    )
+  )
+  scrivi(
+    "contenitori",
+    c(
+      "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria",
+      "0000000123,SECCO,120,QUINDICINALE,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,31",
+      ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,ATTIVA,U9,VALSTAGNA,31"
+    )
+  )
+  scrivi(
+    "gruppi_sacchetti",
+    c(
+      "codice_uhf,codice_gruppo_sacchetti",
+      "00BD00000000000000000001,G1"
+    )
+  )
+  scrivi(
+    "servizi_sacchetti",
+    c(
+      "codice_gruppo_sacchetti,id_servizio,ultima_variazione",
+      "G1,S_VECCHIA,2024-01-01 10:00:00",
+      "G1,S1,2025-01-01 10:00:00"
+    )
+  )
+  scrivi(
+    "calendario",
+    c(
+      "giorno,ora_inizio,ora_fine,matricola_mezzo,id_giro,eseguito,descrizione_servizio,comune",
+      "2026-08-03,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
+      "2026-08-05,06:00:00,12:00:00,X1601,12,NO,CARTA/CARTONE PAP,LIMENA",
+      "2026-08-10,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
+      "2026-08-10,06:00:00,12:00:00,X1602,13,SI,VETRO PAP,LIMENA",
+      "2026-08-17,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
+      "2026-08-31,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,ROSA'",
+      "2026-08-31,06:00:00,12:00:00,,11,SI,SECCO PAP,LIMENA"
+    )
+  )
+  scrivi(
+    "non_pianificati",
+    c(
+      "giorno,matricola_mezzo,descrizione_servizio,comune_giro",
+      "2026-08-03,X1601,CARTA CONT.STRADALI,LIMENA"
+    )
+  )
+  scrivi(
+    "componenti",
+    c(
+      "ID_SERVIZIO,DATA_INIZIO_DECORRENZA,DATA_FINE_DECORRENZA,NUCLEO_RESIDENTI,NUCLEO_NON_RESIDENTI,NUCLEO_TOTALE,TIPO_CATEGORIA,CATEGORIA,SOTTOCATEGORIA",
+      "F1,2020-01-01 00:00:00,2026-08-15 00:00:00,2,0,2,DOMESTICA,ABITAZIONE,D",
+      "F1,2026-08-15 00:00:00,,3,1,4,DOMESTICA,ABITAZIONE,D"
+    )
+  )
+  scrivi(
+    "manovre",
+    c(
+      "id_servizio,data_inizio_dichiarazione,data_fine_dichiarazione",
+      "F1,2026-08-20,"
+    )
+  )
+  scrivi(
+    "storiche",
+    c(
+      "giorno,codice_transponder,id_trasmissione",
+      "2025-03-01 07:00:00,123,T1",
+      "2025-03-01 07:00:00,123,T1",
+      "2025-03-02 07:00:00,00BD00000000000000000001,T1",
+      "2025-03-03 07:00:00,,T2",
+      "2026-08-21 07:00:00,123,T3"
+    )
+  )
   file
 }

@@ -1,20 +1,10 @@
-# Selezioni dell'archivio: le letture di un periodo, filtrate, cercate.
-#
-# Il periodo di analisi non copia le letture: è una selezione dell'archivio,
-# cioè l'archivio più la condizione SQL sul periodo. Filtri, ricerche, giri e
-# dettaglio interrogano DuckDB e ricevono in R solo le righe che servono:
-# l'ultima lettura di ogni bidone, le letture degli RFID cercati, quelle di un
-# giorno. Le regole sono quelle descritte nelle funzioni in R che lavorano sui
-# data frame: `aggiungi_servizio_icona()`, `deduplica_ultimo_rfid()` e le
-# altre citate qui sotto.
+# Interrogazioni sull'archivio: un periodo è l'archivio più una condizione
+# SQL, senza copie. Filtri, ricerche, giri e dettaglio portano in R solo le
+# righe che servono.
 
-#' Seleziona le letture di un periodo
-#'
-#' @param archivio Archivio delle letture, vedi `nuovo_archivio()`.
-#' @param periodo Vettore di due date, estremi inclusi, oppure `NULL` per
-#'   tutte le letture.
-#' @return Lista di classe `selezione_letture` con `archivio`, `periodo`,
-#'   `n` (letture) e `n_rfid`.
+#' Selezione delle letture di un periodo (due date incluse, o `NULL` per tutte)
+#' @return Lista di classe `selezione_letture`: `archivio`, `periodo`, `n`,
+#'   `n_rfid`.
 #' @noRd
 seleziona_periodo <- function(archivio, periodo = NULL) {
   selezione <- structure(
@@ -55,22 +45,17 @@ sql_periodo <- function(selezione) {
 #' Condizione SQL che riconosce i sacchetti, come `rfid_sacchetto()`
 #' @noRd
 sql_sacchetto <- function(colonna = "RFID") {
-  sprintf("(length(%s) = 24 AND upper(substr(%s, 1, 4)) = '00BD')", colonna, colonna)
+  sprintf(
+    "(length(%s) = 24 AND upper(substr(%s, 1, 4)) = '00BD')",
+    colonna,
+    colonna
+  )
 }
 
-#' Tabella del servizio stimato dei non censiti in un periodo
+#' Tabella temporanea del servizio stimato dei non censiti nel periodo
 #'
-#' La stima segue `servizio_prevalente_non_censiti()`: per ogni RFID le sue
-#' letture "Non Presente" del periodo con un servizio atteso; la tipologia più
-#' letta, se raggiunge la soglia, e al suo interno il servizio atteso più
-#' letto. Gli RFID sotto la soglia hanno la stima mancante.
-#'
-#' La tabella si calcola una volta per periodo e resta nel database finché
-#' l'archivio è aperto: la usano tutte le interrogazioni del periodo, e tutte
-#' le sessioni che guardano lo stesso periodo dello stesso archivio.
-#'
-#' @param selezione Selezione delle letture.
-#' @param soglia Quota minima della tipologia più letta.
+#' Regola di `servizio_prevalente_non_censiti()`. Calcolata una volta per
+#' periodo, resta finché l'archivio è aperto ed è condivisa tra le sessioni.
 #' @return Il nome della tabella, con `RFID` e `stimato`.
 #' @noRd
 tabella_stima <- function(selezione, soglia = 0.8) {
@@ -78,7 +63,12 @@ tabella_stima <- function(selezione, soglia = 0.8) {
   nome <- if (is.null(periodo)) {
     "stima_tutto"
   } else {
-    paste0("stima_", format(periodo[1], "%Y%m%d"), "_", format(periodo[2], "%Y%m%d"))
+    paste0(
+      "stima_",
+      format(periodo[1], "%Y%m%d"),
+      "_",
+      format(periodo[2], "%Y%m%d")
+    )
   }
   DBI::dbExecute(
     selezione$archivio$con,
@@ -101,16 +91,7 @@ tabella_stima <- function(selezione, soglia = 0.8) {
   nome
 }
 
-#' Letture di una selezione con il servizio dell'icona
-#'
-#' Una sottoquery con le letture del periodo e la colonna `servizio_icona`,
-#' calcolata come `aggiungi_servizio_icona()`: per un censito il servizio a
-#' database, per un non censito il servizio stimato dalle sue letture del
-#' periodo, vedi `tabella_stima()`, per un sacchetto il servizio dei
-#' sacchetti.
-#'
-#' @param selezione Selezione delle letture.
-#' @return Testo SQL, da usare tra parentesi in un `FROM`.
+#' Sottoquery delle letture del periodo con `servizio_icona` (vedi `aggiungi_servizio_icona()`)
 #' @noRd
 sql_con_icona <- function(selezione) {
   sprintf(
@@ -126,15 +107,10 @@ sql_con_icona <- function(selezione) {
   )
 }
 
-#' Righe dell'ultima lettura di ogni RFID tra quelle che soddisfano una condizione
+#' SQL delle righe dell'ultima lettura di ogni RFID che soddisfa una condizione
 #'
-#' A parità di istante resta la lettura che viene prima nel file, come in
-#' `deduplica_ultimo_rfid()`. `arg_max()` è molto più veloce di una funzione
-#' finestra su milioni di letture.
-#'
-#' @param selezione Selezione delle letture.
-#' @param condizione Condizione SQL sulle letture di `sql_con_icona()`.
-#' @return Testo SQL che dà la colonna `riga`.
+#' Con `arg_max()`, più veloce di una funzione finestra; a parità di istante
+#' vale l'ultima riga del file.
 #' @noRd
 sql_ultime <- function(selezione, condizione = "TRUE") {
   sprintf(
@@ -150,31 +126,13 @@ colonne_risultato <- function(icona = TRUE) {
   paste(c(colonne_app(), if (icona) "servizio_icona"), collapse = ", ")
 }
 
-#' Condizione SQL dei filtri della mappa principale
+#' Condizione SQL dei filtri della mappa principale, sulle letture di `sql_con_icona()`
 #'
-#' Le regole sono quelle dei filtri laterali: i servizi, i giri, i cantieri e
-#' le voci delle due coerenze si filtrano per esclusione, i comuni per scelta,
-#' lo stato a database per scelta. Un valore mancante non è mai tra quelli
-#' esclusi. Gli RFID non censiti con la stima incerta passano solo con
-#' `includi_stima_incerta`. Una lettura di cui la coerenza del servizio non si
-#' può dire sta con quelle coerenti; le letture senza cantiere corrispondono
-#' alla voce `senza_cantiere()`; passano le letture il cui comune assegnato è
-#' tra quelli scelti.
-#'
-#' La condizione va applicata alle letture di `sql_con_icona()`, che hanno il
-#' servizio dell'icona.
-#'
-#' @param con Connessione, per le virgolette dei testi.
-#' @param stato_db Valori di `presente_a_database` da mantenere.
-#' @param servizi_esclusi Servizi deselezionati.
-#' @param includi_stima_incerta Mantiene i non censiti senza servizio stimato.
-#' @param giri_esclusi Giri deselezionati, con il nome del calendario.
-#' @param coerenza_escluse Voci di `stati_coerenza()` deselezionate.
-#' @param cantieri_esclusi Cantieri deselezionati.
-#' @param comuni Comuni da mantenere. Tutti, se il vettore è vuoto.
-#' @param coerenza_comune_escluse Voci di `stati_coerenza_comune()`
-#'   deselezionate.
-#' @return Testo SQL.
+#' Servizi, giri, cantieri e coerenze per esclusione (un mancante non è mai
+#' escluso), comuni e stato a database per scelta. I non censiti con la
+#' stima incerta passano con `includi_stima_incerta`; una coerenza del
+#' servizio mancante sta con le coerenti.
+#' @param comuni Comuni da tenere; vuoto: tutti.
 #' @noRd
 condizione_filtri <- function(
   con,
@@ -247,16 +205,9 @@ condizione_filtri <- function(
 
 #' Ultima lettura di ogni RFID tra quelle che superano i filtri
 #'
-#' Come `deduplica_ultimo_rfid()` dopo i filtri: prima i filtri su tutte le
-#' letture del periodo, poi l'ultima per RFID. A parità di istante resta la
-#' lettura che viene prima nel file.
-#'
-#' @param selezione Selezione delle letture.
-#' @param ... Filtri, vedi `condizione_filtri()`.
-#' @param colonne Colonne da restituire. Tutte quelle di `colonne_app()` e
-#'   `servizio_icona`, se manca.
-#' @return Tibble con una riga per RFID, dalla lettura più recente. Ha sempre
-#'   anche la colonna `riga`, la posizione della lettura nel file.
+#' Prima i filtri su tutte le letture del periodo, poi l'ultima per RFID.
+#' @param ... Filtri di `condizione_filtri()`.
+#' @return Una riga per RFID, con la colonna `riga`.
 #' @noRd
 ultime_letture <- function(selezione, ..., colonne = NULL) {
   colonne <- unique(c(colonne %||% c(colonne_app(), "servizio_icona"), "riga"))
@@ -271,31 +222,24 @@ ultime_letture <- function(selezione, ..., colonne = NULL) {
   )
 }
 
-#' Numero delle letture che superano i filtri
-#'
-#' Le letture del periodo, non le ultime: è il numero che l'intestazione della
-#' mappa principale riporta accanto agli RFID.
-#'
+#' Numero delle letture del periodo che superano i filtri
 #' @inheritParams ultime_letture
-#' @return Un intero.
 #' @noRd
 conta_letture <- function(selezione, ...) {
-  as.integer(interroga(
-    selezione$archivio,
-    sprintf(
-      "SELECT count(*) AS n FROM %s WHERE %s",
-      sql_con_icona(selezione),
-      condizione_filtri(selezione$archivio$con, ...)
-    )
-  )$n)
+  as.integer(
+    interroga(
+      selezione$archivio,
+      sprintf(
+        "SELECT count(*) AS n FROM %s WHERE %s",
+        sql_con_icona(selezione),
+        condizione_filtri(selezione$archivio$con, ...)
+      )
+    )$n
+  )
 }
 
-#' Letture per cantiere tra quelle che superano i filtri
-#'
+#' Letture per cantiere che superano i filtri, nell'ordine di `ordina_cantieri()`
 #' @inheritParams ultime_letture
-#' @return Vettore intero con nome, nell'ordine di `ordina_cantieri()`: le
-#'   letture senza cantiere stanno sotto `senza_cantiere()`. Vuoto se nessuna
-#'   lettura ha un cantiere.
 #' @noRd
 conteggi_cantieri <- function(selezione, ...) {
   conteggi <- interroga(
@@ -314,14 +258,9 @@ conteggi_cantieri <- function(selezione, ...) {
   stats::setNames(as.integer(conteggi$n[match(ordine, nomi)]), ordine)
 }
 
-#' Valori presenti nel periodo, per le voci dei filtri
-#'
-#' @param selezione Selezione delle letture.
-#' @return Lista con `servizi` (servizi dell'icona, in ordine di
-#'   `ordina_servizi()`), `giri` (giri del calendario), `cantieri` (in ordine
-#'   di `ordina_cantieri()`), `comuni` (data frame con `cantiere` e
-#'   `comune_assegnato`) e `con_geografia` (`TRUE` se almeno una lettura ha
-#'   un cantiere).
+#' Voci dei filtri presenti nel periodo
+#' @return Lista con `servizi`, `giri`, `cantieri`, `comuni` (con
+#'   `cantiere` e `comune_assegnato`) e `con_geografia`.
 #' @noRd
 scelte_periodo <- function(selezione) {
   servizi <- interroga(
@@ -350,17 +289,13 @@ scelte_periodo <- function(selezione) {
   )
 }
 
-#' Riquadro delle letture dei cantieri e dei comuni scelti
-#'
-#' È l'area su cui la mappa principale si inquadra: cambia con cantieri e
-#' comuni, non con gli altri filtri.
-#'
-#' @param selezione Selezione delle letture.
-#' @param cantieri_esclusi,comuni Vedi `condizione_filtri()`.
-#' @return Data frame con due punti, gli angoli del riquadro, con
-#'   `latitudine` e `longitudine`; zero righe senza letture.
+#' Riquadro delle letture dei cantieri e comuni scelti: due punti, o zero righe
 #' @noRd
-area_filtri <- function(selezione, cantieri_esclusi = character(0), comuni = character(0)) {
+area_filtri <- function(
+  selezione,
+  cantieri_esclusi = character(0),
+  comuni = character(0)
+) {
   condizione <- condizione_filtri(
     selezione$archivio$con,
     cantieri_esclusi = cantieri_esclusi,
@@ -394,16 +329,8 @@ sql_codici <- function(con, codici) {
   sql_elenco(con, unique(stringr::str_to_upper(codici)))
 }
 
-#' Tutte le letture degli RFID cercati
-#'
-#' Il confronto dei codici non bada a maiuscole e minuscole, come
-#' `codice_in()`.
-#'
-#' @param selezione Selezione delle letture.
-#' @param codici RFID cercati.
-#' @return Tibble con le letture trovate, ordinate per RFID e data
-#'   decrescente, con `servizio_icona` e `is_ultimo`, che marca la lettura
-#'   più recente di ogni RFID.
+#' Letture degli RFID cercati, senza badare alle maiuscole
+#' @return Per RFID e data decrescente, con `servizio_icona` e `is_ultimo`.
 #' @noRd
 cerca_per_rfid <- function(selezione, codici) {
   interroga(
@@ -421,15 +348,7 @@ cerca_per_rfid <- function(selezione, codici) {
   )
 }
 
-#' Ultima lettura dei bidoni la cui utenza attuale è tra quelle cercate
-#'
-#' Un contenitore passato da un'utenza a un'altra compare solo cercando
-#' l'utenza attuale: conta l'utenza dell'ultima lettura del periodo.
-#'
-#' @param selezione Selezione delle letture.
-#' @param utenze Utenze cercate.
-#' @return Tibble con l'ultima lettura di ogni RFID trovato, ordinato per
-#'   utenza e RFID.
+#' Ultima lettura dei bidoni la cui utenza attuale, nell'ultima lettura, è tra quelle cercate
 #' @noRd
 filtra_ultimo_per_utenza <- function(selezione, utenze) {
   interroga(
@@ -447,12 +366,7 @@ filtra_ultimo_per_utenza <- function(selezione, utenze) {
   )
 }
 
-#' Mezzi presenti nelle letture di una selezione
-#'
-#' @param selezione Selezione delle letture, oppure `NULL`.
-#' @return Vettore delle matricole, in ordine: i nomi sono le etichette per
-#'   l'elenco, con matricola e targa. Per ogni matricola vale la targa della
-#'   prima lettura del file.
+#' Matricole dei mezzi, con etichette "matricola (targa)" per l'elenco
 #' @noRd
 mezzi_presenti <- function(selezione) {
   if (is.null(selezione) || selezione$n == 0) {
@@ -475,10 +389,7 @@ mezzi_presenti <- function(selezione) {
   )
 }
 
-#' Primo e ultimo giorno con letture in una selezione
-#'
-#' @param selezione Selezione delle letture, oppure `NULL`.
-#' @return Vettore di due date, `NULL` senza letture.
+#' Primo e ultimo giorno con letture, o `NULL`
 #' @noRd
 giorni_letture <- function(selezione) {
   if (is.null(selezione) || selezione$n == 0) {
@@ -495,16 +406,10 @@ giorni_letture <- function(selezione) {
   c(estremi$primo, estremi$ultimo)
 }
 
-#' Letture dei mezzi in un intervallo di giorni
-#'
-#' @param selezione Selezione delle letture.
-#' @param mezzo Matricola del mezzo. Tutti i mezzi, se manca o è vuota.
-#' @param dal,al Primo e ultimo giorno, inclusi.
-#' @param solo Voci tra `"fuori_giro"` e `"fuori_comune"`: restano le sole
-#'   letture con almeno una delle incongruenze indicate, vedi
-#'   `incongruenze_comune()`. Tutte, se è vuoto.
-#' @return Tibble con le letture trovate, in ordine di tempo, con
-#'   `servizio_icona` e la colonna `giorno`.
+#' Letture dei mezzi in un intervallo di giorni, per la ricerca dei giri
+#' @param mezzo Matricola; tutti se vuota.
+#' @param solo Tra `"fuori_giro"` e `"fuori_comune"`: tiene le letture con
+#'   almeno una delle due; vuoto: tutte.
 #' @noRd
 cerca_giri <- function(selezione, mezzo = NULL, dal, al, solo = character(0)) {
   con <- selezione$archivio$con
@@ -521,7 +426,10 @@ cerca_giri <- function(selezione, mezzo = NULL, dal, al, solo = character(0)) {
       sprintf("matricola_veicolo = %s", DBI::dbQuoteString(con, mezzo))
     )
   }
-  voci <- stati_coerenza_comune()[intersect(solo, c("fuori_giro", "fuori_comune"))]
+  voci <- stati_coerenza_comune()[intersect(
+    solo,
+    c("fuori_giro", "fuori_comune")
+  )]
   if (length(voci) > 0) {
     condizioni <- c(
       condizioni,
@@ -541,12 +449,8 @@ cerca_giri <- function(selezione, mezzo = NULL, dal, al, solo = character(0)) {
   trovate
 }
 
-#' Letture di un RFID
-#'
-#' @param origine Selezione delle letture, per le sole letture del periodo,
-#'   oppure archivio, per tutte.
-#' @param rfid Codice RFID, esatto.
-#' @return Tibble con le letture, in ordine di tempo.
+#' Letture di un RFID, in ordine di tempo
+#' @param origine Selezione (letture del periodo) o archivio (tutte).
 #' @noRd
 letture_del_rfid <- function(origine, rfid) {
   if (inherits(origine, "selezione_letture")) {
@@ -568,11 +472,7 @@ letture_del_rfid <- function(origine, rfid) {
   )
 }
 
-#' Letture di una selezione, per l'analisi dei cluster
-#'
-#' @param selezione Selezione delle letture.
-#' @return Tibble con le letture del periodo, nell'ordine del file, con le
-#'   colonne di `colonne_app()`.
+#' Tutte le letture di una selezione, per l'analisi dei cluster
 #' @noRd
 letture_periodo <- function(selezione) {
   letture_archivio(selezione$archivio, sql_periodo(selezione), colonne_app())
@@ -584,11 +484,13 @@ anni_disponibili <- function(archivio) {
   if (is.null(archivio) || archivio$n == 0) {
     return(numeric(0))
   }
-  as.numeric(interroga(
-    archivio,
-    sprintf(
-      "SELECT DISTINCT year(giorno_lettura) AS anno FROM %s ORDER BY anno DESC",
-      archivio$tabella
-    )
-  )$anno)
+  as.numeric(
+    interroga(
+      archivio,
+      sprintf(
+        "SELECT DISTINCT year(giorno_lettura) AS anno FROM %s ORDER BY anno DESC",
+        archivio$tabella
+      )
+    )$anno
+  )
 }

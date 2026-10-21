@@ -1,21 +1,10 @@
-#' Ricerca dei giri: logica
+#' Ricerca dei giri: letture di un mezzo in un intervallo di giorni, giro per giro
 #'
-#' Trova le letture di un mezzo, o di tutti, in un intervallo di giorni, e le
-#' riassume giro per giro. Lo stato sta sul server: al caricamento di nuove
-#' letture la ricerca torna al giorno più recente, per tutti i mezzi.
-#'
-#' @param id Identificativo del modulo.
-#' @param dati Reactive con le letture del periodo di analisi (o `NULL`).
-#' La mappa disegna le sole letture del giro scelto nella tabella: senza una
-#' scelta non riceve nessun marker, così una ricerca di molti giri non manda
-#' al browser migliaia di letture che nessuno guarda. Inquadra intanto la zona
-#' di tutti i giri trovati.
-#'
-#' @return Lista di reactive: `risultati`, le letture da disegnare sulla
-#'   mappa, cioè quelle del giro scelto in tabella, `NULL` senza una scelta;
-#'   `riepilogo`, la tabella dei giri; `messaggio`, l'avviso da mostrare sulla
-#'   mappa quando non c'è niente da disegnare; `vista`, i punti su cui
-#'   inquadrare la mappa, vedi `area_giri()`.
+#' Stato sul server; nuove letture riportano all'ultimo giorno. La mappa
+#' riceve solo le letture del giro scelto in tabella.
+#' @param dati Reactive con la selezione del periodo, o `NULL`.
+#' @return Lista di reactive: `risultati` (letture del giro scelto, o
+#'   `NULL`), `riepilogo`, `messaggio`, `vista` (`area_giri()`).
 #' @noRd
 mod_giro_server <- function(id, dati) {
   moduleServer(id, function(input, output, session) {
@@ -26,7 +15,7 @@ mod_giro_server <- function(id, dati) {
       solo = character(0)
     )
 
-    # --- Valori predefiniti: nuove letture -------------------------------------
+    # --- Nuove letture --------------------------------------------------------------
     observeEvent(
       dati(),
       {
@@ -104,10 +93,14 @@ mod_giro_server <- function(id, dati) {
 
     output$tabella <- reactable::renderReactable(tabella_giri(riepilogo()))
 
-    # Giro scelto in tabella: la riga vale finché la ricerca non cambia. Una
-    # tabella nuova nasce senza righe scelte, e reactable lo comunica.
+    # Il giro scelto vale finché la ricerca non cambia.
     giro_scelto <- reactiveVal(NULL)
-    observeEvent(trovate(), giro_scelto(NULL), ignoreNULL = FALSE, priority = 10)
+    observeEvent(
+      trovate(),
+      giro_scelto(NULL),
+      ignoreNULL = FALSE,
+      priority = 10
+    )
     observeEvent(
       reactable::getReactableState("tabella", "selected"),
       {
@@ -132,8 +125,7 @@ mod_giro_server <- function(id, dati) {
       letture_del_giro(letture, giro)
     })
 
-    # Con un giro scelto la mappa inquadra le sue letture e il suo comune;
-    # senza, la zona di tutti i giri trovati.
+    # Con un giro scelto: le sue letture e il suo comune; senza, tutti i giri.
     vista <- reactive({
       area_giri(risultati() %||% trovate())
     })

@@ -1,20 +1,7 @@
-# Tabelle sopra le mappe delle ricerche.
-#
-# La ricerca RFID e la ricerca dei giri hanno una tabella in un riquadro in
-# basso a sinistra della mappa, con lo stile della legenda: si chiude con un
-# click sull'intestazione e nasce aperta. Sono tabelle di reactable, che il
-# browser disegna, pagina e ordina da solo.
+# Tabelle delle ricerche (reactable) in un riquadro sopra la mappa, in basso
+# a sinistra: si chiude con un click sull'intestazione e nasce aperta.
 
-#' Riquadro di una tabella sopra la mappa
-#'
-#' È un elemento `details`, come la legenda, ma con classi sue: il gestore
-#' della legenda in `script.js` non lo apre e non lo chiude.
-#'
-#' @param titolo Testo dell'intestazione.
-#' @param ... Contenuto: di norma l'output della tabella.
-#' @param nota Testo facoltativo sotto l'intestazione.
-#' @param classe Classe in più del riquadro, ad esempio per la larghezza.
-#' @return Tag HTML.
+#' Riquadro `details` di una tabella sopra la mappa, con classi diverse dalla legenda
 #' @noRd
 riquadro_tabella_mappa <- function(titolo, ..., nota = NULL, classe = NULL) {
   tags <- htmltools::tags
@@ -35,8 +22,6 @@ riquadro_tabella_mappa <- function(titolo, ..., nota = NULL, classe = NULL) {
 }
 
 #' Testi di reactable in italiano
-#'
-#' @param vuota Testo di una tabella senza righe.
 #' @noRd
 lingua_reactable <- function(vuota = "Nessuna riga") {
   reactable::reactableLang(
@@ -60,10 +45,7 @@ lingua_reactable <- function(vuota = "Nessuna riga") {
   )
 }
 
-#' Aspetto delle tabelle sopra le mappe
-#'
-#' Testo piccolo e righe basse, come la legenda: la tabella copre la mappa il
-#' meno possibile.
+#' Aspetto compatto delle tabelle sopra le mappe
 #' @noRd
 tema_tabelle_mappa <- function() {
   reactable::reactableTheme(
@@ -81,22 +63,21 @@ tema_tabelle_mappa <- function() {
       boxShadow = "inset 3px 0 0 0 #2471a3"
     ),
     inputStyle = list(fontSize = "11px", padding = "2px 6px"),
-    filterInputStyle = list(fontSize = "11px", padding = "1px 4px", height = "22px"),
+    filterInputStyle = list(
+      fontSize = "11px",
+      padding = "1px 4px",
+      height = "22px"
+    ),
     selectStyle = list(fontSize = "11px", padding = "0 4px"),
     paginationStyle = list(fontSize = "11px"),
     pageButtonStyle = list(padding = "1px 6px")
   )
 }
 
-#' Tabella delle letture degli RFID cercati
+#' Tabella delle letture degli RFID cercati, raggruppate per RFID
 #'
-#' Una riga per lettura, raggruppate per RFID, dalla più recente: data e ora,
-#' mezzo e giro del calendario. La riga di un RFID dice quante letture ha, in
-#' quali giorni, con quali mezzi e in quali giri. Con un solo RFID il gruppo
-#' è già aperto.
-#'
-#' @param letture Letture trovate da `cerca_per_rfid()`.
-#' @return Widget reactable.
+#' La riga di un RFID riassume letture, giorni, mezzi e giri; con un solo
+#' RFID il gruppo è aperto.
 #' @noRd
 tabella_letture_rfid <- function(letture) {
   ordine <- order(
@@ -112,8 +93,7 @@ tabella_letture_rfid <- function(letture) {
     Giro = servizio_del_giro(letture),
     stringsAsFactors = FALSE
   )
-  # Le righe di un RFID vanno dalla più recente: la riga del gruppo riporta
-  # il primo e l'ultimo giorno, cioè l'ultima riga e la prima.
+  # Righe dalla più recente: primo e ultimo giorno sono l'ultima e la prima.
   giorni <- reactable::JS(
     paste(
       "function(values) {",

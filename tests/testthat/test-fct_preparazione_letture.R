@@ -57,8 +57,8 @@ sacchetti_prova <- dplyr::tibble(
 
 calendario_prova <- dplyr::tibble(
   giorno = as.Date("2026-03-02"),
-  ora_inizio = c("06:00:00", "13:00", "06:00:00", "22:00:00"),
-  ora_fine = c("12:00:00", "18:00", "12:00:00", "04:00:00"),
+  ora_inizio = c("06:00:00", "13:00", "06:00:00", "08:00"),
+  ora_fine = c("12:00:00", "18:00", "12:00:00", "12:00"),
   matricola_mezzo = c("101", "101", "101", "103"),
   # il terzo turno ripete il primo
   id_giro = c(11, 12, 11, 13),
@@ -278,7 +278,7 @@ test_that("il giro è il turno in cui cade la lettura, o il più vicino", {
     risultato$servizio_giro,
     rep(c("SECCO PAP", "CARTA/CARTONE PAP"), 3)
   )
-  expect_equal(risultato$id_giro, rep(c(11, 12), 3))
+  expect_identical(risultato$id_giro, rep(c("11", "12"), 3))
   expect_identical(risultato$eseguito, rep("SI", 6))
   expect_identical(risultato$comune_giro, rep("BASSANO DEL GRAPPA", 6))
   # il servizio atteso è il giro, con il nome del database
@@ -310,12 +310,15 @@ test_that("il giro è il turno in cui cade la lettura, o il più vicino", {
   spostato <- letture_associate("2026-03-02 08:30:00", rifiuto = "CARTA")
   spostato$comune_fornitura <- "CASSOLA"
   expect_identical(
-    associa_servizio_atteso_da_calendario(spostato, calendario_prova)$coerenza_comune,
+    associa_servizio_atteso_da_calendario(
+      spostato,
+      calendario_prova
+    )$coerenza_comune,
     "Fuori comune"
   )
-  # senza turni il giro manca, e con lui il servizio atteso e la coerenza
-  # del servizio; la coerenza del comune manca solo al non censito, che non
-  # ha un comune dichiarato
+  # senza giri nel giorno il giro manca; il servizio atteso è quello dei
+  # censiti letti dal mezzo quel giorno, per tutte le sue letture. La
+  # coerenza del comune manca solo al non censito, senza comune dichiarato
   senza_turni <- associa_servizio_atteso_da_calendario(
     dplyr::bind_rows(
       letture_associate("2026-03-05 08:30:00", rifiuto = "VETRO"),
@@ -325,36 +328,116 @@ test_that("il giro è il turno in cui cade la lettura, o il più vicino", {
   )
   expect_identical(senza_turni$servizio_transponder, c("VETRO", NA))
   expect_true(all(is.na(senza_turni$servizio_giro)))
-  expect_true(all(is.na(senza_turni$servizio_atteso)))
-  expect_true(all(is.na(senza_turni$coerenza_servizio)))
+  expect_identical(senza_turni$servizio_atteso, c("VETRO", "VETRO"))
+  expect_identical(senza_turni$coerenza_servizio, c("SI", NA))
   expect_identical(
     senza_turni$coerenza_comune,
     c("Coerente", "Coerenza ignota")
   )
 })
 
-test_that("a parità di distanza resta il primo turno, e le letture restano in ordine", {
-  # 12:30 dista mezz'ora dalla fine del mattino e dall'inizio del pomeriggio
-  quando <- c(
-    "2026-03-02 15:00:00",
-    "2026-03-02 12:30:00",
-    "2026-03-02 08:30:00"
+test_that("una lettura entro mezz'ora dalla fine resta nel giro, e allunga il giro", {
+  expect_identical(ritardo_giro_minuti(), 30)
+  calendario <- unisci_calendari(dplyr::tibble(
+    giorno = as.Date("2026-03-02"),
+    ora_inizio = c("06:00", "14:00"),
+    ora_fine = c("12:00", "18:00"),
+    matricola_mezzo = "301",
+    id_giro = c("51", "52"),
+    eseguito = "SI",
+    descrizione_servizio = c("SECCO PAP", "CARTA/CARTONE PAP"),
+    comune_giro = "ROSÀ"
+  ))
+  quando <- paste(
+    "2026-03-02",
+    c("12:20:00", "12:45:00", "13:10:00", "13:50:00", "08:00:00")
   )
-  risultato <- associa_servizio_atteso_da_calendario(
-    letture_associate(quando),
-    calendario_prova
+  letture <- letture_associate(quando, matricola = "301")
+  risultato <- associa_servizio_atteso_da_calendario(letture, calendario)
+  # le letture restano nell'ordine del file
+  expect_identical(
+    format(risultato$giorno_lettura, "%H:%M"),
+    substr(quando, 12, 16)
   )
-  expect_identical(format(risultato$giorno_lettura, "%H:%M"), substr(quando, 12, 16))
+  # 12:20 è a 20 minuti dalla fine, 12:45 a 25 da 12:20, 13:10 a 25 da 12:45:
+  # tutte nel giro del secco. 13:50 arriva 40 minuti dopo: la catena si
+  # ferma, ed è più vicina all'inizio della carta
+  expect_identical(
+    risultato$servizio_giro,
+    c("SECCO PAP", "SECCO PAP", "SECCO PAP", "CARTA/CARTONE PAP", "SECCO PAP")
+  )
+  expect_identical(
+    attr(risultato, "associazione")[[passi_associazione()[["orario_comune"]]]],
+    4L
+  )
+
+  # la catena si ferma all'inizio del giro seguente: le sue letture restano sue
+  vicino <- calendario
+  vicino$ora_inizio[2] <- "12:30"
+  vicine <- associa_servizio_atteso_da_calendario(
+    letture_associate(
+      paste("2026-03-02", c("12:20:00", "12:40:00")),
+      matricola = "301"
+    ),
+    vicino
+  )
+  expect_identical(vicine$servizio_giro, c("SECCO PAP", "CARTA/CARTONE PAP"))
+
+  # la fine allungata, giro per giro
+  giri <- dplyr::tibble(
+    riga = 1:2,
+    mezzo = "301",
+    giorno = "2026-03-02",
+    inizio = c(21600, 50400),
+    fine = c(43200, 64800)
+  )
+  letture_ora <- dplyr::tibble(
+    mezzo = "301",
+    giorno = "2026-03-02",
+    ora = 43200 + c(600, 1500, 4000)
+  )
+  expect_identical(allunga_fine(giri, letture_ora)$fine, c(43200 + 1500, 64800))
+})
+
+test_that("un mezzo senza giri prende il servizio dei bidoni censiti che ha letto", {
+  censito <- function(quando, mezzo, rfid, rifiuto) {
+    l <- letture_associate(
+      paste("2026-03-02", quando),
+      matricola = mezzo,
+      rifiuto = rifiuto
+    )
+    l$RFID <- rfid
+    l
+  }
+  letture <- dplyr::bind_rows(
+    # 401: un bidone del secco letto tre volte, due della carta: vince la
+    # carta, perché ogni bidone conta una volta
+    censito(c("08:00:00", "08:10:00", "08:20:00"), "401", "B1", "SECCO"),
+    censito("08:30:00", "401", "B2", "CARTA"),
+    censito("08:40:00", "401", "B3", "CARTA"),
+    letture_associate("2026-03-02 08:50:00", matricola = "401"),
+    # 402: un bidone per servizio, in parità: niente
+    censito("09:00:00", "402", "B4", "SECCO"),
+    censito("09:10:00", "402", "B5", "CARTA"),
+    # 403: soli non censiti: niente
+    letture_associate("2026-03-02 09:20:00", matricola = "403")
+  )
+  risultato <- associa_servizio_atteso_da_calendario(letture, calendario_prova)
   expect_identical(
     risultato$servizio_atteso,
-    c("CARTA", "SECCO", "SECCO")
+    c(rep("CARTA", 6), NA, NA, NA)
   )
-  # con il pomeriggio scritto per primo nel calendario, vince il pomeriggio
-  rovesciato <- associa_servizio_atteso_da_calendario(
-    letture_associate(quando),
-    calendario_prova[c(2, 1), ]
-  )
-  expect_identical(rovesciato$servizio_atteso[2], "CARTA")
+  # nessun giro: il giro e il suo comune restano vuoti
+  expect_true(all(is.na(risultato$servizio_giro)))
+  expect_true(all(is.na(risultato$comune_giro)))
+  associazione <- attr(risultato, "associazione")
+  expect_identical(associazione[[passi_associazione()[["censiti"]]]], 6L)
+  expect_identical(associazione[["senza giro"]], 3L)
+  # un mezzo con giri nel giorno non prende il servizio dai censiti
+  expect_true(all(is.na(servizio_dei_censiti_del_mezzo(dplyr::mutate(
+    letture,
+    senza_giri = FALSE
+  )))))
 })
 
 test_that("senza turni il servizio atteso resta vuoto", {
@@ -374,72 +457,148 @@ test_that("senza turni il servizio atteso resta vuoto", {
   expect_true(is.na(altro_giorno$servizio_atteso))
 })
 
-test_that("un turno a cavallo della mezzanotte vale anche per le letture del giorno dopo", {
-  # mezzo 103: turno 22:00 - 04:00 iniziato il 2 marzo
-  letture <- letture_associate(
-    c(
-      "2026-03-02 23:30:00", # prima di mezzanotte, dentro il turno
-      "2026-03-03 02:00:00", # dopo mezzanotte, dentro il turno
-      "2026-03-03 04:30:00", # poco dopo la fine: resta il turno più vicino
-      "2026-03-02 21:00:00" # poco prima dell'inizio
-    ),
-    matricola = "103"
+test_that("i due calendari diventano uno solo", {
+  pianificati <- dplyr::tibble(
+    giorno = as.Date("2026-03-02"),
+    ora_inizio = "06:00",
+    ora_fine = "12:00",
+    matricola_mezzo = "201",
+    id_giro = c("21", "21"),
+    eseguito = "SI",
+    descrizione_servizio = "SECCO PAP",
+    comune_giro = "ROSÀ"
   )
-  risultato <- associa_servizio_atteso_da_calendario(letture, calendario_prova)
-  expect_equal(nrow(risultato), nrow(letture))
-  expect_identical(risultato$servizio_atteso, rep("VETRO", 4))
-  expect_equal(risultato$id_giro, rep(13, 4))
-
-  # la notte tra l'1 e il 2 marzo non ha turni: vale il turno più vicino dello stesso giorno
-  mattina <- associa_servizio_atteso_da_calendario(
-    letture_associate("2026-03-02 03:00:00", matricola = "103"),
-    calendario_prova
+  non_pianificati <- dplyr::tibble(
+    giorno = as.Date("2026-03-02"),
+    matricola_mezzo = "201",
+    descrizione_servizio = c("SECCO PAP", "VETRO PAP"),
+    comune_giro = c("ROSÀ", "NOVE")
   )
-  expect_identical(mattina$servizio_atteso, "VETRO")
-
-  # due giorni dopo il turno non c'entra più
-  dopo <- associa_servizio_atteso_da_calendario(
-    letture_associate("2026-03-04 02:00:00", matricola = "103"),
-    calendario_prova
+  calendario <- unisci_calendari(pianificati, non_pianificati)
+  # la riga ripetuta conta una volta
+  expect_equal(nrow(calendario), 3)
+  expect_identical(calendario$pianificato, c(TRUE, FALSE, FALSE))
+  # un non pianificato non ha codice del giro, orari ne' conferma, anche con
+  # lo stesso servizio e comune di un pianificato
+  expect_identical(calendario$id_giro, c("21", NA, NA))
+  expect_true(all(is.na(calendario$ora_inizio[2:3])))
+  expect_true(all(is.na(calendario$eseguito[2:3])))
+  expect_identical(unisci_calendari(pianificati)$pianificato, TRUE)
+  expect_error(
+    unisci_calendari(pianificati[, -1]),
+    "mancano le colonne: giorno"
   )
-  expect_true(is.na(dopo$servizio_atteso))
+  expect_identical(
+    secondi_del_giorno(c("08:30", "13:00:30", "8.30", NA)),
+    c(30600, 46830, NA, NA)
+  )
 })
 
-test_that("il turno notturno e quello del mattino dopo si dividono le letture", {
-  calendario <- dplyr::tibble(
-    giorno = as.Date(c("2026-03-02", "2026-03-03")),
-    ora_inizio = c("22:00:00", "08:00:00"),
-    ora_fine = c("04:00:00", "12:00:00"),
-    matricola_mezzo = "103",
-    id_giro = c(31, 32),
-    eseguito = "SI",
-    descrizione_servizio = c("VETRO PAP", "CARTA CONT.STRADALI"),
-    comune_giro = c("NOVE", "CARTIGLIANO")
-  )
-  letture <- letture_associate(
-    c(
-      "2026-03-03 02:00:00", # dentro il turno notturno
-      "2026-03-03 05:00:00", # a 60 minuti dalla fine del notturno, a 180 dal mattino
-      "2026-03-03 07:00:00", # a 180 minuti dal notturno, a 60 dal mattino
-      "2026-03-03 09:00:00" # dentro il turno del mattino
+test_that("una lettura prende il giro con i passi chiesti, mai di un altro mezzo o giorno", {
+  pianificato <- function(mezzo, id, servizio, comune) {
+    dplyr::tibble(
+      giorno = as.Date("2026-03-02"),
+      ora_inizio = "06:00",
+      ora_fine = "12:00",
+      matricola_mezzo = mezzo,
+      id_giro = id,
+      eseguito = "SI",
+      descrizione_servizio = servizio,
+      comune_giro = comune
+    )
+  }
+  non_pianificato <- function(mezzo, servizio, comune) {
+    dplyr::tibble(
+      giorno = as.Date("2026-03-02"),
+      matricola_mezzo = mezzo,
+      descrizione_servizio = servizio,
+      comune_giro = comune
+    )
+  }
+  calendario <- unisci_calendari(
+    dplyr::bind_rows(
+      # 201: due pianificati alla stessa ora, in comuni diversi
+      pianificato("201", "21", "SECCO PAP", "ROSÀ"),
+      pianificato("201", "22", "CARTA/CARTONE PAP", "CASSOLA"),
+      # 203 e 204: un pianificato e dei non pianificati
+      pianificato("203", "31", "SECCO PAP", "ROSÀ"),
+      pianificato("204", "41", "SECCO PAP", "ROSÀ")
     ),
-    matricola = "103"
+    dplyr::bind_rows(
+      # 202: un solo giro, non pianificato
+      non_pianificato("202", "VETRO PAP", "NOVE"),
+      # 203: comuni tutti diversi
+      non_pianificato("203", "CARTA CONT.STRADALI", "CASSOLA"),
+      # 204: due non pianificati nello stesso comune del pianificato
+      non_pianificato("204", "VETRO PAP", "ROSÀ"),
+      non_pianificato("204", "UMIDO PAP", "ROSÀ"),
+      # 205: soli non pianificati, in comuni diversi
+      non_pianificato("205", "VETRO PAP", "ROSÀ"),
+      non_pianificato("205", "UMIDO PAP", "CASSOLA")
+    )
   )
-  risultato <- associa_servizio_atteso_da_calendario(letture, calendario)
-  expect_identical(
-    risultato$servizio_atteso,
-    c("VETRO", "VETRO", "CARTA", "CARTA")
+  caso <- function(quando, mezzo, comune) {
+    l <- letture_associate(paste("2026-03-02", quando), matricola = mezzo)
+    l$comune_lettura <- comune
+    l
+  }
+  letture <- dplyr::bind_rows(
+    caso("08:00:00", "201", "ROSÀ"), # 1. nell'orario e nel comune
+    caso("08:00:00", "201", "CASSOLA"), # 1. l'altro giro, nel suo comune
+    caso("08:00:00", "201", "NOVE"), # 3. soli pianificati: il primo dei due più vicini
+    caso("20:00:00", "202", "ROSÀ"), # 2. l'unico giro
+    caso("15:00:00", "203", "CASSOLA"), # 4. comuni diversi: quello della lettura
+    caso("15:00:00", "203", "ROSÀ"), # 4. anche il pianificato, fuori orario
+    caso("08:00:00", "203", "NOVE"), # 5. nell'orario del pianificato, anche se in un altro comune
+    caso("15:00:00", "204", "ROSÀ"), # 5. fuori orario: il primo non pianificato nel comune
+    caso("09:00:00", "204", "ROSÀ"), # 1. nell'orario del pianificato
+    caso("15:00:00", "204", "NOVE"), # 7. due non pianificati altrove: il primo del calendario
+    caso("09:00:00", "205", "ROSÀ"), # 4. soli non pianificati, comuni diversi
+    caso("09:00:00", "205", "NOVE"), # 7. il primo non pianificato del calendario
+    caso("09:00:00", "999", "ROSÀ") # mezzo senza giri
   )
-  # il giro resta scritto come nel calendario, senza conversioni
+  # un giorno senza giri: niente, anche se il mezzo li ha il giorno prima
+  altro_giorno <- letture_associate("2026-03-03 09:00:00", matricola = "202")
+  risultato <- associa_servizio_atteso_da_calendario(
+    dplyr::bind_rows(letture, altro_giorno),
+    calendario
+  )
   expect_identical(
     risultato$servizio_giro,
-    c("VETRO PAP", "VETRO PAP", "CARTA CONT.STRADALI", "CARTA CONT.STRADALI")
+    c(
+      "SECCO PAP",
+      "CARTA/CARTONE PAP",
+      "SECCO PAP",
+      "VETRO PAP",
+      "CARTA CONT.STRADALI",
+      "SECCO PAP",
+      "SECCO PAP",
+      "VETRO PAP",
+      "SECCO PAP",
+      "VETRO PAP",
+      "VETRO PAP",
+      "VETRO PAP",
+      NA,
+      NA
+    )
   )
-  # il comune del giro è quello del turno scelto
+  expect_identical(risultato$id_giro[1:3], c("21", "22", "21"))
+  # un giro non pianificato non ha conferma
+  expect_identical(risultato$eseguito[4:5], c(NA_character_, NA_character_))
+  expect_identical(risultato$servizio_atteso[c(4, 10)], c("VETRO", "VETRO"))
+  # quante letture ha associato ogni passo
+  associazione <- attr(risultato, "associazione")
   expect_identical(
-    risultato$comune_giro,
-    c("NOVE", "NOVE", "CARTIGLIANO", "CARTIGLIANO")
+    names(associazione),
+    c(unname(passi_associazione()), "senza giro")
   )
+  expect_equal(as.integer(associazione), c(3, 1, 1, 3, 1, 1, 2, 0, 2))
+  # l'unico non pianificato vale solo fuori dagli orari dei pianificati
+  fuori_orario <- associa_servizio_atteso_da_calendario(
+    caso("20:00:00", "203", "NOVE"),
+    calendario
+  )
+  expect_identical(fuori_orario$servizio_giro, "CARTA CONT.STRADALI")
 })
 
 test_that("i turni che finiscono in giornata non passano al giorno dopo", {
@@ -525,7 +684,10 @@ test_that("nei giri dei servizi il servizio atteso viene dai censiti letti nel g
     # il mercato del 2 marzo: tre contenitori della carta, uno del secco e un
     # non censito
     letture_associate(
-      paste("2026-03-02", c("07:00:00", "07:10:00", "07:20:00", "07:30:00", "07:40:00")),
+      paste(
+        "2026-03-02",
+        c("07:00:00", "07:10:00", "07:20:00", "07:30:00", "07:40:00")
+      ),
       rifiuto = c("CARTA", "CARTA", "SECCO", "CARTA", NA)
     ),
     # lo stesso giro il giorno dopo: tanta carta quanto secco
@@ -536,7 +698,11 @@ test_that("nei giri dei servizi il servizio atteso viene dai censiti letti nel g
     # una manifestazione con i soli non censiti
     letture_associate("2026-03-02 08:00:00", matricola = "102"),
     # un giro del secco con un contenitore della carta: vale il giro
-    letture_associate("2026-03-02 08:00:00", matricola = "103", rifiuto = "CARTA")
+    letture_associate(
+      "2026-03-02 08:00:00",
+      matricola = "103",
+      rifiuto = "CARTA"
+    )
   )
   risultato <- associa_servizio_atteso_da_calendario(letture, calendario)
   expect_identical(
@@ -574,19 +740,33 @@ test_that("nei giri dei servizi il servizio atteso viene dai censiti letti nel g
     servizio_atteso_dal_giro(dplyr::tibble(
       giorno = as.Date("2026-03-02"),
       id_giro = c(1, 1, 1, NA),
-      servizio_giro = c("SERVIZI MERCATI", "SERVIZI MERCATI", "SERVIZI MERCATI", NA),
+      servizio_giro = c(
+        "SERVIZI MERCATI",
+        "SERVIZI MERCATI",
+        "SERVIZI MERCATI",
+        NA
+      ),
       servizio_transponder = c("VETRO", "VETRO", NA, "VETRO")
     )),
     c("VETRO", "VETRO", "VETRO", NA)
   )
-  # il valore più frequente di ogni gruppo, se è uno solo
+  # un non pianificato non ha codice: il suo giro è mezzo, servizio e comune
   expect_identical(
-    moda_unica_per_gruppo(
-      c("A", "A", "B", "A", "B", NA, "", "C"),
-      c(1, 1, 1, 2, 2, 3, 3, 4)
-    ),
-    c("A", "A", "A", NA, NA, NA, NA, "C")
+    servizio_atteso_dal_giro(dplyr::tibble(
+      giorno = as.Date("2026-03-02"),
+      matricola_veicolo = c("1", "1", "2"),
+      id_giro = NA_character_,
+      servizio_giro = "SERVIZI MERCATI",
+      comune_giro = "NOVE",
+      servizio_transponder = c("VETRO", "VETRO", "CARTA")
+    )),
+    c("VETRO", "VETRO", "CARTA")
   )
+  # il valore più frequente, se è uno solo
+  expect_identical(moda_unica(c("A", "A", "B")), "A")
+  expect_identical(moda_unica(c("A", "B")), NA_character_)
+  expect_identical(moda_unica(c(NA, "")), NA_character_)
+  expect_identical(moda_unica("C"), "C")
 })
 
 test_that("il calendario deve riportare il comune di ogni giro", {
@@ -641,10 +821,10 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
   expect_equal(caricate$volume_previsto, c(240, NA, 1100, 240))
   expect_equal(caricate$numero_raccolte_annue_previste, c(26, NA, 13, 26))
   # il servizio atteso è il giro con il nome del database; il 10 marzo il
-  # mezzo non aveva turni
+  # mezzo non aveva giri, e prende il servizio del bidone censito che ha letto
   expect_identical(
     caricate$servizio_atteso,
-    c("SECCO", "SECCO", "CARTA", NA)
+    c("SECCO", "SECCO", "CARTA", "SECCO")
   )
   # l'app tiene il giro con il nome del calendario
   expect_identical(
@@ -655,7 +835,7 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
   # carta e uno del vetro letti in giri di un altro rifiuto
   expect_identical(
     caricate$coerenza_servizio,
-    c("NO", NA, "NO", NA)
+    c("NO", NA, "NO", "SI")
   )
   expect_identical(
     dplyr::arrange(risultato, giorno_lettura)$coerenza_servizio,
@@ -678,7 +858,11 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
 
 test_that("i CSV estratti si leggono come testo, con il separatore del file", {
   virgola <- scrivi_csv(c("a,b,c", "1,2,3"))
-  punto_virgola <- scrivi_csv(c("RFID;giorno_lettura", "0000012345; 2025-01-10 08:00:00", ";"))
+  punto_virgola <- scrivi_csv(c(
+    "RFID;giorno_lettura",
+    "0000012345; 2025-01-10 08:00:00",
+    ";"
+  ))
   expect_identical(rileva_separatore(virgola), ",")
   expect_identical(rileva_separatore(punto_virgola), ";")
 
@@ -688,7 +872,11 @@ test_that("i CSV estratti si leggono come testo, con il separatore del file", {
   expect_identical(letto$RFID, c("0000012345", NA))
   expect_identical(letto$giorno_lettura, c("2025-01-10 08:00:00", NA))
   expect_s3_class(letto, "data.frame")
-  expect_true(all(vapply(leggi_tabella_origine(virgola), is.character, logical(1))))
+  expect_true(all(vapply(
+    leggi_tabella_origine(virgola),
+    is.character,
+    logical(1)
+  )))
 
   vuoto <- scrivi_csv("")
   expect_error(leggi_tabella_origine(vuoto), class = "errore_validazione")
@@ -698,7 +886,13 @@ test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
   letture <- data.frame(
     id_fornitura = c("F1", "F1", "F1", "F2", NA),
     giorno_lettura = as.POSIXct(
-      c("2026-03-01 08:00:00", "2026-07-01 08:00:00", "2026-12-01 08:00:00", "2026-05-01 08:00:00", "2026-05-01 08:00:00"),
+      c(
+        "2026-03-01 08:00:00",
+        "2026-07-01 08:00:00",
+        "2026-12-01 08:00:00",
+        "2026-05-01 08:00:00",
+        "2026-05-01 08:00:00"
+      ),
       tz = "UTC"
     ),
     stringsAsFactors = FALSE
@@ -706,8 +900,14 @@ test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
   componenti <- data.frame(
     # F1 ha 2 residenti fino a metà giugno, poi 3; F2 ha una decorrenza finita
     id_fornitura = c("F1", "F1", "F2"),
-    data_inizio_decorrenza = as.POSIXct(c("2020-01-01", "2026-06-15", "2020-01-01"), tz = "UTC"),
-    data_fine_decorrenza = as.POSIXct(c("2026-06-14", NA, "2026-01-01"), tz = "UTC"),
+    data_inizio_decorrenza = as.POSIXct(
+      c("2020-01-01", "2026-06-15", "2020-01-01"),
+      tz = "UTC"
+    ),
+    data_fine_decorrenza = as.POSIXct(
+      c("2026-06-14", NA, "2026-01-01"),
+      tz = "UTC"
+    ),
     nucleo_residenti = c(2L, 3L, 4L),
     nucleo_non_residenti = c(0L, 1L, 0L),
     nucleo_totale = c(2L, 4L, 4L),
@@ -720,11 +920,20 @@ test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
   expect_identical(names(esito), c(names(letture), colonne_componenti()))
   expect_identical(esito$nucleo_residenti, c(2L, 3L, 3L, NA, NA))
   expect_identical(esito$nucleo_totale, c(2L, 4L, 4L, NA, NA))
-  expect_identical(esito$tipo_categoria, c("DOMESTICA", "DOMESTICA", "DOMESTICA", NA, NA))
+  expect_identical(
+    esito$tipo_categoria,
+    c("DOMESTICA", "DOMESTICA", "DOMESTICA", NA, NA)
+  )
   # una colonna che la tabella non ha resta vuota
-  senza <- associa_componenti(letture, componenti[names(componenti) != "sottocategoria"])
+  senza <- associa_componenti(
+    letture,
+    componenti[names(componenti) != "sottocategoria"]
+  )
   expect_true(all(is.na(senza$sottocategoria)))
-  expect_identical(colonne_nucleo_manovra(), c(colonne_componenti(), "potenziamento_secco"))
+  expect_identical(
+    colonne_nucleo_manovra(),
+    c(colonne_componenti(), "potenziamento_secco")
+  )
   # il dataset validato le tiene tutte
   expect_true(all(colonne_nucleo_manovra() %in% colonne_preparazione()))
 })
@@ -732,7 +941,14 @@ test_that("nucleo e categoria sono quelli in vigore al momento della lettura", {
 test_that("il potenziamento vale se la fornitura ha almeno una manovra in vigore", {
   letture <- data.frame(
     id_fornitura = c("F1", "F1", "F1", "F1", "F2", NA),
-    giorno = as.Date(c("2026-03-01", "2026-06-01", "2026-07-15", "2026-12-01", "2026-05-01", "2026-05-01")),
+    giorno = as.Date(c(
+      "2026-03-01",
+      "2026-06-01",
+      "2026-07-15",
+      "2026-12-01",
+      "2026-05-01",
+      "2026-05-01"
+    )),
     stringsAsFactors = FALSE
   )
   manovre <- data.frame(
@@ -745,43 +961,80 @@ test_that("il potenziamento vale se la fornitura ha almeno una manovra in vigore
   esito <- associa_potenziamento(letture, manovre)
   expect_identical(names(esito), c(names(letture), "potenziamento_secco"))
   # il primo giorno conta; con due dichiarazioni basta una; senza fornitura manca
-  expect_identical(esito$potenziamento_secco, c(FALSE, TRUE, TRUE, TRUE, FALSE, NA))
+  expect_identical(
+    esito$potenziamento_secco,
+    c(FALSE, TRUE, TRUE, TRUE, FALSE, NA)
+  )
   expect_no_warning(associa_potenziamento(letture, manovre))
 
   # una dichiarazione che finisce prima di cominciare: annullata, non conta
-  annullata <- rbind(manovre, data.frame(
-    id_fornitura = "F2",
-    data_inizio_dichiarazione = as.Date("2026-04-01"),
-    data_fine_dichiarazione = as.Date("2026-01-01")
-  ))
+  annullata <- rbind(
+    manovre,
+    data.frame(
+      id_fornitura = "F2",
+      data_inizio_dichiarazione = as.Date("2026-04-01"),
+      data_fine_dichiarazione = as.Date("2026-01-01")
+    )
+  )
   expect_warning(
     con_annullata <- associa_potenziamento(letture, annullata),
     "1 dichiarazioni di manovra sociale finiscono prima di cominciare.*Forniture: F2"
   )
   expect_identical(con_annullata$potenziamento_secco, esito$potenziamento_secco)
   # senza dichiarazioni nessuna fornitura ha il potenziamento
-  expect_identical(associa_potenziamento(letture, manovre[0, ])$potenziamento_secco, c(rep(FALSE, 5), NA))
+  expect_identical(
+    associa_potenziamento(letture, manovre[0, ])$potenziamento_secco,
+    c(rep(FALSE, 5), NA)
+  )
 })
 
-test_that("il comune di lettura che la tabella non conosce viene dalla posizione", {
+test_that("dentro i comuni serviti il comune di lettura viene dalla posizione", {
   cc <- comuni_cantieri()
   limena <- cc[cc$comune == "LIMENA", ]
+  rosa <- cc[cc$comune == "ROSÀ", ]
   letture <- data.frame(
-    comune_lettura = c("LIMENA", "rosa'", "TAGGI DI PROVA", "VENEZIA", "BOH"),
-    cantiere = c("RUBANO", NA, NA, NA, NA),
-    latitudine = c(limena$latitudine, 45.72, limena$latitudine, 45.44, NA),
-    longitudine = c(limena$longitudine, 11.79, limena$longitudine, 12.33, NA),
+    comune_lettura = c(
+      "LIMENA",
+      "rosa'",
+      "TAGGI DI PROVA",
+      "VENEZIA",
+      "BOH",
+      "CITTADELLA"
+    ),
+    cantiere = c("RUBANO", NA, NA, NA, NA, "CAMPOSAMPIERO"),
+    latitudine = c(
+      limena$latitudine,
+      rosa$latitudine,
+      limena$latitudine,
+      45.44,
+      NA,
+      limena$latitudine
+    ),
+    longitudine = c(
+      limena$longitudine,
+      rosa$longitudine,
+      limena$longitudine,
+      12.33,
+      NA,
+      limena$longitudine
+    ),
     stringsAsFactors = FALSE
   )
   expect_message(
     corrette <- correggi_comune_lettura(letture),
-    "per 1 letture.*TAGGI DI PROVA → LIMENA \\(1\\)"
+    "per 2 letture.*CITTADELLA → LIMENA \\(1\\), TAGGI DI PROVA → LIMENA \\(1\\)"
   )
-  # i nomi della tabella passano alla sua grafia; la frazione prende il
-  # comune che la contiene; fuori dai comuni serviti, o senza posizione, il
-  # nome resta
-  expect_identical(corrette$comune_lettura, c("LIMENA", "ROSÀ", "LIMENA", "VENEZIA", "BOH"))
-  expect_identical(corrette$cantiere, c("RUBANO", "BASSANO", "RUBANO", NA, NA))
+  # dentro i comuni serviti vale il comune che contiene il punto, anche se il
+  # sistema di localizzazione ne dice un altro o una frazione; fuori, o senza
+  # posizione, resta il nome del file, nella grafia della tabella
+  expect_identical(
+    corrette$comune_lettura,
+    c("LIMENA", "ROSÀ", "LIMENA", "VENEZIA", "BOH", "LIMENA")
+  )
+  expect_identical(
+    corrette$cantiere,
+    c("RUBANO", "BASSANO", "RUBANO", NA, NA, "RUBANO")
+  )
   # senza nomi da correggere, nessun messaggio
   expect_no_message(correggi_comune_lettura(letture[1:2, ]))
 })
@@ -790,9 +1043,21 @@ test_that("la distanza dal comune dichiarato c'e' solo per le letture in un altr
   cc <- comuni_cantieri()
   limena <- cc[cc$comune == "LIMENA", ]
   letture <- data.frame(
-    presente_a_database = c("Presente", "Presente", "Non Presente", "Non Presente", "Presente"),
+    presente_a_database = c(
+      "Presente",
+      "Presente",
+      "Non Presente",
+      "Non Presente",
+      "Presente"
+    ),
     comune_fornitura = c("LIMENA", "CITTADELLA", NA, NA, NA),
-    comune_giro = c("CITTADELLA", "LIMENA", "LIMENA", "MASSICCIO DEL GRAPPA", "LIMENA"),
+    comune_giro = c(
+      "CITTADELLA",
+      "LIMENA",
+      "LIMENA",
+      "MASSICCIO DEL GRAPPA",
+      "LIMENA"
+    ),
     comune_lettura = c("Limena", "LIMENA", "CITTADELLA", "LIMENA", "LIMENA"),
     latitudine = limena$latitudine,
     longitudine = limena$longitudine,
@@ -809,7 +1074,11 @@ test_that("la distanza dal comune dichiarato c'e' solo per le letture in un altr
   expect_true(all(is.na(distanza[4:5])))
   expect_identical(distanza_comune_dichiarato(letture[0, ]), numeric(0))
   # senza le colonne dei comuni nessuna distanza
-  expect_true(all(is.na(distanza_comune_dichiarato(letture[, c("presente_a_database", "latitudine", "longitudine")]))))
+  expect_true(all(is.na(distanza_comune_dichiarato(letture[, c(
+    "presente_a_database",
+    "latitudine",
+    "longitudine"
+  )]))))
 })
 
 test_that("si segnalano i giri non confermati da tempo e quelli confermati senza letture", {
@@ -821,10 +1090,27 @@ test_that("si segnalano i giri non confermati da tempo e quelli confermati senza
   )
   calendario <- data.frame(
     giorno = as.Date(c(
-      "2026-08-03", "2026-08-05", "2026-08-10", "2026-08-10",
-      "2026-08-28", "2026-08-31", "2026-07-30", "2026-08-12", "2026-08-12"
+      "2026-08-03",
+      "2026-08-05",
+      "2026-08-10",
+      "2026-08-10",
+      "2026-08-28",
+      "2026-08-31",
+      "2026-07-30",
+      "2026-08-12",
+      "2026-08-12"
     )),
-    matricola_mezzo = c("1601", "1601", "1601", "1602", "1601", "1601", "1601", "1601", "1601"),
+    matricola_mezzo = c(
+      "1601",
+      "1601",
+      "1601",
+      "1602",
+      "1601",
+      "1601",
+      "1601",
+      "1601",
+      "1601"
+    ),
     id_giro = c("10", "12", "10", "13", "12", "10", "10", "14", "14"),
     eseguito = c("SI", "NO", "si", "SI", "NO", "SI", "SI", NA, NA),
     descrizione_servizio = "SECCO PAP",
@@ -848,18 +1134,39 @@ test_that("si segnalano i giri non confermati da tempo e quelli confermati senza
   # il NO del 5 agosto ha piu' di sette giorni, quello del 28 no; il giro
   # confermato del 10 agosto non ha letture; quello del mezzo senza antenna,
   # quello prima del periodo e quelli senza conferma non contano
-  expect_named(giri, c("giorno", "matricola_veicolo", "id_giro", "servizio_giro", "comune_giro", "eseguito", "problema"))
+  expect_named(
+    giri,
+    c(
+      "giorno",
+      "matricola_veicolo",
+      "id_giro",
+      "servizio_giro",
+      "comune_giro",
+      "eseguito",
+      "problema"
+    )
+  )
   expect_identical(giri$giorno, as.Date(c("2026-08-05", "2026-08-10")))
   expect_identical(giri$id_giro, c("12", "10"))
-  expect_identical(giri$problema, c("non confermato dopo 7 giorni", "confermato, senza letture dell'antenna"))
+  expect_identical(
+    giri$problema,
+    c("non confermato dopo 7 giorni", "confermato, senza letture dell'antenna")
+  )
   # con un'attesa piu' lunga il NO non conta
   expect_warning(
-    piu_lunga <- controllo_giri(letture, calendario, test_mezzi, giorni_conferma = 30),
+    piu_lunga <- controllo_giri(
+      letture,
+      calendario,
+      test_mezzi,
+      giorni_conferma = 30
+    ),
     "senza|nessuna lettura"
   )
   expect_identical(piu_lunga$problema, "confermato, senza letture dell'antenna")
   # niente da segnalare: tabella vuota, senza avvisi
-  expect_no_warning(vuoto <- controllo_giri(letture, calendario[1, ], test_mezzi))
+  expect_no_warning(
+    vuoto <- controllo_giri(letture, calendario[1, ], test_mezzi)
+  )
   expect_equal(nrow(vuoto), 0)
   expect_named(vuoto, names(giri))
   expect_equal(nrow(controllo_giri(letture[0, ], calendario, test_mezzi)), 0)

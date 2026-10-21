@@ -1,20 +1,12 @@
-#' Run the Shiny Application
+#' Avvia l'app
 #'
-#' Avvia la dashboard RFID dei bidoni per rifiuti.
-#'
-#' @param ... arguments to pass to golem_opts.
-#' See `?golem::get_golem_options` for more details.
-#' Con `demo = TRUE` l'app si apre con i dati di esempio già caricati.
-#' Con `letture = "percorso"` l'app legge il file dal disco all'avvio, senza
-#' passare dal caricamento del browser: è il modo più rapido per i file con
-#' milioni di letture, soprattutto con l'archivio `.duckdb` della pipeline di
-#' preparazione dei dati. Il file resta aperto per tutte le sessioni dello
-#' stesso processo.
+#' @param ... Opzioni di golem: `demo = TRUE` apre i dati di esempio;
+#'   `letture = "percorso"` legge un file dal disco all'avvio (CSV, Parquet o
+#'   `.duckdb` della pipeline), condiviso da tutte le sessioni del processo.
 #' @inheritParams shiny::shinyApp
 #'
 #' @examples
 #' if (interactive()) {
-#'   run_app()
 #'   run_app(demo = TRUE)
 #'   run_app(letture = "data-raw/output/letture_app.duckdb")
 #' }

@@ -2,21 +2,20 @@
 % Please edit documentation in R/generate_cluster_analysis.R
 \name{scrivi_analisi_cluster}
 \alias{scrivi_analisi_cluster}
-\title{Salva l'analisi dei cluster in un file CSV}
+\title{Salva l'analisi dei cluster in \verb{cluster_analysis_[dal]_[al].csv}}
 \usage{
 scrivi_analisi_cluster(risultato, cartella = ".")
 }
 \arguments{
-\item{risultato}{Tabella restituita da \code{\link[=genera_analisi_cluster]{genera_analisi_cluster()}}.}
+\item{risultato}{Tabella di \code{\link[=genera_analisi_cluster]{genera_analisi_cluster()}}.}
 
-\item{cartella}{Cartella di destinazione, creata se non esiste.}
+\item{cartella}{Cartella di destinazione, creata se manca.}
 }
 \value{
-Il percorso del file scritto, in modo invisibile.
+Il percorso del file, invisibile.
 }
 \description{
-Il nome del file segue lo schema \verb{cluster_analysis_[dal]_[al].csv}, con le
-date del periodo di analisi.
+Salva l'analisi dei cluster in \verb{cluster_analysis_[dal]_[al].csv}
 }
 \examples{
 csv <- system.file("extdata", "sample_rfid_dataset.csv", package = "trackerfid")

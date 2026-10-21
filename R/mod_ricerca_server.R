@@ -1,16 +1,10 @@
-#' Modulo ricerca avanzata (RFID o utenza): logica
+#' Ricerca per RFID o per utenza
 #'
-#' - `"rfid"`: restituisce tutte le letture degli RFID cercati, e le mostra
-#'   nella tabella di `mod_ricerca_tabella_ui()`.
-#' - `"utenza"`: restituisce l'ultima lettura degli RFID la cui utenza
-#'   *attuale* è tra quelle cercate. Un bidone passato a un'altra utenza non
-#'   compare cercando il vecchio proprietario.
-#'
-#' @param id Identificativo del modulo.
-#' @param dati Reactive con il dataset validato (o `NULL`).
-#' @param tipo `"rfid"` oppure `"utenza"`.
-#' @return Lista di reactive: `risultati` (letture trovate o `NULL`) e
-#'   `codici` (codici cercati, `NULL` se non c'è una ricerca attiva).
+#' `"rfid"`: tutte le letture del periodo degli RFID cercati, anche nella
+#' tabella. `"utenza"`: l'ultima lettura dei bidoni la cui utenza *attuale* è
+#' tra quelle cercate.
+#' @param dati Reactive con la selezione del periodo, o `NULL`.
+#' @return Lista di reactive: `risultati` (o `NULL`) e `codici` cercati.
 #' @noRd
 mod_ricerca_server <- function(id, dati, tipo = c("rfid", "utenza")) {
   tipo <- match.arg(tipo)

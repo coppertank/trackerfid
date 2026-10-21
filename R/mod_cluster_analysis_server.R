@@ -1,15 +1,9 @@
-#' Modulo analisi cluster spaziale: logica
+#' Analisi dei cluster spaziali del periodo, al click su «Genera Analisi»
 #'
-#' L'analisi parte dal pulsante «Genera Analisi» e riguarda tutte le letture
-#' del periodo scelto nella barra laterale. Se cambiano dataset o periodo il
-#' risultato viene scartato, così non resta a schermo un'analisi superata.
-#'
-#' @param id Identificativo del modulo.
-#' @param dati Reactive con l'archivio delle letture (o `NULL`).
-#' @param periodo Reactive con le due date del periodo di analisi (o `NULL`).
-#' @param etichetta Reactive con la descrizione breve del periodo.
-#' @return Reactive con l'ultimo cluster scelto in tabella o sulla mappa:
-#'   lista con `rfid` e `quando`.
+#' Un cambio di dataset o di periodo scarta il risultato.
+#' @param dati Reactive con l'archivio, o `NULL`.
+#' @param periodo,etichetta Reactive con le date e la descrizione del periodo.
+#' @return Reactive con il cluster scelto: `rfid` e `quando`.
 #' @noRd
 mod_cluster_analysis_server <- function(
   id,
@@ -150,10 +144,8 @@ mod_cluster_analysis_server <- function(
       tabella_cluster_dt(risultato())
     })
 
-    # Righe mostrate dalla tabella: `NULL` vuol dire tutte, un vettore vuoto
-    # nessuna. Una nuova analisi le azzera: il browser riporta le righe della
-    # tabella precedente finché quella nuova non viene disegnata, e la tabella
-    # non si ridisegna mentre la sua vista è nascosta.
+    # Righe mostrate dalla tabella: `NULL` tutte, vuoto nessuna. Una nuova
+    # analisi le azzera: il browser riporta ancora quelle della tabella vecchia.
     righe_tabella <- reactiveVal(NULL)
     observeEvent(
       risultato(),
@@ -161,9 +153,8 @@ mod_cluster_analysis_server <- function(
       ignoreNULL = FALSE,
       priority = 10
     )
-    # Il browser comunica un elenco vuoto quando il filtro non lascia righe,
-    # ma anche, per qualche centesimo di secondo, ogni volta che ridisegna la
-    # tabella: un elenco vale solo se dura.
+    # Un elenco vuoto arriva anche per qualche centesimo di secondo a ogni
+    # ridisegno: vale solo se dura.
     righe_browser <- debounce(
       reactive(input$tabella_rows_all),
       attesa_righe_tabella()
@@ -208,9 +199,7 @@ mod_cluster_analysis_server <- function(
     })
 
     # --- Mappa -----------------------------------------------------------------------
-    # La mappa di base si disegna una volta; baricentri e cerchi arrivano con
-    # un messaggio, a ogni nuova analisi e a ogni filtro della tabella. Il
-    # numero di riga di un cluster è quello del campione disegnato.
+    # Base disegnata una volta; baricentri e cerchi con un messaggio.
     output$mappa <- mapgl::renderMaplibre(mappa_base("analisi"))
     id_mappa <- session$ns("mappa")
     disegnati <- reactiveVal(NULL)
@@ -220,7 +209,12 @@ mod_cluster_analysis_server <- function(
         campiona_cluster(righe, limiti_viste_cluster()$mappa)
       }
       disegnati(campione)
-      invia_mappa(session, id_mappa, "dati", dati = dati_mappa_cluster(campione))
+      invia_mappa(
+        session,
+        id_mappa,
+        "dati",
+        dati = dati_mappa_cluster(campione)
+      )
       riquadro <- riquadro_cluster(campione)
       if (!is.null(riquadro)) {
         invia_mappa(session, id_mappa, "inquadra", riquadro = riquadro)
@@ -237,7 +231,13 @@ mod_cluster_analysis_server <- function(
     observeEvent(input$mappa_clic, {
       righe <- disegnati()
       riga <- suppressWarnings(as.integer(input$mappa_clic$i)) + 1L
-      req(righe, length(riga) == 1, !is.na(riga), riga >= 1, riga <= nrow(righe))
+      req(
+        righe,
+        length(riga) == 1,
+        !is.na(riga),
+        riga >= 1,
+        riga <= nrow(righe)
+      )
       scegli(righe$RFID[riga])
       invia_mappa(
         session,

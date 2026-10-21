@@ -1,25 +1,10 @@
-#' Modulo caricamento dati: logica
+#' Caricamento delle letture nell'archivio DuckDB, con esito o errori
 #'
-#' Legge il file delle letture caricato, lo valida e mostra l'esito:
-#' statistiche di caricamento oppure messaggi di errore espliciti.
-#'
-#' Un file molto grande non va per forza caricato dal browser: con
-#' `run_app(letture = "percorso")` l'app lo legge dal disco all'avvio, una
-#' volta sola per tutte le sessioni.
-#'
-#' Le letture finiscono in un archivio DuckDB, vedi
-#' `carica_archivio()`. Quello di un file caricato dal browser appartiene alla
-#' sessione: si chiude quando un altro file lo sostituisce o quando la
-#' sessione finisce. Quelli del dataset di esempio e dei file letti dal disco
-#' sono condivisi tra le sessioni e restano aperti.
-#'
-#' @param id Identificativo del modulo.
-#' @param demo `TRUE` per aprire l'app con i dati di esempio già caricati.
-#'   Il valore predefinito viene da `run_app(demo = )`.
-#' @param percorso File delle letture da leggere dal disco all'avvio, oppure
-#'   `NULL`. Il valore predefinito viene da `run_app(letture = )`.
-#' @return Reactive con l'archivio delle letture, oppure `NULL` se manca un
-#'   dataset valido.
+#' L'archivio di un file caricato dal browser è della sessione e si chiude
+#' quando viene sostituito o la sessione finisce; quelli dell'esempio e dei
+#' file letti dal disco sono condivisi e restano aperti.
+#' @param demo,percorso Da `run_app(demo = , letture = )`.
+#' @return Reactive con l'archivio, `NULL` senza un dataset valido.
 #' @noRd
 mod_caricamento_server <- function(
   id,
@@ -36,8 +21,7 @@ mod_caricamento_server <- function(
       origine = NULL
     )
 
-    # Legge un file con `lettore` e ne scrive l'esito nello stato. L'archivio
-    # sostituito si chiude, se apparteneva alla sessione.
+    # Legge con `lettore`; chiude l'archivio sostituito, se della sessione.
     carica <- function(lettore, percorso, origine) {
       esito <- tryCatch(
         lettore(percorso),
@@ -57,8 +41,7 @@ mod_caricamento_server <- function(
       stato$errori <- esito$errori
       stato$origine <- origine
     }
-    # Un archivio letto dal disco una volta per processo: lo usano tutte le
-    # sessioni, e nessuna lo chiude.
+    # Letto dal disco una volta per processo, condiviso, mai chiuso.
     archivio_condiviso <- function(percorso) {
       leggi_una_volta(
         function(p) {
@@ -73,9 +56,7 @@ mod_caricamento_server <- function(
       archivio <- isolate(stato$dati)
       if (inherits(archivio, "archivio_letture")) chiudi_archivio(archivio)
     })
-    # Un file caricato dal browser ha un percorso temporaneo: l'estensione,
-    # che dice il formato, sta nel nome originale. Con milioni di righe la
-    # lettura dura qualche secondo: un avviso dice che è in corso.
+    # Il percorso è temporaneo: il formato lo dice il nome originale.
     carica_file <- function(file) {
       withProgress(
         message = "Lettura e controllo del file\u2026",
@@ -98,9 +79,6 @@ mod_caricamento_server <- function(
     observeEvent(input$file_upload, carica_file(input$file_upload))
     observeEvent(input$carica_esempio, carica_esempio())
 
-    # `run_app(demo = TRUE)` apre l'app con i dati di esempio già caricati.
-    # `run_app(letture = )` la apre con il file indicato, letto dal disco una
-    # volta sola per tutte le sessioni.
     if (isTRUE(demo)) {
       carica_esempio()
     }
@@ -108,9 +86,7 @@ mod_caricamento_server <- function(
       carica(archivio_condiviso, percorso, basename(percorso))
     }
 
-    # Esito del caricamento: errori, oppure righe, RFID e periodo, dal
-    # riepilogo dell'archivio.
-    # Nome del file caricato, accanto al titolo della sezione chiusa.
+    # Esito: errori, oppure righe, RFID e periodo.
     output$riassunto <- renderText({
       if (is.null(stato$dati)) "" else stato$origine
     })
@@ -126,7 +102,10 @@ mod_caricamento_server <- function(
       }
       archivio <- stato$dati
       req(archivio)
-      periodo <- formatta_data_ora(c(archivio$primo, archivio$ultimo), "%d/%m/%Y")
+      periodo <- formatta_data_ora(
+        c(archivio$primo, archivio$ultimo),
+        "%d/%m/%Y"
+      )
       div(
         class = "esito-caricamento esito-ok",
         tags$div(class = "esito-file", stato$origine),
