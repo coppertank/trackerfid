@@ -83,7 +83,7 @@ scrivi_csv <- function(righe, env = parent.frame()) {
 
 # Le nove colonne obbligatorie, nell'ordine usato dalle righe dei test.
 intestazione_csv <- paste(
-  "giorno_lettura",
+  "data_ora_lettura",
   "targa_veicolo",
   "matricola_veicolo",
   "RFID",
@@ -106,7 +106,7 @@ intestazione_transponder <- sub(
 # Piccolo insieme di letture costruito a mano.
 letture_test <- function() {
   dplyr::tibble(
-    giorno_lettura = as.POSIXct(
+    data_ora_lettura = as.POSIXct(
       c(
         "2025-09-01 08:00:00",
         "2025-09-10 08:00:00",
@@ -165,7 +165,7 @@ letture_rfid <- function(
   n <- length(date)
   censito <- presente == "Presente"
   dplyr::tibble(
-    giorno_lettura = as.POSIXct(paste(date, "08:00:00"), tz = "UTC"),
+    data_ora_lettura = as.POSIXct(paste(date, "08:00:00"), tz = "UTC"),
     targa_veicolo = "AB123CD",
     matricola_veicolo = "1601",
     RFID = rfid,
@@ -196,7 +196,7 @@ tipi_archivio <- function(colonne = "app") {
     rep("VARCHAR", length(colonne_archivio(colonne))),
     colonne_archivio(colonne)
   )
-  tipi[["giorno_lettura"]] <- "TIMESTAMP"
+  tipi[["data_ora_lettura"]] <- "TIMESTAMP"
   tipi[c(
     "latitudine",
     "longitudine",
@@ -362,7 +362,7 @@ scrivi_origine_prova <- function(cartella) {
   scrivi(
     "calendario",
     c(
-      "giorno,ora_inizio,ora_fine,matricola_mezzo,id_giro,eseguito,descrizione_servizio,comune",
+      "data_giro,ora_inizio,ora_fine,matricola_mezzo,id_giro,eseguito,descrizione_servizio,comune_giro",
       "2026-08-03,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
       "2026-08-05,06:00:00,12:00:00,X1601,12,NO,CARTA/CARTONE PAP,LIMENA",
       "2026-08-10,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA",
@@ -375,7 +375,7 @@ scrivi_origine_prova <- function(cartella) {
   scrivi(
     "non_pianificati",
     c(
-      "giorno,matricola_mezzo,descrizione_servizio,comune_giro",
+      "data_giro,matricola_mezzo,descrizione_servizio,comune_giro",
       "2026-08-03,X1601,CARTA CONT.STRADALI,LIMENA"
     )
   )
@@ -397,7 +397,7 @@ scrivi_origine_prova <- function(cartella) {
   scrivi(
     "storiche",
     c(
-      "giorno,codice_transponder,id_trasmissione",
+      "data_lettura,codice_transponder,id_trasmissione",
       "2025-03-01 07:00:00,123,T1",
       "2025-03-01 07:00:00,123,T1",
       "2025-03-02 07:00:00,00BD00000000000000000001,T1",

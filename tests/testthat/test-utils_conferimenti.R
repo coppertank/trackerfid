@@ -16,7 +16,7 @@ letture_via <- function(
     for (j in seq_len(passaggi)) {
       if (j %in% senza_antenna || !b$esposto(j)) next
       righe[[length(righe) + 1]] <- data.frame(
-        giorno_lettura = as.POSIXct(primo_giorno + 14 * (j - 1), tz = "UTC") + 8 * 3600 + b$posizione * 10,
+        data_ora_lettura = as.POSIXct(primo_giorno + 14 * (j - 1), tz = "UTC") + 8 * 3600 + b$posizione * 10,
         RFID = nome,
         presente_a_database = if (is.null(b$fornitura)) "Non Presente" else "Presente",
         servizio_transponder = if (is.null(b$fornitura)) NA_character_ else "SECCO",
@@ -46,7 +46,7 @@ letture_via <- function(
     }
   }
   letture <- do.call(rbind, righe)
-  letture[order(letture$giorno_lettura), , drop = FALSE]
+  letture[order(letture$data_ora_lettura), , drop = FALSE]
 }
 
 # Una via di dieci bidoni censiti che escono a passaggi alterni, più quelli
@@ -237,13 +237,13 @@ test_that("letture lontane, tag anomali, sacchetti e giri di altri rifiuti non c
   ))
   # una lettura del bidone a un chilometro, sul mezzo
   lontana <- letture[letture$RFID == "SEMPRE", ][1, ]
-  lontana$giorno_lettura <- lontana$giorno_lettura + 3600
+  lontana$data_ora_lettura <- lontana$data_ora_lettura + 3600
   lontana$latitudine <- lontana$latitudine + 0.01
   # un tag letto ogni giorno, e un sacchetto
   deposito <- letture[rep(1, 300), ]
   deposito$RFID <- "DEPOSITO"
   deposito$id_fornitura <- "F9"
-  deposito$giorno_lettura <- as.POSIXct("2025-01-01 05:00:00", tz = "UTC") + 86400 * (0:299)
+  deposito$data_ora_lettura <- as.POSIXct("2025-01-01 05:00:00", tz = "UTC") + 86400 * (0:299)
   sacchetto <- letture[1, ]
   sacchetto$RFID <- "00BD00000000000000000001"
   analisi <- analisi_conferimenti(

@@ -15,7 +15,7 @@ file_origine <- function(cartella = "data-raw/origine") {
     gruppi_sacchetti = "dv_cnt_gruppi_sacchetti.csv",
     servizi_sacchetti = "dv_cnt_gruppi_sacchetti_servizi.csv",
     calendario = "iv_estrazione_giri_servizi_rifiuti_filtered.csv",
-    non_pianificati = "giri_non_pianificati.csv",
+    non_pianificati = "iv_estrazione_giri_non_pianificati_filtered.csv",
     componenti = "dv_associazione_componenti.csv",
     manovre = "dv_potenziamento_secco.csv",
     storiche = "dv_cnt_letture.csv"
@@ -100,11 +100,11 @@ importa_test_mezzi <- function(percorso) {
 importa_letture <- function(percorso, comuni = comuni_cantieri()) {
   leggi_tabella_origine(percorso, na = c("", "NA")) |>
     dplyr::transmute(
-      giorno_lettura = as.POSIXct(
+      data_ora_lettura = as.POSIXct(
         .data$DataeOraPrimaLettura,
         format = "%d/%m/%Y %H.%M.%S"
       ),
-      giorno = lubridate::as_date(lubridate::dmy_hms(
+      data_lettura = lubridate::as_date(lubridate::dmy_hms(
         .data$DataeOraPrimaLettura,
         quiet = TRUE
       )),
@@ -123,8 +123,8 @@ importa_letture <- function(percorso, comuni = comuni_cantieri()) {
     # prima via i dati sporchi, poi la prima lettura valida di un transponder
     # nello stesso giorno, anche se letto più volte
     dplyr::filter(.data$latitudine != 0, .data$comune_lettura != "") |>
-    dplyr::arrange(.data$giorno_lettura) |>
-    dplyr::distinct(.data$giorno, .data$RFID, .keep_all = TRUE) |>
+    dplyr::arrange(.data$data_ora_lettura) |>
+    dplyr::distinct(.data$data_lettura, .data$RFID, .keep_all = TRUE) |>
     dplyr::left_join(
       dplyr::select(comuni, "comune", "cantiere"),
       by = c("comune_lettura" = "comune")
@@ -185,23 +185,21 @@ importa_sacchetti <- function(percorso_gruppi, percorso_servizi) {
 
 #' Calendario dei giri pianificati
 #'
-#' Il comune del giro sta in `comune_giro`, o in `comune` nelle estrazioni
-#' meno recenti. Gli orari restano testo `HH:MM`. Vedi `pulisci_giri()`.
+#' Il comune del giro sta in `comune_giro`.
+#' Gli orari restano testo `HH:MM`. Vedi `pulisci_giri()`.
 #' @noRd
 importa_calendario <- function(percorso) {
   calendario <- leggi_tabella_origine(percorso)
-  if (!"comune_giro" %in% names(calendario)) {
-    calendario <- dplyr::rename(calendario, comune_giro = "comune")
-  }
   pulisci_giri(calendario)
 }
 
-#' Giri non pianificati: giorno, mezzo, servizio e comune, senza orari
+#' Giri non pianificati: data, mezzo, servizio e comune, senza orari
 #' @noRd
 importa_giri_non_pianificati <- function(percorso) {
-  giri <- leggi_tabella_origine(percorso)
+  giri <- leggi_tabella_origine(percorso) |>
+    dplyr::rename(dplyr::any_of(c(data_giro = "giorno")))
   mancanti <- setdiff(
-    c("giorno", "matricola_mezzo", "descrizione_servizio", "comune_giro"),
+    c("data_giro", "matricola_mezzo", "descrizione_servizio", "comune_giro"),
     names(giri)
   )
   if (length(mancanti) > 0) {
@@ -216,15 +214,17 @@ importa_giri_non_pianificati <- function(percorso) {
 
 #' Regole comuni ai due calendari
 #'
-#' Fuori i giri senza mezzo; la matricola perde la lettera iniziale; il
-#' giorno diventa una data; `ROSA'` diventa `ROSÀ`.
+#' Fuori i giri senza mezzo; la matricola perde la lettera iniziale; la data
+#' del giro (`data_giro`, in un file vecchio `giorno`) diventa una data;
+#' `ROSA'` diventa `ROSÀ`.
 #' @noRd
 pulisci_giri <- function(giri) {
   giri |>
+    dplyr::rename(dplyr::any_of(c(data_giro = "giorno"))) |>
     dplyr::filter(!is.na(.data$matricola_mezzo)) |>
     dplyr::mutate(
       matricola_mezzo = stringr::str_remove(.data$matricola_mezzo, "^[A-Za-z]"),
-      giorno = lubridate::as_date(.data$giorno),
+      data_giro = lubridate::as_date(.data$data_giro),
       comune_giro = dplyr::if_else(
         .data$comune_giro %in% "ROSA'",
         "ROS\u00c0",
@@ -239,14 +239,14 @@ pulisci_giri <- function(giri) {
 #' vigore.
 #' @noRd
 importa_componenti <- function(percorso) {
-  istante <- function(x) as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S")
+  data_ora <- function(x) as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S")
   intero <- function(x) suppressWarnings(as.integer(numero_testo(x)))
 
   leggi_tabella_origine(percorso) |>
     dplyr::transmute(
       id_fornitura = .data$ID_SERVIZIO,
-      data_inizio_decorrenza = istante(.data$DATA_INIZIO_DECORRENZA),
-      data_fine_decorrenza = istante(.data$DATA_FINE_DECORRENZA),
+      data_inizio_decorrenza = data_ora(.data$DATA_INIZIO_DECORRENZA),
+      data_fine_decorrenza = data_ora(.data$DATA_FINE_DECORRENZA),
       nucleo_residenti = intero(.data$NUCLEO_RESIDENTI),
       nucleo_non_residenti = intero(.data$NUCLEO_NON_RESIDENTI),
       nucleo_totale = intero(.data$NUCLEO_TOTALE),
@@ -271,9 +271,9 @@ importa_manovre <- function(percorso) {
     )
 }
 
-#' Istante da un testo `AAAA-MM-GG` o `GG/MM/AAAA`, con o senza ora, nel fuso della sessione
+#' Data e ora da un testo `AAAA-MM-GG` o `GG/MM/AAAA`, con o senza ora, nel fuso della sessione
 #' @noRd
-istante_da_testo <- function(x) {
+data_ora_da_testo <- function(x) {
   lubridate::parse_date_time(
     x,
     orders = c("Ymd HMS", "Ymd HM", "Ymd", "dmY HMS", "dmY HM", "dmY"),
@@ -284,23 +284,23 @@ istante_da_testo <- function(x) {
 
 #' Letture storiche (saponette), prima delle antenne
 #'
-#' Istante, trasmissione e codice, nel formato della pipeline, senza righe
+#' Data e ora, trasmissione e codice, nel formato della pipeline, senza righe
 #' ripetute. `id_trasmissione` raggruppa i codici letti nello stesso giro in
-#' un giorno, ma non è un `id_giro`. Le righe con un istante illeggibile si
+#' un giorno, ma non è un `id_giro`. Le righe con data e ora illeggibile si
 #' scartano, con un avviso.
-#' @param colonna_rfid,colonna_giorno,colonna_trasmissione Nomi delle colonne
+#' @param colonna_rfid,colonna_data_ora,colonna_trasmissione Nomi delle colonne
 #'   nel file.
-#' @return `giorno_lettura`, `giorno`, `id_trasmissione`, `RFID`.
+#' @return `data_ora_lettura`, `data_lettura`, `id_trasmissione`, `RFID`.
 #' @noRd
 importa_letture_storiche <- function(
   percorso,
   colonna_rfid = "codice_transponder",
-  colonna_giorno = "giorno",
+  colonna_data_ora = "data_lettura",
   colonna_trasmissione = "id_trasmissione"
 ) {
   grezzo <- leggi_tabella_origine(percorso, na = c("", "NA"))
   mancanti <- setdiff(
-    c(colonna_rfid, colonna_giorno, colonna_trasmissione),
+    c(colonna_rfid, colonna_data_ora, colonna_trasmissione),
     names(grezzo)
   )
   if (length(mancanti) > 0) {
@@ -313,30 +313,30 @@ importa_letture_storiche <- function(
 
   storiche <- grezzo |>
     dplyr::transmute(
-      testo_giorno = .data[[colonna_giorno]],
-      giorno_lettura = istante_da_testo(.data$testo_giorno),
-      giorno = lubridate::as_date(.data$giorno_lettura),
+      testo_data_ora = .data[[colonna_data_ora]],
+      data_ora_lettura = data_ora_da_testo(.data$testo_data_ora),
+      data_lettura = lubridate::as_date(.data$data_ora_lettura),
       id_trasmissione = .data[[colonna_trasmissione]],
       RFID = .data[[colonna_rfid]]
     )
 
   illeggibili <- dplyr::filter(
     storiche,
-    !is.na(.data$testo_giorno),
-    is.na(.data$giorno_lettura)
+    !is.na(.data$testo_data_ora),
+    is.na(.data$data_ora_lettura)
   )
   if (nrow(illeggibili) > 0) {
     warning(
       nrow(illeggibili),
       " letture storiche hanno un istante illeggibile e vengono scartate, ad esempio: ",
-      paste(utils::head(unique(illeggibili$testo_giorno), 3), collapse = ", "),
+      paste(utils::head(unique(illeggibili$testo_data_ora), 3), collapse = ", "),
       call. = FALSE
     )
   }
 
   storiche |>
-    dplyr::select(-"testo_giorno") |>
-    dplyr::filter(!is.na(.data$RFID), !is.na(.data$giorno_lettura)) |>
+    dplyr::select(-"testo_data_ora") |>
+    dplyr::filter(!is.na(.data$RFID), !is.na(.data$data_ora_lettura)) |>
     formatta_rfid() |>
     dplyr::distinct()
 }

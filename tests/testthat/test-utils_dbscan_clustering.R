@@ -166,7 +166,7 @@ test_that("gli RFID letti in un solo punto saltano DBSCAN con lo stesso risultat
           parametri[1],
           parametri[2]
         ),
-        d$giorno_lettura[righe]
+        d$data_ora_lettura[righe]
       )
     }
     expect_identical(veloce, lento, info = paste(parametri, collapse = ", "))

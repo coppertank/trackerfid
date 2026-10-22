@@ -28,7 +28,7 @@ test_that("il caricamento restituisce il dataset validato", {
 })
 
 test_that("un file non valido azzera il dataset e mostra l'errore", {
-  errato <- scrivi_csv(c("giorno_lettura,RFID", "2025-09-15 08:30:00,R1"))
+  errato <- scrivi_csv(c("data_ora_lettura,RFID", "2025-09-15 08:30:00,R1"))
   shiny::testServer(mod_caricamento_server, {
     session$setInputs(carica_esempio = 1)
     esempio <- session$getReturned()()
@@ -94,7 +94,7 @@ test_that("il periodo predefinito è l'anno più recente del dataset", {
     selezione <- periodo$dati()
     expect_s3_class(selezione, "selezione_letture")
     letture <- letture_periodo(selezione)
-    expect_true(all(lubridate::year(letture$giorno_lettura) == 2025))
+    expect_true(all(lubridate::year(letture$data_ora_lettura) == 2025))
     expect_equal(selezione$n, nrow(letture))
     # con letture nel periodo la barra in alto non mostra avvisi
     expect_null(output$riepilogo$html)
@@ -104,7 +104,7 @@ test_that("il periodo predefinito è l'anno più recente del dataset", {
     expect_identical(periodo$periodo(), as.Date(c("2024-01-01", "2024-12-31")))
     expect_identical(periodo$etichetta(), "Anno 2024")
     expect_true(all(
-      lubridate::year(letture_periodo(periodo$dati())$giorno_lettura) == 2024
+      lubridate::year(letture_periodo(periodo$dati())$data_ora_lettura) == 2024
     ))
     expect_lt(periodo$dati()$n, nrow(letture))
   })
@@ -119,7 +119,7 @@ test_that("il periodo è l'intervallo di date scelto, e viene validato", {
     session$setInputs(intervallo = as.Date(c("2025-03-15", "2025-09-30")))
     expect_identical(periodo$periodo(), as.Date(c("2025-03-15", "2025-09-30")))
     expect_identical(periodo$etichetta(), "15/03/2025 - 30/09/2025")
-    giorni <- as.Date(letture_periodo(periodo$dati())$giorno_lettura)
+    giorni <- as.Date(letture_periodo(periodo$dati())$data_ora_lettura)
     expect_true(all(
       giorni >= as.Date("2025-03-15") & giorni <= as.Date("2025-09-30")
     ))
@@ -157,7 +157,7 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
     expect_identical(periodo$etichetta(), "01/05/2025 - 31/05/2025")
 
     solo_2024 <- dati_esempio()[
-      lubridate::year(dati_esempio()$giorno_lettura) == 2024,
+      lubridate::year(dati_esempio()$data_ora_lettura) == 2024,
     ]
     dati(archivio_da_letture(solo_2024))
     session$flushReact()
@@ -420,7 +420,7 @@ test_that("i filtri si azzerano con un nuovo dataset ma non al cambio di periodo
       dati(seleziona_periodo(archivio_esempio(), periodo_anno(2024)))
       session$flushReact()
       expect_true(all(filtrati()$presente_a_database == "Non Presente"))
-      expect_true(all(lubridate::year(filtrati()$giorno_lettura) == 2024))
+      expect_true(all(lubridate::year(filtrati()$data_ora_lettura) == 2024))
 
       # nuovo dataset: filtri ai valori predefiniti
       origine(2)
@@ -1007,7 +1007,7 @@ test_that("le scelte geografiche restano al cambio di periodo e si azzerano con 
       session$flushReact()
       expect_gt(nrow(filtrati()), 0)
       expect_true(all(filtrati()$comune_assegnato == "BASSANO DEL GRAPPA"))
-      expect_true(all(lubridate::year(filtrati()$giorno_lettura) == 2024))
+      expect_true(all(lubridate::year(filtrati()$data_ora_lettura) == 2024))
 
       # nuovo dataset: tutti i cantieri e tutti i comuni
       origine(2)
@@ -1351,7 +1351,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_identical(stato$dal, as.Date("2025-12-31"))
     expect_identical(stato$al, as.Date("2025-12-31"))
     all_avvio <- trovate()
-    expect_true(all(all_avvio$giorno == as.Date("2025-12-31")))
+    expect_true(all(all_avvio$data_lettura == as.Date("2025-12-31")))
     expect_gt(nrow(all_avvio), 0)
     # senza un giro scelto la mappa non riceve letture: inquadra la zona dei
     # giri trovati e invita a sceglierne uno
@@ -1384,8 +1384,8 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_true(all(settimana$coerenza_comune == "Fuori giro"))
     expect_gt(dplyr::n_distinct(settimana$matricola_veicolo), 1)
     expect_true(all(
-      settimana$giorno >= as.Date("2025-09-22") &
-        settimana$giorno <= as.Date("2025-09-28")
+      settimana$data_lettura >= as.Date("2025-09-22") &
+        settimana$data_lettura <= as.Date("2025-09-28")
     ))
     giri <- restituito$riepilogo()
     expect_true(all(giri$fuori_giro > 0))
@@ -1393,7 +1393,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     # un click su una riga della tabella: le sole letture di quel giro
     riga <- which(
       giri$matricola_veicolo == "1601" &
-        giri$giorno == as.Date("2025-09-24")
+        giri$data_giro == as.Date("2025-09-24")
     )
     expect_identical(giri$comune_giro[riga], "LIMENA")
     session$setInputs(tabella__reactable__selected = riga)
@@ -1438,7 +1438,7 @@ test_that("la ricerca dei giri parte dal giorno pi\u00f9 recente e segue mezzo, 
     expect_identical(stato$mezzo, "")
     expect_identical(stato$solo, character(0))
     expect_identical(stato$dal, as.Date("2024-12-31"))
-    expect_true(all(trovate()$giorno == as.Date("2024-12-31")))
+    expect_true(all(trovate()$data_lettura == as.Date("2024-12-31")))
 
     # senza letture non c'\u00e8 niente da cercare
     dati(NULL)

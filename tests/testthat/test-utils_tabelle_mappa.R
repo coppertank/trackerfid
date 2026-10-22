@@ -45,8 +45,8 @@ test_that("la tabella delle letture riporta tutte le letture, per RFID, dalla pi
   expect_gt(nrow(dati), nrow(limita_letture_ricerca(trovate)))
   # in ordine di RFID e, per ogni RFID, dalla più recente
   expect_false(is.unsorted(dati$RFID))
-  ordinate <- trovate[order(trovate$RFID, -as.numeric(trovate$giorno_lettura)), ]
-  expect_identical(dati$Lettura, formatta_data_ora(ordinate$giorno_lettura))
+  ordinate <- trovate[order(trovate$RFID, -as.numeric(trovate$data_ora_lettura)), ]
+  expect_identical(dati$Lettura, formatta_data_ora(ordinate$data_ora_lettura))
   expect_identical(
     dati$Mezzo,
     paste(ordinate$matricola_veicolo, ordinate$targa_veicolo)
@@ -76,6 +76,6 @@ test_that("la tabella delle letture usa il servizio atteso se manca il giro", {
   letture$is_ultimo <- FALSE
   letture <- letture[names(letture) != "servizio_giro"]
   dati <- dati_reactable(tabella_letture_rfid(letture))
-  ordinate <- letture[order(letture$RFID, -as.numeric(letture$giorno_lettura)), ]
+  ordinate <- letture[order(letture$RFID, -as.numeric(letture$data_ora_lettura)), ]
   expect_identical(dati$Giro, ordinate$servizio_atteso)
 })

@@ -41,7 +41,7 @@ genera_analisi_cluster <- function(
   letture <- esito$dati
 
   if (is.null(data_inizio) && is.null(data_fine)) {
-    periodo <- periodo_anno(max(lubridate::year(letture$giorno_lettura)))
+    periodo <- periodo_anno(max(lubridate::year(letture$data_ora_lettura)))
     data_inizio <- periodo[1]
     data_fine <- periodo[2]
   } else if (is.null(data_inizio)) {

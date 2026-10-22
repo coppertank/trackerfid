@@ -3,7 +3,7 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   dati <- esito$dati
 
   expect_identical(names(dati), colonne_app())
-  expect_s3_class(dati$giorno_lettura, "POSIXct")
+  expect_s3_class(dati$data_ora_lettura, "POSIXct")
   expect_type(dati$volume_previsto, "double")
   expect_type(dati$numero_raccolte_annue_previste, "double")
   for (campo in c(
@@ -26,7 +26,7 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   dati <- carica_dataset(percorso_dataset_esempio(), colonne = "tutte")$dati
   grezzo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character", na.strings = c("", "NA"))
   expect_true(all(names(grezzo) %in% c(colonne_dataset(), names(alias_colonne()))))
-  expect_s3_class(dati$giorno, "Date")
+  expect_s3_class(dati$data_lettura, "Date")
   expect_s3_class(dati$data_attivazione_contenitore, "Date")
   expect_type(dati$nucleo_residenti, "integer")
   expect_type(dati$potenziamento_secco, "logical")
@@ -38,7 +38,7 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
 
 test_that("le colonne della pipeline si convertono, o restano vuote con un avviso", {
   percorso <- scrivi_csv(c(
-    paste0(intestazione_csv, ",giorno,nucleo_residenti,potenziamento_secco,sottocategoria,id_giro"),
+    paste0(intestazione_csv, ",data_lettura,nucleo_residenti,potenziamento_secco,sottocategoria,id_giro"),
     "2025-09-15 08:30:00,AB1,1601,R1,Presente,SECCO,U1,45.7,11.7,15/09/2025,2,SI,D,0007",
     "2025-09-16 08:30:00,AB1,1601,R2,Presente,SECCO,U1,45.7,11.7,2025-09-16,tre,false,ND,8",
     "2025-09-17 08:30:00,AB1,1601,R3,Non Presente,SECCO,,45.7,11.7,ieri,,forse,,"
@@ -49,7 +49,7 @@ test_that("le colonne della pipeline si convertono, o restano vuote con un avvis
   expect_false(any(grepl("non interpretabili", solo_app$avvisi)))
   esito <- carica_dataset(percorso, colonne = "tutte")
   dati <- esito$dati
-  expect_identical(dati$giorno, as.Date(c("2025-09-15", "2025-09-16", NA)))
+  expect_identical(dati$data_lettura, as.Date(c("2025-09-15", "2025-09-16", NA)))
   expect_identical(dati$nucleo_residenti, c(2L, NA, NA))
   expect_identical(dati$potenziamento_secco, c(TRUE, FALSE, NA))
   expect_identical(dati$sottocategoria, c("D", "ND", NA))
@@ -58,7 +58,7 @@ test_that("le colonne della pipeline si convertono, o restano vuote con un avvis
   # una colonna assente resta vuota, senza avvisi
   expect_true(all(is.na(dati$id_fornitura)))
   expect_false(any(grepl("id_fornitura", esito$avvisi)))
-  expect_match(esito$avvisi, "giorno: 1 valori non interpretabili, lasciati vuoti. Righe del file: 4", all = FALSE, fixed = TRUE)
+  expect_match(esito$avvisi, "data_lettura: 1 valori non interpretabili, lasciati vuoti. Righe del file: 4", all = FALSE, fixed = TRUE)
   expect_match(esito$avvisi, "nucleo_residenti: 1 valori non interpretabili", all = FALSE, fixed = TRUE)
   expect_match(esito$avvisi, "potenziamento_secco: 1 valori non interpretabili", all = FALSE, fixed = TRUE)
 })
@@ -72,11 +72,11 @@ test_that("legge CSV con punto e virgola, virgola decimale e date italiane", {
   dati <- carica_dataset(percorso)$dati
 
   expect_equal(
-    dati$giorno_lettura[1],
+    dati$data_ora_lettura[1],
     as.POSIXct("2025-09-15 08:30:00", tz = "UTC")
   )
   expect_equal(
-    dati$giorno_lettura[2],
+    dati$data_ora_lettura[2],
     as.POSIXct("2025-09-16 09:00:00", tz = "UTC")
   )
   expect_equal(dati$latitudine, c(41.9028, 41.91))
@@ -100,7 +100,7 @@ test_that("i nomi delle colonne non dipendono da maiuscole e ordine", {
 
 test_that("le colonne mancanti producono un errore esplicito", {
   percorso <- scrivi_csv(c(
-    "giorno_lettura,targa_veicolo,RFID,latitudine",
+    "data_ora_lettura,targa_veicolo,RFID,latitudine",
     "2025-09-15 08:30:00,AB123CD,R1,41.9"
   ))
   errore <- expect_error(carica_dataset(percorso), class = "errore_validazione")
@@ -119,7 +119,7 @@ test_that("i valori non interpretabili sono segnalati con il numero di riga", {
   messaggi <- errore$messaggi
 
   expect_length(messaggi, 4)
-  expect_match(messaggi[1], "giorno_lettura.*Righe del file: 3")
+  expect_match(messaggi[1], "data_ora_lettura.*Righe del file: 3")
   expect_match(messaggi[2], "latitudine.*non numerici")
   expect_match(messaggi[3], "longitudine.*fuori dall'intervallo")
   expect_match(messaggi[4], "presente_a_database.*Forse")
@@ -164,7 +164,7 @@ test_that("l'ultima lettura di ogni RFID si sceglie in DuckDB", {
   expect_equal(nrow(ultimi), 3)
   expect_setequal(ultimi$RFID, c("A", "B", "C"))
   expect_equal(
-    ultimi$giorno_lettura[ultimi$RFID == "A"],
+    ultimi$data_ora_lettura[ultimi$RFID == "A"],
     as.POSIXct("2025-09-20 08:00:00", tz = "UTC")
   )
   # le colonne del dataset, il servizio dell'icona e la posizione nel file
@@ -173,7 +173,7 @@ test_that("l'ultima lettura di ogni RFID si sceglie in DuckDB", {
     c(colonne_app(), "servizio_icona", "riga")
   )
   # dalla più recente alla meno recente
-  expect_false(is.unsorted(rev(ultimi$giorno_lettura)))
+  expect_false(is.unsorted(rev(ultimi$data_ora_lettura)))
   # a parità di istante resta la lettura che viene prima nel file
   doppie <- letture_test()[c(1, 1), ]
   doppie$servizio_transponder <- c("PRIMA", "SECONDA")
@@ -191,7 +191,7 @@ test_that("il filtro per periodo include gli estremi", {
     as.Date(c("2025-09-05", "2025-09-10"))
   )
   expect_setequal(
-    format(filtrate$giorno_lettura, "%d"),
+    format(filtrate$data_ora_lettura, "%d"),
     c("05", "06", "07", "10")
   )
   expect_equal(nrow(filtra_periodo(letture_test(), NULL)), 6)
@@ -501,11 +501,11 @@ test_that("la coerenza confronta le tipologie dei servizi di una lettura", {
   riepilogo <- coerenza_rfid(storia)
   expect_equal(riepilogo$n, 6)
   expect_equal(nrow(riepilogo$letture), 5)
-  expect_identical(riepilogo$letture$giorno_lettura, rev(storia$giorno_lettura)[1:5])
+  expect_identical(riepilogo$letture$data_ora_lettura, rev(storia$data_ora_lettura)[1:5])
   expect_identical(
     names(riepilogo$letture),
     c(
-      "giorno_lettura",
+      "data_ora_lettura",
       "matricola_veicolo",
       "servizio_transponder",
       "servizio_atteso",
@@ -523,7 +523,7 @@ test_that("i filtri si applicano prima della deduplica", {
   riga <- ultimi[ultimi$RFID == "A", ]
   expect_identical(riga$servizio_transponder, "SECCO")
   expect_equal(
-    riga$giorno_lettura,
+    riga$data_ora_lettura,
     as.POSIXct("2025-09-10 08:00:00", tz = "UTC")
   )
 })
@@ -577,7 +577,7 @@ test_that("la ricerca per RFID restituisce tutte le letture e marca l'ultima", {
   expect_equal(sum(trovate$is_ultimo), 2)
   ultima_a <- trovate[trovate$RFID == "A" & trovate$is_ultimo, ]
   expect_equal(
-    ultima_a$giorno_lettura,
+    ultima_a$data_ora_lettura,
     as.POSIXct("2025-09-20 08:00:00", tz = "UTC")
   )
   expect_equal(nrow(cerca_per_rfid(selezione, "inesistente")), 0)
@@ -585,7 +585,7 @@ test_that("la ricerca per RFID restituisce tutte le letture e marca l'ultima", {
   # data decrescente
   expect_true("servizio_icona" %in% names(trovate))
   expect_identical(trovate$RFID, c("A", "A", "A", "C", "C"))
-  expect_false(is.unsorted(rev(trovate$giorno_lettura[trovate$RFID == "A"])))
+  expect_false(is.unsorted(rev(trovate$data_ora_lettura[trovate$RFID == "A"])))
 })
 
 test_that("la ricerca per utenza considera solo l'utenza attuale", {
@@ -622,7 +622,7 @@ test_that("la cronologia accorpa le letture consecutive uguali", {
   utenze <- cronologia_transizioni(d[d$RFID == "A", ], "id_utenza")
   expect_identical(utenze$valore, c("U1", "U2"))
   expect_equal(
-    utenze$giorno_lettura[2],
+    utenze$data_ora_lettura[2],
     as.POSIXct("2025-09-20 08:00:00", tz = "UTC")
   )
 
@@ -935,7 +935,7 @@ test_that("anni e periodi di analisi", {
   expect_null(etichetta_periodo(NULL))
 
   nel_2024 <- filtra_periodo(dati_esempio(), periodo_anno(2024))
-  expect_true(all(lubridate::year(nel_2024$giorno_lettura) == 2024))
+  expect_true(all(lubridate::year(nel_2024$data_ora_lettura) == 2024))
   expect_gt(nrow(nel_2024), 0)
 })
 
@@ -1119,10 +1119,10 @@ test_that("le letture si leggono da un file Parquet con le colonne già tipizzat
   expect_equal(esito$dati, atteso)
   expect_identical(esito$avvisi, avvisi_esempio())
   # data e ora restano quelle scritte, senza spostamenti di fuso
-  expect_s3_class(esito$dati$giorno_lettura, "POSIXct")
+  expect_s3_class(esito$dati$data_ora_lettura, "POSIXct")
   expect_identical(
-    format(esito$dati$giorno_lettura[1:20], "%Y-%m-%d %H:%M:%S"),
-    format(atteso$giorno_lettura[1:20], "%Y-%m-%d %H:%M:%S")
+    format(esito$dati$data_ora_lettura[1:20], "%Y-%m-%d %H:%M:%S"),
+    format(atteso$data_ora_lettura[1:20], "%Y-%m-%d %H:%M:%S")
   )
 
   # un file che non è Parquet
@@ -1173,14 +1173,14 @@ test_that("l'ultima lettura si sceglie tra quelle che superano i filtri", {
   )
   # stesso risultato della regola: l'ultima lettura di ogni RFID
   attese <- dati |>
-    dplyr::slice_max(.data$giorno_lettura, n = 1, by = "RFID", with_ties = FALSE)
+    dplyr::slice_max(.data$data_ora_lettura, n = 1, by = "RFID", with_ties = FALSE)
   ultimi <- ultime_esempio()
   expect_identical(
-    ultimi$giorno_lettura[match(attese$RFID, ultimi$RFID)],
-    attese$giorno_lettura
+    ultimi$data_ora_lettura[match(attese$RFID, ultimi$RFID)],
+    attese$data_ora_lettura
   )
   # dalla più recente alla meno recente
-  expect_false(is.unsorted(rev(ultimi$giorno_lettura)))
+  expect_false(is.unsorted(rev(ultimi$data_ora_lettura)))
   expect_equal(nrow(ultime_esempio(stato_db = character(0))), 0)
 })
 
@@ -1191,7 +1191,7 @@ test_that("un periodo che contiene tutte le letture restituisce il dataset com'�
     dati
   )
   # gli estremi contano a giornata intera
-  giorni <- as.Date(range(dati$giorno_lettura))
+  giorni <- as.Date(range(dati$data_ora_lettura))
   expect_identical(filtra_periodo(dati, giorni), dati)
   expect_lt(nrow(filtra_periodo(dati, giorni + c(1, 0))), nrow(dati))
   expect_lt(nrow(filtra_periodo(dati, giorni - c(0, 1))), nrow(dati))
@@ -1394,7 +1394,7 @@ test_that("le letture senza i sacchetti sono quelle dei contenitori", {
   expect_identical(senza_sacchetti(soli), soli)
   expect_equal(nrow(senza_sacchetti(d[0, ])), 0)
   # basta la colonna RFID
-  solo_codici <- d[, c("RFID", "giorno_lettura")]
+  solo_codici <- d[, c("RFID", "data_ora_lettura")]
   expect_identical(senza_sacchetti(solo_codici)$RFID, soli$RFID)
   # nel dataset di esempio toglie i 12 sacchetti e le loro 12 letture
   esempio <- dati_esempio()
@@ -1752,10 +1752,10 @@ test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarat
   # le ultime cinque letture fuori giro, dalla più recente
   ultime <- deposito$fuori_giro$letture
   expect_equal(nrow(ultime), 5)
-  expect_false(is.unsorted(rev(ultime$giorno_lettura)))
+  expect_false(is.unsorted(rev(ultime$data_ora_lettura)))
   expect_named(
     ultime,
-    c("giorno_lettura", "matricola_veicolo", "comune_giro", "comune_lettura")
+    c("data_ora_lettura", "matricola_veicolo", "comune_giro", "comune_lettura")
   )
 
   # un contenitore coerente non ha niente da segnalare
@@ -1766,4 +1766,20 @@ test_that("il dettaglio di un RFID riporta le letture fuori dai comuni dichiarat
   semplice <- analizza_rfid(letture_rfid("A", date_2025(3)))$coerenza_comune
   expect_identical(semplice$fuori_comune$n, 0L)
   expect_identical(semplice$fuori_giro$n, 0L)
+})
+
+test_that("un file con i nomi vecchi di data e ora si legge come uno nuovo", {
+  nuovo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
+  vecchio <- nuovo[1:50, ]
+  names(vecchio)[names(vecchio) == "data_ora_lettura"] <- "giorno_lettura"
+  names(vecchio)[names(vecchio) == "data_lettura"] <- "giorno"
+  file <- withr::local_tempfile(fileext = ".csv")
+  utils::write.csv(vecchio, file, row.names = FALSE)
+
+  esito <- carica_dataset(file, colonne = "tutte")
+  expect_identical(
+    format(esito$dati$data_ora_lettura, "%Y-%m-%d %H:%M:%S"),
+    nuovo$data_ora_lettura[1:50]
+  )
+  expect_identical(as.character(esito$dati$data_lettura), nuovo$data_lettura[1:50])
 })

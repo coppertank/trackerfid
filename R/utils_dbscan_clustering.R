@@ -123,7 +123,7 @@ assegna_cluster <- function(letture, eps_m = 100, min_pts = 1) {
         eps_m,
         min_pts
       ),
-      letture$giorno_lettura[righe]
+      letture$data_ora_lettura[righe]
     )
   }
   letture$cluster_id <- cluster

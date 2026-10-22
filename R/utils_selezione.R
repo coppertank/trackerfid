@@ -36,7 +36,7 @@ sql_periodo <- function(selezione) {
     return("TRUE")
   }
   sprintf(
-    "giorno_lettura >= TIMESTAMP '%s 00:00:00' AND giorno_lettura < TIMESTAMP '%s 00:00:00'",
+    "data_ora_lettura >= TIMESTAMP '%s 00:00:00' AND data_ora_lettura < TIMESTAMP '%s 00:00:00'",
     format(periodo[1]),
     format(periodo[2] + 1)
   )
@@ -114,7 +114,7 @@ sql_con_icona <- function(selezione) {
 #' @noRd
 sql_ultime <- function(selezione, condizione = "TRUE") {
   sprintf(
-    "(SELECT arg_max(riga, {'g': giorno_lettura, 'r': -riga}) AS riga FROM %s WHERE %s GROUP BY RFID)",
+    "(SELECT arg_max(riga, {'g': data_ora_lettura, 'r': -riga}) AS riga FROM %s WHERE %s GROUP BY RFID)",
     sql_con_icona(selezione),
     condizione
   )
@@ -214,7 +214,7 @@ ultime_letture <- function(selezione, ..., colonne = NULL) {
   interroga(
     selezione$archivio,
     sprintf(
-      "SELECT %s FROM %s l SEMI JOIN %s u ON u.riga = l.riga ORDER BY giorno_lettura DESC, riga",
+      "SELECT %s FROM %s l SEMI JOIN %s u ON u.riga = l.riga ORDER BY data_ora_lettura DESC, riga",
       paste(colonne, collapse = ", "),
       sql_con_icona(selezione),
       sql_ultime(selezione, condizione_filtri(selezione$archivio$con, ...))
@@ -337,9 +337,9 @@ cerca_per_rfid <- function(selezione, codici) {
     selezione$archivio,
     sprintf(
       paste(
-        "SELECT %s, row_number() OVER (PARTITION BY RFID ORDER BY giorno_lettura DESC, riga) = 1 AS is_ultimo",
+        "SELECT %s, row_number() OVER (PARTITION BY RFID ORDER BY data_ora_lettura DESC, riga) = 1 AS is_ultimo",
         "FROM %s WHERE upper(RFID) IN (%s)",
-        "ORDER BY RFID, giorno_lettura DESC, riga"
+        "ORDER BY RFID, data_ora_lettura DESC, riga"
       ),
       colonne_risultato(),
       sql_con_icona(selezione),
@@ -398,7 +398,7 @@ giorni_letture <- function(selezione) {
   estremi <- interroga(
     selezione$archivio,
     sprintf(
-      "SELECT min(giorno_lettura)::DATE AS primo, max(giorno_lettura)::DATE AS ultimo FROM %s WHERE %s",
+      "SELECT min(data_ora_lettura)::DATE AS primo, max(data_ora_lettura)::DATE AS ultimo FROM %s WHERE %s",
       selezione$archivio$tabella,
       sql_periodo(selezione)
     )
@@ -416,7 +416,7 @@ cerca_giri <- function(selezione, mezzo = NULL, dal, al, solo = character(0)) {
   dal <- lubridate::as_date(dal)
   al <- lubridate::as_date(al)
   condizioni <- sprintf(
-    "giorno_lettura >= TIMESTAMP '%s 00:00:00' AND giorno_lettura < TIMESTAMP '%s 00:00:00'",
+    "data_ora_lettura >= TIMESTAMP '%s 00:00:00' AND data_ora_lettura < TIMESTAMP '%s 00:00:00'",
     format(dal),
     format(al + 1)
   )
@@ -439,13 +439,13 @@ cerca_giri <- function(selezione, mezzo = NULL, dal, al, solo = character(0)) {
   trovate <- interroga(
     selezione$archivio,
     sprintf(
-      "SELECT %s FROM %s WHERE %s ORDER BY giorno_lettura, RFID, riga",
+      "SELECT %s FROM %s WHERE %s ORDER BY data_ora_lettura, RFID, riga",
       colonne_risultato(),
       sql_con_icona(selezione),
       paste0("(", condizioni, ")", collapse = " AND ")
     )
   )
-  trovate$giorno <- lubridate::as_date(trovate$giorno_lettura)
+  trovate$data_lettura <- lubridate::as_date(trovate$data_ora_lettura)
   trovate
 }
 
@@ -463,7 +463,7 @@ letture_del_rfid <- function(origine, rfid) {
   interroga(
     archivio,
     sprintf(
-      "SELECT %s FROM %s WHERE RFID = %s AND %s ORDER BY giorno_lettura, riga",
+      "SELECT %s FROM %s WHERE RFID = %s AND %s ORDER BY data_ora_lettura, riga",
       colonne_risultato(icona = FALSE),
       archivio$tabella,
       DBI::dbQuoteString(archivio$con, rfid),
@@ -488,7 +488,7 @@ anni_disponibili <- function(archivio) {
     interroga(
       archivio,
       sprintf(
-        "SELECT DISTINCT year(giorno_lettura) AS anno FROM %s ORDER BY anno DESC",
+        "SELECT DISTINCT year(data_ora_lettura) AS anno FROM %s ORDER BY anno DESC",
         archivio$tabella
       )
     )$anno

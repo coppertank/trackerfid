@@ -40,7 +40,7 @@ create_popup_html <- function(
   servizio_atteso,
   targa,
   matricola,
-  giorno_lettura,
+  data_ora_lettura,
   id_utenza,
   presente,
   comune = NULL,
@@ -56,7 +56,7 @@ create_popup_html <- function(
   testo <- function(x, se_mancante = "N/A") {
     htmltools::htmlEscape(tidyr::replace_na(as.character(x), se_mancante))
   }
-  data_formattata <- formatta_data_ora(giorno_lettura)
+  data_formattata <- formatta_data_ora(data_ora_lettura)
   riga_facoltativa <- function(etichetta, valori, mostra = TRUE) {
     if (is.null(valori)) {
       return("")
@@ -251,7 +251,7 @@ elenco_cronologia <- function(cronologia, etichetta_attuale) {
   tags <- htmltools::tags
   voci <- purrr::pmap(
     list(
-      formatta_data_ora(cronologia$giorno_lettura, "%d/%m/%Y %H:%M"),
+      formatta_data_ora(cronologia$data_ora_lettura, "%d/%m/%Y %H:%M"),
       cronologia$valore,
       cronologia$attuale
     ),
@@ -473,7 +473,7 @@ blocco_coerenza_comune <- function(coerenza, n_letture) {
           letto <- righe$comune_lettura[i]
           tags$li(sprintf(
             "%s \u00b7 %s \u00b7 giro a %s, letto %s",
-            formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
+            formatta_data_ora(righe$data_ora_lettura[i], "%d/%m/%Y"),
             righe$matricola_veicolo[i],
             righe$comune_giro[i],
             if (is.na(letto)) "in un comune sconosciuto" else paste("a", letto)
@@ -515,7 +515,7 @@ blocco_coerenza <- function(coerenza, n_letture) {
       lapply(seq_len(nrow(righe)), function(i) {
         tags$li(sprintf(
           "%s \u00b7 %s \u00b7 %s",
-          formatta_data_ora(righe$giorno_lettura[i], "%d/%m/%Y"),
+          formatta_data_ora(righe$data_ora_lettura[i], "%d/%m/%Y"),
           righe$matricola_veicolo[i],
           descrivi_servizi(
             database = righe[["servizio_transponder"]][i],

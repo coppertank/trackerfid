@@ -4,7 +4,7 @@
 
 #' Versione dello schema dell'archivio: va aumentata se cambiano le colonne
 #' @noRd
-versione_archivio <- function() 4L
+versione_archivio <- function() 5L
 
 #' Database DuckDB in memoria, senza estensioni, con la tabella `servizi_tipologie`
 #'
@@ -54,7 +54,7 @@ nuovo_archivio <- function(con, tabella, origine = NULL, condiviso = FALSE) {
   riepilogo <- DBI::dbGetQuery(
     con,
     sprintf(
-      "SELECT count(*) AS n, count(DISTINCT RFID) AS n_rfid, min(giorno_lettura) AS primo, max(giorno_lettura) AS ultimo FROM %s",
+      "SELECT count(*) AS n, count(DISTINCT RFID) AS n_rfid, min(data_ora_lettura) AS primo, max(data_ora_lettura) AS ultimo FROM %s",
       tabella
     )
   )
@@ -262,7 +262,7 @@ sql_pulito <- function(colonna, csv = TRUE) {
   if (csv) sprintf("nullif(%s, 'NA')", pulito) else pulito
 }
 
-#' Formati accettati per `giorno_lettura`: anno-mese-giorno o giorno/mese/anno, con o senza ora
+#' Formati accettati per `data_ora_lettura`: anno-mese-giorno o giorno/mese/anno, con o senza ora
 #' @noRd
 formati_data_ora <- function() {
   c(
@@ -377,10 +377,10 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     )
   }
   data_ora <- local({
-    colonna <- colonna_di("giorno_lettura")
+    colonna <- colonna_di("data_ora_lettura")
     tipo <- tipi_file[[colonna]]
     if (tipo == "VARCHAR") {
-      pulito <- testo("giorno_lettura")
+      pulito <- testo("data_ora_lettura")
       c(
         testo = pulito,
         valore = sprintf(
@@ -482,7 +482,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       data_ora[["testo"]],
       " AS t_giorno, ",
       data_ora[["valore"]],
-      " AS giorno_lettura, ",
+      " AS data_ora_lettura, ",
       testo("targa_veicolo"),
       " AS targa_veicolo, ",
       testo("matricola_veicolo"),
@@ -562,12 +562,12 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     )
   }
   errori <- character(0)
-  problema <- righe_con("t_giorno IS NOT NULL AND giorno_lettura IS NULL")
+  problema <- righe_con("t_giorno IS NOT NULL AND data_ora_lettura IS NULL")
   if (problema$n > 0) {
     errori <- c(
       errori,
       sprintf(
-        "giorno_lettura: %d valori non riconosciuti come data e ora (formato atteso YYYY-MM-DD HH:MM:SS). Righe del file: %s.",
+        "data_ora_lettura: %d valori non riconosciuti come data e ora (formato atteso YYYY-MM-DD HH:MM:SS). Righe del file: %s.",
         problema$n,
         problema$righe
       )
@@ -763,7 +763,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     con,
     paste0(
       "CREATE TABLE letture AS ",
-      "WITH base AS (SELECT l.riga, l.giorno_lettura, l.targa_veicolo, l.matricola_veicolo, l.RFID, ",
+      "WITH base AS (SELECT l.riga, l.data_ora_lettura, l.targa_veicolo, l.matricola_veicolo, l.RFID, ",
       presente,
       " AS presente_a_database, ",
       "CASE WHEN ",
@@ -787,9 +787,9 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       "LEFT JOIN mappa_giri g ON g.servizio_giro = l.servizio_giro), ",
       "completa AS (SELECT *, coalesce(comune_geografico, comune_fornitura) AS comune_assegnato, ",
       "CASE WHEN presente_a_database = 'Presente' THEN chiave_database ELSE chiave_giro END AS chiave_dichiarata ",
-      "FROM base WHERE giorno_lettura IS NOT NULL AND RFID IS NOT NULL AND presente_a_database IS NOT NULL ",
+      "FROM base WHERE data_ora_lettura IS NOT NULL AND RFID IS NOT NULL AND presente_a_database IS NOT NULL ",
       "AND latitudine IS NOT NULL AND longitudine IS NOT NULL) ",
-      "SELECT c.giorno_lettura, c.targa_veicolo, c.matricola_veicolo, c.RFID, c.presente_a_database, ",
+      "SELECT c.data_ora_lettura, c.targa_veicolo, c.matricola_veicolo, c.RFID, c.presente_a_database, ",
       "c.servizio_atteso, c.id_utenza, c.latitudine, c.longitudine, c.servizio_transponder, ",
       "c.volume_previsto, c.numero_raccolte_annue_previste, c.comune_fornitura, c.comune_giro, ",
       "c.comune_lettura, coalesce(ca.cantiere, c.cantiere_file) AS cantiere, c.servizio_giro, ",
@@ -837,7 +837,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
 
   # --- Righe con campi essenziali vuoti ----------------------------------------
   essenziali <- c(
-    "giorno_lettura",
+    "data_ora_lettura",
     "RFID",
     "presente_a_database",
     "latitudine",

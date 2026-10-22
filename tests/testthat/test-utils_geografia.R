@@ -583,7 +583,7 @@ test_that("ogni RFID ha il comune del database o quello in cui è letto più spe
 test_that("sul dataset di esempio ogni contenitore censito ha il comune del database", {
   dati <- dati_esempio()
   # in ordine di tempo dentro ogni RFID, come nell'anagrafica
-  dati <- dati[order(dati$RFID, dati$giorno_lettura), ]
+  dati <- dati[order(dati$RFID, dati$data_ora_lettura), ]
   gruppo <- indice_gruppi(dati$RFID)
   geografia <- geografia_per_gruppo(dati, gruppo)
   expect_equal(nrow(geografia), 251)

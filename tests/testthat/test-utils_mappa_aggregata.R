@@ -177,12 +177,12 @@ test_that("la ricerca disegna le ultime letture di ogni RFID", {
   # di ogni RFID restano le più recenti, compresa l'ultima
   expect_equal(sum(disegnate$is_ultimo), 3)
   for (rfid in names(conteggi)) {
-    tutte <- sort(trovate$giorno_lettura[trovate$RFID == rfid], decreasing = TRUE)
-    tenute <- sort(disegnate$giorno_lettura[disegnate$RFID == rfid], decreasing = TRUE)
+    tutte <- sort(trovate$data_ora_lettura[trovate$RFID == rfid], decreasing = TRUE)
+    tenute <- sort(disegnate$data_ora_lettura[disegnate$RFID == rfid], decreasing = TRUE)
     expect_equal(tenute, utils::head(tutte, 10))
   }
   # l'ordine delle righe è quello di partenza
-  chiave <- function(df) paste(df$RFID, format(df$giorno_lettura))
+  chiave <- function(df) paste(df$RFID, format(df$data_ora_lettura))
   expect_false(is.unsorted(match(chiave(disegnate), chiave(trovate))))
 
   # il numero per RFID segue l'argomento e l'opzione
@@ -206,15 +206,15 @@ test_that("la ricerca disegna le letture più recenti quando sono troppe", {
   # restano l'ultima lettura di ogni RFID e, per il resto, le più recenti
   expect_equal(sum(poche$is_ultimo), 2)
   altre <- sort(
-    trovate$giorno_lettura[!trovate$is_ultimo],
+    trovate$data_ora_lettura[!trovate$is_ultimo],
     decreasing = TRUE
   )
   expect_identical(
-    sort(poche$giorno_lettura[!poche$is_ultimo], decreasing = TRUE),
+    sort(poche$data_ora_lettura[!poche$is_ultimo], decreasing = TRUE),
     altre[1:3]
   )
   # l'ordine delle righe è quello di partenza
-  chiave <- function(df) paste(df$RFID, format(df$giorno_lettura))
+  chiave <- function(df) paste(df$RFID, format(df$data_ora_lettura))
   expect_false(is.unsorted(match(chiave(poche), chiave(trovate))))
 
   # il limite predefinito segue l'opzione

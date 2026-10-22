@@ -322,7 +322,7 @@ analisi_conferimenti <- function(
   parametri = parametri_conferimenti()
 ) {
   usate <- c(
-    "giorno_lettura",
+    "data_ora_lettura",
     "RFID",
     "presente_a_database",
     "servizio_transponder",
@@ -361,7 +361,7 @@ analisi_conferimenti <- function(
       call. = FALSE
     )
   }
-  giorno <- as.integer(as.Date(letture$giorno_lettura))
+  giorno <- as.integer(as.Date(letture$data_ora_lettura))
   al <- as.integer(as.Date(al %||% as.Date(max(giorno), origin = "1970-01-01")))
   dal <- as.integer(as.Date(
     dal %||%
@@ -436,7 +436,7 @@ analisi_conferimenti <- function(
   presa <- censita | non_censita
   ordine <- which(presa)[order(
     gs[presa],
-    ls$giorno_lettura[presa],
+    ls$data_ora_lettura[presa],
     method = "radix"
   )]
   u <- indice_gruppi(chiave[ordine])
@@ -872,8 +872,8 @@ stima_non_censiti <- function(
     comune_lettura = unita$comune_lettura,
     latitudine = contenitori$lat[unita$contenitore],
     longitudine = contenitori$lon[unita$contenitore],
-    prima_lettura = as.Date(unita$prima_lettura, origin = "1970-01-01"),
-    ultima_lettura = as.Date(unita$ultima_lettura, origin = "1970-01-01"),
+    data_prima_lettura = as.Date(unita$prima_lettura, origin = "1970-01-01"),
+    data_ultima_lettura = as.Date(unita$ultima_lettura, origin = "1970-01-01"),
     metodo = unita$metodo,
     occasioni = unita$occasioni,
     esposizioni = unita$esposizioni,
@@ -901,7 +901,7 @@ stima_non_censiti <- function(
     utenza_candidata = sostituzione$id_utenza,
     RFID_candidato = sostituzione$RFID,
     distanza_candidato_m = sostituzione$distanza,
-    ultima_lettura_candidato = sostituzione$ultima_lettura,
+    data_ultima_lettura_candidato = sostituzione$ultima_lettura,
     potenziamento_candidato = sostituzione$potenziamento,
     stringsAsFactors = FALSE
   )

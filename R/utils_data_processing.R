@@ -4,7 +4,7 @@
 #' @noRd
 colonne_obbligatorie <- function() {
   c(
-    "giorno_lettura",
+    "data_ora_lettura",
     "targa_veicolo",
     "matricola_veicolo",
     "RFID",
@@ -29,7 +29,8 @@ colonne_contenitore <- function() "servizio_transponder"
 #' Nomi alternativi delle colonne del file
 #'
 #' `volume` e `numero_raccolte_annue` della pipeline; `comune_da_database`
-#' (fino al 17/10/2026) e `comune` dei file vecchi. Valgono solo se manca la
+#' (fino al 17/10/2026) e `comune`, `giorno_lettura` e `giorno` (fino al
+#' 22/10/2026) dei file vecchi. Valgono solo se manca la
 #' colonna con il nome dell'app.
 #' @return Vettore con nome: nome del file -> nome dell'app.
 #' @noRd
@@ -38,7 +39,9 @@ alias_colonne <- function() {
     volume = "volume_previsto",
     numero_raccolte_annue = "numero_raccolte_annue_previste",
     comune_da_database = "comune_fornitura",
-    comune = "comune_fornitura"
+    comune = "comune_fornitura",
+    giorno_lettura = "data_ora_lettura",
+    giorno = "data_lettura"
   )
 }
 
@@ -97,7 +100,7 @@ colonne_derivate <- function() {
 #' @noRd
 tipi_colonne_preparazione <- function() {
   c(
-    giorno = "DATE",
+    data_lettura = "DATE",
     id_giro = "VARCHAR",
     frequenza = "VARCHAR",
     data_attivazione_contenitore = "DATE",
@@ -364,7 +367,7 @@ filtra_periodo <- function(data, periodo = NULL) {
   periodo <- lubridate::as_date(periodo)
   inizio <- as.POSIXct(format(periodo[1]), tz = "UTC")
   fine <- as.POSIXct(format(periodo[2] + 1), tz = "UTC")
-  nel_periodo <- data$giorno_lettura >= inizio & data$giorno_lettura < fine
+  nel_periodo <- data$data_ora_lettura >= inizio & data$data_ora_lettura < fine
   if (all(nel_periodo)) {
     return(data)
   }
@@ -593,16 +596,16 @@ calcola_bbox <- function(data) {
 #' Cambi di valore di un campo nelle letture di un RFID
 #'
 #' Una riga per cambio, con la prima lettura del nuovo valore.
-#' @return Tibble con `giorno_lettura`, `valore`, `attuale`.
+#' @return Tibble con `data_ora_lettura`, `valore`, `attuale`.
 #' @noRd
 cronologia_transizioni <- function(letture, campo) {
   x <- letture |>
     dplyr::filter(!is.na(.data[[campo]])) |>
-    dplyr::arrange(.data$giorno_lettura)
+    dplyr::arrange(.data$data_ora_lettura)
   valori <- x[[campo]]
   cambio <- c(TRUE, valori[-1] != valori[-length(valori)])[seq_along(valori)]
   out <- dplyr::tibble(
-    giorno_lettura = x$giorno_lettura[cambio],
+    data_ora_lettura = x$data_ora_lettura[cambio],
     valore = valori[cambio]
   )
   dplyr::mutate(out, attuale = dplyr::row_number() == dplyr::n())
@@ -628,14 +631,14 @@ stima_servizio_atteso <- function(letture) {
 #' `non_censito_senza_stima`; lo stato è quello dell'ultima lettura.
 #' @noRd
 analizza_rfid <- function(letture) {
-  letture <- dplyr::arrange(letture, .data$giorno_lettura)
+  letture <- dplyr::arrange(letture, .data$data_ora_lettura)
   ultima <- letture[nrow(letture), ]
   censito <- identical(ultima$presente_a_database, "Presente")
 
   # Cambi di servizio a database: il servizio atteso cambia con il mezzo.
   servizi <- cronologia_transizioni(
     dplyr::tibble(
-      giorno_lettura = letture$giorno_lettura,
+      data_ora_lettura = letture$data_ora_lettura,
       servizio = letture[["servizio_transponder"]] %||%
         rep(NA_character_, nrow(letture))
     ),
@@ -656,8 +659,8 @@ analizza_rfid <- function(letture) {
     censito = censito,
     sacchetto = rfid_sacchetto(ultima$RFID),
     n_letture = nrow(letture),
-    prima_lettura = min(letture$giorno_lettura),
-    ultima_lettura = ultima$giorno_lettura,
+    prima_lettura = min(letture$data_ora_lettura),
+    ultima_lettura = ultima$data_ora_lettura,
     servizio_attuale = if (nrow(servizi) > 0) {
       servizi$valore[nrow(servizi)]
     } else {
@@ -699,7 +702,7 @@ coerenza_comune_rfid <- function(letture) {
       rev(seq_len(nrow(ultime))),
       intersect(
         c(
-          "giorno_lettura",
+          "data_ora_lettura",
           "matricola_veicolo",
           "comune_giro",
           "comune_lettura"
@@ -729,7 +732,7 @@ coerenza_rfid <- function(letture) {
       rev(seq_len(nrow(ultime))),
       intersect(
         c(
-          "giorno_lettura",
+          "data_ora_lettura",
           "matricola_veicolo",
           "servizio_transponder",
           "servizio_atteso",

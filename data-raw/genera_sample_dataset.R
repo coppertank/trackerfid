@@ -179,7 +179,7 @@ letture_calendario <- function(b, dal = b$attivo_dal, al = fine_dati) {
   ore <- b$ora_tipica + stats::rnorm(length(tenute), 0, 0.25)
   ore <- pmin(pmax(ore, t$da), t$a - 0.02)
   data.frame(
-    giorno_lettura = istante(tenute, ore),
+    data_ora_lettura = istante(tenute, ore),
     matricola_veicolo = t$m,
     stringsAsFactors = FALSE
   )
@@ -193,7 +193,7 @@ lettura_turno <- function(t, dal = inizio_dati, al = fine_dati) {
       giorno_settimana(giorni_periodo) %in% t$giorni
   ]
   data.frame(
-    giorno_lettura = istante(estrai(giorni), orario_turno(t)),
+    data_ora_lettura = istante(estrai(giorni), orario_turno(t)),
     matricola_veicolo = t$m,
     stringsAsFactors = FALSE
   )
@@ -207,7 +207,7 @@ lettura_fuori_turno <- function(dal = inizio_dati, al = fine_dati) {
     quando <- istante(estrai(giorni), stats::runif(1, 6, 19))
     if (is.na(servizio_da_calendario(m, quando))) {
       return(data.frame(
-        giorno_lettura = quando,
+        data_ora_lettura = quando,
         matricola_veicolo = m,
         stringsAsFactors = FALSE
       ))
@@ -604,7 +604,7 @@ punto_sul_percorso <- function(n) {
 
 manuali <- function(quando, matricola, ...) {
   data.frame(
-    giorno_lettura = as.POSIXct(quando, tz = "UTC"),
+    data_ora_lettura = as.POSIXct(quando, tz = "UTC"),
     matricola_veicolo = matricola,
     ...,
     stringsAsFactors = FALSE
@@ -704,7 +704,7 @@ genera_letture <- function(b) {
       stats::runif(length(giorni), 18.5, 18.98)
     )
     out <- data.frame(
-      giorno_lettura = istante(giorni, ore),
+      data_ora_lettura = istante(giorni, ore),
       matricola_veicolo = sample(
         veicoli$matricola,
         length(giorni),
@@ -724,7 +724,7 @@ genera_letture <- function(b) {
     giorni <- rep(feriali, each = 2)
     out <- cbind(
       data.frame(
-        giorno_lettura = istante(
+        data_ora_lettura = istante(
           giorni,
           stats::runif(length(giorni), 12, 18.98)
         ),
@@ -771,8 +771,8 @@ genera_letture <- function(b) {
     out <- rbind(prima, altre)
   }
 
-  out <- out[order(out$giorno_lettura), , drop = FALSE]
-  out <- out[!duplicated(out$giorno_lettura), , drop = FALSE]
+  out <- out[order(out$data_ora_lettura), , drop = FALSE]
+  out <- out[!duplicated(out$data_ora_lettura), , drop = FALSE]
   n <- nrow(out)
   completa <- function(campo, valore) {
     if (is.null(out[[campo]])) {
@@ -788,7 +788,7 @@ genera_letture <- function(b) {
   out$chiave <- b$chiave
   out$presente <- b$presente
   out[, c(
-    "giorno_lettura",
+    "data_ora_lettura",
     "matricola_veicolo",
     "servizio_database",
     "id_utenza",
@@ -823,7 +823,7 @@ coord_esempio <- list(
 )
 for (ce in coord_esempio) {
   righe <- which(letture$chiave == ce$k)
-  righe <- righe[order(letture$giorno_lettura[righe])]
+  righe <- righe[order(letture$data_ora_lettura[righe])]
   letture$latitudine[righe] <- ce$lat + c(0, rumore_gps(length(righe) - 1))
   letture$longitudine[righe] <- ce$lng + c(0, rumore_gps(length(righe) - 1))
 }
@@ -841,7 +841,7 @@ giorni_svolta <- seq(as.Date("2025-03-01"), as.Date("2025-10-15"), by = "day")
 dopo_svolta <- function(k) {
   svolta <- estrai(giorni_svolta)
   which(
-    letture$chiave == k & as.Date(letture$giorno_lettura, tz = "UTC") >= svolta
+    letture$chiave == k & as.Date(letture$data_ora_lettura, tz = "UTC") >= svolta
   )
 }
 
@@ -969,7 +969,7 @@ letture_sacchetti <- con_seme(
       t <- turni[[s$turno]]
       ora <- p$ora + stats::rnorm(1, 0, 0.25)
       data.frame(
-        giorno_lettura = istante(s$giorno, min(max(ora, t$da), t$a - 0.02)),
+        data_ora_lettura = istante(s$giorno, min(max(ora, t$da), t$a - 0.02)),
         matricola_veicolo = t$m,
         servizio_database = NA_character_,
         id_utenza = NA_character_,
@@ -995,20 +995,20 @@ rownames(letture) <- NULL
 
 # La domenica lavora un solo mezzo: le letture date a un mezzo fermo passano
 # al primo in servizio.
-giorno_lettura_gs <- giorno_settimana(as.Date(
-  letture$giorno_lettura,
+data_ora_lettura_gs <- giorno_settimana(as.Date(
+  letture$data_ora_lettura,
   tz = "UTC"
 ))
 fermo <- which(
   !mapply(
     function(m, gs) length(turni_del_giorno(m, gs)) > 0,
     letture$matricola_veicolo,
-    giorno_lettura_gs
+    data_ora_lettura_gs
   )
 )
 for (i in fermo) {
   letture$matricola_veicolo[i] <- Find(
-    function(m) length(turni_del_giorno(m, giorno_lettura_gs[i])) > 0,
+    function(m) length(turni_del_giorno(m, data_ora_lettura_gs[i])) > 0,
     veicoli$matricola
   )
 }
@@ -1029,7 +1029,7 @@ letture$numero_raccolte_annue_previste <- bidoni$raccolte[letture$chiave]
 letture$servizio_atteso <- vapply(
   seq_len(nrow(letture)),
   function(i) {
-    giro_del_mezzo(letture$matricola_veicolo[i], letture$giorno_lettura[i])
+    giro_del_mezzo(letture$matricola_veicolo[i], letture$data_ora_lettura[i])
   },
   character(1)
 )
@@ -1047,7 +1047,7 @@ turno_lettura <- vapply(
   function(i) {
     indice_turno_del_mezzo(
       letture$matricola_veicolo[i],
-      letture$giorno_lettura[i]
+      letture$data_ora_lettura[i]
     )
   },
   numeric(1)
@@ -1055,14 +1055,14 @@ turno_lettura <- vapply(
 # Il giro è una riga della tabella `giri`; il suo numero dà `id_giro`.
 letture$id_giro <- giro_di(
   turno_lettura,
-  giorno_settimana(as.Date(letture$giorno_lettura, tz = "UTC"))
+  giorno_settimana(as.Date(letture$data_ora_lettura, tz = "UTC"))
 )
 letture$comune_giro <- giri$nome_calendario[letture$id_giro]
 # Giro sbagliato: il 24/9/2025 il calendario dava al turno 1 il giro del
 # venerdì, a Limena, ma il mezzo ha fatto quello del mercoledì.
 giro_sbagliato <- list(giorno = as.Date("2025-09-24"), turno = 1, previsto = 5)
 del_giro_sbagliato <- turno_lettura == giro_sbagliato$turno &
-  as.Date(letture$giorno_lettura, tz = "UTC") == giro_sbagliato$giorno
+  as.Date(letture$data_ora_lettura, tz = "UTC") == giro_sbagliato$giorno
 letture$id_giro[del_giro_sbagliato] <- giro_di(
   giro_sbagliato$turno,
   giro_sbagliato$previsto
@@ -1099,7 +1099,7 @@ letture$coerenza_comune <- con_geografia$coerenza_comune
 letture$cantiere <- con_geografia$cantiere
 
 # RFID: "D" + AAMMGG della prima lettura + progressivo: D250901001.
-prima_lettura <- tapply(letture$giorno_lettura, letture$chiave, min)
+prima_lettura <- tapply(letture$data_ora_lettura, letture$chiave, min)
 prima_lettura <- as.POSIXct(prima_lettura, origin = "1970-01-01", tz = "UTC")
 bidoni$RFID <- sprintf(
   "D%s%03d",
@@ -1109,7 +1109,7 @@ bidoni$RFID <- sprintf(
 dei_bidoni <- !is.na(letture$chiave)
 letture$RFID[dei_bidoni] <- bidoni$RFID[letture$chiave[dei_bidoni]]
 
-letture <- letture[order(letture$giorno_lettura, letture$RFID), ]
+letture <- letture[order(letture$data_ora_lettura, letture$RFID), ]
 
 # Una fornitura per contenitore, utenza e servizio, numerate per prima lettura.
 del_contenitore <- letture$presente & !is.na(letture$chiave)
@@ -1125,10 +1125,10 @@ letture$id_fornitura[del_contenitore] <- sprintf(
   match(chiave_fornitura[del_contenitore], forniture)
 )
 # Servizio atteso e coerenza con le regole della pipeline.
-giorno <- as.Date(letture$giorno_lettura, tz = "UTC")
+giorno <- as.Date(letture$data_ora_lettura, tz = "UTC")
 letture$servizio_giro <- letture$servizio_atteso
 letture$servizio_atteso <- servizio_atteso_dal_giro(data.frame(
-  giorno = giorno,
+  data_lettura = giorno,
   id_giro = letture$id_giro,
   servizio_giro = letture$servizio_giro,
   servizio_transponder = letture$servizio_database,
@@ -1335,12 +1335,12 @@ eseguito_giro <- con_seme(2033, {
 letture$eseguito <- eseguito_giro[match(giro_giorno, elenco_giri)]
 
 finale <- data.frame(
-  giorno_lettura = format(
-    letture$giorno_lettura,
+  data_ora_lettura = format(
+    letture$data_ora_lettura,
     "%Y-%m-%d %H:%M:%S",
     tz = "UTC"
   ),
-  giorno = format(giorno),
+  data_lettura = format(giorno),
   targa_veicolo = letture$targa_veicolo,
   matricola_veicolo = letture$matricola_veicolo,
   id_giro = 1800L + letture$id_giro,
@@ -1381,7 +1381,7 @@ finale <- data.frame(
 
 per_rfid <- split(finale, finale$RFID)
 non_presente <- finale$presente_a_database == "Non Presente"
-nel_2025 <- substr(finale$giorno_lettura, 1, 4) == "2025"
+nel_2025 <- substr(finale$data_ora_lettura, 1, 4) == "2025"
 # Le righe dei sacchetti, riconosciute dal codice con la regola dell'app.
 sacchetto <- rfid_sacchetto(finale$RFID)
 n_bidoni <- sum(!rfid_sacchetto(names(per_rfid)))
@@ -1415,22 +1415,22 @@ stopifnot(
     stats::na.omit(sacchetti$fornitura)
   ),
   all(is.na(finale$id_utenza[sacchetto])),
-  setequal(unique(substr(finale$giorno_lettura, 1, 4)), c("2024", "2025")),
-  all(substr(finale$giorno_lettura, 12, 19) >= "06:00:00"),
-  all(substr(finale$giorno_lettura, 12, 19) <= "19:00:00"),
+  setequal(unique(substr(finale$data_ora_lettura, 1, 4)), c("2024", "2025")),
+  all(substr(finale$data_ora_lettura, 12, 19) >= "06:00:00"),
+  all(substr(finale$data_ora_lettura, 12, 19) <= "19:00:00"),
   # righe di esempio e casi speciali della prima specifica
-  finale$giorno_lettura[finale$RFID == "D250901001"][1] ==
+  finale$data_ora_lettura[finale$RFID == "D250901001"][1] ==
     "2025-09-01 06:00:00",
-  finale$giorno_lettura[finale$RFID == "D250901002"][1] ==
+  finale$data_ora_lettura[finale$RFID == "D250901002"][1] ==
     "2025-09-01 06:15:00",
-  finale$giorno_lettura[finale$RFID == "D250901201"][1] ==
+  finale$data_ora_lettura[finale$RFID == "D250901201"][1] ==
     "2025-09-01 06:30:00",
   identical(
     per_rfid$D250901001$servizio_transponder[1:4],
     c("CARTA", "SECCO", "CARTA", "CARTA")
   ),
   identical(
-    substr(per_rfid$D250901001$giorno_lettura[1:3], 1, 10),
+    substr(per_rfid$D250901001$data_ora_lettura[1:3], 1, 10),
     c("2025-09-01", "2025-09-15", "2025-09-28")
   ),
   identical(
@@ -1472,13 +1472,13 @@ stopifnot(
   all(finale$eseguito %in% c("SI", "NO", NA)),
   all(tapply(
     paste(finale$eseguito),
-    paste(finale$id_giro, finale$giorno),
+    paste(finale$id_giro, finale$data_lettura),
     function(x) length(unique(x)) == 1
   )),
-  all(finale$eseguito[finale$giorno > format(fine_dati - 7)] == "NO"),
-  !any(finale$eseguito[finale$giorno <= format(fine_dati - 7)] %in% "NO"),
+  all(finale$eseguito[finale$data_lettura > format(fine_dati - 7)] == "NO"),
+  !any(finale$eseguito[finale$data_lettura <= format(fine_dati - 7)] %in% "NO"),
   any(is.na(finale$eseguito)),
-  identical(finale$giorno, substr(finale$giorno_lettura, 1, 10)),
+  identical(finale$data_lettura, substr(finale$data_ora_lettura, 1, 10)),
   # ogni lettura ha il giro del mezzo che l'ha fatta, con il nome del
   # calendario: i giri sono dodici
   !anyNA(finale$servizio_giro),
@@ -1594,8 +1594,8 @@ stopifnot(
       (finale$stato_fornitura == "ATTIVA"),
     na.rm = TRUE
   ),
-  all(finale$giorno >= finale$data_attivazione_contenitore, na.rm = TRUE),
-  all(finale$giorno <= finale$data_cessazione_contenitore, na.rm = TRUE),
+  all(finale$data_lettura >= finale$data_attivazione_contenitore, na.rm = TRUE),
+  all(finale$data_lettura <= finale$data_cessazione_contenitore, na.rm = TRUE),
   length(unique(stats::na.omit(finale$id_utenza[!sacchetto]))) == 50,
   !anyNA(finale$latitudine),
   !anyNA(finale$longitudine),

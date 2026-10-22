@@ -38,8 +38,8 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   expect_identical(
     names(letture),
     c(
-      "giorno_lettura",
-      "giorno",
+      "data_ora_lettura",
+      "data_lettura",
       "targa_veicolo",
       "RFID",
       "comune_lettura",
@@ -72,16 +72,16 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
     "SENZA COMUNE;03/08/2026 07.30.00;123;AB123CD;45,4700;11,8400;1",
     "VIA ROMA 1, LIMENA;04/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1"
   )))
-  expect_identical(format(doppie$giorno_lettura, "%d %H"), c("03 08", "04 08"))
+  expect_identical(format(doppie$data_ora_lettura, "%d %H"), c("03 08", "04 08"))
   # le letture escono in ordine di istante
-  expect_false(is.unsorted(letture$giorno_lettura))
+  expect_false(is.unsorted(letture$data_ora_lettura))
   prima <- letture[letture$RFID == "123", ][1, ]
   expect_equal(prima$latitudine, 45.47)
   expect_identical(
-    format(prima$giorno_lettura, "%Y-%m-%d %H:%M:%S"),
+    format(prima$data_ora_lettura, "%Y-%m-%d %H:%M:%S"),
     "2026-08-03 08:15:00"
   )
-  expect_identical(prima$giorno, as.Date("2026-08-03"))
+  expect_identical(prima$data_lettura, as.Date("2026-08-03"))
 
   contenitori <- importa_contenitori(file$contenitori)
   # fuori il contenitore senza codice
@@ -114,18 +114,24 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   expect_setequal(calendario$matricola_mezzo, c("1601", "1602"))
   expect_identical(calendario$comune_giro[6], "ROSÀ")
   expect_identical(calendario$eseguito, c("SI", "NO", "SI", "SI", "SI", "SI"))
-  expect_s3_class(calendario$giorno, "Date")
+  expect_s3_class(calendario$data_giro, "Date")
+  # un file estratto con il nome vecchio della data vale lo stesso
+  vecchio <- importa_calendario(scrivi_csv(c(
+    "giorno,ora_inizio,ora_fine,matricola_mezzo,id_giro,eseguito,descrizione_servizio,comune_giro",
+    "2026-08-03,06:00:00,12:00:00,X1601,10,SI,SECCO PAP,LIMENA"
+  )))
+  expect_identical(vecchio$data_giro, as.Date("2026-08-03"))
   # i giri non pianificati: stesse regole, senza orari
   non_pianificati <- importa_giri_non_pianificati(file$non_pianificati)
   expect_named(
     non_pianificati,
-    c("giorno", "matricola_mezzo", "descrizione_servizio", "comune_giro")
+    c("data_giro", "matricola_mezzo", "descrizione_servizio", "comune_giro")
   )
   expect_identical(non_pianificati$matricola_mezzo, "1601")
-  expect_identical(non_pianificati$giorno, as.Date("2026-08-03"))
+  expect_identical(non_pianificati$data_giro, as.Date("2026-08-03"))
   expect_error(
     importa_giri_non_pianificati(scrivi_csv(c(
-      "giorno,matricola_mezzo",
+      "data_giro,matricola_mezzo",
       "2026-08-03,X1601"
     ))),
     "mancano le colonne: descrizione_servizio, comune_giro"
@@ -152,7 +158,7 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   # sacchetti si tolgono dopo, come per le letture con le antenne
   expect_named(
     storiche,
-    c("giorno_lettura", "giorno", "id_trasmissione", "RFID")
+    c("data_ora_lettura", "data_lettura", "id_trasmissione", "RFID")
   )
   expect_identical(
     storiche$RFID,
@@ -160,11 +166,11 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   )
   expect_identical(storiche$id_trasmissione, c("T1", "T1", "T3"))
   expect_identical(
-    storiche$giorno,
+    storiche$data_lettura,
     as.Date(c("2025-03-01", "2025-03-02", "2026-08-21"))
   )
   expect_identical(
-    format(storiche$giorno_lettura[1], "%Y-%m-%d %H:%M:%S"),
+    format(storiche$data_ora_lettura[1], "%Y-%m-%d %H:%M:%S"),
     "2025-03-01 07:00:00"
   )
   expect_error(
@@ -174,14 +180,14 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   # anche le date italiane; un istante illeggibile si scarta, con un avviso
   expect_warning(
     italiane <- importa_letture_storiche(scrivi_csv(c(
-      "giorno,codice_transponder,id_trasmissione",
+      "data_lettura,codice_transponder,id_trasmissione",
       "01/03/2025 07.00.00,123,T1",
       "ieri,124,T1"
     ))),
     "1 letture storiche hanno un istante illeggibile.*ieri"
   )
   expect_identical(italiane$RFID, "0000000123")
-  expect_identical(italiane$giorno, as.Date("2025-03-01"))
+  expect_identical(italiane$data_lettura, as.Date("2025-03-01"))
 })
 
 test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie", {
@@ -278,12 +284,17 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     basename(percorsi),
     c("letture_app.csv", "letture_app.duckdb", "controllo_giri.csv")
   )
+  # le letture con il comune del GPS sostituito: la frazione
+  corretti <- comuni_corretti(letture)
+  expect_identical(corretti$RFID, "0000000128")
+  expect_identical(corretti$comune_gps, "TAGGI DI PROVA")
+  expect_identical(corretti$comune_posizione, "LIMENA")
   # senza l'attributo i giri da controllare sono una tabella vuota
-  expect_equal(nrow(giri_da_controllare(data.frame(giorno = as.Date(character(0))))), 0)
+  expect_equal(nrow(giri_da_controllare(data.frame(data_lettura = as.Date(character(0))))), 0)
   # i giri da controllare: il giro ancora NO e quello confermato senza
   # letture; il giro confermato del mezzo senza antenna non conta
   giri <- utils::read.csv(percorsi[3], colClasses = "character")
-  expect_identical(giri$giorno, c("2026-08-05", "2026-08-10"))
+  expect_identical(giri$data_giro, c("2026-08-05", "2026-08-10"))
   expect_identical(giri$id_giro, c("12", "10"))
   expect_identical(
     giri$problema,

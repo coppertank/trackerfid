@@ -10,13 +10,13 @@ test_that("dimensioni, periodo e mezzi", {
   expect_length(bidoni, 239)
   # 2025 completo, 2024 parziale: serve a provare la selezione dell'anno
   expect_equal(
-    as.Date(range(d$giorno_lettura)),
+    as.Date(range(d$data_ora_lettura)),
     as.Date(c("2024-10-01", "2025-12-31"))
   )
   expect_identical(anni_disponibili(archivio_esempio()), c(2025, 2024))
 
-  ore <- as.numeric(format(d$giorno_lettura, "%H", tz = "UTC")) +
-    as.numeric(format(d$giorno_lettura, "%M", tz = "UTC")) / 60
+  ore <- as.numeric(format(d$data_ora_lettura, "%H", tz = "UTC")) +
+    as.numeric(format(d$data_ora_lettura, "%M", tz = "UTC")) / 60
   expect_true(all(ore >= 6 & ore <= 19))
 
   mezzi <- dplyr::distinct(d, targa_veicolo, matricola_veicolo)
@@ -143,7 +143,7 @@ test_that("distribuzioni vicine a quelle richieste", {
 
   # raccolta a cadenza fissa: un contenitore tipico ha una ventina di letture l'anno
   nel_2025 <- d[
-    lubridate::year(d$giorno_lettura) == 2025 &
+    lubridate::year(d$data_ora_lettura) == 2025 &
       d$presente_a_database == "Presente",
   ]
   letture <- as.integer(table(nel_2025$RFID))
@@ -282,8 +282,8 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   expect_identical(
     names(grezzo),
     c(
-      "giorno_lettura",
-      "giorno",
+      "data_ora_lettura",
+      "data_lettura",
       "targa_veicolo",
       "matricola_veicolo",
       "id_giro",
@@ -345,7 +345,7 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   expect_identical(
     servizio_atteso_dal_giro(dplyr::mutate(
       d,
-      giorno = as.Date(giorno_lettura),
+      data_lettura = as.Date(data_ora_lettura),
       id_giro = as.integer(grezzo$id_giro)
     )),
     d$servizio_atteso
@@ -358,33 +358,33 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   expect_true(all(grezzo$eseguito %in% c("SI", "NO", NA)))
   expect_true(all(tapply(
     paste(grezzo$eseguito),
-    paste(grezzo$id_giro, grezzo$giorno),
+    paste(grezzo$id_giro, grezzo$data_lettura),
     function(x) length(unique(x)) == 1
   )))
   expect_identical(
     grezzo$eseguito %in% "NO",
-    grezzo$giorno >= "2025-12-25"
+    grezzo$data_lettura >= "2025-12-25"
   )
   expect_gt(sum(is.na(grezzo$eseguito)), 0)
   # i codici del giro, come nei dati aziendali, sono numeri di quattro cifre
   expect_true(all(grepl("^18[0-9]{2}$", grezzo$id_giro)))
-  expect_identical(grezzo$giorno, substr(grezzo$giorno_lettura, 1, 10))
+  expect_identical(grezzo$data_lettura, substr(grezzo$data_ora_lettura, 1, 10))
 })
 test_that("casi speciali presenti", {
-  d <- dplyr::arrange(dati_esempio(), giorno_lettura)
+  d <- dplyr::arrange(dati_esempio(), data_ora_lettura)
   letture <- function(rfid) d[d$RFID == rfid, ]
 
   # righe di esempio della prima specifica
   expect_identical(
-    format(letture("D250901001")$giorno_lettura[1]),
+    format(letture("D250901001")$data_ora_lettura[1]),
     "2025-09-01 06:00:00"
   )
   expect_identical(
-    format(letture("D250901002")$giorno_lettura[1]),
+    format(letture("D250901002")$data_ora_lettura[1]),
     "2025-09-01 06:15:00"
   )
   expect_identical(
-    format(letture("D250901201")$giorno_lettura[1]),
+    format(letture("D250901201")$data_ora_lettura[1]),
     "2025-09-01 06:30:00"
   )
 
@@ -394,16 +394,16 @@ test_that("casi speciali presenti", {
     c("CARTA", "SECCO", "CARTA")
   )
   expect_identical(
-    format(cambio_servizio$giorno_lettura[1:3], "%d/%m"),
+    format(cambio_servizio$data_ora_lettura[1:3], "%d/%m"),
     c("01/09", "15/09", "28/09")
   )
   expect_true(all(cambio_servizio$servizio_transponder[-2] == "CARTA"))
 
   cambio_utenza <- letture("D250901050")
   expect_identical(cambio_utenza$id_utenza[1], "58590001")
-  expect_identical(format(cambio_utenza$giorno_lettura[1], "%d/%m"), "01/09")
+  expect_identical(format(cambio_utenza$data_ora_lettura[1], "%d/%m"), "01/09")
   prima_nuova <- cambio_utenza[cambio_utenza$id_utenza == "58590025", ][1, ]
-  expect_identical(format(prima_nuova$giorno_lettura, "%d/%m"), "20/09")
+  expect_identical(format(prima_nuova$data_ora_lettura, "%d/%m"), "20/09")
 
   con_stima <- letture("D250915201")
   expect_equal(nrow(con_stima), 4)
@@ -462,7 +462,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   expect_true(all(s$servizio_atteso == "SECCO"))
   # due sono letti solo nel 2024, gli altri dieci nel 2025
   expect_equal(
-    as.integer(table(lubridate::year(ultimi$giorno_lettura))),
+    as.integer(table(lubridate::year(ultimi$data_ora_lettura))),
     c(2, 10)
   )
 
@@ -564,7 +564,7 @@ test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   # quote dei cantieri tra i contenitori: 12%, 26%, 37% e 25%
   # comune e cantiere di ogni RFID: quelli del database per i censiti, il
   # comune in cui cade il maggior numero di letture per gli altri
-  in_ordine <- d[order(d$giorno_lettura), ]
+  in_ordine <- d[order(d$data_ora_lettura), ]
   rfid <- indice_gruppi(in_ordine$RFID)
   anagrafica <- geografia_per_gruppo(in_ordine, rfid, max(rfid))
   quote <- prop.table(table(anagrafica$cantiere))

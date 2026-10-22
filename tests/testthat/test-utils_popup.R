@@ -4,7 +4,7 @@ test_that("il popup riporta tutti i campi della lettura", {
     servizio_atteso = "CARTA",
     targa = "AB123CD",
     matricola = "1601",
-    giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
+    data_ora_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     id_utenza = "58590042",
     presente = "Presente"
   )
@@ -27,7 +27,7 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     d$servizio_atteso,
     d$targa_veicolo,
     d$matricola_veicolo,
-    d$giorno_lettura,
+    d$data_ora_lettura,
     d$id_utenza,
     d$presente_a_database
   )
@@ -38,7 +38,7 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
   # un censito senza utenza, come un sacchetto, non è un non censito
   sacchetto <- create_popup_html(
     "00BD00000000000000000001", "SECCO", "AB123CD", "1601",
-    d$giorno_lettura[1], NA_character_, c("Presente", "Non Presente")
+    d$data_ora_lettura[1], NA_character_, c("Presente", "Non Presente")
   )
   expect_match(sacchetto[1], "<b>Utenza:</b> N/A", fixed = TRUE)
   expect_match(sacchetto[2], "<b>Utenza:</b> Non Censito", fixed = TRUE)
@@ -51,7 +51,7 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     d$servizio_atteso,
     d$targa_veicolo,
     d$matricola_veicolo,
-    d$giorno_lettura,
+    d$data_ora_lettura,
     d$id_utenza,
     d$presente_a_database,
     comune = c(rep("LIMENA", 4), NA, NA),
@@ -107,7 +107,7 @@ test_that("una lettura coerente perche' vicina al confine lo dice", {
     servizio_atteso = "SECCO",
     targa = "AB123CD",
     matricola = "1601",
-    giorno_lettura = as.POSIXct("2025-09-01 08:00:00", tz = "UTC"),
+    data_ora_lettura = as.POSIXct("2025-09-01 08:00:00", tz = "UTC"),
     id_utenza = c("U1", NA, "U1", "U1"),
     presente = c("Presente", "Non Presente", "Presente", "Presente"),
     comune = c("LIMENA", NA, "LIMENA", "LIMENA"),
@@ -123,7 +123,7 @@ test_that("una lettura coerente perche' vicina al confine lo dice", {
   # una lettura fuori comune ha la sua riga, non quella del confine
   fuori <- create_popup_html(
     rfid = "A", servizio_atteso = "SECCO", targa = "AB123CD", matricola = "1601",
-    giorno_lettura = as.POSIXct("2025-09-01 08:00:00", tz = "UTC"),
+    data_ora_lettura = as.POSIXct("2025-09-01 08:00:00", tz = "UTC"),
     id_utenza = "U1", presente = "Presente", comune = "LIMENA",
     comune_lettura = "PADOVA", coerenza_comune = "Fuori comune",
     distanza_comune_dichiarato = 2500
@@ -329,7 +329,7 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
     servizio_atteso = "CARTA",
     targa = "AB123CD",
     matricola = "1601",
-    giorno_lettura = as.POSIXct("2025-03-01 08:00:00", tz = "UTC"),
+    data_ora_lettura = as.POSIXct("2025-03-01 08:00:00", tz = "UTC"),
     id_utenza = "U1",
     presente = "Presente",
     comune = c("LIMENA", "LIMENA", "LIMENA", "LIMENA"),
@@ -396,7 +396,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
     servizio_atteso = "CARTA",
     targa = "AB123CD",
     matricola = "1601",
-    giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
+    data_ora_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     id_utenza = "58590042",
     presente = "Presente"
   )
@@ -409,7 +409,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
     servizio_atteso = c("SECCO", "SECCO", "SECCO", NA),
     targa = "AB123CD",
     matricola = "1601",
-    giorno_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
+    data_ora_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     id_utenza = c("58590001", "58590002", NA, "58590003"),
     presente = c("Presente", "Presente", "Non Presente", "Presente"),
     servizio_giro = c("SECCO PAP", "SECCO PAP", "SECCO <PAP>", NA),

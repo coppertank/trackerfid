@@ -120,7 +120,7 @@ test_that("l'ultima lettura restituisce le colonne chieste, con la riga del file
   expect_named(tutte, c(colonne_app(), "servizio_icona", "riga"))
   # la riga riporta alla lettura del file
   expect_identical(dati_esempio()$RFID[tutte$riga], tutte$RFID)
-  expect_equal(dati_esempio()$giorno_lettura[tutte$riga], tutte$giorno_lettura)
+  expect_equal(dati_esempio()$data_ora_lettura[tutte$riga], tutte$data_ora_lettura)
 })
 
 test_that("le scelte dei filtri sono i valori presenti nel periodo", {
@@ -170,7 +170,7 @@ test_that("le letture di un RFID vengono dal periodo o da tutto l'archivio", {
   esempio <- dati_esempio()[colonne_app()]
   tutte <- letture_del_rfid(archivio_esempio(), rfid)
   attese <- esempio[esempio$RFID == rfid, ]
-  attese <- attese[order(attese$giorno_lettura), ]
+  attese <- attese[order(attese$data_ora_lettura), ]
   expect_identical(tutte, attese)
 
   anno <- letture_del_rfid(seleziona_periodo(archivio_esempio(), periodo_anno(2025)), rfid)

@@ -18,8 +18,8 @@ leggi_letture_confronto <- function(letture) {
 #'    volta al giorno.
 #' @param letture_storiche,letture_app Data frame (anche da `targets::tar_load()`)
 #'   o percorsi dei CSV della pipeline, con `RFID` e
-#'   `giorno_lettura`; le storiche anche con `id_trasmissione`.
-#' @return Tibble con `giorno_lettura` (data), `RFID` e `origine`:
+#'   `data_ora_lettura`; le storiche anche con `id_trasmissione`.
+#' @return Tibble con `data_lettura` (data), `RFID` e `origine`:
 #'   `"Saponette"`, `"Antenne"` o `"Entrambe"`, per giorno e RFID.
 #' @noRd
 confronta_letture <- function(
@@ -27,23 +27,23 @@ confronta_letture <- function(
   letture_app = "data-raw/output/letture_app.csv"
 ) {
   storiche <- leggi_letture_confronto(letture_storiche) |>
-    dplyr::mutate(giorno = lubridate::as_date(.data$giorno_lettura))
+    dplyr::mutate(data_lettura = lubridate::as_date(.data$data_ora_lettura))
   antenne <- leggi_letture_confronto(letture_app)
 
   # I giri, trasmissione e giorno, in cui le saponette hanno letto almeno un
   # RFID visto anche dalle antenne.
   giri <- storiche |>
     dplyr::filter(.data$RFID %in% antenne$RFID) |>
-    dplyr::distinct(.data$giorno, .data$id_trasmissione)
+    dplyr::distinct(.data$data_lettura, .data$id_trasmissione)
 
   # Un RFID al più una volta al giorno, per ognuno dei due metodi.
   da_saponette <- storiche |>
-    dplyr::semi_join(giri, by = c("giorno", "id_trasmissione")) |>
-    dplyr::distinct(giorno_lettura = .data$giorno, RFID = .data$RFID) |>
+    dplyr::semi_join(giri, by = c("data_lettura", "id_trasmissione")) |>
+    dplyr::distinct(.data$data_lettura, .data$RFID) |>
     dplyr::mutate(saponette = TRUE)
   da_antenne <- antenne |>
     dplyr::distinct(
-      giorno_lettura = lubridate::as_date(.data$giorno_lettura),
+      data_lettura = lubridate::as_date(.data$data_ora_lettura),
       RFID = .data$RFID
     ) |>
     dplyr::mutate(antenne = TRUE)
@@ -51,7 +51,7 @@ confronta_letture <- function(
   dplyr::full_join(
     da_saponette,
     da_antenne,
-    by = c("giorno_lettura", "RFID")
+    by = c("data_lettura", "RFID")
   ) |>
     dplyr::mutate(
       origine = dplyr::case_when(
@@ -60,6 +60,6 @@ confronta_letture <- function(
         .default = "Antenne"
       )
     ) |>
-    dplyr::select("giorno_lettura", "RFID", "origine") |>
-    dplyr::arrange(.data$giorno_lettura, .data$RFID)
+    dplyr::select("data_lettura", "RFID", "origine") |>
+    dplyr::arrange(.data$data_lettura, .data$RFID)
 }

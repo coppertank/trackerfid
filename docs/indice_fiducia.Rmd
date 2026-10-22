@@ -99,7 +99,7 @@ tema_grafico <- theme_void(base_size = 12) +
 ```{r dati}
 # Analisi dei cluster sull'anno più recente del dataset di esempio.
 letture <- carica_dataset(percorso_dataset_esempio())$dati
-anno <- max(lubridate::year(letture$giorno_lettura))
+anno <- max(lubridate::year(letture$data_ora_lettura))
 periodo <- periodo_anno(anno)
 analisi <- calcola_analisi_cluster(letture, periodo[1], periodo[2])
 parametri <- attr(analisi, "parametri")
@@ -162,7 +162,7 @@ servizi <- dplyr::summarise(
   .by = "RFID"
 )
 quote_giro <- nel_periodo |>
-  dplyr::arrange(RFID, giorno_lettura) |>
+  dplyr::arrange(RFID, data_ora_lettura) |>
   assegna_cluster(parametri$eps_m, parametri$min_pts) |>
   # Il giro c'è su ogni lettura: per la stima contano quelle non censite.
   dplyr::filter(presente_a_database == "Non Presente", !is.na(servizio_atteso)) |>

@@ -26,7 +26,7 @@ tar_option_set(imports = "trackerfid")
 # trasmissione.
 colonne_storiche <- list(
   rfid = "codice_transponder",
-  giorno = "giorno",
+  data_ora = "data_lettura",
   trasmissione = "id_trasmissione"
 )
 
@@ -119,6 +119,13 @@ list(
     format = "file"
   ),
 
+  # Le letture il cui comune del GPS è stato sostituito da quello della posizione.
+  tar_target(
+    csv_comuni_corretti,
+    scrivi_csv_output(comuni_corretti(letture_app), "comuni_corretti.csv", na = ""),
+    format = "file"
+  ),
+
   # --- Letture storiche, con la stessa anagrafica -----------------------------
   tar_target(
     letture_storiche,
@@ -128,7 +135,7 @@ list(
       prepara_letture_storiche(
         file_origine(),
         colonna_rfid = colonne_storiche$rfid,
-        colonna_giorno = colonne_storiche$giorno,
+        colonna_data_ora = colonne_storiche$data_ora,
         colonna_trasmissione = colonne_storiche$trasmissione
       )
     }

@@ -85,8 +85,8 @@ i_giro[altro_giro] <- sample(6, length(altro_giro), replace = TRUE)
 censito <- bidoni$censito[k]
 del_contenitore <- fifelse(censito, servizi[bidoni$i_servizio[k]], NA_character_)
 letture <- data.table(
-  giorno_lettura = format(istante, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
-  giorno = format(istante, "%Y-%m-%d", tz = "UTC"),
+  data_ora_lettura = format(istante, "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+  data_lettura = format(istante, "%Y-%m-%d", tz = "UTC"),
   targa_veicolo = targhe[i_mezzo],
   matricola_veicolo = mezzi[i_mezzo],
   # un giro per mezzo e per servizio
@@ -127,7 +127,7 @@ letture <- data.table(
   latitudine = round(bidoni$lat[k] + rnorm(n_letture, 0, 0.0001), 5),
   longitudine = round(bidoni$lon[k] + rnorm(n_letture, 0, 0.0001), 5)
 )
-setorder(letture, giorno_lettura)
+setorder(letture, data_ora_lettura)
 
 file_letture <- file.path(cartella, "letture_prova.csv")
 fwrite(letture, file_letture, na = "NA")

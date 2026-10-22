@@ -82,13 +82,13 @@ tema_tabelle_mappa <- function() {
 tabella_letture_rfid <- function(letture) {
   ordine <- order(
     letture$RFID,
-    -as.numeric(letture$giorno_lettura),
+    -as.numeric(letture$data_ora_lettura),
     method = "radix"
   )
   letture <- letture[ordine, , drop = FALSE]
   dati <- data.frame(
     RFID = letture$RFID,
-    Lettura = formatta_data_ora(letture$giorno_lettura),
+    Lettura = formatta_data_ora(letture$data_ora_lettura),
     Mezzo = paste(letture$matricola_veicolo, letture$targa_veicolo),
     Giro = servizio_del_giro(letture),
     stringsAsFactors = FALSE

@@ -135,7 +135,7 @@ limita_letture_ricerca <- function(
     ordine <- order(
       df$RFID,
       !df$is_ultimo,
-      -as.numeric(df$giorno_lettura),
+      -as.numeric(df$data_ora_lettura),
       method = "radix"
     )
     posizione <- integer(totale)
@@ -145,7 +145,7 @@ limita_letture_ricerca <- function(
   if (nrow(df) > massimo) {
     ordine <- order(
       !df$is_ultimo,
-      -as.numeric(df$giorno_lettura),
+      -as.numeric(df$data_ora_lettura),
       method = "radix"
     )
     df <- df[sort(utils::head(ordine, massimo)), , drop = FALSE]

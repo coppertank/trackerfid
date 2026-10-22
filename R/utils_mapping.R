@@ -752,7 +752,7 @@ popup_lettura <- function(df, riga) {
     servizio_atteso = r$servizio_atteso,
     targa = r$targa_veicolo,
     matricola = r$matricola_veicolo,
-    giorno_lettura = r$giorno_lettura,
+    data_ora_lettura = r$data_ora_lettura,
     id_utenza = r$id_utenza,
     presente = r$presente_a_database,
     comune = r[["comune_fornitura"]],

@@ -406,7 +406,7 @@ simula_conferimenti <- function(
     6 * 3600 +
     stats::runif(nrow(letti), 0, 4 * 3600)
   letture <- data.frame(
-    giorno_lettura = ora,
+    data_ora_lettura = ora,
     RFID = b$RFID[letti$k],
     presente_a_database = "Presente",
     servizio_transponder = "SECCO",
@@ -568,7 +568,7 @@ veri <- attr(sc$letture, "veri")
 v <- veri[veri$id_fornitura == scelto$id_fornitura, ]
 passaggi <- attr(sc$letture, "passaggi")
 passaggi <- passaggi[passaggi$zona == v$zona, ]
-letti <- unique(as.Date(sc$letture$giorno_lettura[
+letti <- unique(as.Date(sc$letture$data_ora_lettura[
   sc$letture$id_fornitura == scelto$id_fornitura
 ]))
 passaggi$stato <- ifelse(

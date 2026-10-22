@@ -16,14 +16,14 @@ servizio_del_giro <- function(letture) {
 #' @noRd
 colonne_riepilogo_giri <- function() {
   c(
-    "giorno",
+    "data_giro",
     "matricola_veicolo",
     "targa_veicolo",
     "servizio_giro",
     "comune_giro",
     "eseguito",
-    "prima_lettura",
-    "ultima_lettura",
+    "data_ora_prima_lettura",
+    "data_ora_ultima_lettura",
     "letture",
     "bidoni",
     "fuori_giro",
@@ -42,14 +42,14 @@ colonne_riepilogo_giri <- function() {
 riepilogo_giri <- function(letture) {
   if (is.null(letture) || nrow(letture) == 0) {
     return(dplyr::tibble(
-      giorno = as.Date(character(0)),
+      data_giro = as.Date(character(0)),
       matricola_veicolo = character(0),
       targa_veicolo = character(0),
       servizio_giro = character(0),
       comune_giro = character(0),
       eseguito = character(0),
-      prima_lettura = as.POSIXct(character(0), tz = "UTC"),
-      ultima_lettura = as.POSIXct(character(0), tz = "UTC"),
+      data_ora_prima_lettura = as.POSIXct(character(0), tz = "UTC"),
+      data_ora_ultima_lettura = as.POSIXct(character(0), tz = "UTC"),
       letture = integer(0),
       bidoni = integer(0),
       fuori_giro = integer(0),
@@ -57,14 +57,15 @@ riepilogo_giri <- function(letture) {
       letto_in = character(0)
     ))
   }
-  letture <- letture[order(letture$giorno_lettura, method = "radix"), ]
-  giorno <- letture[["giorno"]] %||% lubridate::as_date(letture$giorno_lettura)
+  letture <- letture[order(letture$data_ora_lettura, method = "radix"), ]
+  data_giro <- letture[["data_lettura"]] %||%
+    lubridate::as_date(letture$data_ora_lettura)
   comune_giro <- as.character(
     letture[["comune_giro"]] %||% rep(NA_character_, nrow(letture))
   )
   servizio_giro <- servizio_del_giro(letture)
   gruppo <- indice_gruppi(paste(
-    as.integer(giorno),
+    as.integer(data_giro),
     letture$matricola_veicolo,
     servizio_giro,
     comune_giro,
@@ -98,14 +99,14 @@ riepilogo_giri <- function(letture) {
     .default = NA_character_
   )
   riepilogo <- dplyr::tibble(
-    giorno = primo_per_gruppo(giorno, gruppo, n),
+    data_giro = primo_per_gruppo(data_giro, gruppo, n),
     matricola_veicolo = primo_per_gruppo(letture$matricola_veicolo, gruppo, n),
     targa_veicolo = primo_per_gruppo(letture$targa_veicolo, gruppo, n),
     servizio_giro = primo_per_gruppo(servizio_giro, gruppo, n),
     comune_giro = primo_per_gruppo(comune_giro, gruppo, n),
     eseguito = eseguito,
-    prima_lettura = primo_per_gruppo(letture$giorno_lettura, gruppo, n),
-    ultima_lettura = ultimo_per_gruppo(letture$giorno_lettura, gruppo, n),
+    data_ora_prima_lettura = primo_per_gruppo(letture$data_ora_lettura, gruppo, n),
+    data_ora_ultima_lettura = ultimo_per_gruppo(letture$data_ora_lettura, gruppo, n),
     # Calcolato prima: dentro `tibble()` la colonna `letture` nasconderebbe il
     # data frame.
     bidoni = bidoni,
@@ -121,9 +122,9 @@ riepilogo_giri <- function(letture) {
   riepilogo <- riepilogo[, colonne_riepilogo_giri()]
   riepilogo[
     order(
-      riepilogo$giorno,
+      riepilogo$data_giro,
       riepilogo$matricola_veicolo,
-      riepilogo$prima_lettura,
+      riepilogo$data_ora_prima_lettura,
       method = "radix"
     ),
   ]
@@ -139,7 +140,7 @@ letture_del_giro <- function(letture, giro) {
     letture[["comune_giro"]] %||% rep(NA_character_, nrow(letture))
   )
   letture[
-    letture$giorno == giro$giorno &
+    letture$data_lettura == giro$data_giro &
       letture$matricola_veicolo == giro$matricola_veicolo &
       uguale(servizio_del_giro(letture), giro$servizio_giro) &
       uguale(comune_giro, giro$comune_giro),
@@ -183,7 +184,7 @@ limita_letture_giro <- function(df, massimo = limiti_mappa()$letture_ricerca) {
     incongruenze <- incongruenze_comune(df)
     ordine <- order(
       !(incongruenze$fuori_giro | incongruenze$fuori_comune),
-      -as.numeric(df$giorno_lettura),
+      -as.numeric(df$data_ora_lettura),
       method = "radix"
     )
     df <- df[sort(utils::head(ordine, massimo)), , drop = FALSE]
@@ -219,15 +220,15 @@ descrizione_giri <- function(letture) {
 tabella_giri <- function(riepilogo) {
   ora <- function(x) format(x, "%H:%M", tz = "UTC")
   tabella <- data.frame(
-    Data = riepilogo$giorno,
+    Data = riepilogo$data_giro,
     Mezzo = paste(riepilogo$matricola_veicolo, riepilogo$targa_veicolo),
     `Giro previsto` = riepilogo$servizio_giro,
     `Comune del giro` = riepilogo$comune_giro,
     # Un giro senza l'informazione ha un trattino: si filtra come gli altri.
     Confermato = dplyr::coalesce(riepilogo$eseguito, "\u2013"),
     Orario = paste(
-      ora(riepilogo$prima_lettura),
-      ora(riepilogo$ultima_lettura),
+      ora(riepilogo$data_ora_prima_lettura),
+      ora(riepilogo$data_ora_ultima_lettura),
       sep = "\u2013"
     ),
     Letture = riepilogo$letture,

@@ -325,7 +325,7 @@ calcola_analisi_cluster <- function(
     return(structure(analisi_cluster_vuota(), parametri = parametri))
   }
 
-  copertura <- lubridate::as_date(copertura %||% range(letture$giorno_lettura))
+  copertura <- lubridate::as_date(copertura %||% range(letture$data_ora_lettura))
   giorni_osservati <- as.numeric(
     min(analisi_al, copertura[2]) - max(analisi_dal, copertura[1])
   ) +
@@ -335,7 +335,7 @@ calcola_analisi_cluster <- function(
   # Per RFID e tempo: i riepiloghi contano su quest'ordine.
   ordine <- order(
     nel_periodo$RFID,
-    nel_periodo$giorno_lettura,
+    nel_periodo$data_ora_lettura,
     method = "radix"
   )
   dati <- assegna_cluster(nel_periodo[ordine, , drop = FALSE], eps_m, min_pts)
@@ -373,9 +373,9 @@ calcola_analisi_cluster <- function(
   per_rfid <- dplyr::tibble(
     RFID = primo_per_gruppo(dati$RFID, rfid, n_rfid),
     globale_conteggio_cluster = tabulate(rfid_del_cluster, n_rfid),
-    globale_prima_lettura = primo_per_gruppo(dati$giorno_lettura, rfid, n_rfid),
+    globale_prima_lettura = primo_per_gruppo(dati$data_ora_lettura, rfid, n_rfid),
     globale_ultima_lettura = ultimo_per_gruppo(
-      dati$giorno_lettura,
+      dati$data_ora_lettura,
       rfid,
       n_rfid
     ),
@@ -441,12 +441,12 @@ calcola_analisi_cluster <- function(
     incongruenza_comune = posizione$incongruenza_comune,
     cluster_id = primo_per_gruppo(dati$cluster_id, cluster, n_cluster),
     cluster_prima_lettura = primo_per_gruppo(
-      dati$giorno_lettura,
+      dati$data_ora_lettura,
       cluster,
       n_cluster
     ),
     cluster_ultima_lettura = ultimo_per_gruppo(
-      dati$giorno_lettura,
+      dati$data_ora_lettura,
       cluster,
       n_cluster
     ),

@@ -2,7 +2,7 @@
 letture_giri <- function() {
   quando <- function(testo) as.POSIXct(testo, tz = "UTC")
   dplyr::tibble(
-    giorno_lettura = quando(c(
+    data_ora_lettura = quando(c(
       "2025-03-03 06:10:00",
       "2025-03-03 06:40:00",
       "2025-03-03 07:05:00",
@@ -53,7 +53,7 @@ test_that("la ricerca trova le letture di un mezzo nei giorni scelti", {
   # un giorno, tutti i mezzi: in ordine di tempo, con il giorno
   giorno <- cerca_giri(d, "", "2025-03-03", "2025-03-03")
   expect_identical(giorno$RFID, c("R1", "R2", "R1", "R4", "R3"))
-  expect_true(all(giorno$giorno == as.Date("2025-03-03")))
+  expect_true(all(giorno$data_lettura == as.Date("2025-03-03")))
   expect_identical(cerca_giri(d, NULL, "2025-03-03", "2025-03-03"), giorno)
   expect_identical(cerca_giri(d, NA, "2025-03-03", "2025-03-03"), giorno)
   # un mezzo
@@ -99,10 +99,10 @@ test_that("il riepilogo ha una riga per giorno, mezzo, servizio e comune del gir
   expect_identical(giri$fuori_giro, c(1L, 0L, 0L, 1L, 0L))
   expect_identical(giri$fuori_comune, c(1L, 0L, 0L, 0L, 0L))
   expect_identical(
-    format(giri$prima_lettura[1:2], "%H:%M", tz = "UTC"),
+    format(giri$data_ora_prima_lettura[1:2], "%H:%M", tz = "UTC"),
     c("06:10", "14:20")
   )
-  expect_identical(format(giri$ultima_lettura[1], "%H:%M", tz = "UTC"), "07:05")
+  expect_identical(format(giri$data_ora_ultima_lettura[1], "%H:%M", tz = "UTC"), "07:05")
   # in quali comuni sono state fatte le letture del giro
   expect_identical(
     giri$letto_in,
@@ -142,7 +142,7 @@ test_that("frase, limite e tabella dei giri", {
     sum(poche$coerenza_comune %in% c("Fuori giro", "Fuori comune")),
     3
   )
-  expect_false(is.unsorted(poche$giorno_lettura))
+  expect_false(is.unsorted(poche$data_ora_lettura))
   tutte <- limita_letture_giro(d, 100)
   expect_equal(nrow(tutte), 7)
   expect_null(limita_letture_giro(NULL))
@@ -191,7 +191,7 @@ test_that("frase, limite e tabella dei giri", {
   # le righe sono quelle del riepilogo, nello stesso ordine: la riga scelta
   # nel browser è la riga del riepilogo
   expect_equal(nrow(dati), nrow(giri))
-  expect_identical(dati$Data, format(giri$giorno, "%Y-%m-%d"))
+  expect_identical(dati$Data, format(giri$data_giro, "%Y-%m-%d"))
   expect_identical(dati$Mezzo[1], "M1 AA111AA")
   expect_identical(dati$Orario[1], "06:10\u201307:05")
   attributi <- attributi_reactable(tabella)
@@ -221,15 +221,15 @@ test_that("frase, limite e tabella dei giri", {
 
 test_that("un giro e' confermato, non ancora confermato o senza l'informazione", {
   d <- letture_giri()
-  d$giorno <- lubridate::as_date(d$giorno_lettura)
+  d$data_lettura <- lubridate::as_date(d$data_ora_lettura)
   giri <- riepilogo_giri(d)
   # senza la colonna la conferma manca, e in tabella c'e' un trattino
   expect_true(all(is.na(giri$eseguito)))
   expect_true(all(dati_reactable(tabella_giri(giri))$Confermato == "\u2013"))
   # un giro e' NO se una sua lettura lo e', SI se una lo e', altrimenti manca
   gruppo <- match(
-    paste(d$giorno, d$matricola_veicolo, servizio_del_giro(d), d$comune_giro),
-    paste(giri$giorno, giri$matricola_veicolo, giri$servizio_giro, giri$comune_giro)
+    paste(d$data_lettura, d$matricola_veicolo, servizio_del_giro(d), d$comune_giro),
+    paste(giri$data_giro, giri$matricola_veicolo, giri$servizio_giro, giri$comune_giro)
   )
   d$eseguito <- NA_character_
   d$eseguito[gruppo == 1] <- c("SI", "NO")[seq_len(sum(gruppo == 1)) %% 2 + 1]
@@ -250,7 +250,7 @@ test_that("un giro \u00e8 quello del calendario anche se il servizio atteso vien
   # Il calendario dava la carta; il servizio atteso di un non censito viene
   # dai censiti letti nello stesso giro, ed \u00e8 il secco
   d <- letture_giri()[1:3, ]
-  d$giorno <- lubridate::as_date(d$giorno_lettura)
+  d$data_lettura <- lubridate::as_date(d$data_ora_lettura)
   d$presente_a_database <- c("Presente", "Presente", "Non Presente")
   d$servizio_giro <- "CARTA"
   d$servizio_atteso <- c("CARTA", "CARTA", "SECCO")
@@ -276,7 +276,7 @@ test_that("sul dataset di esempio un giro lavora in un comune, e uno \u00e8 sbag
   d <- seleziona_periodo(archivio_esempio())
   giri <- riepilogo_giri(cerca_giri(d, "", "2025-01-01", "2025-12-31"))
   # un mezzo fa uno o due giri al giorno
-  per_giorno <- table(paste(giri$giorno, giri$matricola_veicolo))
+  per_giorno <- table(paste(giri$data_giro, giri$matricola_veicolo))
   expect_lte(max(per_giorno), 2)
   expect_false(anyNA(giri$comune_giro))
   expect_false(anyNA(giri$servizio_giro))
