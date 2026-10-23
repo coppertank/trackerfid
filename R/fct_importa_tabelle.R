@@ -329,7 +329,10 @@ importa_letture_storiche <- function(
     warning(
       nrow(illeggibili),
       " letture storiche hanno un istante illeggibile e vengono scartate, ad esempio: ",
-      paste(utils::head(unique(illeggibili$testo_data_ora), 3), collapse = ", "),
+      paste(
+        utils::head(unique(illeggibili$testo_data_ora), 3),
+        collapse = ", "
+      ),
       call. = FALSE
     )
   }

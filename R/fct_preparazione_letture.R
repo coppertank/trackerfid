@@ -26,17 +26,23 @@ filtra_letture_post_test <- function(df_letture, df_test_mezzi) {
     )
 }
 
-#' Comune di lettura dalla posizione, dentro i comuni serviti
+#' Comune di lettura: quello del GPS se coincide con il comune del contenitore, altrimenti quello della posizione
 #'
-#' Una lettura che cade nel confine di un comune servito prende quel comune
+#' Il comune del GPS (`IndirizzoLocalizzazione`) si porta alla grafia della
+#' tabella. Se coincide con il comune della fornitura, `comune_fornitura`, la
+#' lettura lo tiene: vicino al confine la posizione può dare il comune
+#' accanto. Altrimenti prende il comune che contiene il punto
 #' (`comune_del_punto()`); fuori dai comuni serviti, o senza coordinate,
-#' resta il comune del sistema di localizzazione, nella grafia della tabella
-#' se la tabella lo contiene. Il cantiere segue il comune. Un messaggio
-#' conta le letture il cui comune cambia; l'elenco sta nell'attributo
-#' `comuni_corretti` (vedi `comuni_corretti()`).
+#' resta quello del GPS. Il cantiere segue il comune. Un messaggio conta le
+#' letture il cui comune cambia; l'elenco sta nell'attributo `comuni_corretti`
+#' (vedi `comuni_corretti()`). Va applicata dopo `associa_servizio()`.
+#' @param letture Letture con `comune_lettura`, `cantiere`, `latitudine`,
+#'   `longitudine` e, se ci sono, `comune_fornitura`.
 #' @noRd
 correggi_comune_lettura <- function(letture) {
   tabella <- comuni_cantieri()
+  fornitura <- letture[["comune_fornitura"]] %||%
+    rep(NA_character_, nrow(letture))
 
   letture <- letture |>
     dplyr::mutate(
@@ -46,9 +52,17 @@ correggi_comune_lettura <- function(letture) {
         .data$comune_lettura,
         tabella$comune[.data$riga_tabella]
       ),
+      comune_fornitura_chiave = chiave_comune_o_na(fornitura),
+      gps_come_fornitura = (chiave_comune_o_na(.data$comune_gps) ==
+        .data$comune_fornitura_chiave) %in% TRUE,
       dalla_posizione = comune_del_punto(.data$latitudine, .data$longitudine),
-      cambiato = !is.na(.data$dalla_posizione) &
-        (is.na(.data$comune_gps) | .data$comune_gps != .data$dalla_posizione)
+      comune_finale = dplyr::if_else(
+        .data$gps_come_fornitura,
+        .data$comune_gps,
+        dplyr::coalesce(.data$dalla_posizione, .data$comune_gps)
+      ),
+      cambiato = !is.na(.data$comune_finale) &
+        (is.na(.data$comune_gps) | .data$comune_gps != .data$comune_finale)
     )
 
   cambiate <- dplyr::filter(letture, .data$cambiato)
@@ -56,7 +70,7 @@ correggi_comune_lettura <- function(letture) {
     voci <- cambiate |>
       dplyr::count(
         da = dplyr::coalesce(.data$comune_gps, "(vuoto)"),
-        a = .data$dalla_posizione,
+        a = .data$comune_finale,
         sort = TRUE
       ) |>
       dplyr::mutate(
@@ -73,7 +87,7 @@ correggi_comune_lettura <- function(letture) {
 
   letture |>
     dplyr::mutate(
-      comune_lettura = dplyr::coalesce(.data$dalla_posizione, .data$comune_gps),
+      comune_lettura = .data$comune_finale,
       cantiere = dplyr::coalesce(
         cantiere_di_comune(.data$comune_lettura),
         .data$cantiere
@@ -82,7 +96,10 @@ correggi_comune_lettura <- function(letture) {
     dplyr::select(
       -"riga_tabella",
       -"comune_gps",
+      -"comune_fornitura_chiave",
+      -"gps_come_fornitura",
       -"dalla_posizione",
+      -"comune_finale",
       -"cambiato"
     ) |>
     structure(
@@ -92,6 +109,7 @@ correggi_comune_lettura <- function(letture) {
             "data_ora_lettura", "matricola_veicolo", "targa_veicolo", "RFID"
           )),
           "latitudine", "longitudine", "comune_gps",
+          dplyr::any_of("comune_fornitura"),
           comune_posizione = "dalla_posizione"
         )
     )
@@ -111,6 +129,7 @@ comuni_corretti <- function(letture) {
     latitudine = numeric(0),
     longitudine = numeric(0),
     comune_gps = character(0),
+    comune_fornitura = character(0),
     comune_posizione = character(0)
   )
   if ("RFID" %in% names(elenco)) formatta_rfid(elenco) else elenco
@@ -140,6 +159,15 @@ formatta_rfid <- function(df) {
       stringr::str_pad(.data$RFID, width = 24, side = "left", pad = "0")
     )
   )
+}
+
+#' Una lettura al giorno per RFID: la prima
+#'
+#' Dopo `formatta_rfid()`, perché due codici letti male possono diventare lo
+#' stesso RFID. Presuppone le letture in ordine di tempo.
+#' @noRd
+una_lettura_al_giorno <- function(letture) {
+  dplyr::distinct(letture, .data$data_lettura, .data$RFID, .keep_all = TRUE)
 }
 
 #' Associa a ogni lettura il contenitore attivo nel suo giorno e la sua fornitura
@@ -187,8 +215,9 @@ associa_servizio <- function(
 
 #' Un calendario solo, con i giri pianificati e i non pianificati
 #'
-#' Un non pianificato non ha `id_giro`, orari né conferma: il codice del
-#' giro vale solo per i pianificati. Le righe ripetute contano una volta.
+#' Un non pianificato non ha orari né conferma. Il suo `id_giro` è quello
+#' del suo file (servizio e comune), se c'è: può coincidere con quello di un
+#' pianificato di un altro giorno. Le righe ripetute contano una volta.
 #' @param pianificati Calendario di `importa_calendario()`.
 #' @param non_pianificati Giri di `importa_giri_non_pianificati()`, o `NULL`.
 #' @return Il calendario, con la colonna `pianificato`.
@@ -220,15 +249,17 @@ unisci_calendari <- function(pianificati, non_pianificati = NULL) {
     return(dplyr::distinct(pianificati))
   }
 
+  codici <- non_pianificati[["id_giro"]] %||%
+    rep(NA_character_, nrow(non_pianificati))
   non_pianificati <- non_pianificati |>
     dplyr::transmute(
       data_giro = .data$data_giro,
       matricola_mezzo = as.character(.data$matricola_mezzo),
+      id_giro = as.character(codici),
       descrizione_servizio = .data$descrizione_servizio,
       comune_giro = .data$comune_giro
     ) |>
     dplyr::mutate(
-      id_giro = NA_character_,
       eseguito = NA_character_,
       ora_inizio = NA_character_,
       ora_fine = NA_character_,
@@ -270,17 +301,17 @@ chiave_comune_o_na <- function(nomi) {
 #' Passi con cui una lettura riceve il suo giro, nell'ordine
 #'
 #' I testi compaiono nel messaggio della pipeline che conta le letture di
-#' ogni passo.
+#' ogni passo; il documento `docs/associazione_giri.html` li illustra.
 #' @noRd
 passi_associazione <- function() {
   c(
     orario_comune = "giro pianificato, nell'orario e nel comune della lettura",
-    unico = "unico giro del mezzo nel giorno",
-    piu_vicino = "giro pianificato con l'orario pi\u00f9 vicino",
-    comune = "giro nel comune della lettura, con comuni tutti diversi",
+    comune_non_pianificato = "giro non pianificato nel comune della lettura",
     orario = "giro pianificato nel cui orario cade la lettura, in un altro comune",
-    non_pianificato_comune = "giro non pianificato nel comune, fuori dagli orari dei pianificati",
-    non_pianificato = "giro non pianificato del mezzo nel giorno: l'unico, o il primo del calendario",
+    servizio_unico = "unico servizio non pianificato del mezzo nel giorno",
+    tratto = "giro delle altre letture di seguito dello stesso mezzo",
+    comune_vicino = "giro non pianificato del comune pi\u00f9 vicino",
+    vicino_orario = "giro pianificato entro la tolleranza dall'orario",
     censiti = "servizio dei censiti letti dal mezzo, senza giri nel giorno"
   )
 }
@@ -288,6 +319,31 @@ passi_associazione <- function() {
 #' Minuti di ritardo ammessi dopo la fine di un giro pianificato
 #' @noRd
 ritardo_giro_minuti <- function() 30
+
+#' Minuti entro cui una lettura fuori orario prende ancora il giro pianificato più vicino
+#' @noRd
+tolleranza_giro_minuti <- function() 60
+
+#' Metri entro cui il comune più vicino decide il giro non pianificato
+#' @noRd
+soglia_comune_vicino_m <- function() 2000
+
+#' Divide le letture di ogni mezzo in ogni giorno in tratti continui
+#'
+#' Un tratto nuovo comincia dopo una pausa più lunga di
+#' `ritardo_giro_minuti()`. Restituisce le letture in ordine di mezzo, giorno
+#' e ora, con la colonna `tratto`.
+#' @param letture Una riga per lettura: `mezzo`, `data_giro`, `ora`.
+#' @noRd
+assegna_tratti <- function(letture) {
+  ritardo <- ritardo_giro_minuti() * 60
+  letture |>
+    dplyr::arrange(.data$mezzo, .data$data_giro, .data$ora) |>
+    dplyr::mutate(
+      tratto = cumsum(c(TRUE, diff(.data$ora) > ritardo)),
+      .by = c("mezzo", "data_giro")
+    )
+}
 
 #' Allunga la fine dei giri pianificati con le letture in ritardo
 #'
@@ -302,14 +358,8 @@ ritardo_giro_minuti <- function() 30
 allunga_fine <- function(giri, letture) {
   ritardo <- ritardo_giro_minuti() * 60
 
-  # Le letture di un mezzo in un giorno, in ordine di ora, divise in tratti:
-  # un tratto nuovo comincia dopo una pausa più lunga del ritardo.
   tratti <- letture |>
-    dplyr::arrange(.data$mezzo, .data$data_giro, .data$ora) |>
-    dplyr::mutate(
-      tratto = cumsum(c(TRUE, diff(.data$ora) > ritardo)),
-      .by = c("mezzo", "data_giro")
-    ) |>
+    assegna_tratti() |>
     dplyr::select("mezzo", "data_giro", "ora", "tratto")
 
   seguenti <- giri |>
@@ -355,15 +405,19 @@ allunga_fine <- function(giri, letture) {
 #' Solo giri dello stesso mezzo e dello stesso giorno. Ogni passo vale per
 #' le letture che i precedenti non hanno associato:
 #' 1. pianificato nel cui orario e nel cui comune cade la lettura;
-#' 2. l'unico giro del mezzo nel giorno;
-#' 3. con soli pianificati, quello con l'orario più vicino;
-#' 4. con anche non pianificati e comuni tutti diversi, quello nel comune;
-#' 5. pianificato nel cui orario cade la lettura, in un altro comune;
-#' 6. fuori dagli orari dei pianificati, un non pianificato nel comune;
-#' 7. un non pianificato: l'unico, o il primo del calendario.
+#' 2. non pianificato nel comune della lettura, se quel comune ha un solo
+#'    servizio;
+#' 3. pianificato nel cui orario cade la lettura, in un altro comune;
+#' 4. se tutti i non pianificati del mezzo hanno lo stesso servizio, quel
+#'    servizio: il giro è quello del comune più vicino;
+#' 5. il giro più frequente tra le letture già associate dello stesso
+#'    tratto continuo del mezzo;
+#' 6. non pianificato del comune più vicino, entro `soglia_comune_vicino_m()`;
+#' 7. pianificato più vicino nel tempo, entro `tolleranza_giro_minuti()`.
 #'
-#' L'orario finisce alla fine allungata da `allunga_fine()`. A parità vale il
-#' primo giro del calendario. I comuni si confrontano con `chiave_comune()`.
+#' L'orario finisce alla fine allungata da `allunga_fine()`. Un passo con un
+#' pareggio tra servizi diversi non associa niente. A parità di giro vale il
+#' primo del calendario. I comuni si confrontano con `chiave_comune()`.
 #' @param calendario Calendario di `unisci_calendari()`.
 #' @return Una riga per lettura: `riga` del calendario, `passo` (testo di
 #'   `passi_associazione()`), `senza_giri` se il mezzo quel giorno non ne ha.
@@ -375,8 +429,13 @@ scegli_giro <- function(letture, calendario) {
       mezzo = as.character(.data$matricola_veicolo),
       data_giro = as.character(.data$data_lettura),
       ora = secondi_dalla_mezzanotte(.data$data_ora_lettura),
-      comune_lettura = chiave_comune_o_na(.data$comune_lettura)
+      comune_lettura = chiave_comune_o_na(.data$comune_lettura),
+      latitudine = .data$latitudine,
+      longitudine = .data$longitudine
     )
+  tratti <- letture_ora |>
+    assegna_tratti() |>
+    dplyr::select("lettura", "tratto")
 
   giri <- calendario |>
     dplyr::transmute(
@@ -386,9 +445,23 @@ scegli_giro <- function(letture, calendario) {
       pianificato = .data$pianificato %in% TRUE,
       inizio = secondi_del_giorno(.data$ora_inizio),
       fine = secondi_del_giorno(.data$ora_fine),
-      comune_giro = chiave_comune_o_na(.data$comune_giro)
+      comune_nome = as.character(.data$comune_giro),
+      comune_giro = chiave_comune_o_na(.data$comune_giro),
+      servizio = stringr::str_to_upper(
+        stringr::str_squish(as.character(.data$descrizione_servizio))
+      )
     ) |>
-    allunga_fine(letture_ora)
+    allunga_fine(letture_ora) |>
+    # Quanti servizi hanno i non pianificati del mezzo nel giorno, e quanti
+    # quelli dello stesso comune.
+    dplyr::mutate(
+      servizi_np = dplyr::n_distinct(.data$servizio[!.data$pianificato]),
+      .by = c("mezzo", "data_giro")
+    ) |>
+    dplyr::mutate(
+      servizi_np_comune = dplyr::n_distinct(.data$servizio),
+      .by = c("mezzo", "data_giro", "pianificato", "comune_giro")
+    )
 
   # Ogni lettura con ogni giro del suo mezzo nel suo giorno.
   coppie <- letture_ora |>
@@ -397,6 +470,7 @@ scegli_giro <- function(letture, calendario) {
       by = c("mezzo", "data_giro"),
       relationship = "many-to-many"
     ) |>
+    dplyr::left_join(tratti, by = "lettura") |>
     dplyr::mutate(
       dentro = .data$pianificato &
         (dplyr::between(.data$ora, .data$inizio, .data$fine) %in% TRUE),
@@ -405,24 +479,68 @@ scegli_giro <- function(letture, calendario) {
         Inf
       ),
       stesso_comune = (.data$comune_lettura == .data$comune_giro) %in% TRUE
-    ) |>
-    dplyr::mutate(
-      giri = dplyr::n(),
-      non_pianificati = sum(!.data$pianificato),
-      comuni = dplyr::n_distinct(.data$comune_giro),
-      in_orario = any(.data$dentro),
-      .by = "lettura"
     )
 
   # Per le letture ancora senza giro, la prima coppia ammessa secondo
-  # `ordine` e, a parità, secondo il calendario.
-  scegli <- function(scelte, passo, ammessa, ordine = 0) {
+  # `ordine` e, a parità, secondo il calendario. `prima` prepara le coppie
+  # rimaste (ad esempio con la distanza dal comune).
+  scegli <- function(scelte, passo, ammessa, ordine = 0, prima = identity) {
     nuove <- coppie |>
-      dplyr::filter(!.data$lettura %in% scelte$lettura, {{ ammessa }}) |>
+      dplyr::filter(!.data$lettura %in% scelte$lettura) |>
+      prima() |>
+      dplyr::filter({{ ammessa }}) |>
       dplyr::arrange(.data$lettura, {{ ordine }}, .data$riga) |>
       dplyr::distinct(.data$lettura, .keep_all = TRUE) |>
       dplyr::select("lettura", "riga") |>
       dplyr::mutate(passo = passi_associazione()[[passo]])
+    dplyr::bind_rows(scelte, nuove)
+  }
+
+  # Metri dalla lettura al comune di ogni giro non pianificato.
+  con_distanza <- function(coppie_rimaste) {
+    coppie_rimaste |>
+      dplyr::filter(!.data$pianificato) |>
+      dplyr::mutate(
+        distanza_m = distanza_dal_comune(
+          .data$latitudine,
+          .data$longitudine,
+          .data$comune_nome
+        )
+      )
+  }
+
+  # Il non pianificato del comune più vicino, se i giri più vicini non hanno
+  # servizi diversi.
+  il_piu_vicino <- function(coppie_rimaste) {
+    coppie_rimaste |>
+      dplyr::filter(!.data$pianificato, !is.na(.data$latitudine)) |>
+      con_distanza() |>
+      dplyr::filter(!is.na(.data$distanza_m)) |>
+      dplyr::slice_min(.data$distanza_m, by = "lettura", with_ties = TRUE) |>
+      dplyr::filter(dplyr::n_distinct(.data$servizio) == 1, .by = "lettura")
+  }
+
+  # Il giro più frequente, tra le letture già associate, di ogni tratto.
+  nel_tratto <- function(scelte) {
+    vincitori <- scelte |>
+      dplyr::inner_join(
+        dplyr::distinct(coppie, .data$lettura, .data$mezzo, .data$data_giro, .data$tratto),
+        by = "lettura"
+      ) |>
+      dplyr::count(.data$mezzo, .data$data_giro, .data$tratto, .data$riga) |>
+      dplyr::slice_max(
+        .data$n,
+        by = c("mezzo", "data_giro", "tratto"),
+        with_ties = TRUE
+      ) |>
+      dplyr::filter(dplyr::n() == 1, .by = c("mezzo", "data_giro", "tratto")) |>
+      dplyr::select("mezzo", "data_giro", "tratto", "riga")
+    nuove <- coppie |>
+      dplyr::filter(!.data$lettura %in% scelte$lettura) |>
+      dplyr::distinct(.data$lettura, .data$mezzo, .data$data_giro, .data$tratto) |>
+      dplyr::inner_join(vincitori, by = c("mezzo", "data_giro", "tratto")) |>
+      dplyr::select("lettura", "riga") |>
+      dplyr::mutate(passo = passi_associazione()[["tratto"]])
     dplyr::bind_rows(scelte, nuove)
   }
 
@@ -432,24 +550,29 @@ scegli_giro <- function(letture, calendario) {
     passo = character()
   ) |>
     scegli("orario_comune", .data$dentro & .data$stesso_comune) |>
-    scegli("unico", .data$giri == 1) |>
     scegli(
-      "piu_vicino",
-      .data$pianificato & .data$non_pianificati == 0,
-      ordine = .data$distanza
-    ) |>
-    scegli(
-      "comune",
-      .data$non_pianificati > 0 &
-        .data$comuni == .data$giri &
-        .data$stesso_comune
+      "comune_non_pianificato",
+      !.data$pianificato & .data$stesso_comune & .data$servizi_np_comune == 1
     ) |>
     scegli("orario", .data$dentro) |>
     scegli(
-      "non_pianificato_comune",
-      !.data$pianificato & !.data$in_orario & .data$stesso_comune
+      "servizio_unico",
+      .data$servizi_np == 1,
+      ordine = .data$distanza_m,
+      prima = \(rimaste) con_distanza(dplyr::filter(rimaste, .data$servizi_np == 1))
     ) |>
-    scegli("non_pianificato", !.data$pianificato)
+    nel_tratto() |>
+    scegli(
+      "comune_vicino",
+      .data$distanza_m <= soglia_comune_vicino_m(),
+      ordine = .data$distanza_m,
+      prima = il_piu_vicino
+    ) |>
+    scegli(
+      "vicino_orario",
+      .data$pianificato & .data$distanza <= tolleranza_giro_minuti() * 60,
+      ordine = .data$distanza
+    )
 
   letture_ora |>
     dplyr::select("lettura") |>
@@ -1045,17 +1168,19 @@ prepara_letture_app <- function(file = file_origine()) {
     non_pianificati
   )
 
+  # Il comune di lettura si corregge dopo l'associazione al database: serve
+  # il comune della fornitura.
   con_comune <- importa_letture(file$letture) |>
     filtra_letture_post_test(test_mezzi) |>
-    correggi_comune_lettura()
-
-  con_giro <- con_comune |>
     formatta_rfid() |>
+    una_lettura_al_giorno() |>
     associa_servizio(
       importa_contenitori(file$contenitori),
       importa_sacchetti(file$gruppi_sacchetti, file$servizi_sacchetti)
     ) |>
-    associa_servizio_atteso_da_calendario(calendario)
+    correggi_comune_lettura()
+
+  con_giro <- associa_servizio_atteso_da_calendario(con_comune, calendario)
 
   associazione <- attr(con_giro, "associazione")
   message(

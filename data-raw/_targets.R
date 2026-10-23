@@ -44,14 +44,17 @@ compila_report_conferimenti <- function(
 ) {
   cartella <- normalizePath(cartella)
   nome <- "conferimenti_secco.html"
+  # Calcolati qui, non dentro la chiamata: render() valuta `params` dopo
+  # essersi spostato in docs/, dove un percorso relativo non esiste.
+  parametri <- list(
+    letture = normalizePath(letture),
+    dal = periodo$dal,
+    al = periodo$al,
+    cartella_csv = cartella
+  )
   rmarkdown::render(
     rmd,
-    params = list(
-      letture = normalizePath(letture),
-      dal = periodo$dal,
-      al = periodo$al,
-      cartella_csv = cartella
-    ),
+    params = parametri,
     output_file = nome,
     output_dir = cartella,
     quiet = TRUE

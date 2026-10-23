@@ -1,0 +1,575 @@
+---
+title: "Come si assegna un giro a una lettura"
+subtitle: "I passi di `scegli_giro()`, con esempi calcolati dal codice"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+lang: it
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    mathjax: null
+---
+
+```{r setup, include=FALSE}
+# Per compilare il documento, dalla radice del progetto:
+#   rmarkdown::render("docs/associazione_giri.Rmd")
+# Servono i pacchetti rmarkdown, ggplot2, DiagrammeR e pkgload.
+#
+# Non fa parte della pipeline: `targets::tar_make()` non lo compila. Si
+# ricompila a mano quando cambia la logica di `scegli_giro()`. Soglie, nomi dei
+# passi ed esempi vengono dal codice del pacchetto, e la compilazione si
+# ferma se i passi non corrispondono più alla tabella qui sotto.
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.retina = 2,
+  out.width = "100%"
+)
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+# Testo su più righe per le etichette dei diagrammi.
+a_capo <- function(x, larghezza = 30) {
+  # L'apostrofo dritto confonde il lettore dei diagrammi: si usa quello tipografico.
+  x <- gsub("'", "\u2019", x, fixed = TRUE)
+  vapply(x, function(t) paste(strwrap(t, larghezza), collapse = "\\n"), "")
+}
+colori <- c(
+  verde = "#2f7d4f",
+  verde_chiaro = "#dcefe3",
+  arancio = "#e08a2e",
+  giallo = "#d9b43b",
+  azzurro = "#3b7cc4",
+  grigio = "#9aa39c",
+  testo = "#1f2a24"
+)
+```
+
+```{css, echo=FALSE}
+body {
+    font-size: 16px;
+}
+
+.tabella-passi td {
+    vertical-align: top;
+}
+```
+
+Documento scritto per spiegare, a chi non legge il codice, come una lettura riceve il suo giro. Il giro dà alla lettura il servizio atteso e il comune del giro, e da lì vengono la coerenza dei servizi e quella dei comuni. Il calendario dice che cosa era *previsto*, non che cosa è successo: per questo l'associazione è una serie di regole, dalla più sicura alla meno sicura, e una lettura che non ne soddisfa nessuna resta **senza giro**, invece di prenderne uno a caso.
+
+# I dati di partenza
+
+- **Letture**, con mezzo, data e ora, comune e posizione.
+- **Giri pianificati**: mezzo, giorno, ora di inizio e di fine, servizio, comune, codice del giro.
+- **Giri non pianificati**: mezzo, giorno, servizio, comune, codice del giro. Non hanno orari: non si sa quando iniziano e finiscono.
+
+**Regola di base.** Una lettura può avere solo un giro dello *stesso mezzo* (matricola) e dello *stesso giorno*. Mai di un altro mezzo o di un altro giorno. I codici dei giri non pianificati hanno la stessa logica di quelli dei pianificati (un servizio in un comune) e possono coincidere con quelli di un pianificato di un altro giorno. I comuni si confrontano senza badare a maiuscole, accenti e apostrofi.
+
+# I passi
+
+La lettura attraversa i passi nell'ordine. Il primo che vale le dà il giro e gli altri non la vedono più.
+
+```{r passi}
+# Un passo per riga: è l'unico posto da modificare per cambiare tabella e
+# diagramma. `codice` deve essere quello di `passi_associazione()`.
+passi <- dplyr::tribble(
+  ~codice                                                                                                                                                                                   , ~domanda , ~assegna , ~quando ,
+  "orario_comune"                                                                                                                                                                           ,
+  "Nell'orario di un pianificato e nel suo comune?"                                                                                                                                         ,
+  "il giro pianificato"                                                                                                                                                                     ,
+  "La lettura cade nell'orario di un giro pianificato e nel suo comune."                                                                                                                    ,
+
+  "comune_non_pianificato"                                                                                                                                                                  ,
+  "Nel comune di un giro non pianificato (un solo servizio lì)?"                                                                                                                            ,
+  "quel giro non pianificato"                                                                                                                                                               ,
+  "Il comune della lettura è quello di un giro non pianificato del mezzo e, in quel comune, il mezzo ha un solo servizio. Vale anche dentro l'orario di un pianificato di un altro comune." ,
+
+  "orario"                                                                                                                                                                                  ,
+  "Nell'orario di un pianificato, in un altro comune?"                                                                                                                                      ,
+  "il giro pianificato"                                                                                                                                                                     ,
+  "La lettura cade nell'orario di un giro pianificato, ma in un comune che non è né il suo né quello di un non pianificato."                                                                ,
+
+  "servizio_unico"                                                                                                                                                                          ,
+  "Tutti i non pianificati del mezzo hanno lo stesso servizio?"                                                                                                                             ,
+  "quel servizio, nel comune più vicino"                                                                                                                                                    ,
+  "Il servizio è certo (`distinct()` sul servizio), anche se i comuni sono diversi. Il giro è quello del comune più vicino alla lettura."                                                   ,
+
+  "tratto"                                                                                                                                                                                  ,
+  "Le letture di seguito (stesso tratto) hanno già un giro?"                                                                                                                                ,
+  "il giro più frequente del tratto"                                                                                                                                                        ,
+  "Un tratto è una serie di letture del mezzo senza pause lunghe. Vince il giro più frequente tra quelle già associate; a pari voti, nessuno."                                              ,
+
+  "comune_vicino"                                                                                                                                                                           ,
+  "C'è un comune non pianificato molto vicino?"                                                                                                                                             ,
+  "il giro del comune più vicino"                                                                                                                                                           ,
+  "Un giro non pianificato in un comune a meno della distanza massima dalla lettura. Se i giri più vicini hanno servizi diversi, niente."                                                   ,
+
+  "vicino_orario"                                                                                                                                                                           ,
+  "Un pianificato è vicino nel tempo?"                                                                                                                                                      ,
+  "il pianificato più vicino"                                                                                                                                                               ,
+  "Il mezzo ha giri pianificati e la lettura è entro la tolleranza dall'inizio o dalla fine (allungata) di uno."
+)
+if (!identical(c(passi$codice, "censiti"), names(passi_associazione()))) {
+  stop(
+    "I passi di questo documento non corrispondono più a `passi_associazione()`: aggiorna la tabella `passi`."
+  )
+}
+```
+
+```{r diagramma-passi, fig.height=9}
+n <- nrow(passi)
+nodi <- paste0(
+  sprintf(
+    'p%d [label="%d · %s"];\n',
+    seq_len(n),
+    seq_len(n),
+    a_capo(passi$domanda, 30)
+  ),
+  sprintf(
+    'e%d [label="assegna:\\n%s", fillcolor="%s", color="%s"];\n',
+    seq_len(n),
+    a_capo(passi$assegna, 24),
+    colori[["verde_chiaro"]],
+    colori[["verde"]]
+  ),
+  sprintf("{rank=same; p%d; e%d}\n", seq_len(n), seq_len(n)),
+  collapse = ""
+)
+archi <- paste0(
+  c(
+    "inizio -> p1;\n",
+    sprintf('p%d -> p%d [label=" no"];\n', seq_len(n - 1), seq_len(n - 1) + 1),
+    sprintf('p%d -> e%d [label="sì"];\n', seq_len(n), seq_len(n)),
+    sprintf('p%d -> nessuno [label=" no"];\n', n)
+  ),
+  collapse = ""
+)
+DiagrammeR::grViz(
+  paste0(
+    '
+digraph passi {
+  graph [rankdir=TB, nodesep=0.5, ranksep=0.32, fontname="Helvetica"];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled",
+        fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];
+  inizio [label="Una lettura di un mezzo, in un giorno", style="rounded"];
+  nessuno [label="Nessun giro:\\nla lettura resta senza giro", style="rounded,dashed", fillcolor="#ffffff"];
+',
+    nodi,
+    archi,
+    '}'
+  ),
+  width = "100%"
+)
+```
+
+```{r tabella-passi}
+tabella <- passi |>
+  dplyr::mutate(
+    n = as.character(dplyr::row_number()),
+    codice = paste0("`", codice, "`")
+  ) |>
+  dplyr::select(
+    `#` = n,
+    Passo = codice,
+    `Quando vale` = quando,
+    `Cosa assegna` = assegna
+  )
+tabella <- dplyr::bind_rows(
+  tabella,
+  dplyr::tibble(
+    `#` = c("—", "8"),
+    Passo = c("senza giro", "`censiti`"),
+    `Quando vale` = c(
+      "Nessuno dei passi vale.",
+      "Il mezzo quel giorno non ha nessun giro."
+    ),
+    `Cosa assegna` = c(
+      "niente: giro, servizio atteso e comune del giro restano vuoti",
+      "solo il servizio atteso: il servizio più frequente dei bidoni censiti letti dal mezzo (ogni bidone conta una volta; con un pareggio, niente). Il giro resta vuoto"
+    )
+  )
+)
+knitr::kable(
+  tabella,
+  format = "html",
+  escape = FALSE,
+  na = "—",
+  table.attr = 'class="table table-sm tabella-passi"'
+)
+```
+
+I nomi in codice sono quelli che compaiono nel messaggio della pipeline («Giro associato alle letture: …»), con il numero di letture di ogni passo.
+
+# L'orario, il ritardo e la tolleranza
+
+L'orario di un giro pianificato non finisce a `ora_fine`. Una lettura del mezzo entro **`r ritardo_giro_minuti()` minuti** dalla fine ne fa ancora parte e *diventa la nuova fine*; si va avanti finché la lettura seguente arriva entro lo stesso tempo dall'ultima. La catena si ferma all'inizio del pianificato seguente dello stesso mezzo. Fuori orario, il passo 7 accetta una lettura entro **`r tolleranza_giro_minuti()` minuti** dall'orario (contando la fine allungata), purché non abbia trovato un giro prima.
+
+Il disegno qui sotto non è fatto a mano: è il risultato di `scegli_giro()` su un giro pianificato dalle 8 alle 12 e su sette letture dello stesso mezzo.
+
+```{r orario, fig.height=3.8}
+ore <- c(6.5, 7 + 20 / 60, 9, 12 + 20 / 60, 12 + 45 / 60, 13 + 20 / 60, 15)
+rosa <- comuni_cantieri()[comuni_cantieri()$comune == "ROSÀ", ]
+quando <- as.POSIXct("2026-03-02", tz = "UTC") + ore * 3600
+letture <- dplyr::tibble(
+  data_ora_lettura = quando,
+  data_lettura = as.Date("2026-03-02"),
+  matricola_veicolo = "1",
+  comune_lettura = "ROSÀ",
+  latitudine = rosa$latitudine,
+  longitudine = rosa$longitudine
+)
+calendario <- unisci_calendari(dplyr::tibble(
+  data_giro = as.Date("2026-03-02"),
+  ora_inizio = "08:00:00",
+  ora_fine = "12:00:00",
+  matricola_mezzo = "1",
+  id_giro = "P1",
+  eseguito = "SI",
+  descrizione_servizio = "SECCO PAP",
+  comune_giro = "ROSÀ"
+))
+scelta <- scegli_giro(letture, calendario)
+stato <- dplyr::case_when(
+  is.na(scelta$riga) ~ "nessun giro",
+  scelta$passo ==
+    passi_associazione()[["vicino_orario"]] ~ "giro più vicino (tolleranza)",
+  ore > 12 ~ "ritardo: resta nel giro",
+  TRUE ~ "dentro l'orario"
+)
+stato <- factor(
+  stato,
+  levels = c(
+    "dentro l'orario",
+    "ritardo: resta nel giro",
+    "giro più vicino (tolleranza)",
+    "nessun giro"
+  )
+)
+punti <- dplyr::tibble(
+  ore = ore,
+  stato = stato,
+  etichetta = format(quando, "%H:%M")
+)
+r <- ritardo_giro_minuti() / 60
+fine_allungata <- max(ore[stato == "ritardo: resta nel giro"], 12)
+ggplot() +
+  annotate(
+    "rect",
+    xmin = 8,
+    xmax = 12,
+    ymin = 0.1,
+    ymax = 0.5,
+    fill = colori[["verde_chiaro"]],
+    colour = colori[["verde"]]
+  ) +
+  annotate(
+    "text",
+    x = 10,
+    y = 0.62,
+    label = "giro pianificato 08:00–12:00",
+    colour = colori[["testo"]],
+    size = 4
+  ) +
+  annotate(
+    "rect",
+    xmin = 8 - tolleranza_giro_minuti() / 60,
+    xmax = 8,
+    ymin = -0.12,
+    ymax = -0.02,
+    fill = colori[["giallo"]]
+  ) +
+  annotate(
+    "rect",
+    xmin = 12,
+    xmax = fine_allungata,
+    ymin = -0.12,
+    ymax = -0.02,
+    fill = colori[["arancio"]]
+  ) +
+  annotate(
+    "rect",
+    xmin = fine_allungata,
+    xmax = fine_allungata + tolleranza_giro_minuti() / 60,
+    ymin = -0.12,
+    ymax = -0.02,
+    fill = colori[["giallo"]]
+  ) +
+  geom_point(
+    data = punti,
+    aes(ore, -0.35, fill = stato, shape = stato),
+    size = 5,
+    stroke = 1.1,
+    colour = colori[["testo"]]
+  ) +
+  geom_text(
+    data = punti,
+    aes(ore, ifelse(seq_along(ore) %% 2 == 1, -0.62, -0.85), label = etichetta),
+    size = 3.4,
+    colour = "#5b655f"
+  ) +
+  scale_fill_manual(
+    values = c(
+      colori[["verde"]],
+      colori[["arancio"]],
+      colori[["giallo"]],
+      "white"
+    ),
+    name = NULL
+  ) +
+  scale_shape_manual(values = c(21, 24, 22, 21), name = NULL) +
+  scale_x_continuous(
+    breaks = seq(5, 20, 2),
+    labels = sprintf("%02d:00", seq(5, 20, 2)),
+    limits = c(5, 20)
+  ) +
+  scale_y_continuous(limits = c(-1, 0.75)) +
+  labs(
+    x = NULL,
+    y = NULL,
+    caption = "barre sotto il giro: ritardo (arancio) e tolleranza (giallo)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "top"
+  )
+```
+
+# I tratti
+
+Un giro non pianificato non ha orari, ma le letture di un mezzo arrivano in sequenza. Se tra due letture passano più di **`r ritardo_giro_minuti()` minuti**, comincia un tratto nuovo. In ogni tratto le letture già associate dai passi 1–4 «votano», e le orfane prendono il giro più frequente. È l'idea che, quando il mezzo lavora, le letture di seguito appartengono quasi sempre allo stesso giro.
+
+L'esempio è calcolato da `scegli_giro()`: il mezzo ha due giri non pianificati, il vetro a Rosà e l'umido a Cassola. Le letture a Nove non sono in nessuno dei due comuni.
+
+```{r tratti, fig.height=3.2}
+cc <- comuni_cantieri()
+pos <- function(nome) cc[cc$comune == nome, c("latitudine", "longitudine")]
+ore <- c(8, 8 + 12 / 60, 8 + 25 / 60, 9 + 10 / 60, 9 + 22 / 60, 9 + 34 / 60)
+comuni <- c("ROSÀ", "NOVE", "ROSÀ", "CASSOLA", "NOVE", "NOVE")
+quando <- as.POSIXct("2026-03-02", tz = "UTC") + ore * 3600
+coord <- do.call(rbind, lapply(comuni, pos))
+letture <- dplyr::tibble(
+  data_ora_lettura = quando,
+  data_lettura = as.Date("2026-03-02"),
+  matricola_veicolo = "1",
+  comune_lettura = comuni,
+  latitudine = coord$latitudine,
+  longitudine = coord$longitudine
+)
+calendario <- unisci_calendari(
+  dplyr::tibble(
+    data_giro = as.Date("2026-03-02"),
+    ora_inizio = "05:00",
+    ora_fine = "06:00",
+    matricola_mezzo = "9",
+    id_giro = "X",
+    eseguito = "SI",
+    descrizione_servizio = "ALTRO",
+    comune_giro = "NOVE"
+  ),
+  dplyr::tibble(
+    data_giro = as.Date("2026-03-02"),
+    matricola_mezzo = "1",
+    id_giro = c("N3", "N4"),
+    descrizione_servizio = c("VETRO PAP", "UMIDO PAP"),
+    comune_giro = c("ROSÀ", "CASSOLA")
+  )
+)
+scelta <- scegli_giro(letture, calendario)
+etichetta_giro <- c("N3 (vetro)", "N4 (umido)")[match(
+  calendario$id_giro[scelta$riga],
+  c("N3", "N4")
+)]
+per_tratto <- scelta$passo == passi_associazione()[["tratto"]] &
+  !is.na(scelta$passo)
+tratto <- cumsum(c(TRUE, diff(ore) * 60 > ritardo_giro_minuti()))
+punti <- dplyr::tibble(
+  ore = ore,
+  giro = etichetta_giro,
+  tratto = tratto,
+  per_tratto = per_tratto,
+  comune = comuni,
+  etichetta = format(quando, "%H:%M")
+)
+bande <- punti |>
+  dplyr::summarise(
+    inizio = min(ore) - 0.08,
+    fine = max(ore) + 0.08,
+    .by = tratto
+  )
+ggplot() +
+  geom_rect(
+    data = bande,
+    aes(xmin = inizio, xmax = fine, ymin = -0.05, ymax = 0.95),
+    fill = NA,
+    colour = "#5b655f",
+    linetype = "dashed"
+  ) +
+  geom_text(
+    data = bande,
+    aes(x = (inizio + fine) / 2, y = 0.8, label = paste("tratto", tratto)),
+    size = 4
+  ) +
+  geom_point(
+    data = punti,
+    aes(ore, 0.5, fill = giro, shape = per_tratto),
+    size = 6,
+    stroke = 1.1,
+    colour = colori[["testo"]]
+  ) +
+  geom_text(
+    data = punti,
+    aes(ore, 0.5, label = substr(giro, 1, 2)),
+    size = 3,
+    colour = "white",
+    fontface = "bold"
+  ) +
+  geom_text(
+    data = punti,
+    aes(ore, 0.2, label = paste0(etichetta, "\n", comune)),
+    size = 3.1,
+    colour = "#5b655f",
+    lineheight = 0.9
+  ) +
+  scale_fill_manual(
+    values = c(
+      `N3 (vetro)` = colori[["azzurro"]],
+      `N4 (umido)` = colori[["arancio"]]
+    ),
+    name = "giro assegnato"
+  ) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  scale_shape_manual(
+    values = c(`FALSE` = 21, `TRUE` = 24),
+    labels = c("dal comune", "dal tratto"),
+    name = "assegnata"
+  ) +
+  scale_x_continuous(limits = c(7.7, 9.9), breaks = NULL) +
+  scale_y_continuous(limits = c(-0.1, 1)) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    legend.position = "top"
+  )
+```
+
+Le letture a Nove di ogni tratto prendono il giro delle altre letture dello stesso tratto (triangoli); quelle in un comune di un giro lo ricevono dal comune (cerchi).
+
+# Un servizio solo, in più comuni
+
+Se tutti i giri non pianificati del mezzo in quel giorno hanno lo stesso servizio, una lettura fuori dall'orario dei pianificati ha il servizio certo, anche se il comune non coincide con nessuno. Il giro (cioè il comune) è quello più vicino, misurato dal confine del comune con i confini della Regione. Le distanze qui sotto sono calcolate dal pacchetto.
+
+```{r servizio-unico, fig.height=2.6}
+punto <- c(lat = 45.72942, lng = 11.70269)
+d <- round(distanza_dal_comune(
+  rep(punto[["lat"]], 2),
+  rep(punto[["lng"]], 2),
+  c("NOVE", "MAROSTICA")
+))
+calendario <- unisci_calendari(
+  dplyr::tibble(
+    data_giro = as.Date("2026-03-02"),
+    ora_inizio = "05:00",
+    ora_fine = "06:00",
+    matricola_mezzo = "9",
+    id_giro = "X",
+    eseguito = "SI",
+    descrizione_servizio = "ALTRO",
+    comune_giro = "NOVE"
+  ),
+  dplyr::tibble(
+    data_giro = as.Date("2026-03-02"),
+    matricola_mezzo = "1",
+    id_giro = c("N1", "N2"),
+    descrizione_servizio = "CARTA CONT.STRADALI",
+    comune_giro = c("NOVE", "MAROSTICA")
+  )
+)
+letture <- dplyr::tibble(
+  data_ora_lettura = as.POSIXct("2026-03-02 15:00:00", tz = "UTC"),
+  data_lettura = as.Date("2026-03-02"),
+  matricola_veicolo = "1",
+  comune_lettura = "BASSANO DEL GRAPPA",
+  latitudine = punto[["lat"]],
+  longitudine = punto[["lng"]]
+)
+scelta <- scegli_giro(letture, calendario)
+if (!identical(calendario$id_giro[scelta$riga], "N1")) {
+  stop("L'esempio non dà più il giro N1: aggiorna il testo del documento.")
+}
+DiagrammeR::grViz(
+  sprintf(
+    '
+digraph servizio {
+  graph [rankdir=LR, nodesep=0.4, ranksep=1.4, fontname="Helvetica"];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];
+  lettura [label="lettura a BASSANO DEL GRAPPA\\n(fuori orario, in nessuno dei due comuni)", style="rounded,dashed"];
+  n1 [label="giro N1\\nCARTA a NOVE", fillcolor="%s", color="%s"];
+  n2 [label="giro N2\\nCARTA a MAROSTICA"];
+  lettura -> n1 [label=" %d m"];
+  lettura -> n2 [label=" %d m", style=dashed];
+}',
+    colori[["verde_chiaro"]],
+    colori[["verde"]],
+    d[1],
+    d[2]
+  ),
+  width = "100%"
+)
+```
+
+Il servizio (CARTA) è lo stesso nei due giri, quindi è certo; il giro è N1, il comune più vicino. Una lettura fuori da tutti i comuni dei giri resta «fuori giro»: il servizio è giusto, il comune no.
+
+# Soglie e dove cambiarle
+
+```{r soglie}
+knitr::kable(dplyr::tibble(
+  Soglia = c(
+    "Ritardo dopo la fine di un pianificato",
+    "Pausa che apre un tratto nuovo",
+    "Tolleranza dall'orario di un pianificato",
+    "Distanza massima del comune più vicino"
+  ),
+  Valore = c(
+    paste(ritardo_giro_minuti(), "minuti"),
+    paste(ritardo_giro_minuti(), "minuti (lo stesso ritardo)"),
+    paste(tolleranza_giro_minuti(), "minuti"),
+    paste(soglia_comune_vicino_m() / 1000, "km")
+  ),
+  Funzione = c(
+    "`ritardo_giro_minuti()`",
+    "`assegna_tratti()`",
+    "`tolleranza_giro_minuti()`",
+    "`soglia_comune_vicino_m()`"
+  )
+))
+```
+
+# Scelte e limiti da conoscere
+
+- **Nessun «primo del calendario».** Con più servizi non pianificati e nessun indizio la lettura resta senza giro, invece di prendere il primo giro dell'elenco (scelta del 23 ottobre 2026).
+- **Il non pianificato vince nel suo comune.** Una lettura dentro l'orario di un pianificato, ma nel comune di un non pianificato (e non in quello del pianificato), va al non pianificato (scelta del 21 ottobre 2026).
+- **Pareggi.** A parità di distanza o di voti tra servizi diversi non si assegna niente. A parità di giro dello stesso servizio vale il primo del calendario.
+- **Un tratto può unire giri diversi.** Se due giri si susseguono senza pause, le orfane prendono il più frequente: è un'approssimazione.
+- **Zone fuori tabella.** Un comune del giro che non è un comune servito (per esempio il Massiccio del Grappa) non ha confini: le distanze mancano, e il passo 6 non vale per quei giri.
+- **Niente turni a cavallo della mezzanotte** né pianificati sovrapposti dello stesso mezzo.
+
+# Come verificare che l'associazione funzioni
+
+I bidoni censiti vengono raccolti dal loro servizio. Per le loro letture, la quota con `coerenza_servizio` uguale a `SI` dice quanto è giusto il giro assegnato. Confrontando, per ogni passo, la quota di coerenti e quella di letture assegnate si vede dove l'associazione è più sicura e dove conviene stringere o allargare le soglie.
+
+# Come si cambia
+
+La logica sta in `scegli_giro()` e nelle funzioni accanto (`passi_associazione()`, `allunga_fine()`, `assegna_tratti()`, `servizio_dei_censiti_del_mezzo()`) in `R/fct_preparazione_letture.R`, con i test in `tests/testthat/test-fct_preparazione_letture.R`. Quando un passo cambia, vanno aggiornati la tabella `passi` in questo file, il paragrafo «Associazione lettura-giro» di `CLAUDE.md` e il README, e il documento va ricompilato.

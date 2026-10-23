@@ -1,0 +1,348 @@
+---
+title: "Come si ricava il comune di una lettura"
+subtitle: "La scelta di `correggi_comune_lettura()`, con esempi calcolati dal codice"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+lang: it
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    mathjax: null
+---
+
+```{r setup, include=FALSE}
+# Per compilare il documento, dalla radice del progetto:
+#   rmarkdown::render("docs/comune_lettura.Rmd")
+# Servono i pacchetti rmarkdown, ggplot2, DiagrammeR e pkgload.
+#
+# Non fa parte della pipeline: `targets::tar_make()` non lo compila. Si
+# ricompila a mano quando cambia `correggi_comune_lettura()` o l'importazione
+# delle letture. I sei casi e il disegno del punto nel poligono sono calcolati
+# dal codice del pacchetto, e la compilazione si ferma se i risultati non
+# tornano più con il testo.
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.retina = 2,
+  out.width = "100%"
+)
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+colori <- c(
+  verde = "#2f7d4f",
+  verde_chiaro = "#dcefe3",
+  arancio = "#e08a2e",
+  giallo = "#d9b43b",
+  azzurro = "#3b7cc4",
+  grigio = "#9aa39c",
+  testo = "#1f2a24"
+)
+# Parametri comuni dei diagrammi.
+stile_dot <- '
+  graph [fontname="Helvetica", nodesep=0.45, ranksep=0.35];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled",
+        fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];'
+```
+
+```{css, echo=FALSE}
+body {
+    font-size: 16px;
+}
+```
+
+Il campo `comune_lettura` dice in quale comune è stata fatta una lettura. Da lì vengono il cantiere, i filtri per comune sulla mappa, le bolle e la coerenza del comune (`Coerente`, `Fuori comune`, `Fuori giro`). Il sistema di localizzazione dei mezzi lo scrive già, ma vicino ai confini, o per una frazione, a volte sbaglia: per questo la pipeline lo controlla con la posizione.
+
+# Da quali dati si ricava
+
+```{r dati}
+DiagrammeR::grViz(
+  paste0(
+    '
+digraph dati {
+  graph [rankdir=LR];',
+    stile_dot,
+    '
+  gps [label="Indirizzo del sistema\\ndi localizzazione\\n«via, comune»", fillcolor="#f3f4f2"];
+  pos [label="Posizione\\nlatitudine e longitudine", fillcolor="#f3f4f2"];
+  conf [label="Confini dei ',
+    nrow(comuni_cantieri()),
+    ' comuni serviti\\n(Regione del Veneto)", fillcolor="#f3f4f2"];
+  forn [label="Comune della fornitura\\n(database, nel giorno\\ndella lettura)", fillcolor="#f3f4f2"];
+  cg [label="comune del GPS\\n(dopo la prima virgola)"];
+  cp [label="comune della posizione"];
+  fin [label="comune_lettura", fillcolor="',
+    colori[["verde_chiaro"]],
+    '", color="',
+    colori[["verde"]],
+    '"];
+  gps -> cg; pos -> cp; conf -> cp;
+  cg -> fin; cp -> fin; forn -> fin;
+}'
+  ),
+  width = "100%"
+)
+```
+
+- **Indirizzo del sistema di localizzazione** (`IndirizzoLocalizzazione`): un testo «via, comune». Il comune è la parte dopo la prima virgola.
+- **Posizione**: latitudine e longitudine della lettura.
+- **Confini dei comuni serviti**: i `r nrow(comuni_cantieri())` comuni dell'azienda, con i confini della Regione del Veneto (non semplificati).
+- **Comune della fornitura** (`comune_fornitura`): il comune del contenitore secondo il database, nel giorno della lettura. Non esiste per i non censiti e per i sacchetti.
+
+# Prima di tutto: quali letture entrano
+
+- Si scartano le letture con latitudine zero e quelle senza comune dopo la virgola: per il proprietario sono dati sporchi.
+- Per ogni RFID resta *una lettura al giorno*, la prima valida in ordine di tempo (prima si tolgono le sporche, poi si guarda quale è la prima). Il controllo si fa dopo la pulizia dei codici (`formatta_rfid()`), perché due codici letti male possono diventare lo stesso RFID.
+- Solo i mezzi con il test delle antenne positivo, e solo dal giorno dopo il test.
+
+# Il percorso
+
+La scelta avviene dopo l'associazione al database, perché serve il comune della fornitura.
+
+```{r percorso}
+DiagrammeR::grViz(
+  paste0(
+    '
+digraph percorso {
+  graph [rankdir=TB];',
+    stile_dot,
+    '
+  inizio [label="Una lettura:\\ncomune del GPS, posizione, comune della fornitura", style="rounded"];
+  d1 [label="Il comune del GPS è\\nquello della fornitura?", shape=diamond, style="filled", fillcolor="#f3f4f2"];
+  gps [label="Vale il comune del GPS", fillcolor="',
+    colori[["verde_chiaro"]],
+    '", color="',
+    colori[["verde"]],
+    '"];
+  d2 [label="La posizione cade in un\\ncomune servito?", shape=diamond, style="filled", fillcolor="#f3f4f2"];
+  pos [label="Vale il comune\\ndella posizione", fillcolor="',
+    colori[["verde_chiaro"]],
+    '", color="',
+    colori[["verde"]],
+    '"];
+  res [label="Resta il comune del GPS\\n(anche se fuori tabella)", fillcolor="#fbf1dd", color="',
+    colori[["arancio"]],
+    '"];
+  inizio -> d1;
+  d1 -> gps [label=" sì"];
+  d1 -> d2 [label=" no, o la fornitura manca"];
+  d2 -> pos [label=" sì"];
+  d2 -> res [label=" no, o senza coordinate"];
+}'
+  ),
+  width = "100%"
+)
+```
+
+Il GPS e la fornitura si confrontano senza badare a maiuscole, accenti e apostrofi (`chiave_comune()`), e un nome del GPS portato alla grafia della tabella non conta come correzione («Rosa'» e `ROSÀ` sono lo stesso comune).
+
+# I sei casi
+
+La tabella è calcolata eseguendo davvero `correggi_comune_lettura()` su sei letture sintetiche, con punti scelti dentro i comuni di Limena, Nove e Cittadella e un punto a Venezia, fuori dai comuni serviti.
+
+```{r casi}
+centro <- function(nome) {
+  riga <- comuni_cantieri()[comuni_cantieri()$comune == nome, ]
+  c(lat = riga$latitudine, lng = riga$longitudine)
+}
+limena <- centro("LIMENA")
+nove <- centro("NOVE")
+venezia <- c(lat = 45.4408, lng = 12.3155)
+if (
+  !identical(
+    comune_del_punto(venezia[["lat"]], venezia[["lng"]]),
+    NA_character_
+  ) ||
+    !identical(comune_del_punto(nove[["lat"]], nove[["lng"]]), "NOVE")
+) {
+  stop("I punti dell'esempio non cadono più dove il testo dice.")
+}
+
+casi <- dplyr::tribble(
+  ~caso , ~gps     , ~fornitura   , ~posizione                 , ~lat             , ~lng             ,
+  "A"   , "LIMENA" , "LIMENA"     , "NOVE"                     , nove[["lat"]]    , nove[["lng"]]    ,
+  "B"   , "LIMENA" , "CITTADELLA" , "NOVE"                     , nove[["lat"]]    , nove[["lng"]]    ,
+  "C"   , "LIMENA" , "CITTADELLA" , "fuori dai comuni serviti" , venezia[["lat"]] , venezia[["lng"]] ,
+  "D"   , "MESTRE" , "CITTADELLA" , "NOVE"                     , nove[["lat"]]    , nove[["lng"]]    ,
+  "E"   , "MESTRE" , NA           , "fuori dai comuni serviti" , venezia[["lat"]] , venezia[["lng"]] ,
+  "F"   , "LIMENA" , "CITTADELLA" , "senza coordinate"         , NA_real_         , NA_real_
+)
+esito <- dplyr::tibble(
+  comune_lettura = casi$gps,
+  cantiere = NA_character_,
+  latitudine = casi$lat,
+  longitudine = casi$lng,
+  comune_fornitura = casi$fornitura
+) |>
+  correggi_comune_lettura() |>
+  suppressMessages()
+atteso <- c("LIMENA", "NOVE", "LIMENA", "NOVE", "MESTRE", "LIMENA")
+if (!identical(esito$comune_lettura, atteso)) {
+  stop(
+    "I sei casi non danno più ",
+    paste(atteso, collapse = ", "),
+    ": aggiorna il testo."
+  )
+}
+corretti <- nrow(comuni_corretti(esito))
+if (corretti != 2L) {
+  stop("Le correzioni dell'esempio non sono più due.")
+}
+
+knitr::kable(
+  dplyr::tibble(
+    Caso = casi$caso,
+    `Comune del GPS` = casi$gps,
+    `Comune della fornitura` = dplyr::coalesce(casi$fornitura, "nessuno"),
+    `Posizione` = casi$posizione,
+    `comune_lettura` = esito$comune_lettura,
+    `In comuni_corretti.csv` = ifelse(
+      esito$comune_lettura != casi$gps,
+      "sì",
+      "no"
+    )
+  ),
+  format = "html",
+  table.attr = 'class="table table-sm"'
+)
+```
+
+Il caso A è quello segnalato dal proprietario: vicino al confine la posizione può dare il comune accanto, mentre il GPS e il database sono d'accordo. Un cambio di sola grafia non conta come correzione, e non entra in `comuni_corretti.csv`.
+
+# Come si capisce che un punto è dentro un comune
+
+Per ogni comune servito si guarda prima il rettangolo che racchiude il suo confine (un filtro veloce), poi, solo per i punti che ci cadono, si conta quanti lati del confine attraversa una semiretta che parte dal punto: **un numero dispari di lati vuol dire dentro**. Il primo comune che contiene il punto vince. I punti con le stesse coordinate si calcolano una volta sola.
+
+Il disegno usa un confine inventato, con una rientranza, e `dentro_poligoni()` del pacchetto per dare l'esito di ogni punto.
+
+```{r poligono, fig.height=4.2}
+contorno <- dplyr::tibble(
+  longitudine = c(1, 7, 7, 5, 5, 3, 3, 1),
+  latitudine = c(1, 1, 5, 5, 3, 3, 5, 5)
+) |>
+  dplyr::mutate(poligono = 1L, anello = 1L)
+punti <- dplyr::tibble(
+  nome = c("1", "2", "3", "4"),
+  longitudine = c(2, 4, 6, 8),
+  latitudine = c(2.2, 4.3, 3.5, 1.5)
+)
+punti$dentro <- vapply(
+  seq_len(nrow(punti)),
+  function(i) {
+    dentro_poligoni(punti$longitudine[i], punti$latitudine[i], contorno)
+  },
+  logical(1)
+)
+# I lati attraversati dalla semiretta verso destra: ricontati qui per il disegno.
+lati <- contorno |>
+  dplyr::mutate(
+    x2 = dplyr::lead(.data$longitudine, default = .data$longitudine[1]),
+    y2 = dplyr::lead(.data$latitudine, default = .data$latitudine[1])
+  )
+punti$lati <- vapply(
+  seq_len(nrow(punti)),
+  function(i) {
+    lng <- punti$longitudine[i]
+    lat <- punti$latitudine[i]
+    sum(
+      ((lati$latitudine > lat) != (lati$y2 > lat)) &
+        (lng <
+          (lati$x2 - lati$longitudine) *
+            (lat - lati$latitudine) /
+            (lati$y2 - lati$latitudine) +
+            lati$longitudine)
+    )
+  },
+  numeric(1)
+)
+if (
+  !identical(punti$lati %% 2 == 1, punti$dentro) ||
+    !identical(punti$dentro, c(TRUE, FALSE, TRUE, FALSE))
+) {
+  stop("Il disegno del punto nel poligono non torna con dentro_poligoni().")
+}
+punti$etichetta <- sprintf(
+  "%s %s: %s",
+  punti$lati,
+  ifelse(punti$lati == 1, "lato", "lati"),
+  ifelse(punti$dentro, "dentro", "fuori")
+)
+
+ggplot() +
+  geom_polygon(
+    data = contorno,
+    aes(longitudine, latitudine),
+    fill = colori[["verde_chiaro"]],
+    colour = colori[["verde"]],
+    linewidth = 0.8
+  ) +
+  geom_segment(
+    data = punti,
+    aes(x = longitudine, xend = 9.2, y = latitudine, yend = latitudine),
+    colour = colori[["grigio"]],
+    linetype = "dashed",
+    arrow = arrow(length = unit(0.12, "inches"))
+  ) +
+  geom_point(
+    data = punti,
+    aes(longitudine, latitudine, fill = dentro),
+    shape = 21,
+    size = 5,
+    colour = colori[["testo"]],
+    stroke = 0.8
+  ) +
+  geom_text(
+    data = punti,
+    aes(longitudine, latitudine, label = nome),
+    colour = "white",
+    size = 3,
+    fontface = "bold"
+  ) +
+  geom_text(
+    data = punti,
+    aes(x = 9.3, y = latitudine, label = etichetta),
+    hjust = 0,
+    size = 3.6,
+    colour = colori[["testo"]]
+  ) +
+  scale_fill_manual(
+    values = c(`TRUE` = colori[["verde"]], `FALSE` = colori[["arancio"]]),
+    guide = "none"
+  ) +
+  coord_fixed(xlim = c(0.5, 12.5), ylim = c(0.3, 5.7)) +
+  theme_void()
+```
+
+Il punto 2 sta nella rientranza: la semiretta attraversa due lati e il punto è fuori. Il punto 4 è fuori e attraversa zero lati.
+
+# Che cosa ne deriva
+
+- **Cantiere**: quello del comune finale, secondo la tabella dei comuni. Per un comune fuori tabella resta vuoto.
+- **Distanza dal comune dichiarato**: per una lettura fatta in un comune diverso da quello dichiarato (database per un censito, giro per un non censito) si calcolano i metri dal suo confine.
+- **Coerenza del comune**: `Coerente` se il comune finale è quello dichiarato o la distanza è entro `r tolleranza_confine_m()` metri; altrimenti `Fuori comune` (censito) o `Fuori giro` (non censito); `Coerenza ignota` se manca uno dei due comuni, o se il comune del giro è una zona fuori tabella.
+- **Nell'app**: il comune di lettura si usa così com'è. Un comune fuori tabella dà un avviso al caricamento, nessun cantiere e la voce «Non assegnato» nei filtri.
+
+# `comuni_corretti.csv`
+
+La pipeline scrive in `data-raw/output/` l'elenco delle letture il cui comune finale è diverso da quello del sistema di localizzazione: data e ora, mezzo, RFID, coordinate, `comune_gps`, `comune_fornitura`, `comune_posizione`. Serve a controllare le correzioni: per i bidoni censiti si vede quante volte la posizione coincide con la fornitura.
+
+# Scelte e limiti da conoscere
+
+- **La posizione è più precisa del GPS** (verificato dal proprietario sulle letture dei censiti: `comune_posizione` coincide con `comune_fornitura` molto più spesso di `comune_gps`). L'eccezione è il caso A, scelto il 23 ottobre 2026.
+- **Il caso A ha un effetto sulla coerenza.** Per un censito, se il GPS coincide con la fornitura la lettura risulta coerente anche quando il punto è già nel comune accanto. Un bidone davvero spostato in un comune confinante, letto con un GPS che scrive ancora il comune vecchio, non verrebbe segnalato «fuori comune».
+- **Per i non censiti conta solo la posizione**: la regola del caso A non si applica, perché non c'è un comune della fornitura.
+- **Confini della Regione contro confini del sistema di localizzazione.** Non sono gli stessi: vicino al confine i due possono dare comuni diversi. La tolleranza di `r tolleranza_confine_m()` metri sulla coerenza copre in parte questa differenza.
+- **Letture fuori dai comuni serviti** (casi C ed E) tengono il nome del sistema di localizzazione: non è verificabile con i confini che abbiamo.
+- **Comuni soppressi o scritti diversamente.** `VALSTAGNA` è stato riportato a `VALBRENTA` nell'anagrafica dei contenitori; un nome del GPS non in tabella si risolve con la posizione.
+
+# Come si cambia
+
+La scelta sta in `correggi_comune_lettura()`; l'importazione in `importa_letture()`; il calcolo del punto in `comune_del_punto()` (`R/utils_geografia.R`); l'ordine dei passi in `prepara_letture_app()`. I test sono in `test-fct_preparazione_letture.R` e `test-fct_importa_tabelle.R`. Quando la logica cambia vanno aggiornati questo file (la tabella dei casi si ricalcola da sola, il testo no), `CLAUDE.md` e il README, e il documento va ricompilato.

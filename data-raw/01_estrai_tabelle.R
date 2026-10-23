@@ -25,6 +25,7 @@ con <- dbConnect(
 
 tabelle <- c(
   "iv_estrazione_giri_servizi_rifiuti_filtered",
+  "iv_estrazione_giri_non_pianificati_filtered",
   "dv_cnt_associazione_contenitori",
   "dv_cnt_letture",
   "dv_cnt_tag_contenitori",
