@@ -102,9 +102,11 @@ composizione_storiche <- function(storiche_confronto, antenne, antenne_tutte) {
 composizione_giri <- function(storiche_confronto, antenne) {
   storiche_confronto |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
+    # Una volta sola: dentro un raggruppamento sarebbe una ricerca per giro.
+    dplyr::mutate(delle_antenne = .data$RFID %in% antenne$RFID) |>
     dplyr::summarise(
       rfid = dplyr::n(),
-      rfid_antenne = sum(.data$RFID %in% antenne$RFID),
+      rfid_antenne = sum(.data$delle_antenne),
       .by = c("data_lettura", "id_trasmissione")
     ) |>
     dplyr::mutate(quota = .data$rfid_antenne / .data$rfid)
@@ -218,14 +220,15 @@ copertura_contenitori <- function(
     dplyr::select(storiche, "RFID", dplyr::all_of(colonne)),
     dplyr::select(antenne, "RFID", dplyr::all_of(colonne))
   ) |>
+    # Pochi periodi distinti per contenitore: si raggruppa dopo averli ridotti.
+    dplyr::distinct() |>
+    dplyr::mutate(
+      inizio = lubridate::as_date(.data$data_attivazione_contenitore),
+      fine = data_o_aperta(.data$data_cessazione_contenitore)
+    ) |>
     dplyr::summarise(
-      inizio = lubridate::as_date(
-        suppressWarnings(min(
-          lubridate::as_date(.data$data_attivazione_contenitore),
-          na.rm = TRUE
-        ))
-      ),
-      fine = max(data_o_aperta(.data$data_cessazione_contenitore)),
+      inizio = suppressWarnings(min(.data$inizio, na.rm = TRUE)),
+      fine = max(.data$fine),
       .by = "RFID"
     ) |>
     dplyr::mutate(
@@ -236,31 +239,34 @@ copertura_contenitori <- function(
       )
     )
 
-  giorni_letti <- list(
-    saponette = dplyr::distinct(storiche, .data$data_lettura, .data$RFID),
-    antenne = dplyr::distinct(antenne, .data$data_lettura, .data$RFID)
-  )
+  # Per ogni sistema, i giorni di lettura con il numero del contenitore.
+  giorni_letti <- function(letture) {
+    letture |>
+      dplyr::distinct(.data$data_lettura, .data$RFID) |>
+      dplyr::mutate(numero = match(.data$RFID, contenitori$RFID)) |>
+      dplyr::filter(!is.na(.data$numero))
+  }
+  da_saponette <- giorni_letti(storiche)
+  da_antenne <- giorni_letti(antenne)
   tutti <- c(storiche$data_lettura, antenne$data_lettura)
   fine_finestre <- seq(min(tutti) + finestra - 1, max(tutti), by = passo)
   prima_antenne <- min(antenne$data_lettura)
 
-  letti <- function(letture, inizio, fine, attivi) {
+  letti <- function(letture, inizio, fine) {
     nel_periodo <- letture$data_lettura >= inizio & letture$data_lettura <= fine
-    unique(letture$RFID[nel_periodo & letture$RFID %in% attivi])
+    unique(letture$numero[nel_periodo])
   }
   purrr::map(fine_finestre, function(fine) {
     inizio <- fine - finestra + 1
-    attivi <- contenitori$RFID[
-      contenitori$inizio <= fine & contenitori$fine >= inizio
-    ]
-    da_saponette <- letti(giorni_letti$saponette, inizio, fine, attivi)
-    da_antenne <- letti(giorni_letti$antenne, inizio, fine, attivi)
+    attivo <- contenitori$inizio <= fine & contenitori$fine >= inizio
+    numeri_saponette <- letti(da_saponette, inizio, fine)
+    numeri_antenne <- letti(da_antenne, inizio, fine)
     dplyr::tibble(
       data_fine = fine,
-      attivi = length(attivi),
-      letti_saponette = length(da_saponette),
-      letti_antenne = length(da_antenne),
-      letti_unione = length(union(da_saponette, da_antenne)),
+      attivi = sum(attivo),
+      letti_saponette = sum(attivo[numeri_saponette]),
+      letti_antenne = sum(attivo[numeri_antenne]),
+      letti_unione = sum(attivo[union(numeri_saponette, numeri_antenne)]),
       antenne_complete = inizio >= prima_antenne
     )
   }) |>
@@ -494,19 +500,19 @@ chip_senza_saponette <- function(antenne, storiche_tutte) {
     "Censiti attivati dopo l'inizio delle saponette",
     "Non censiti"
   )
+  censiti <- unique(antenne$RFID[antenne$presente_a_database %in% "Presente"])
   antenne |>
-    dplyr::summarise(
-      censito = any(.data$presente_a_database %in% "Presente"),
-      attivazione = suppressWarnings(min(
-        lubridate::as_date(.data$data_attivazione_contenitore),
-        na.rm = TRUE
-      )),
-      .by = "RFID"
+    dplyr::distinct(.data$RFID, .data$data_attivazione_contenitore) |>
+    dplyr::mutate(
+      attivazione = lubridate::as_date(.data$data_attivazione_contenitore)
     ) |>
+    # Un contenitore, la sua prima attivazione (le date mancanti in coda).
+    dplyr::arrange(is.na(.data$attivazione), .data$attivazione) |>
+    dplyr::distinct(.data$RFID, .keep_all = TRUE) |>
     dplyr::mutate(
       gruppo = dplyr::case_when(
-        !.data$censito ~ gruppi[3],
-        !is.finite(.data$attivazione) |
+        !.data$RFID %in% censiti ~ gruppi[3],
+        is.na(.data$attivazione) |
           .data$attivazione <= inizio_storiche ~ gruppi[1],
         .default = gruppi[2]
       ),

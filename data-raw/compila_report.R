@@ -22,7 +22,9 @@ compila_report <- function(
   }
   dir.create(cartella, recursive = TRUE, showWarnings = FALSE)
   nome <- paste0(tools::file_path_sans_ext(basename(report)), ".html")
-  quarto::quarto_render(report, execute_params = parametri, quiet = TRUE)
+  # Non in silenzio: con `quiet = TRUE` un errore del report si vedrebbe come
+  # un generico "Error running quarto CLI".
+  quarto::quarto_render(report, execute_params = parametri, quiet = FALSE)
   # Quarto scrive l'HTML accanto al sorgente: lo si sposta.
   compilato <- file.path(dirname(report), nome)
   finale <- file.path(normalizePath(cartella), nome)

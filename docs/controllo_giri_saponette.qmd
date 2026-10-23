@@ -1,0 +1,510 @@
+---
+title: "Controllo dei giri con antenne e saponette insieme"
+subtitle: "Un giorno in cui i mezzi attrezzati dovevano usare anche le saponette"
+author: "Aldo Caumo"
+date: today
+date-format: DD/MM/YYYY
+lang: it
+params:
+  letture_antenne: "data-raw/output/letture_app.csv"
+  letture_storiche: "data-raw/output/letture_storiche.csv"
+  giri_controllo: "data-raw/origine/giri_controllo.csv"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Per compilare il report, con l'HTML in data-raw/output/, dalla radice del
+# progetto:
+#   source("data-raw/compila_report.R")
+#   compila_report("docs/controllo_giri_saponette.qmd")
+# I giri da controllare stanno nel file `giri_controllo`: per un altro
+# confronto si modifica quel file (o se ne passa un altro) e si ricompila.
+# Il report non fa parte della pipeline: `targets::tar_make()` non lo compila.
+# Servono il programma quarto e i pacchetti quarto, ggplot2, DiagrammeR,
+# data.table e pkgload.
+#
+# Parametri (i percorsi relativi partono dalla radice del progetto):
+#   letture_antenne   CSV delle letture con le antenne (`letture_app.csv`)
+#   letture_storiche  CSV delle letture storiche (`letture_storiche.csv`)
+#   giri_controllo    CSV con i giri: `data_giro`, `matricola_veicolo`,
+#                     `servizio_giro`, una riga per giorno, mezzo e servizio
+
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+# Un percorso relativo dei parametri parte dalla radice del progetto, ma la
+# compilazione avviene in docs/.
+percorso_progetto <- function(percorso) {
+  if (grepl("^(/|~|[A-Za-z]:)", percorso)) {
+    path.expand(percorso)
+  } else {
+    file.path("..", percorso)
+  }
+}
+
+# Numeri con la virgola decimale.
+intero <- function(x) formatta_numero(round(x))
+num <- function(x, cifre = 1) {
+  formatC(x, format = "f", digits = cifre, decimal.mark = ",", big.mark = ".")
+}
+quota <- function(x, cifre = 1) paste0(num(100 * x, cifre), "%")
+data_it <- function(x) format(as.Date(x), "%d/%m/%Y")
+
+# Slot 1-3 della palette categorica dei report, validati insieme per le forme
+# in cui i colori si toccano.
+colori_classi <- c(
+  "Solo saponette" = "#2a78d6",
+  "Entrambi" = "#1baf7a",
+  "Solo antenne" = "#eb6834"
+)
+colori <- list(primario = "#0b0b0b", secondario = "#52514e")
+tema_grafico <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13.5, colour = colori$primario),
+    plot.subtitle = element_text(
+      size = 10.5,
+      colour = colori$secondario,
+      margin = margin(t = 5, b = 12)
+    ),
+    plot.title.position = "plot",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.title = element_text(size = 10, colour = colori$secondario),
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+
+# Parametri comuni dei diagrammi.
+stile_dot <- '
+  graph [fontname="Helvetica", nodesep=0.3, ranksep=0.45];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled",
+        fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];'
+```
+
+```{r}
+#| label: dati
+giri <- giri_di_controllo(percorso_progetto(params$giri_controllo))
+antenne_tutte <- leggi_tabella_origine(
+  percorso_progetto(params$letture_antenne)
+)
+storiche_tutte <- leggi_tabella_origine(
+  percorso_progetto(params$letture_storiche)
+)
+
+# Letture con le antenne dei giri della lista, trasmissioni delle saponette
+# che hanno letto lo stesso giorno uno di quegli RFID, e loro letture.
+antenne_giri <- antenne_dei_giri(antenne_tutte, giri)
+if (nrow(antenne_giri) == 0) {
+  servizi_del_giorno <- antenne_tutte |>
+    dplyr::filter(lubridate::as_date(.data$data_ora_lettura) %in% giri$data_giro) |>
+    dplyr::count(.data$servizio_giro, sort = TRUE) |>
+    utils::head(8)
+  stop(
+    if (nrow(servizi_del_giorno) == 0) {
+      paste0(
+        "Il file delle antenne non ha letture dei giorni della lista (",
+        paste(format(sort(unique(giri$data_giro)), "%d/%m/%Y"), collapse = ", "),
+        ")."
+      )
+    } else {
+      paste0(
+        "Nessuna lettura con le antenne per i mezzi e il servizio della lista. Servizi di quei giorni: ",
+        paste0(servizi_del_giorno$servizio_giro, " (", servizi_del_giorno$n, ")", collapse = ", ")
+      )
+    },
+    call. = FALSE
+  )
+}
+storiche_giri <- trasmissioni_dei_giri(storiche_tutte, antenne_giri)
+abbinamenti <- abbina_trasmissioni(storiche_giri, antenne_giri)
+classi <- classi_rfid(antenne_giri, storiche_giri)
+per_mezzo <- confronto_per_mezzo(giri, antenne_giri, storiche_giri, abbinamenti)
+n_classe <- function(nome) sum(classi$classe == nome)
+giorni_giri <- sort(unique(giri$data_giro))
+un_giorno <- length(giorni_giri) == 1
+```
+
+# Perché questo confronto
+
+Le saponette e le antenne leggono gli stessi RFID, ma sono due sistemi diversi: le saponette dipendono da un operatore che le usa, le antenne leggono da sole. Per giudicarle non basta confrontare i totali di un periodo, perché i mezzi con le antenne e quelli con le saponette non sono gli stessi e non lavorano negli stessi giorni.
+
+Questo report parte da una situazione controllata. Dei mezzi già attrezzati e collaudati sono noti il giorno `{r} paste(data_it(giorni_giri), collapse = ", ")`, il servizio del giro (`{r} paste(unique(giri$servizio_giro), collapse = ", ")`) e le matricole: `{r} intero(nrow(giri))` mezzi-giorno. In quei giri gli operatori avrebbero dovuto usare anche le saponette. Se le saponette fossero complete, ogni RFID letto da un sistema sarebbe letto anche dall'altro: i due insiemi coinciderebbero.
+
+La lista dei giri è un denominatore che non dipende da nessuno dei due sistemi: sappiamo quali giri dovevano esserci, anche quando uno dei due non ha letto niente. Il report misura quanto i due insiemi coincidono, mezzo per mezzo, e dove si trovano gli RFID letti da uno solo.
+
+Il confronto non dice quale dei due sistemi abbia ragione quando differiscono. Un RFID letto solo dalle antenne può essere un bidone che l'operatore non ha scansionato, oppure un bidone vicino, non svuotato, che l'antenna ha letto passando. Un RFID letto solo dalle saponette può essere una lettura mancata dall'antenna, oppure un bidone di un altro giro. Per questo si guardano anche le coerenze e le altre letture dello stesso RFID.
+
+# Parametri
+
+```{r}
+#| label: parametri
+knitr::kable(
+  dplyr::tibble(
+    Parametro = c(
+      "`letture_antenne`",
+      "`letture_storiche`",
+      "`giri_controllo`"
+    ),
+    Valore = c(
+      params$letture_antenne,
+      params$letture_storiche,
+      params$giri_controllo
+    )
+  )
+)
+```
+
+Il file dei giri contiene `{r} intero(nrow(giri))` righe: `{r} intero(length(unique(giri$data_giro)))` giorni (`{r} paste(data_it(sort(unique(giri$data_giro))), collapse = ", ")`), `{r} intero(dplyr::n_distinct(chiave_matricola(giri$matricola_veicolo)))` mezzi e il servizio del giro `{r} paste(unique(giri$servizio_giro), collapse = ", ")`.
+
+# Come si scelgono le letture
+
+1. **Antenne.** Si tengono le letture del giorno dei giri, con `matricola_veicolo` in lista e `servizio_giro` uguale a quello della lista. Il confronto non distingue maiuscole e minuscole nel servizio, né gli zeri iniziali nella matricola (`0101` e `101` sono lo stesso mezzo).
+2. **Trasmissioni delle saponette.** Si prendono le coppie di giorno e `id_trasmissione` delle letture storiche in cui compare, lo stesso giorno, almeno uno degli RFID del punto 1.
+3. **Saponette.** Si tengono **tutte** le letture di quelle trasmissioni, anche di RFID che le antenne non hanno letto.
+4. **Confronto.** Per ogni RFID del giorno si guarda se è stato letto dalle antenne, dalle saponette o da entrambe.
+
+```{r}
+#| label: diagramma-selezione
+#| fig-height: 5
+n_mezzi_lista <- dplyr::n_distinct(chiave_matricola(giri$matricola_veicolo))
+n_mezzi_antenne <- dplyr::n_distinct(antenne_giri$chiave_mezzo)
+DiagrammeR::grViz(paste0('
+digraph selezione {
+  graph [rankdir=TB];', stile_dot, '
+  lista [label="Lista dei giri\\n', paste(data_it(giorni_giri), collapse = ", "), ': ', intero(n_mezzi_lista), ' mezzi\\nservizio del giro ', paste(unique(giri$servizio_giro), collapse = ", "), '", fillcolor="#f0efec", color="#898781"];
+  ant [label="Letture con le antenne dei mezzi della lista\\ncon quel servizio del giro\\n', intero(nrow(antenne_giri)), ' letture, ', intero(dplyr::n_distinct(antenne_giri$RFID)), ' RFID (', intero(n_mezzi_antenne), ' mezzi con letture)", fillcolor="#fdeee6", color="#eb6834"];
+  trasm [label="Trasmissioni delle saponette dello stesso giorno\\nche hanno letto almeno uno di quegli RFID\\n', intero(nrow(abbinamenti)), ' trasmissioni"];
+  sap [label="Tutte le letture di quelle trasmissioni\\n', intero(nrow(storiche_giri)), ' letture, ', intero(dplyr::n_distinct(storiche_giri$RFID)), ' RFID", fillcolor="#e3eefb", color="#2a78d6"];
+  conf [label="Per ogni RFID: letto da entrambi,\\nsolo dalle antenne, solo dalle saponette", fillcolor="#e4f4ec", color="#1baf7a"];
+  lista -> ant [label=" giorno, mezzo, servizio"];
+  ant -> trasm [label=" gli stessi RFID,\\n lo stesso giorno"];
+  trasm -> sap [label=" tutte le letture"];
+  ant -> conf;
+  sap -> conf;
+}'), width = "100%")
+```
+
+# Le letture di partenza
+
+```{r}
+#| label: riepilogo
+knitr::kable(
+  dplyr::tibble(
+    Sistema = c("Antenne", "Saponette"),
+    `Mezzi o trasmissioni` = c(
+      sprintf("%s mezzi su %s della lista", intero(n_mezzi_antenne), intero(n_mezzi_lista)),
+      sprintf("%s trasmissioni", intero(nrow(abbinamenti)))
+    ),
+    Letture = intero(c(nrow(antenne_giri), nrow(storiche_giri))),
+    `RFID distinti` = intero(c(
+      dplyr::n_distinct(antenne_giri$RFID),
+      dplyr::n_distinct(storiche_giri$RFID)
+    ))
+  ),
+  align = "llrr"
+)
+```
+
+# Il risultato: quanto coincidono i due sistemi
+
+```{r}
+#| label: risultato
+solo_s <- n_classe("Solo saponette")
+entrambi <- n_classe("Entrambi")
+solo_a <- n_classe("Solo antenne")
+totale <- solo_s + entrambi + solo_a
+knitr::kable(
+  dplyr::tibble(
+    `RFID del giorno` = c("Letti da entrambi", "Solo dalle antenne", "Solo dalle saponette", "Totale"),
+    RFID = intero(c(entrambi, solo_a, solo_s, totale)),
+    Quota = quota(c(entrambi, solo_a, solo_s, totale) / totale)
+  ),
+  align = "lrr"
+)
+```
+
+```{r}
+#| label: testo-risultato
+#| results: asis
+cat(sprintf(
+  "Sui giri della lista gli RFID letti da entrambi i sistemi sono **%s** del totale (%s su %s). Dei %s RFID letti dalle antenne, **%s** sono letti anche dalle saponette; dei %s RFID letti dalle saponette, **%s** sono letti anche dalle antenne.",
+  quota(entrambi / totale), intero(entrambi), intero(totale),
+  intero(entrambi + solo_a), quota(entrambi / (entrambi + solo_a)),
+  intero(entrambi + solo_s), quota(entrambi / (entrambi + solo_s))
+))
+```
+
+```{r}
+#| label: grafico-risultato
+#| fig-height: 2.4
+#| fig-alt: "RFID dei giri della lista letti solo dalle saponette, da entrambi i sistemi, solo dalle antenne"
+dplyr::tibble(
+  classe = factor(names(colori_classi), rev(names(colori_classi))),
+  n = c(solo_s, entrambi, solo_a)
+) |>
+  ggplot(aes(n, "RFID", fill = classe)) +
+  geom_col(width = 0.5, colour = "#fcfcfb", linewidth = 0.6) +
+  scale_fill_manual(values = colori_classi, breaks = names(colori_classi)) +
+  scale_x_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "RFID dei giri della lista, per sistema che li ha letti",
+    x = "RFID",
+    y = NULL
+  ) +
+  tema_grafico +
+  theme(axis.text.y = element_blank(), panel.grid.major.x = element_line(colour = "#e9e8e4"))
+```
+
+# Mezzo per mezzo
+
+Le letture storiche non hanno il mezzo: una trasmissione è abbinata al mezzo della lista con cui ha più RFID in comune lo stesso giorno. Le saponette di un mezzo sono quelle delle trasmissioni abbinate a lui.
+
+```{r}
+#| label: tabella-mezzi
+tabella_mezzi <- per_mezzo |>
+  dplyr::mutate(
+    quota_entrambi = dplyr::if_else(
+      .data$chip_antenne + .data$solo_saponette > 0,
+      .data$chip_entrambi / (.data$chip_antenne + .data$solo_saponette),
+      NA_real_
+    )
+  ) |>
+  dplyr::arrange(dplyr::desc(.data$chip_antenne + .data$solo_saponette))
+knitr::kable(
+  dplyr::tibble(
+    Mezzo = tabella_mezzi$matricola_veicolo,
+    `Giorno` = if (un_giorno) NULL else data_it(tabella_mezzi$data_lettura),
+    Trasmissioni = tabella_mezzi$trasmissioni,
+    `RFID antenne` = tabella_mezzi$chip_antenne,
+    `RFID saponette` = tabella_mezzi$chip_saponette,
+    Entrambi = tabella_mezzi$chip_entrambi,
+    `Solo antenne` = tabella_mezzi$solo_antenne,
+    `Solo saponette` = tabella_mezzi$solo_saponette,
+    `Quota da entrambi` = dplyr::if_else(is.na(tabella_mezzi$quota_entrambi), "—", quota(tabella_mezzi$quota_entrambi, 0))
+  ),
+  align = "lrrrrrrrr"
+)
+```
+
+La quota da entrambi è gli RFID letti da entrambi divisi per tutti gli RFID letti dal mezzo (da entrambi, solo dalle antenne, solo dalle saponette).
+
+```{r}
+#| label: mezzi-senza-letture
+#| results: asis
+etichetta_mezzi <- function(tabella) {
+  paste(
+    unique(paste0(
+      tabella$matricola_veicolo,
+      if (un_giorno) "" else paste0(" (", data_it(tabella$data_lettura), ")")
+    )),
+    collapse = ", "
+  )
+}
+senza_antenne <- per_mezzo[per_mezzo$chip_antenne == 0, ]
+senza_saponette <- per_mezzo[per_mezzo$chip_antenne > 0 & per_mezzo$trasmissioni == 0, ]
+cat(
+  if (nrow(senza_antenne) > 0) {
+    sprintf("- **Senza letture delle antenne** (%s): %s. Il mezzo non ha letto con quel servizio del giro quel giorno, o le letture non sono nel file.\n", intero(nrow(senza_antenne)), etichetta_mezzi(senza_antenne))
+  } else {
+    "- Tutti i mezzi della lista hanno letture delle antenne.\n"
+  },
+  if (nrow(senza_saponette) > 0) {
+    sprintf("- **Con le antenne ma senza trasmissioni abbinate** (%s): %s. Le saponette non sono state usate, o sono state usate su RFID che nessuna antenna ha letto: i due casi non si distinguono dai dati.\n", intero(nrow(senza_saponette)), etichetta_mezzi(senza_saponette))
+  } else {
+    "- Ogni mezzo con letture delle antenne ha almeno una trasmissione abbinata.\n"
+  },
+  sep = ""
+)
+```
+
+```{r}
+#| label: grafico-mezzi
+#| fig-height: 6
+#| fig-alt: "RFID per mezzo: solo saponette, entrambi, solo antenne"
+per_mezzo |>
+  dplyr::mutate(
+    mezzo = if (un_giorno) {
+      .data$matricola_veicolo
+    } else {
+      paste(.data$matricola_veicolo, data_it(.data$data_lettura))
+    },
+    totale = .data$chip_antenne + .data$solo_saponette
+  ) |>
+  dplyr::select("mezzo", "totale", "Solo saponette" = "solo_saponette", "Entrambi" = "chip_entrambi", "Solo antenne" = "solo_antenne") |>
+  tidyr::pivot_longer(c("Solo saponette", "Entrambi", "Solo antenne"), names_to = "classe", values_to = "n") |>
+  dplyr::mutate(
+    classe = factor(.data$classe, rev(names(colori_classi))),
+    mezzo = stats::reorder(.data$mezzo, .data$totale)
+  ) |>
+  ggplot(aes(n, mezzo, fill = classe)) +
+  geom_col(width = 0.7, colour = "#fcfcfb", linewidth = 0.4) +
+  scale_fill_manual(values = colori_classi, breaks = names(colori_classi)) +
+  scale_x_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "RFID letti da ogni mezzo, per sistema",
+    subtitle = "Un mezzo senza barra non ha letture delle antenne né trasmissioni abbinate",
+    x = "RFID",
+    y = "Mezzo"
+  ) +
+  tema_grafico +
+  theme(panel.grid.major.x = element_line(colour = "#e9e8e4"))
+```
+
+# Come si è abbinata ogni trasmissione
+
+Una trasmissione entra nel confronto se ha almeno un RFID in comune con le antenne dei giri; poi va al mezzo con cui ne ha di più. Un abbinamento fatto con un solo RFID è il meno sicuro: la tabella dice quante trasmissioni sono in quel caso.
+
+```{r}
+#| label: fasce
+fasce <- fasce_di_abbinamento(abbinamenti)
+multi <- sum(abbinamenti$mezzi_in_comune > 1)
+knitr::kable(
+  dplyr::tibble(
+    `RFID in comune con il mezzo abbinato` = as.character(fasce$fascia),
+    Trasmissioni = intero(fasce$trasmissioni),
+    Quota = quota(fasce$trasmissioni / sum(fasce$trasmissioni), 0)
+  ),
+  align = "lrr"
+)
+```
+
+`{r} intero(multi)` trasmissioni hanno RFID in comune con più di un mezzo della lista (vanno al mezzo con più RFID in comune). Una trasmissione dell'operatore su più mezzi nello stesso giorno ricade in questo caso.
+
+# Gli RFID letti da un solo sistema
+
+```{r}
+#| label: diagramma-classi
+#| fig-height: 4.2
+altrove <- solo_saponette_altrove(classi, antenne_tutte)
+n_altrove <- sum(altrove$n[grepl("fuori dai giri", altrove$motivo)])
+DiagrammeR::grViz(paste0('
+digraph classi {
+  graph [rankdir=TB];', stile_dot, '
+  tot [label="RFID dei giri della lista\\n', intero(totale), '"];
+  a [label="Letti dalle antenne dei giri\\n', intero(entrambi + solo_a), '", fillcolor="#fdeee6", color="#eb6834"];
+  b [label="Non letti dalle antenne dei giri\\n(letti solo dalle saponette)\\n', intero(solo_s), '", fillcolor="#e3eefb", color="#2a78d6"];
+  e [label="Letti anche dalle saponette\\nENTRAMBI: ', intero(entrambi), '", fillcolor="#e4f4ec", color="#1baf7a"];
+  sa [label="Non letti dalle saponette\\nSOLO ANTENNE: ', intero(solo_a), '", fillcolor="#fdeee6", color="#eb6834"];
+  alt [label="Letti da un’antenna fuori lista\\nlo stesso giorno: ', intero(n_altrove), '\\n(un altro giro, non una lettura mancata)"];
+  nes [label="Non letti da nessuna antenna\\nlo stesso giorno: ', intero(solo_s - n_altrove), '"];
+  tot -> a; tot -> b;
+  a -> e; a -> sa;
+  b -> alt; b -> nes;
+}'), width = "100%")
+```
+
+Per gli RFID letti solo dalle saponette si guarda se un'antenna fuori dai giri della lista (un altro mezzo, o un altro servizio) li ha letti lo stesso giorno: in quel caso l'RFID è passato in un altro giro e la differenza non è una lettura mancata dall'antenna. Per gli RFID letti solo dalle antenne la domanda non ha senso: una trasmissione che li avesse letti sarebbe già tra quelle scelte.
+
+```{r}
+#| label: tabella-altrove
+knitr::kable(
+  dplyr::tibble(
+    `RFID letti solo dalle saponette` = altrove$motivo,
+    RFID = intero(altrove$n),
+    Quota = quota(altrove$n / sum(altrove$n), 0)
+  ),
+  align = "lrr"
+)
+```
+
+## Servizio a database
+
+Un giro di `{r} paste(unique(giri$servizio_giro), collapse = ", ")` dovrebbe leggere contenitori del secco. Il servizio a database degli RFID dice quanto le tre classi lo rispettano (gli RFID senza servizio sono non censiti).
+
+```{r}
+#| label: tabella-servizi
+servizi <- servizi_per_classe(classi, antenne_giri, storiche_giri)
+servizi |>
+  tidyr::pivot_wider(names_from = "classe", values_from = "n", values_fill = 0L) |>
+  dplyr::mutate(
+    dplyr::across(dplyr::any_of(names(colori_classi)), intero)
+  ) |>
+  dplyr::rename(`Servizio a database` = "servizio") |>
+  knitr::kable(align = "lrrr")
+```
+
+## Coerenza delle letture con le antenne
+
+Un RFID letto solo dalle antenne è più credibile se il servizio e il comune coincidono con quelli del giro. La tabella confronta gli RFID letti da entrambi i sistemi (di cui si sa che c'erano) con quelli letti solo dalle antenne.
+
+```{r}
+#| label: tabella-qualita
+classi_antenne <- classi |> dplyr::select("data_lettura", "RFID", "classe")
+qualita <- dplyr::bind_rows(lapply(c("Entrambi", "Solo antenne"), function(nome) {
+  letture <- antenne_giri |>
+    dplyr::semi_join(
+      dplyr::filter(classi_antenne, .data$classe == nome),
+      by = c("data_lettura", "RFID")
+    )
+  q <- qualita_letture_antenne(letture)
+  if (nrow(q) > 0) dplyr::mutate(q, classe = nome) else NULL
+}))
+if (nrow(qualita) == 0) {
+  cat("Le letture non hanno le colonne di coerenza.")
+} else {
+  qualita |>
+    dplyr::mutate(quota = quota(.data$quota, 0)) |>
+    dplyr::select("indicatore", "valore", "classe", "quota") |>
+    tidyr::pivot_wider(names_from = "classe", values_from = "quota", values_fill = "0%") |>
+    dplyr::rename(Indicatore = "indicatore", Valore = "valore") |>
+    knitr::kable(align = "llrr")
+}
+```
+
+# Scelte compiute e limiti
+
+- **Una lista di giri come denominatore.** Il confronto sulla lista dei giri evita di dedurre i giri dalle letture. Un mezzo in lista senza letture resta nel conteggio.
+- **Antenne: giorno, mezzo e servizio.** Il servizio del giro è quello del calendario (`servizio_giro`), senza distinguere maiuscole: `SECCO PaP` e `SECCO PAP` sono lo stesso giro. Le matricole si confrontano senza zeri iniziali.
+- **Saponette: tutte le letture delle trasmissioni scelte.** Una trasmissione è scelta se ha letto, lo stesso giorno, almeno un RFID delle antenne dei giri. Un solo RFID in comune basta, come richiesto; la tabella degli abbinamenti dice quante trasmissioni dipendono da un solo RFID. Questo vuol dire che le trasmissioni scelte sono solo quelle che hanno qualcosa in comune con le antenne: un operatore che ha usato le saponette senza che le antenne leggessero lo stesso RFID non compare. Per le saponette non usate o non abbinabili il report dà il numero di mezzi senza trasmissioni.
+- **Le trasmissioni comprendono anche RFID di altri giri.** Se un operatore ha usato la saponetta su più mezzi o più giri nella stessa trasmissione, i suoi RFID in più finiscono tra i «solo saponette». Si controllano guardando se un'antenna li ha letti altrove.
+- **Un RFID al giorno.** Le letture con le antenne e le storiche tengono al più una lettura per RFID e giorno; un RFID letto due volte lo stesso giorno conta una volta.
+- **Mezzo delle saponette dedotto.** Le letture storiche non hanno il mezzo: il mezzo di una trasmissione è dedotto dagli RFID in comune. Se il database avesse il mezzo o il dispositivo delle saponette, l'abbinamento non servirebbe.
+- **Pochi giri.** Un solo giorno dà numeri piccoli per mezzo: i totali sono più solidi dei singoli mezzi. Più giorni nella stessa lista danno stime più stabili.
+- **Nessuno dei due è la verità.** La differenza tra i due insiemi dice che i sistemi non coincidono, non quale sbaglia.
+
+# Come aggiornare il report
+
+Il report legge i giri dal file `giri_controllo` (di norma `data-raw/origine/giri_controllo.csv`, fuori da git come gli altri dati aziendali) e ne ricava da solo le letture delle antenne e le trasmissioni delle saponette. Per un nuovo confronto basta modificare il file e ricompilare: non si cambia nient'altro.
+
+Il file ha una riga per mezzo e giorno, con tre colonne:
+
+| Colonna | Contenuto |
+|---|---|
+| `data_giro` | giorno del giro, `AAAA-MM-GG` oppure `GG/MM/AAAA` |
+| `matricola_veicolo` | matricola del mezzo; gli zeri iniziali non contano (`0101` e `101` sono lo stesso mezzo) |
+| `servizio_giro` | servizio del giro come nel calendario, per esempio `SECCO PaP`; le maiuscole non contano |
+
+Il separatore può essere la virgola o il punto e virgola. Le righe vuote si ignorano, e una riga a metà dà un errore con il numero di riga. Con più giorni, mezzi o servizi nello stesso file il confronto si fa su tutti insieme; per ogni mezzo e giorno vale il servizio della sua riga.
+
+```r
+source("data-raw/compila_report.R")
+compila_report("docs/controllo_giri_saponette.qmd")
+# con un altro file
+compila_report(
+  "docs/controllo_giri_saponette.qmd",
+  list(giri_controllo = "data-raw/origine/altri_giri.csv")
+)
+```
+
+# Come si cambia
+
+Le funzioni sono in `R/utils_controllo_giri.R`: `giri_di_controllo()` per la lista, `antenne_dei_giri()` e `trasmissioni_dei_giri()` per la scelta delle letture, `abbina_trasmissioni()` per il mezzo delle saponette, `classi_rfid()` e `confronto_per_mezzo()` per il confronto. I test sono in `tests/testthat/test-utils_controllo_giri.R`.

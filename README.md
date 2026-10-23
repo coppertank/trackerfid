@@ -366,6 +366,32 @@ compila_report(
 )   # crea data-raw/output/confronto_antenne.html
 ```
 
+## Controllo dei giri con antenne e saponette
+
+Il report `docs/controllo_giri_saponette.qmd` confronta i due sistemi su una lista di giri in cui i mezzi hanno già le antenne e gli operatori dovevano usare anche le saponette. La lista dà un denominatore che non dipende da nessuno dei due: si sa quali giri dovevano esserci. Se le saponette fossero complete, ogni RFID letto da un sistema sarebbe letto anche dall'altro.
+
+Le antenne sono le letture del giorno dei mezzi della lista con il servizio del giro indicato (per esempio `SECCO PaP`, senza distinguere le maiuscole; gli zeri iniziali delle matricole non contano). Le saponette sono tutte le letture delle trasmissioni dello stesso giorno che hanno letto almeno uno di quegli RFID. Il report mostra quanti RFID sono letti da entrambi, solo dalle antenne, solo dalle saponette, mezzo per mezzo; come ogni trasmissione è stata abbinata a un mezzo (le letture storiche non hanno il mezzo); dove si trovano gli RFID letti da un solo sistema (per esempio letti da un'antenna fuori lista lo stesso giorno), con il servizio a database e la coerenza delle letture. Quando i due sistemi differiscono non dice quale sbaglia.
+
+I giri da controllare stanno in un file, `data-raw/origine/giri_controllo.csv` (parametro `giri_controllo`, fuori da git come gli altri dati aziendali): per un nuovo confronto si modifica il file e si ricompila, senza toccare il report. Il file ha una riga per mezzo e giorno:
+
+| Colonna | Contenuto |
+|---|---|
+| `data_giro` | giorno del giro, `AAAA-MM-GG` oppure `GG/MM/AAAA` |
+| `matricola_veicolo` | matricola del mezzo; gli zeri iniziali non contano (`0101` e `101` sono lo stesso mezzo) |
+| `servizio_giro` | servizio del giro come nel calendario, per esempio `SECCO PaP`; le maiuscole non contano |
+
+Il separatore può essere la virgola o il punto e virgola; le righe vuote si ignorano e una riga a metà dà un errore con il numero di riga. Con più giorni, mezzi o servizi nello stesso file il confronto si fa su tutti insieme. I parametri `letture_antenne` e `letture_storiche` sono i CSV della pipeline.
+
+```r
+source("data-raw/compila_report.R")
+compila_report("docs/controllo_giri_saponette.qmd")
+# con un altro file di giri
+compila_report(
+  "docs/controllo_giri_saponette.qmd",
+  list(giri_controllo = "data-raw/origine/altri_giri.csv")
+)
+```
+
 ## File grandi
 
 Un anno di letture con le antenne può arrivare a un paio di milioni di righe. L'app è costruita per restare veloce a quella scala.
@@ -484,6 +510,7 @@ docs/
   indice_fiducia.qmd            report sull'indice di fiducia, da compilare in HTML
   conferimenti_secco.qmd        report sui conferimenti del secco oltre il limite
   confronto_antenne.qmd         confronto tra letture storiche e letture con le antenne, con i filtri
+  controllo_giri_saponette.qmd  controllo di una lista di giri con antenne e saponette insieme
   associazione_giri.qmd, comune_lettura.qmd   come si ricavano il giro e il comune di una lettura
 tests/testthat/
 ```
