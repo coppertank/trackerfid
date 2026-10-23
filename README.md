@@ -60,7 +60,7 @@ Il file è quello che scrive la pipeline della [preparazione dei dati reali](#pr
 | `eseguito` | testo | Facoltativo. Conferma del giro nel calendario: `SI`, `NO` se non ancora confermato, oppure vuoto |
 | `cantiere` | testo | Facoltativo. Cantiere del comune di lettura; fuori dai comuni serviti, quello del comune del database |
 
-**Giro e comune del giro.** Una lettura esiste solo se un mezzo passa durante un giro, e dal calendario dei mezzi si ricavano il servizio del giro e il suo comune. Per questo `servizio_giro`, `servizio_atteso` e `comune_giro` sono compilati per quasi ogni lettura, anche per i bidoni censiti. La preparazione dei dati unisce i giri pianificati e quelli non pianificati (questi ultimi senza orari) e cerca sempre un giro dello stesso mezzo e dello stesso giorno, con una serie di regole dalla più sicura alla meno sicura: prima l'orario e il comune dei pianificati, poi il comune dei non pianificati, poi il servizio se il mezzo ne ha uno solo, poi le letture di seguito dello stesso mezzo, poi il comune più vicino e infine un pianificato a meno di un'ora. Una lettura che nessuna regola associa resta senza giro, e un messaggio della pipeline dice quante sono per ogni regola. Le regole sono spiegate con diagrammi in `docs/associazione_giri.Rmd` (si compila con `rmarkdown::render()`, non con la pipeline). `servizio_giro` è il giro scelto, con il nome del calendario: resta `SECCO PAP`, perché il secco porta a porta va distinto dagli altri giri del secco. Il calendario dice però che cosa era previsto, non che cosa è successo: un mezzo può sostituirne un altro e fare un giro che non era il suo.
+**Giro e comune del giro.** Una lettura esiste solo se un mezzo passa durante un giro, e dal calendario dei mezzi si ricavano il servizio del giro e il suo comune. Per questo `servizio_giro`, `servizio_atteso` e `comune_giro` sono compilati per quasi ogni lettura, anche per i bidoni censiti. La preparazione dei dati unisce i giri pianificati e quelli non pianificati (questi ultimi senza orari) e cerca sempre un giro dello stesso mezzo e dello stesso giorno, con una serie di regole dalla più sicura alla meno sicura: prima l'orario e il comune dei pianificati, poi il comune dei non pianificati, poi il servizio se il mezzo ne ha uno solo, poi le letture di seguito dello stesso mezzo, poi il comune più vicino e infine un pianificato a meno di un'ora. Una lettura che nessuna regola associa resta senza giro, e un messaggio della pipeline dice quante sono per ogni regola. Le regole sono spiegate con diagrammi in `docs/associazione_giri.qmd` (documento Quarto, si compila con `quarto::quarto_render()`, non con la pipeline). `servizio_giro` è il giro scelto, con il nome del calendario: resta `SECCO PAP`, perché il secco porta a porta va distinto dagli altri giri del secco. Il calendario dice però che cosa era previsto, non che cosa è successo: un mezzo può sostituirne un altro e fare un giro che non era il suo.
 
 **Tre servizi per ogni lettura.** `servizio_transponder` è il servizio del contenitore secondo il database: c'è solo per i censiti. `servizio_atteso` è il servizio che il giro lasciava aspettare, con il nome del database, e c'è per tutti. `servizio_giro` è il giro com'è scritto nel calendario. Per un bidone non censito il servizio si stima dal servizio atteso delle sue letture: vedi [la mappa principale](#mappa-principale).
 
@@ -246,10 +246,10 @@ Con decine di migliaia di cluster il grafico a dispersione e la mappa ne disegna
 
 Regole, colonne, indice di fiducia, parametri e scelte di progetto sono descritti in [docs/analisi_cluster.md](docs/analisi_cluster.md).
 
-L'indice di fiducia ha un report dedicato, [docs/indice_fiducia.Rmd](docs/indice_fiducia.Rmd): spiega come si calcola e perché il metodo è semplice ed efficace. Numeri e grafici sono calcolati sul dataset di esempio quando lo si compila in HTML:
+L'indice di fiducia ha un report dedicato, [docs/indice_fiducia.qmd](docs/indice_fiducia.qmd), in Quarto: spiega come si calcola e perché il metodo è semplice ed efficace. Numeri e grafici sono calcolati sul dataset di esempio quando lo si compila in HTML (serve il programma [Quarto](https://quarto.org); quello incluso in Positron va bene):
 
 ```r
-rmarkdown::render("docs/indice_fiducia.Rmd")   # crea docs/indice_fiducia.html
+quarto::quarto_render("docs/indice_fiducia.qmd")   # crea docs/indice_fiducia.html
 ```
 
 ### Analisi senza l'app
@@ -291,13 +291,13 @@ Il CSV con le letture vere si produce dentro il repository, in due passi, dalla 
 | Passo | Come | Cosa fa |
 |---|---|---|
 | 1, estrazione | `source("data-raw/01_estrai_tabelle.R")`, a mano | Estrae le tabelle dal database aziendale e le salva in `data-raw/origine/` |
-| 2, pipeline di preparazione | `targets::tar_make()` | Dai file estratti scrive in `data-raw/output/` il CSV e l'archivio `.duckdb` da caricare nell'app, l'elenco dei giri da controllare, il CSV delle letture storiche per i report e il report sui [conferimenti del secco oltre il limite](#conferimenti-del-secco-oltre-il-limite), con i suoi tre CSV |
+| 2, pipeline di preparazione | `targets::tar_make()` | Dai file estratti scrive in `data-raw/output/` il CSV e l'archivio `.duckdb` da caricare nell'app, l'elenco dei giri da controllare, il CSV delle letture storiche e quello dei comuni corretti. Fa solo la pulizia dei dati: i report, come quello sui [conferimenti del secco oltre il limite](#conferimenti-del-secco-oltre-il-limite), si compilano a mano |
 
-La pipeline usa il pacchetto [{targets}](https://docs.ropensci.org/targets/): sta in `data-raw/_targets.R` e rifà solo quello che è cambiato. Dopo una nuova estrazione riconosce i file cambiati; dopo una modifica a una regola del pacchetto rifà i passi che la usano. Le tabelle intermedie restano in memoria; i due dataset finali si leggono in R con `targets::tar_load(letture_app)` e `targets::tar_load(letture_storiche)`, e i file in `data-raw/output/` li scrivono passi a sé, l'archivio `.duckdb` dal CSV. Altri comandi utili: `targets::tar_make(names = duckdb_letture_app)` per i soli file dell'app, `targets::tar_outdated()` per sapere che cosa è da rifare, `targets::tar_visnetwork()` per vedere la catena dei passi. Servono i pacchetti `targets`, `rmarkdown`, `ggplot2` e `pkgload`.
+La pipeline usa il pacchetto [{targets}](https://docs.ropensci.org/targets/): sta in `data-raw/_targets.R` e rifà solo quello che è cambiato. Dopo una nuova estrazione riconosce i file cambiati; dopo una modifica a una regola del pacchetto rifà i passi che la usano. Le tabelle intermedie restano in memoria; i due dataset finali si leggono in R con `targets::tar_load(letture_app)` e `targets::tar_load(letture_storiche)`, e i file in `data-raw/output/` li scrivono passi a sé, l'archivio `.duckdb` dal CSV. Altri comandi utili: `targets::tar_make(names = duckdb_letture_app)` per i soli file dell'app, `targets::tar_outdated()` per sapere che cosa è da rifare, `targets::tar_visnetwork()` per vedere la catena dei passi. Servono i pacchetti `targets` e `pkgload`.
 
-I file di `data-raw/origine/` hanno sempre lo stesso nome, elencato in `file_origine()`. Le letture delle antenne, `letture_antenne.csv`, e i test dei mezzi, `AppSheet.ViewData.csv`, arrivano da altri sistemi e vanno salvati con quel nome. In cima a `data-raw/_targets.R` si indicano i nomi delle due colonne del file delle letture storiche e il periodo del report.
+I file di `data-raw/origine/` hanno sempre lo stesso nome, elencato in `file_origine()`. Le letture delle antenne, `letture_antenne.csv`, e i test dei mezzi, `AppSheet.ViewData.csv`, arrivano da altri sistemi e vanno salvati con quel nome. In cima a `data-raw/_targets.R` si indicano i nomi delle colonne del file delle letture storiche.
 
-Il file `.duckdb` contiene le stesse letture del CSV, già controllate come le controlla l'app e con le sole colonne che l'app usa, con gli avvisi del controllo: l'app lo apre senza rileggerle. Lo scrive `scrivi_archivio()`, che si può usare anche da sola su un CSV già preparato: `scrivi_archivio("letture_app.csv", "letture_app.duckdb")`. Le regole sono funzioni del pacchetto, in `R/fct_importa_tabelle.R`, una per file estratto, e in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune di lettura arriva con le letture delle antenne: è il testo dopo la prima virgola del campo `IndirizzoLocalizzazione`, e con la tabella dei comuni del pacchetto se ne trova il cantiere. Se il comune del sistema di localizzazione coincide con quello della fornitura del contenitore, la lettura lo tiene; altrimenti ogni lettura che cade nel confine di un comune servito prende quel comune, dalla posizione, con i confini della Regione: il sistema di localizzazione scrive a volte una frazione, o il comune accanto. Un messaggio conta le letture cambiate, e `comuni_corretti.csv` le elenca tutte: istante, mezzo, RFID, coordinate, comune del sistema di localizzazione, comune della fornitura e comune dalla posizione. Una lettura fuori dai comuni serviti, o senza coordinate, tiene il nome del sistema di localizzazione. Il percorso è spiegato con diagrammi in `docs/comune_lettura.Rmd` (si compila come l'altro, non con la pipeline). Il servizio e gli altri dati del contenitore vengono dall'anagrafica dei contenitori attiva nel giorno della lettura, insieme alla fornitura a cui il contenitore è legato: `id_fornitura`, il suo stato, `stato_fornitura`, l'utenza che la possiede, `id_utenza`, e il suo comune, `comune_fornitura`. Un'utenza può avere più forniture. Una lettura è «Presente» a database se ha una fornitura: quella del contenitore o, per un sacchetto, quella del suo gruppo di sacchetti; un sacchetto non ha un'utenza. Il giro, il suo comune, `comune_giro`, e i campi `id_giro` ed `eseguito` vengono dal giro associato alla lettura; un giro non pianificato ha l'`id_giro` del suo file, se c'è, ma non ha `eseguito`, che vale solo per il calendario dei pianificati. La coerenza del comune, `coerenza_comune`, confronta il comune di lettura con quello del database o del giro, con la stessa funzione che l'app usa al caricamento; per una lettura fatta in un altro comune la pipeline scrive anche la distanza dal comune dichiarato, `distanza_comune_dichiarato`, e una lettura entro 100 metri è coerente. I nomi dei giri sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone), e danno il servizio atteso. I nomi dei comuni si correggono all'importazione: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso.
+Il file `.duckdb` contiene le stesse letture del CSV, già controllate come le controlla l'app e con le sole colonne che l'app usa, con gli avvisi del controllo: l'app lo apre senza rileggerle. Lo scrive `scrivi_archivio()`, che si può usare anche da sola su un CSV già preparato: `scrivi_archivio("letture_app.csv", "letture_app.duckdb")`. Le regole sono funzioni del pacchetto, in `R/fct_importa_tabelle.R`, una per file estratto, e in `R/fct_preparazione_letture.R`, e hanno i loro test. Il comune di lettura arriva con le letture delle antenne: è il testo dopo la prima virgola del campo `IndirizzoLocalizzazione`, e con la tabella dei comuni del pacchetto se ne trova il cantiere. Se il comune del sistema di localizzazione coincide con quello della fornitura del contenitore, la lettura lo tiene; altrimenti ogni lettura che cade nel confine di un comune servito prende quel comune, dalla posizione, con i confini della Regione: il sistema di localizzazione scrive a volte una frazione, o il comune accanto. Un messaggio conta le letture cambiate, e `comuni_corretti.csv` le elenca tutte: istante, mezzo, RFID, coordinate, comune del sistema di localizzazione, comune della fornitura e comune dalla posizione. Una lettura fuori dai comuni serviti, o senza coordinate, tiene il nome del sistema di localizzazione. Il percorso è spiegato con diagrammi in `docs/comune_lettura.qmd` (si compila come l'altro, non con la pipeline). Il servizio e gli altri dati del contenitore vengono dall'anagrafica dei contenitori attiva nel giorno della lettura, insieme alla fornitura a cui il contenitore è legato: `id_fornitura`, il suo stato, `stato_fornitura`, l'utenza che la possiede, `id_utenza`, e il suo comune, `comune_fornitura`. Un'utenza può avere più forniture. Una lettura è «Presente» a database se ha una fornitura: quella del contenitore o, per un sacchetto, quella del suo gruppo di sacchetti; un sacchetto non ha un'utenza. Il giro, il suo comune, `comune_giro`, e i campi `id_giro` ed `eseguito` vengono dal giro associato alla lettura; un giro non pianificato ha l'`id_giro` del suo file, se c'è, ma non ha `eseguito`, che vale solo per il calendario dei pianificati. La coerenza del comune, `coerenza_comune`, confronta il comune di lettura con quello del database o del giro, con la stessa funzione che l'app usa al caricamento; per una lettura fatta in un altro comune la pipeline scrive anche la distanza dal comune dichiarato, `distanza_comune_dichiarato`, e una lettura entro 100 metri è coerente. I nomi dei giri sono riportati a quelli del database con la [tabella di conversione](#tipologie-di-servizio-e-icone), e danno il servizio atteso. I nomi dei comuni si correggono all'importazione: `VALSTAGNA`, soppresso nel 2019 e oggi parte di `VALBRENTA`, viene riportato a `VALBRENTA`. Un nome che la tabella dei comuni non contiene arriva comunque all'app, che lo segnala con un avviso.
 
 La pipeline controlla anche il calendario, con il campo `eseguito`, e scrive in `data-raw/output/controllo_giri.csv` i giri da guardare, con un avviso che ne dice il numero: i giri ancora `NO` più di sette giorni prima dell'ultima lettura, probabilmente conferme dimenticate, e i giri confermati di un mezzo con l'antenna collaudata, dopo il collaudo, senza nessuna lettura, segno di un'antenna spenta o guasta. Un giro che non raccoglie contenitori, come la pulizia del territorio, può non avere letture. Il file c'è sempre, anche senza righe.
 
@@ -309,14 +309,44 @@ Le cartelle dei dati, `data-raw/origine/`, `data-raw/output/` e l'archivio della
 
 ## Conferimenti del secco oltre il limite
 
-Il report `docs/conferimenti_secco.Rmd` trova le forniture domestiche che, al ritmo attuale, conferiranno in un anno più secco di quanto consente la tariffa: i litri del nucleo residente, da 720 per un componente a 1680 per cinque o più, oppure 6240 con il potenziamento del secco di una manovra sociale per neonati, anziani o disabili. Per ogni fornitura stima i conferimenti dell'anno, quelli consentiti, quelli eccedenti e la probabilità di superare il limite, e la mette in una classe: «Oltre il limite», «Probabile superamento», «Vicino al limite», «Entro il limite», oppure il motivo per cui non si può dire. Per i bidoni non censiti del secco stima i conferimenti, il nucleo più piccolo che li giustificherebbe, quanto è comune il potenziamento tra le forniture censite che conferiscono così e il contenitore censito che potrebbero aver sostituito.
+Il report `docs/conferimenti_secco.qmd` trova le forniture domestiche che, al ritmo attuale, conferiranno in un anno più secco di quanto consente la tariffa: i litri del nucleo residente, da 720 per un componente a 1680 per cinque o più, oppure 6240 con il potenziamento del secco di una manovra sociale per neonati, anziani o disabili. Per ogni fornitura stima i conferimenti dell'anno, quelli consentiti, quelli eccedenti e la probabilità di superare il limite, e la mette in una classe: «Oltre il limite», «Probabile superamento», «Vicino al limite», «Entro il limite», oppure il motivo per cui non si può dire. Per i bidoni non censiti del secco stima i conferimenti, il nucleo più piccolo che li giustificherebbe, quanto è comune il potenziamento tra le forniture censite che conferiscono così e il contenitore censito che potrebbero aver sostituito.
 
 Le letture delle antenne non vedono tutti gli svuotamenti: le antenne sono recenti e solo su una parte dei mezzi. Per questo il report non conta le letture, ma le confronta con le occasioni, cioè le volte in cui un mezzo con l'antenna è passato davanti al bidone, che si riconoscono dalle letture dei bidoni vicini. Il report spiega il metodo, le ragioni delle scelte e la prova su un territorio simulato.
 
-- Sul dataset di esempio: `rmarkdown::render("docs/conferimenti_secco.Rmd")`. Nell'esempio i bidoni del secco sono grandi ed esposti quasi sempre: i risultati servono solo a vedere il report.
-- Sui dati aziendali: lo compila la pipeline di preparazione, `targets::tar_make()`. Il periodo si cambia in cima a `data-raw/_targets.R`; report e CSV restano in `data-raw/output/`, fuori dal repository.
+- Sul dataset di esempio: `quarto::quarto_render("docs/conferimenti_secco.qmd")`. Nell'esempio i bidoni del secco sono grandi ed esposti quasi sempre: i risultati servono solo a vedere il report.
+- Sui dati aziendali: lo compili tu, la pipeline `targets::tar_make()` non lo fa. `compila_report()` lo compila con i parametri e mette l'HTML in `data-raw/output/`, fuori dal repository; `letture` è il CSV della pipeline, `dal` e `al` il periodo (vuoti: l'anno dell'ultima lettura), `cartella_csv` dove scrivere i tre CSV:
+
+```r
+source("data-raw/compila_report.R")
+compila_report(
+  "docs/conferimenti_secco.qmd",
+  list(letture = "data-raw/output/letture_app.csv", cartella_csv = "data-raw/output")
+)
+```
 
 L'app non usa ancora questa analisi.
+
+## Confronto tra letture storiche e letture con le antenne
+
+Il report `docs/confronto_antenne.qmd` confronta le letture dei lettori manuali (le saponette) con quelle delle antenne. Si compila a mano, come gli altri, e ha cinque parametri:
+
+| Parametro | Che cosa fa |
+|---|---|
+| `letture_antenne` | CSV delle letture con le antenne, di norma `data-raw/output/letture_app.csv` |
+| `letture_storiche` | CSV delle letture storiche, di norma `data-raw/output/letture_storiche.csv` |
+| `servizio` | tiene le letture con `servizio_atteso` **oppure** `servizio_transponder` uguale al valore, per esempio `"SECCO"` |
+| `categorie_escluse` | toglie le letture di quella `categoria`, per esempio `"34"`; i non censiti, senza categoria, restano |
+| `sottocategoria` | tiene solo le letture di quella `sottocategoria`, per esempio `"D"`; i non censiti, senza sottocategoria, escono |
+
+Un parametro vuoto non filtra; per più valori si passa un elenco (`c("SECCO", "CARTA")`). I percorsi relativi partono dalla radice del progetto. Dopo i filtri si prendono gli RFID delle letture con le antenne; delle letture storiche si tengono le coppie di `data_lettura` e `id_trasmissione` in cui compare almeno uno di quegli RFID, e tutte le letture storiche di quelle coppie. Il report mostra i parametri, i conteggi di partenza e quanti RFID in un giorno sono stati letti solo dalle saponette, solo dalle antenne o da entrambe.
+
+```r
+source("data-raw/compila_report.R")
+compila_report(
+  "docs/confronto_antenne.qmd",
+  list(servizio = "SECCO", categorie_escluse = "34", sottocategoria = "D")
+)   # crea data-raw/output/confronto_antenne.html
+```
 
 ## File grandi
 
@@ -433,8 +463,10 @@ dev/
   misura_prestazioni.R          tempi e memoria di ogni passaggio dell'app su un file
 docs/
   analisi_cluster.md            analisi dei cluster: regole, colonne, scelte
-  indice_fiducia.Rmd            report sull'indice di fiducia, da compilare in HTML
-  conferimenti_secco.Rmd        report sui conferimenti del secco oltre il limite
+  indice_fiducia.qmd            report sull'indice di fiducia, da compilare in HTML
+  conferimenti_secco.qmd        report sui conferimenti del secco oltre il limite
+  confronto_antenne.qmd         confronto tra letture storiche e letture con le antenne, con i filtri
+  associazione_giri.qmd, comune_lettura.qmd   come si ricavano il giro e il comune di una lettura
 tests/testthat/
 ```
 

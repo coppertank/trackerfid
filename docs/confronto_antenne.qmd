@@ -1,0 +1,257 @@
+---
+title: "Confronto tra letture storiche e letture con le antenne"
+subtitle: "Quali RFID vedono le saponette, quali le antenne, quali entrambe"
+author: "Aldo Caumo"
+date: today
+date-format: DD/MM/YYYY
+lang: it
+params:
+  letture_antenne: "data-raw/output/letture_app.csv"
+  letture_storiche: "data-raw/output/letture_storiche.csv"
+  servizio: ""
+  categorie_escluse: ""
+  sottocategoria: ""
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Per compilare il report, con l'HTML in data-raw/output/, dalla radice del
+# progetto:
+#   source("data-raw/compila_report.R")
+#   compila_report(
+#     "docs/confronto_antenne.qmd",
+#     list(servizio = "SECCO", categorie_escluse = "34", sottocategoria = "D")
+#   )
+# Il report non fa parte della pipeline: `targets::tar_make()` non lo compila.
+# Servono il programma quarto e i pacchetti quarto, ggplot2, data.table e pkgload.
+#
+# Parametri (i percorsi relativi partono dalla radice del progetto):
+#   letture_antenne    CSV delle letture con le antenne (`letture_app.csv`)
+#   letture_storiche   CSV delle letture storiche (`letture_storiche.csv`)
+#   servizio           si tengono le letture con `servizio_atteso` oppure
+#                      `servizio_transponder` uguale a questo ("SECCO"); più
+#                      servizi, un elenco
+#   categorie_escluse  si tolgono le letture di questa `categoria` ("34"); più
+#                      categorie, un elenco. I non censiti, senza categoria,
+#                      restano
+#   sottocategoria     si tengono solo le letture di questa `sottocategoria`
+#                      ("D"). I non censiti, senza sottocategoria, escono
+# Un parametro vuoto non filtra.
+
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+# Un percorso relativo dei parametri parte dalla radice del progetto, ma la
+# compilazione avviene in docs/.
+percorso_progetto <- function(percorso) {
+  if (grepl("^(/|~|[A-Za-z]:)", percorso)) {
+    path.expand(percorso)
+  } else {
+    file.path("..", percorso)
+  }
+}
+
+intero <- function(x) formatta_numero(round(x))
+data_it <- function(x) format(as.Date(x), "%d/%m/%Y")
+elenco <- function(x) {
+  x <- valori_filtro(x)
+  if (is.null(x)) "nessun filtro" else paste(x, collapse = ", ")
+}
+
+# Slot 1-3 della palette categorica dei report, validati insieme per le forme
+# in cui i colori si toccano.
+colori_origine <- c(
+  Saponette = "#2a78d6",
+  Antenne = "#eb6834",
+  Entrambe = "#1baf7a"
+)
+colori <- list(
+  primario = "#0b0b0b",
+  secondario = "#52514e"
+)
+tema_grafico <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13.5, colour = colori$primario),
+    plot.subtitle = element_text(
+      size = 10.5,
+      colour = colori$secondario,
+      margin = margin(t = 5, b = 12)
+    ),
+    plot.title.position = "plot",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.title = element_text(size = 10, colour = colori$secondario),
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+```
+
+```{r}
+#| label: dati
+antenne_tutte <- leggi_tabella_origine(
+  percorso_progetto(params$letture_antenne)
+)
+storiche_tutte <- leggi_tabella_origine(
+  percorso_progetto(params$letture_storiche)
+)
+
+# Letture con le antenne dopo i filtri, e letture storiche dei giri in cui le
+# saponette hanno letto almeno un loro RFID.
+antenne <- filtra_letture_antenne(
+  antenne_tutte,
+  servizio = params$servizio,
+  categorie_escluse = params$categorie_escluse,
+  sottocategoria = params$sottocategoria
+)
+storiche <- storiche_di_confronto(storiche_tutte, antenne)
+confronto <- confronta_letture(
+  storiche_tutte,
+  antenne_tutte,
+  servizio = params$servizio,
+  categorie_escluse = params$categorie_escluse,
+  sottocategoria = params$sottocategoria
+)
+if (nrow(antenne) == 0) {
+  stop("Nessuna lettura con le antenne rispetta i filtri.", call. = FALSE)
+}
+```
+
+Il report confronta le letture dei lettori manuali (le saponette) con quelle delle antenne, sugli stessi RFID e sugli stessi giorni di raccolta. Un RFID conta una volta al giorno per ognuno dei due metodi.
+
+# Parametri
+
+```{r}
+#| label: parametri
+knitr::kable(
+  dplyr::tibble(
+    Parametro = c(
+      "`letture_antenne`",
+      "`letture_storiche`",
+      "`servizio`",
+      "`categorie_escluse`",
+      "`sottocategoria`"
+    ),
+    Valore = c(
+      params$letture_antenne,
+      params$letture_storiche,
+      elenco(params$servizio),
+      elenco(params$categorie_escluse),
+      elenco(params$sottocategoria)
+    )
+  )
+)
+```
+
+# Come si scelgono le letture
+
+1. Dalle letture con le antenne si tengono quelle che rispettano i filtri dei parametri, tutti insieme:
+    - `servizio`: `servizio_atteso` **oppure** `servizio_transponder` uguale al valore;
+    - `categorie_escluse`: si tolgono le letture di quella `categoria`; i non censiti, che non ne hanno una, restano;
+    - `sottocategoria`: si tengono solo le letture di quella `sottocategoria`; i non censiti escono.
+2. Dalle letture storiche si prendono le coppie distinte di `data_lettura` e `id_trasmissione` in cui compare almeno uno degli RFID letti dalle antenne al punto 1: una trasmissione in un giorno è un giro.
+3. Delle letture storiche si tengono **tutte** quelle di quei giri, anche di RFID che le antenne non hanno letto.
+4. Le due serie si uniscono, un RFID al più una volta al giorno, con l'origine `Saponette`, `Antenne` o `Entrambe`.
+
+# Le letture di partenza
+
+```{r}
+#| label: riepilogo
+riga <- function(nome, letture, giri = NA) {
+  giorni <- lubridate::as_date(letture$data_ora_lettura)
+  dplyr::tibble(
+    Letture = nome,
+    `Numero di letture` = intero(nrow(letture)),
+    RFID = intero(dplyr::n_distinct(letture$RFID)),
+    Giri = if (is.na(giri)) "—" else intero(giri),
+    Dal = data_it(min(giorni)),
+    Al = data_it(max(giorni))
+  )
+}
+giri_storiche <- function(letture) {
+  nrow(dplyr::distinct(
+    dplyr::mutate(letture, giorno = lubridate::as_date(.data$data_ora_lettura)),
+    .data$giorno,
+    .data$id_trasmissione
+  ))
+}
+knitr::kable(dplyr::bind_rows(
+  riga("Antenne, tutte", antenne_tutte),
+  riga("Antenne, dopo i filtri", antenne),
+  riga("Storiche, tutte", storiche_tutte, giri_storiche(storiche_tutte)),
+  riga("Storiche dei giri di confronto", storiche, giri_storiche(storiche))
+))
+```
+
+# Il confronto
+
+```{r}
+#| label: origine
+tabella <- confronto |>
+  dplyr::count(origine, name = "n") |>
+  dplyr::mutate(origine = factor(origine, names(colori_origine))) |>
+  dplyr::arrange(origine)
+totale <- sum(tabella$n)
+knitr::kable(
+  dplyr::tibble(
+    Origine = as.character(tabella$origine),
+    `RFID letti in un giorno` = intero(tabella$n),
+    Quota = paste0(
+      formatC(100 * tabella$n / totale, format = "f", digits = 1, decimal.mark = ","),
+      "%"
+    )
+  ),
+  align = "lrr"
+)
+```
+
+Ogni riga della tabella è un RFID letto in un giorno: lo stesso RFID in due giorni conta due volte. `Entrambe` sono gli RFID letti lo stesso giorno da saponette e antenne.
+
+```{r}
+#| label: grafico-mesi
+#| fig-height: 4
+#| fig-alt: "RFID letti in un giorno ogni mese, per origine della lettura"
+per_mese <- confronto |>
+  dplyr::mutate(
+    mese = lubridate::floor_date(.data$data_lettura, "month"),
+    origine = factor(.data$origine, rev(names(colori_origine)))
+  ) |>
+  dplyr::count(.data$mese, .data$origine)
+ggplot(per_mese, aes(mese, n, fill = origine)) +
+  geom_col(width = 24, colour = "#fcfcfb", linewidth = 0.6) +
+  scale_fill_manual(
+    values = colori_origine,
+    breaks = names(colori_origine)
+  ) +
+  scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
+  scale_y_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "RFID letti in un giorno, per mese",
+    subtitle = "Per ogni mese, quanti RFID-giorno hanno letto saponette, antenne o entrambe",
+    x = NULL,
+    y = "RFID letti in un giorno"
+  ) +
+  tema_grafico +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Come si cambia
+
+Le funzioni sono in `R/utils_confronto.R`: `filtra_letture_antenne()` per i filtri, `storiche_di_confronto()` per le letture storiche dei giri, `confronta_letture()` per l'unione. I test sono in `tests/testthat/test-utils_confronto.R`. Questo report è il punto di partenza: le analisi vanno aggiunte qui, sui due dataset `antenne` e `storiche` e sulla tabella `confronto`.

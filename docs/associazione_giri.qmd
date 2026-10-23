@@ -1,34 +1,38 @@
 ---
 title: "Come si assegna un giro a una lettura"
 subtitle: "I passi di `scegli_giro()`, con esempi calcolati dal codice"
-date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+date: today
+date-format: DD/MM/YYYY
 lang: it
-output:
-  html_document:
+format:
+  html:
     toc: true
-    toc_depth: 2
-    toc_float: true
-    mathjax: null
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+    css: stile.css
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
 ---
 
-```{r setup, include=FALSE}
+```{r}
+#| label: setup
+#| include: false
 # Per compilare il documento, dalla radice del progetto:
-#   rmarkdown::render("docs/associazione_giri.Rmd")
-# Servono i pacchetti rmarkdown, ggplot2, DiagrammeR e pkgload.
+#   quarto::quarto_render("docs/associazione_giri.qmd")
+# Servono i pacchetti quarto, ggplot2, DiagrammeR e pkgload.
 #
 # Non fa parte della pipeline: `targets::tar_make()` non lo compila. Si
 # ricompila a mano quando cambia la logica di `scegli_giro()`. Soglie, nomi dei
 # passi ed esempi vengono dal codice del pacchetto, e la compilazione si
 # ferma se i passi non corrispondono più alla tabella qui sotto.
 
-knitr::opts_chunk$set(
-  echo = FALSE,
-  message = FALSE,
-  warning = FALSE,
-  fig.align = "center",
-  fig.retina = 2,
-  out.width = "100%"
-)
 if (!file.exists("../DESCRIPTION")) {
   stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
 }
@@ -52,16 +56,6 @@ colori <- c(
 )
 ```
 
-```{css, echo=FALSE}
-body {
-    font-size: 16px;
-}
-
-.tabella-passi td {
-    vertical-align: top;
-}
-```
-
 Documento scritto per spiegare, a chi non legge il codice, come una lettura riceve il suo giro. Il giro dà alla lettura il servizio atteso e il comune del giro, e da lì vengono la coerenza dei servizi e quella dei comuni. Il calendario dice che cosa era *previsto*, non che cosa è successo: per questo l'associazione è una serie di regole, dalla più sicura alla meno sicura, e una lettura che non ne soddisfa nessuna resta **senza giro**, invece di prenderne uno a caso.
 
 # I dati di partenza
@@ -76,7 +70,8 @@ Documento scritto per spiegare, a chi non legge il codice, come una lettura rice
 
 La lettura attraversa i passi nell'ordine. Il primo che vale le dà il giro e gli altri non la vedono più.
 
-```{r passi}
+```{r}
+#| label: passi
 # Un passo per riga: è l'unico posto da modificare per cambiare tabella e
 # diagramma. `codice` deve essere quello di `passi_associazione()`.
 passi <- dplyr::tribble(
@@ -123,7 +118,9 @@ if (!identical(c(passi$codice, "censiti"), names(passi_associazione()))) {
 }
 ```
 
-```{r diagramma-passi, fig.height=9}
+```{r}
+#| label: diagramma-passi
+#| fig-height: 9
 n <- nrow(passi)
 nodi <- paste0(
   sprintf(
@@ -170,7 +167,8 @@ digraph passi {
 )
 ```
 
-```{r tabella-passi}
+```{r}
+#| label: tabella-passi
 tabella <- passi |>
   dplyr::mutate(
     n = as.character(dplyr::row_number()),
@@ -199,10 +197,7 @@ tabella <- dplyr::bind_rows(
 )
 knitr::kable(
   tabella,
-  format = "html",
-  escape = FALSE,
-  na = "—",
-  table.attr = 'class="table table-sm tabella-passi"'
+  na = "—"
 )
 ```
 
@@ -210,11 +205,13 @@ I nomi in codice sono quelli che compaiono nel messaggio della pipeline («Giro 
 
 # L'orario, il ritardo e la tolleranza
 
-L'orario di un giro pianificato non finisce a `ora_fine`. Una lettura del mezzo entro **`r ritardo_giro_minuti()` minuti** dalla fine ne fa ancora parte e *diventa la nuova fine*; si va avanti finché la lettura seguente arriva entro lo stesso tempo dall'ultima. La catena si ferma all'inizio del pianificato seguente dello stesso mezzo. Fuori orario, il passo 7 accetta una lettura entro **`r tolleranza_giro_minuti()` minuti** dall'orario (contando la fine allungata), purché non abbia trovato un giro prima.
+L'orario di un giro pianificato non finisce a `ora_fine`. Una lettura del mezzo entro **`{r} ritardo_giro_minuti()` minuti** dalla fine ne fa ancora parte e *diventa la nuova fine*; si va avanti finché la lettura seguente arriva entro lo stesso tempo dall'ultima. La catena si ferma all'inizio del pianificato seguente dello stesso mezzo. Fuori orario, il passo 7 accetta una lettura entro **`{r} tolleranza_giro_minuti()` minuti** dall'orario (contando la fine allungata), purché non abbia trovato un giro prima.
 
 Il disegno qui sotto non è fatto a mano: è il risultato di `scegli_giro()` su un giro pianificato dalle 8 alle 12 e su sette letture dello stesso mezzo.
 
-```{r orario, fig.height=3.8}
+```{r}
+#| label: orario
+#| fig-height: 3.8
 ore <- c(6.5, 7 + 20 / 60, 9, 12 + 20 / 60, 12 + 45 / 60, 13 + 20 / 60, 15)
 rosa <- comuni_cantieri()[comuni_cantieri()$comune == "ROSÀ", ]
 quando <- as.POSIXct("2026-03-02", tz = "UTC") + ore * 3600
@@ -346,11 +343,13 @@ ggplot() +
 
 # I tratti
 
-Un giro non pianificato non ha orari, ma le letture di un mezzo arrivano in sequenza. Se tra due letture passano più di **`r ritardo_giro_minuti()` minuti**, comincia un tratto nuovo. In ogni tratto le letture già associate dai passi 1–4 «votano», e le orfane prendono il giro più frequente. È l'idea che, quando il mezzo lavora, le letture di seguito appartengono quasi sempre allo stesso giro.
+Un giro non pianificato non ha orari, ma le letture di un mezzo arrivano in sequenza. Se tra due letture passano più di **`{r} ritardo_giro_minuti()` minuti**, comincia un tratto nuovo. In ogni tratto le letture già associate dai passi 1–4 «votano», e le orfane prendono il giro più frequente. È l'idea che, quando il mezzo lavora, le letture di seguito appartengono quasi sempre allo stesso giro.
 
 L'esempio è calcolato da `scegli_giro()`: il mezzo ha due giri non pianificati, il vetro a Rosà e l'umido a Cassola. Le letture a Nove non sono in nessuno dei due comuni.
 
-```{r tratti, fig.height=3.2}
+```{r}
+#| label: tratti
+#| fig-height: 3.2
 cc <- comuni_cantieri()
 pos <- function(nome) cc[cc$comune == nome, c("latitudine", "longitudine")]
 ore <- c(8, 8 + 12 / 60, 8 + 25 / 60, 9 + 10 / 60, 9 + 22 / 60, 9 + 34 / 60)
@@ -470,7 +469,9 @@ Le letture a Nove di ogni tratto prendono il giro delle altre letture dello stes
 
 Se tutti i giri non pianificati del mezzo in quel giorno hanno lo stesso servizio, una lettura fuori dall'orario dei pianificati ha il servizio certo, anche se il comune non coincide con nessuno. Il giro (cioè il comune) è quello più vicino, misurato dal confine del comune con i confini della Regione. Le distanze qui sotto sono calcolate dal pacchetto.
 
-```{r servizio-unico, fig.height=2.6}
+```{r}
+#| label: servizio-unico
+#| fig-height: 2.6
 punto <- c(lat = 45.72942, lng = 11.70269)
 d <- round(distanza_dal_comune(
   rep(punto[["lat"]], 2),
@@ -534,7 +535,8 @@ Il servizio (CARTA) è lo stesso nei due giri, quindi è certo; il giro è N1, i
 
 # Soglie e dove cambiarle
 
-```{r soglie}
+```{r}
+#| label: soglie
 knitr::kable(dplyr::tibble(
   Soglia = c(
     "Ritardo dopo la fine di un pianificato",

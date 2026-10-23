@@ -2,8 +2,9 @@
 #
 # Dai file estratti dal passo 1 (data-raw/origine/) scrive in data-raw/output/:
 # letture_app.csv, letture_app.duckdb e controllo_giri.csv per l'app;
-# letture_storiche.csv, le letture delle saponette con la stessa anagrafica;
-# il report sui conferimenti del secco.
+# letture_storiche.csv, le letture delle saponette con la stessa anagrafica.
+# I report non fanno parte della pipeline: si compilano a mano con
+# data-raw/compila_report.R.
 # I due dataset si leggono anche con targets::tar_load(letture_app) e
 # targets::tar_load(letture_storiche); le tabelle intermedie non si salvano.
 #
@@ -29,41 +30,6 @@ colonne_storiche <- list(
   data_ora = "data_lettura",
   trasmissione = "id_trasmissione"
 )
-
-# Periodo del report sui conferimenti, "AAAA-MM-GG". Vuoti: dal primo gennaio
-# dell'anno dell'ultima lettura all'ultima lettura.
-periodo_report <- list(dal = "", al = "")
-
-# Compila il report sui conferimenti e ne restituisce l'HTML e i tre CSV. I
-# percorsi diventano assoluti prima di render(), che si sposta in docs/.
-compila_report_conferimenti <- function(
-  rmd,
-  letture,
-  periodo,
-  cartella = "data-raw/output"
-) {
-  cartella <- normalizePath(cartella)
-  nome <- "conferimenti_secco.html"
-  # Calcolati qui, non dentro la chiamata: render() valuta `params` dopo
-  # essersi spostato in docs/, dove un percorso relativo non esiste.
-  parametri <- list(
-    letture = normalizePath(letture),
-    dal = periodo$dal,
-    al = periodo$al,
-    cartella_csv = cartella
-  )
-  rmarkdown::render(
-    rmd,
-    params = parametri,
-    output_file = nome,
-    output_dir = cartella,
-    quiet = TRUE
-  )
-  c(
-    file.path(cartella, nome),
-    list.files(cartella, pattern = "^conferimenti_.*\\.csv$", full.names = TRUE)
-  )
-}
 
 list(
   # --- File di partenza: la pipeline ne segue il contenuto ------------------
@@ -94,7 +60,6 @@ list(
     format = "file"
   ),
   tar_target(file_storiche, file_origine()$storiche, format = "file"),
-  tar_target(file_report, "docs/conferimenti_secco.Rmd", format = "file"),
 
   # --- Letture per l'app: dataset, CSV, archivio .duckdb, giri da controllare
   tar_target(
@@ -146,13 +111,6 @@ list(
   tar_target(
     csv_letture_storiche,
     scrivi_csv_output(letture_storiche, "letture_storiche.csv"),
-    format = "file"
-  ),
-
-  # --- Report sui conferimenti del secco ------------------------------------
-  tar_target(
-    report_conferimenti,
-    compila_report_conferimenti(file_report, csv_letture_app, periodo_report),
     format = "file"
   )
 )

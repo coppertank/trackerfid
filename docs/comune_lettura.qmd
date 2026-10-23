@@ -1,20 +1,32 @@
 ---
 title: "Come si ricava il comune di una lettura"
 subtitle: "La scelta di `correggi_comune_lettura()`, con esempi calcolati dal codice"
-date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+date: today
+date-format: DD/MM/YYYY
 lang: it
-output:
-  html_document:
+format:
+  html:
     toc: true
-    toc_depth: 2
-    toc_float: true
-    mathjax: null
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+    css: stile.css
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
 ---
 
-```{r setup, include=FALSE}
+```{r}
+#| label: setup
+#| include: false
 # Per compilare il documento, dalla radice del progetto:
-#   rmarkdown::render("docs/comune_lettura.Rmd")
-# Servono i pacchetti rmarkdown, ggplot2, DiagrammeR e pkgload.
+#   quarto::quarto_render("docs/comune_lettura.qmd")
+# Servono i pacchetti quarto, ggplot2, DiagrammeR e pkgload.
 #
 # Non fa parte della pipeline: `targets::tar_make()` non lo compila. Si
 # ricompila a mano quando cambia `correggi_comune_lettura()` o l'importazione
@@ -22,14 +34,6 @@ output:
 # dal codice del pacchetto, e la compilazione si ferma se i risultati non
 # tornano più con il testo.
 
-knitr::opts_chunk$set(
-  echo = FALSE,
-  message = FALSE,
-  warning = FALSE,
-  fig.align = "center",
-  fig.retina = 2,
-  out.width = "100%"
-)
 if (!file.exists("../DESCRIPTION")) {
   stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
 }
@@ -53,17 +57,12 @@ stile_dot <- '
   edge [fontname="Helvetica", fontsize=11, color="#5b655f"];'
 ```
 
-```{css, echo=FALSE}
-body {
-    font-size: 16px;
-}
-```
-
 Il campo `comune_lettura` dice in quale comune è stata fatta una lettura. Da lì vengono il cantiere, i filtri per comune sulla mappa, le bolle e la coerenza del comune (`Coerente`, `Fuori comune`, `Fuori giro`). Il sistema di localizzazione dei mezzi lo scrive già, ma vicino ai confini, o per una frazione, a volte sbaglia: per questo la pipeline lo controlla con la posizione.
 
 # Da quali dati si ricava
 
-```{r dati}
+```{r}
+#| label: dati
 DiagrammeR::grViz(
   paste0(
     '
@@ -94,7 +93,7 @@ digraph dati {
 
 - **Indirizzo del sistema di localizzazione** (`IndirizzoLocalizzazione`): un testo «via, comune». Il comune è la parte dopo la prima virgola.
 - **Posizione**: latitudine e longitudine della lettura.
-- **Confini dei comuni serviti**: i `r nrow(comuni_cantieri())` comuni dell'azienda, con i confini della Regione del Veneto (non semplificati).
+- **Confini dei comuni serviti**: i `{r} nrow(comuni_cantieri())` comuni dell'azienda, con i confini della Regione del Veneto (non semplificati).
 - **Comune della fornitura** (`comune_fornitura`): il comune del contenitore secondo il database, nel giorno della lettura. Non esiste per i non censiti e per i sacchetti.
 
 # Prima di tutto: quali letture entrano
@@ -107,7 +106,8 @@ digraph dati {
 
 La scelta avviene dopo l'associazione al database, perché serve il comune della fornitura.
 
-```{r percorso}
+```{r}
+#| label: percorso
 DiagrammeR::grViz(
   paste0(
     '
@@ -148,7 +148,8 @@ Il GPS e la fornitura si confrontano senza badare a maiuscole, accenti e apostro
 
 La tabella è calcolata eseguendo davvero `correggi_comune_lettura()` su sei letture sintetiche, con punti scelti dentro i comuni di Limena, Nove e Cittadella e un punto a Venezia, fuori dai comuni serviti.
 
-```{r casi}
+```{r}
+#| label: casi
 centro <- function(nome) {
   riga <- comuni_cantieri()[comuni_cantieri()$comune == nome, ]
   c(lat = riga$latitudine, lng = riga$longitudine)
@@ -209,9 +210,7 @@ knitr::kable(
       "sì",
       "no"
     )
-  ),
-  format = "html",
-  table.attr = 'class="table table-sm"'
+  )
 )
 ```
 
@@ -223,7 +222,9 @@ Per ogni comune servito si guarda prima il rettangolo che racchiude il suo confi
 
 Il disegno usa un confine inventato, con una rientranza, e `dentro_poligoni()` del pacchetto per dare l'esito di ogni punto.
 
-```{r poligono, fig.height=4.2}
+```{r}
+#| label: poligono
+#| fig-height: 4.2
 contorno <- dplyr::tibble(
   longitudine = c(1, 7, 7, 5, 5, 3, 3, 1),
   latitudine = c(1, 1, 5, 5, 3, 3, 5, 5)
@@ -327,7 +328,7 @@ Il punto 2 sta nella rientranza: la semiretta attraversa due lati e il punto è 
 
 - **Cantiere**: quello del comune finale, secondo la tabella dei comuni. Per un comune fuori tabella resta vuoto.
 - **Distanza dal comune dichiarato**: per una lettura fatta in un comune diverso da quello dichiarato (database per un censito, giro per un non censito) si calcolano i metri dal suo confine.
-- **Coerenza del comune**: `Coerente` se il comune finale è quello dichiarato o la distanza è entro `r tolleranza_confine_m()` metri; altrimenti `Fuori comune` (censito) o `Fuori giro` (non censito); `Coerenza ignota` se manca uno dei due comuni, o se il comune del giro è una zona fuori tabella.
+- **Coerenza del comune**: `Coerente` se il comune finale è quello dichiarato o la distanza è entro `{r} tolleranza_confine_m()` metri; altrimenti `Fuori comune` (censito) o `Fuori giro` (non censito); `Coerenza ignota` se manca uno dei due comuni, o se il comune del giro è una zona fuori tabella.
 - **Nell'app**: il comune di lettura si usa così com'è. Un comune fuori tabella dà un avviso al caricamento, nessun cantiere e la voce «Non assegnato» nei filtri.
 
 # `comuni_corretti.csv`
@@ -339,7 +340,7 @@ La pipeline scrive in `data-raw/output/` l'elenco delle letture il cui comune fi
 - **La posizione è più precisa del GPS** (verificato dal proprietario sulle letture dei censiti: `comune_posizione` coincide con `comune_fornitura` molto più spesso di `comune_gps`). L'eccezione è il caso A, scelto il 23 ottobre 2026.
 - **Il caso A ha un effetto sulla coerenza.** Per un censito, se il GPS coincide con la fornitura la lettura risulta coerente anche quando il punto è già nel comune accanto. Un bidone davvero spostato in un comune confinante, letto con un GPS che scrive ancora il comune vecchio, non verrebbe segnalato «fuori comune».
 - **Per i non censiti conta solo la posizione**: la regola del caso A non si applica, perché non c'è un comune della fornitura.
-- **Confini della Regione contro confini del sistema di localizzazione.** Non sono gli stessi: vicino al confine i due possono dare comuni diversi. La tolleranza di `r tolleranza_confine_m()` metri sulla coerenza copre in parte questa differenza.
+- **Confini della Regione contro confini del sistema di localizzazione.** Non sono gli stessi: vicino al confine i due possono dare comuni diversi. La tolleranza di `{r} tolleranza_confine_m()` metri sulla coerenza copre in parte questa differenza.
 - **Letture fuori dai comuni serviti** (casi C ed E) tengono il nome del sistema di localizzazione: non è verificabile con i confini che abbiamo.
 - **Comuni soppressi o scritti diversamente.** `VALSTAGNA` è stato riportato a `VALBRENTA` nell'anagrafica dei contenitori; un nome del GPS non in tabella si risolve con la posizione.
 

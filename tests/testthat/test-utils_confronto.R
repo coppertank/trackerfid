@@ -34,3 +34,127 @@ test_that("le letture si leggono anche dai CSV della pipeline", {
   expect_identical(confronto$RFID, "0000000123")
   expect_identical(confronto$origine, "Entrambe")
 })
+
+antenne_filtri <- function() {
+  dplyr::tibble(
+    RFID = c("A", "B", "C", "D", "E"),
+    servizio_atteso = c("SECCO", "CARTA", "CARTA", NA, "SECCO"),
+    servizio_transponder = c("SECCO", "SECCO", "CARTA", NA, "CARTA"),
+    categoria = c("31", "34", "34", NA, "44"),
+    sottocategoria = c("D", "D", "ND", NA, "ND")
+  )
+}
+
+test_that("filtra_letture_antenne senza parametri non filtra", {
+  antenne <- antenne_filtri()
+  expect_identical(filtra_letture_antenne(antenne), antenne)
+  expect_identical(
+    filtra_letture_antenne(antenne, servizio = "", categorie_escluse = NA, sottocategoria = character(0)),
+    antenne
+  )
+})
+
+test_that("il servizio vale per il servizio atteso o per quello del transponder", {
+  antenne <- antenne_filtri()
+  # B ha il secco solo nel transponder, E solo come servizio atteso
+  expect_identical(
+    filtra_letture_antenne(antenne, servizio = "SECCO")$RFID,
+    c("A", "B", "E")
+  )
+  expect_identical(
+    filtra_letture_antenne(antenne, servizio = "secco")$RFID,
+    c("A", "B", "E")
+  )
+  expect_identical(
+    filtra_letture_antenne(antenne, servizio = c("SECCO", "CARTA"))$RFID,
+    c("A", "B", "C", "E")
+  )
+})
+
+test_that("le categorie escluse tolgono quelle categorie e tengono i non censiti", {
+  antenne <- antenne_filtri()
+  expect_identical(
+    filtra_letture_antenne(antenne, categorie_escluse = "34")$RFID,
+    c("A", "D", "E")
+  )
+  # anche un numero
+  expect_identical(
+    filtra_letture_antenne(antenne, categorie_escluse = c(34, 44))$RFID,
+    c("A", "D")
+  )
+})
+
+test_that("la sottocategoria tiene solo quella, senza i non censiti", {
+  expect_identical(
+    filtra_letture_antenne(antenne_filtri(), sottocategoria = "D")$RFID,
+    c("A", "B")
+  )
+})
+
+test_that("i filtri si combinano e una colonna mancante dà un errore chiaro", {
+  expect_identical(
+    filtra_letture_antenne(
+      antenne_filtri(),
+      servizio = "SECCO",
+      categorie_escluse = "34",
+      sottocategoria = "D"
+    )$RFID,
+    "A"
+  )
+  expect_error(
+    filtra_letture_antenne(dplyr::tibble(RFID = "A"), servizio = "SECCO"),
+    "servizio_atteso, servizio_transponder"
+  )
+  expect_error(
+    filtra_letture_antenne(dplyr::tibble(RFID = "A"), sottocategoria = "D"),
+    "sottocategoria"
+  )
+})
+
+test_that("le storiche di confronto sono quelle dei giri degli RFID filtrati", {
+  storiche <- dplyr::tibble(
+    data_ora_lettura = c(
+      "2026-08-03 07:00:00", # A, giro T1 del 3/8
+      "2026-08-03 07:10:00", # B, stesso giro
+      "2026-08-04 07:00:00", # C, T1 ma un altro giorno
+      "2026-08-03 08:00:00", # D, giro T2
+      "2026-08-05 08:00:00" # A, giro T3 del 5/8
+    ),
+    id_trasmissione = c("T1", "T1", "T1", "T2", "T3"),
+    RFID = c("A", "B", "C", "D", "A")
+  )
+  antenne <- dplyr::tibble(RFID = "A")
+  risultato <- storiche_di_confronto(storiche, antenne)
+  expect_identical(risultato$RFID, c("A", "B", "A"))
+  expect_identical(
+    risultato$data_lettura,
+    as.Date(c("2026-08-03", "2026-08-03", "2026-08-05"))
+  )
+  expect_identical(nrow(storiche_di_confronto(storiche, dplyr::tibble(RFID = "Z"))), 0L)
+})
+
+test_that("il confronto usa le letture delle antenne già filtrate", {
+  storiche <- dplyr::tibble(
+    data_ora_lettura = c(
+      "2026-08-03 07:00:00", # A
+      "2026-08-03 07:10:00", # B, stesso giro di A
+      "2026-08-03 08:00:00" # C, giro T2
+    ),
+    id_trasmissione = c("T1", "T1", "T2"),
+    RFID = c("A", "B", "C")
+  )
+  antenne <- dplyr::tibble(
+    data_ora_lettura = rep("2026-08-03 09:00:00", 3),
+    RFID = c("A", "C", "E"),
+    servizio_atteso = c("SECCO", "CARTA", "CARTA"),
+    servizio_transponder = c("SECCO", "CARTA", "CARTA")
+  )
+  tutte <- confronta_letture(storiche, antenne)
+  expect_identical(tutte$RFID, c("A", "B", "C", "E"))
+  expect_identical(tutte$origine, c("Entrambe", "Saponette", "Entrambe", "Antenne"))
+
+  # Solo il secco: resta il giro T1, quindi A e B; C ed E escono
+  secco <- confronta_letture(storiche, antenne, servizio = "SECCO")
+  expect_identical(secco$RFID, c("A", "B"))
+  expect_identical(secco$origine, c("Entrambe", "Saponette"))
+})

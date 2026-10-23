@@ -2,44 +2,51 @@
 title: "Conferimenti del secco oltre il limite"
 subtitle: "Come si stimano i conferimenti di un anno dalle letture delle antenne, e perché così"
 author: "Aldo Caumo"
-date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+date: today
+date-format: DD/MM/YYYY
 lang: it
 params:
   letture: ""
   dal: ""
   al: ""
   cartella_csv: ""
-output:
-  html_document:
+format:
+  html:
     toc: true
-    toc_depth: 2
-    toc_float: true
-    mathjax: null
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
 ---
 
-```{r setup, include=FALSE}
+```{r}
+#| label: setup
+#| include: false
 # Per compilare il report sul dataset di esempio, dalla radice del progetto:
-#   rmarkdown::render("docs/conferimenti_secco.Rmd")
-# Sui dati aziendali lo compila la pipeline di preparazione dei dati,
-# targets::tar_make(): passa i parametri e scrive il report e i CSV in
-# data-raw/output/. Il periodo si cambia in cima a data-raw/_targets.R.
-# Servono i pacchetti rmarkdown, ggplot2 e pkgload.
+#   quarto::quarto_render("docs/conferimenti_secco.qmd")
+# Sui dati aziendali, con i parametri, e con l'HTML in data-raw/output/:
+#   source("data-raw/compila_report.R")
+#   compila_report(
+#     "docs/conferimenti_secco.qmd",
+#     list(letture = "data-raw/output/letture_app.csv",
+#          cartella_csv = "data-raw/output")
+#   )
+# Il report non fa parte della pipeline: `targets::tar_make()` non lo compila.
+# Servono il programma quarto e i pacchetti quarto, ggplot2 e pkgload.
 #
-# Parametri:
+# Parametri (i percorsi relativi partono dalla radice del progetto):
 #   letture       CSV della pipeline, con tutte le colonne; vuoto per il
 #                 dataset di esempio
 #   dal, al       periodo, "AAAA-MM-GG"; vuoti per l'anno dell'ultima lettura
 #   cartella_csv  se indicata, vi scrive le forniture, l'elenco da contattare
 #                 e i non censiti
-
-knitr::opts_chunk$set(
-  echo = FALSE,
-  message = FALSE,
-  warning = FALSE,
-  fig.align = "center",
-  fig.retina = 2,
-  out.width = "100%"
-)
 
 # Il report usa le funzioni del pacchetto trackerfid, comprese quelle interne:
 # le carica dai sorgenti, quindi il file deve restare nella cartella docs/.
@@ -47,6 +54,16 @@ if (!file.exists("../DESCRIPTION")) {
   stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
 }
 pkgload::load_all("..", quiet = TRUE)
+
+# Un percorso relativo dei parametri parte dalla radice del progetto, ma la
+# compilazione avviene in docs/.
+percorso_progetto <- function(percorso) {
+  if (grepl("^(/|~|[A-Za-z]:)", percorso)) {
+    path.expand(percorso)
+  } else {
+    file.path("..", percorso)
+  }
+}
 library(ggplot2)
 
 # Numeri con la virgola decimale.
@@ -104,7 +121,8 @@ tema_grafico <- theme_minimal(base_size = 12) +
   )
 ```
 
-```{css}
+```{=html}
+<style>
 .formula {
   margin: 1.2em 0;
   padding: 0.8em 1em;
@@ -119,11 +137,13 @@ tema_grafico <- theme_minimal(base_size = 12) +
   border-left: 4px solid #c2410c;
   background: #fff7ed;
 }
+</style>
 ```
 
-```{r dati}
+```{r}
+#| label: dati
 esempio <- !nzchar(params$letture)
-percorso <- if (esempio) percorso_dataset_esempio() else params$letture
+percorso <- if (esempio) percorso_dataset_esempio() else percorso_progetto(params$letture)
 vuoto_null <- function(x) if (nzchar(x)) x else NULL
 # Le letture validate come le valida l'app, ma con tutte le colonne della
 # pipeline: l'app tiene solo le sue, e nucleo e potenziamento non ci sono.
@@ -142,30 +162,40 @@ domestiche <- f[!f$classe %in% c("Non domestica", "Categoria sconosciuta"), ]
 stimate <- f[f$classe %in% classi[1:4], ]
 contattare <- elenco_da_contattare(analisi)
 if (nzchar(params$cartella_csv)) {
-  file_csv <- esporta_analisi_conferimenti(analisi, params$cartella_csv)
+  cartella_csv <- percorso_progetto(params$cartella_csv)
+  file_csv <- esporta_analisi_conferimenti(analisi, cartella_csv)
 }
 conta_classe <- function(classe) sum(f$classe == classe)
 ```
 
-`r if (esempio) "<p class=\"nota-esempio\">Questo report è compilato sul <b>dataset di esempio</b>: letture, volumi e nuclei sono simulati. Nell'esempio i bidoni del secco sono da 240 o 1.100 litri e vengono esposti quasi a ogni raccolta, per cui quasi tutte le forniture risultano oltre il limite, e sono troppo distanti tra loro per contare i passaggi dai vicini. I numeri dei risultati servono solo a vedere il report completo; il metodo è provato nella sezione «Prova su un territorio simulato». Per i dati aziendali vedi l'ultima sezione.</p>"`
+```{r}
+#| label: nota-esempio
+#| results: asis
+if (esempio) {
+  cat(
+    '<p class="nota-esempio">Questo report è compilato sul <b>dataset di esempio</b>: letture, volumi e nuclei sono simulati. Nell\'esempio i bidoni del secco sono da 240 o 1.100 litri e vengono esposti quasi a ogni raccolta, per cui quasi tutte le forniture risultano oltre il limite, e sono troppo distanti tra loro per contare i passaggi dai vicini. I numeri dei risultati servono solo a vedere il report completo; il metodo è provato nella sezione «Prova su un territorio simulato». Per i dati aziendali vedi l\'ultima sezione.</p>'
+  )
+}
+```
 
 ## In breve
 
-Il periodo analizzato va dal `r data_it(analisi$periodo[1])` al `r data_it(analisi$periodo[2])`. Le letture delle antenne nel periodo sono `r intero(r$letture)`; di queste `r intero(r$letture_secco)` sono di giri del secco. I contenitori del secco censiti letti sono `r intero(r$contenitori_censiti)`, di `r intero(nrow(f))` forniture, `r intero(nrow(domestiche))` delle quali domestiche.
+Il periodo analizzato va dal `{r} data_it(analisi$periodo[1])` al `{r} data_it(analisi$periodo[2])`. Le letture delle antenne nel periodo sono `{r} intero(r$letture)`; di queste `{r} intero(r$letture_secco)` sono di giri del secco. I contenitori del secco censiti letti sono `{r} intero(r$contenitori_censiti)`, di `{r} intero(nrow(f))` forniture, `{r} intero(nrow(domestiche))` delle quali domestiche.
 
-- **Oltre il limite: `r intero(conta_classe("Oltre il limite"))` forniture domestiche.** Al ritmo attuale, con una probabilità di `r quota(parametri$soglie_probabilita[["oltre"]])` o più, in un anno conferiranno più di quanto è loro consentito.
-- **Probabile superamento: `r intero(conta_classe("Probabile superamento"))` forniture**, con una probabilità tra `r quota(parametri$soglie_probabilita[["probabile"]])` e `r quota(parametri$soglie_probabilita[["oltre"]])`.
-- **Da contattare: le `r intero(nrow(contattare))` forniture delle due classi.** Insieme conferirebbero, in un anno, circa `r intero(sum(contattare$conferimenti_eccedenti))` volte oltre il limite.
-- **Dati insufficienti: `r intero(conta_classe("Dati insufficienti"))` forniture**, con meno di `r parametri$occasioni_minime` occasioni osservate: per loro non si può ancora dire.
-- **Non censiti del secco: `r intero(nrow(nc))`.** Tra quelli con dati sufficienti, `r intero(sum(nc$dati_sufficienti & nc$nucleo_minimo %in% c("Solo con potenziamento", "Oltre il potenziamento")))` conferiscono più di quanto consentirebbe qualsiasi nucleo senza il potenziamento.
+- **Oltre il limite: `{r} intero(conta_classe("Oltre il limite"))` forniture domestiche.** Al ritmo attuale, con una probabilità di `{r} quota(parametri$soglie_probabilita[["oltre"]])` o più, in un anno conferiranno più di quanto è loro consentito.
+- **Probabile superamento: `{r} intero(conta_classe("Probabile superamento"))` forniture**, con una probabilità tra `{r} quota(parametri$soglie_probabilita[["probabile"]])` e `{r} quota(parametri$soglie_probabilita[["oltre"]])`.
+- **Da contattare: le `{r} intero(nrow(contattare))` forniture delle due classi.** Insieme conferirebbero, in un anno, circa `{r} intero(sum(contattare$conferimenti_eccedenti))` volte oltre il limite.
+- **Dati insufficienti: `{r} intero(conta_classe("Dati insufficienti"))` forniture**, con meno di `{r} parametri$occasioni_minime` occasioni osservate: per loro non si può ancora dire.
+- **Non censiti del secco: `{r} intero(nrow(nc))`.** Tra quelli con dati sufficienti, `{r} intero(sum(nc$dati_sufficienti & nc$nucleo_minimo %in% c("Solo con potenziamento", "Oltre il potenziamento")))` conferiscono più di quanto consentirebbe qualsiasi nucleo senza il potenziamento.
 
 Il resto del report spiega come si arriva a questi numeri e perché.
 
 ## La domanda
 
-Ogni fornitura domestica può conferire in un anno un numero di litri di secco che dipende dai componenti residenti del nucleo. Una fornitura con il potenziamento del secco, cioè con una manovra sociale per neonati, anziani o disabili in vigore, può conferirne `r intero(litri_potenziamento())` qualunque sia il nucleo. Il limite vale per la fornitura: un'utenza con più forniture le paga una per una. Le forniture non domestiche hanno regole diverse e restano fuori.
+Ogni fornitura domestica può conferire in un anno un numero di litri di secco che dipende dai componenti residenti del nucleo. Una fornitura con il potenziamento del secco, cioè con una manovra sociale per neonati, anziani o disabili in vigore, può conferirne `{r} intero(litri_potenziamento())` qualunque sia il nucleo. Il limite vale per la fornitura: un'utenza con più forniture le paga una per una. Le forniture non domestiche hanno regole diverse e restano fuori.
 
-```{r tabella-tariffa}
+```{r}
+#| label: tabella-tariffa
 tariffa <- rbind(
   litri_conferibili(),
   data.frame(componenti = "Potenziamento", litri = litri_potenziamento())
@@ -206,7 +236,8 @@ L'analisi conta invece, per ogni bidone, due numeri: le **occasioni**, cioè le 
 
 ## Dalle letture alle esposizioni
 
-```{r regole}
+```{r}
+#| label: regole
 regole <- data.frame(
   regola = c(
     "Letture nel periodo",
@@ -253,35 +284,36 @@ Le letture di uno stesso bidone in uno stesso giorno valgono un'esposizione: un 
 
 Un'occasione è un giorno in cui un mezzo con l'antenna, in un giro del secco, è passato davanti al bidone. Non serve sapere quale mezzo né quale giro: lo dicono le letture dei **vicini**. Se quel giorno il mezzo ha letto i bidoni della stessa via, è passato anche davanti a questo; se il bidone non è stato letto, non era esposto.
 
-- **Vicini**: i `r parametri$vicini_massimi` contenitori più vicini, entro `r intero(parametri$raggio_vicini_m)` metri dalla posizione abituale del bidone, letti in un giro del secco, di qualsiasi servizio e anche non censiti.
+- **Vicini**: i `{r} parametri$vicini_massimi` contenitori più vicini, entro `{r} intero(parametri$raggio_vicini_m)` metri dalla posizione abituale del bidone, letti in un giro del secco, di qualsiasi servizio e anche non censiti.
 - **Stesso percorso**: conta solo un vicino letto almeno una volta nello stesso giorno del bidone. Un bidone della via accanto, raccolta in un altro giorno, aggiungerebbe giorni in cui il mezzo non passava davanti a questo.
 - **Finestra**: le occasioni e le esposizioni si contano dal giorno dopo la prima lettura del bidone, e non prima che il contenitore fosse attivo nella fornitura. Un bidone compare nei dati solo se è stato letto almeno una volta: se quella prima lettura contasse, un bidone esposto raramente e letto per caso nelle prime settimane sembrerebbe esposto spesso. Dopo la prima lettura ogni occasione è una prova a sé.
-- **Senza vicini**: con meno di `r parametri$vicini_minimi` vicini sullo stesso percorso i passaggi non si possono contare. Le occasioni si stimano allora dalle raccolte previste nell'anagrafica, in proporzione ai giorni della finestra, come se tutti i mezzi avessero l'antenna. Con l'antenna solo su una parte dei mezzi questa stima conta più occasioni di quelle osservate, e il tasso esce più basso del vero: è una stima prudente, che non porta a contattare nessuno per errore ma può non vedere qualcuno.
+- **Senza vicini**: con meno di `{r} parametri$vicini_minimi` vicini sullo stesso percorso i passaggi non si possono contare. Le occasioni si stimano allora dalle raccolte previste nell'anagrafica, in proporzione ai giorni della finestra, come se tutti i mezzi avessero l'antenna. Con l'antenna solo su una parte dei mezzi questa stima conta più occasioni di quelle osservate, e il tasso esce più basso del vero: è una stima prudente, che non porta a contattare nessuno per errore ma può non vedere qualcuno.
 
 Perché non il calendario dei giri? Il calendario dice quale mezzo doveva fare quale giro, ma un mezzo può sostituirne un altro, e il giro di un bidone non è scritto da nessuna parte. Le letture dei vicini dicono che cosa è successo davvero.
 
-```{r metodi}
+```{r}
+#| label: metodi
 metodi <- table(factor(
   domestiche$metodo,
   levels = c("passaggi", "raccolte previste")
 ))
 ```
 
-Nel periodo analizzato le occasioni di `r intero(metodi[["passaggi"]])` forniture domestiche vengono dai passaggi dei vicini, quelle di `r intero(metodi[["raccolte previste"]])` dalle raccolte previste.
+Nel periodo analizzato le occasioni di `{r} intero(metodi[["passaggi"]])` forniture domestiche vengono dai passaggi dei vicini, quelle di `{r} intero(metodi[["raccolte previste"]])` dalle raccolte previste.
 
 ## Dal tasso ai conferimenti dell'anno
 
-Il tasso osservato è esposizioni diviso occasioni. Con poche occasioni però oscilla molto: due esposizioni su due non vogliono dire che il bidone esce sempre. La stima avvicina allora il tasso osservato alla media di tutte le forniture, come se alle occasioni osservate se ne aggiungessero `r parametri$peso_prior`, esposte alla frequenza media:
+Il tasso osservato è esposizioni diviso occasioni. Con poche occasioni però oscilla molto: due esposizioni su due non vogliono dire che il bidone esce sempre. La stima avvicina allora il tasso osservato alla media di tutte le forniture, come se alle occasioni osservate se ne aggiungessero `{r} parametri$peso_prior`, esposte alla frequenza media:
 
-<p class="formula">tasso = (esposizioni + `r parametri$peso_prior` × media) / (occasioni + `r parametri$peso_prior`)</p>
+<p class="formula">tasso = (esposizioni + `{r} parametri$peso_prior` × media) / (occasioni + `{r} parametri$peso_prior`)</p>
 
-La media è il tasso di tutte le forniture domestiche censite con le occasioni contate dai vicini e almeno `r parametri$occasioni_minime` occasioni. `r if (attr(analisi$tasso_medio, "tutte")) "Nel periodo nessuna fornitura ha queste caratteristiche, e la media è calcolata su tutti i contenitori letti: vale " else sprintf("Nel periodo sono %s contenitori, e la media vale ", intero(attr(analisi$tasso_medio, "unita")))``r num(analisi$tasso_medio, 2)`. Con venti occasioni la media pesa un sesto, con cento quasi niente.
+La media è il tasso di tutte le forniture domestiche censite con le occasioni contate dai vicini e almeno `{r} parametri$occasioni_minime` occasioni. `{r} paste0(if (attr(analisi$tasso_medio, "tutte")) "Nel periodo nessuna fornitura ha queste caratteristiche, e la media è calcolata su tutti i contenitori letti: vale " else sprintf("Nel periodo sono %s contenitori, e la media vale ", intero(attr(analisi$tasso_medio, "unita"))), num(analisi$tasso_medio, 2))`. Con venti occasioni la media pesa un sesto, con cento quasi niente.
 
 <p class="formula">conferimenti dell'anno = tasso × raccolte previste in un anno × contenitori attivi</p>
 
 Le raccolte previste vengono dall'anagrafica del contenitore: 26 per una raccolta ogni due settimane. I contenitori attivi sono quelli della fornitura non cessati alla fine del periodo: un contenitore sostituito non conta due volte, due contenitori attivi insieme sì.
 
-L'incertezza della stima è un intervallo: con probabilità `r quota(parametri$livello_intervallo)` i conferimenti dell'anno stanno tra un valore basso e uno alto, riportati nei CSV. Il tasso si tratta come una probabilità incerta, con una distribuzione Beta che ha la media della formula sopra: più occasioni, intervallo più stretto.
+L'incertezza della stima è un intervallo: con probabilità `{r} quota(parametri$livello_intervallo)` i conferimenti dell'anno stanno tra un valore basso e uno alto, riportati nei CSV. Il tasso si tratta come una probabilità incerta, con una distribuzione Beta che ha la media della formula sopra: più occasioni, intervallo più stretto.
 
 ## Il confronto con il limite
 
@@ -291,7 +323,8 @@ I litri consentiti vengono dal nucleo e dal potenziamento in vigore all'ultima l
 
 La **probabilità di superare il limite** è la probabilità che il tasso vero sia più alto del tasso consentito, cioè dei conferimenti consentiti divisi per le raccolte dell'anno. Dice quanto è sicura la stima: una fornitura stimata appena sopra il limite con poche occasioni ha una probabilità vicina al 50%, una stimata molto sopra con molte occasioni vicina al 100%.
 
-```{r tabella-classi}
+```{r}
+#| label: tabella-classi
 spiegazione <- c(
   sprintf(
     "Probabilità di superare il limite: %s o più.",
@@ -332,7 +365,8 @@ knitr::kable(
 
 Per sapere se il metodo funziona servono bidoni di cui si conosce il comportamento vero. La simulazione costruisce un territorio di mille bidoni del secco da 120 litri, in dieci zone di quattro vie, ogni zona raccolta ogni 14 giorni in un giorno diverso. Ogni bidone ha un tasso vero: la maggior parte espone poco, uno su sette quasi sempre. Ogni raccolta la fa uno di cinque mezzi, a caso; solo i mezzi con l'antenna lasciano letture, e un'antenna perde il 3% dei bidoni esposti. Il periodo va da gennaio a dicembre; cambiano quando arrivano le antenne e su quanti mezzi.
 
-```{r simulazione}
+```{r}
+#| label: simulazione
 # Territorio simulato: valori veri noti. Le letture hanno le colonne del CSV
 # della pipeline che servono all'analisi.
 simula_conferimenti <- function(
@@ -482,7 +516,8 @@ tabella_scenari <- do.call(rbind, lapply(scenari, `[[`, "riga"))
 
 Il conto «per giorni» qui è quello che viene in mente per primo: le letture del bidone riportate a un anno con i giorni in cui le antenne c'erano. Il conto «per occasioni» è quello dell'analisi.
 
-```{r tabella-scenari}
+```{r}
+#| label: tabella-scenari
 knitr::kable(
   data.frame(
     tabella_scenari$scenario,
@@ -509,7 +544,8 @@ knitr::kable(
 )
 ```
 
-```{r verifiche-scenari}
+```{r}
+#| label: verifiche-scenari
 parziali <- tabella_scenari[grepl("2 mezzi", tabella_scenari$scenario), ]
 verifica_testo(
   all(parziali$scarto_giorni < -4) && all(abs(parziali$scarto_occasioni) < 2),
@@ -541,11 +577,12 @@ verifica_testo(
 
 Che cosa dice la tabella:
 
-- **Con l'antenna su una parte dei mezzi il conto per giorni sbaglia di molto**: con due mezzi su cinque sottostima di `r num(-max(parziali$scarto_giorni))`-`r num(-min(parziali$scarto_giorni))` conferimenti l'anno, su una media vera di `r num(mean(parziali$media_vera))`. Il conto per occasioni resta in media entro `r num(max(abs(parziali$scarto_occasioni)))` conferimenti dal vero, qualunque sia la copertura. Con tutti i mezzi i due conti si equivalgono: la differenza sta solo nella copertura.
-- **Pochi mesi con poche antenne non bastano per tutti**: da agosto con due mezzi su cinque ogni bidone ha in media `r num(tabella_scenari$occasioni[1])` occasioni, e le forniture con dati insufficienti sono `r quota(tabella_scenari$insufficienti[1])`. Con l'anno intero e tutti i mezzi quasi nessuna. L'analisi non inventa: dove i dati non bastano lo dice.
-- **Le forniture segnalate superano davvero il limite** in una quota dei casi tra `r quota(min(tabella_scenari$precisione))` e `r quota(max(tabella_scenari$precisione))`; tra le sole forniture «Oltre il limite», tra `r quota(min(tabella_scenari$precisione_oltre, na.rm = TRUE))` e `r quota(max(tabella_scenari$precisione_oltre, na.rm = TRUE))`. Gli errori sono per lo più forniture vicine al limite: delle forniture segnalate che non lo superano, `r quota(min(tabella_scenari$errori_vicini))` o più hanno conferimenti veri a meno di tre dal limite. Per un avviso, che non è una sanzione, è un buon compromesso; chi vuole meno errori può contattare solo le forniture «Oltre il limite».
+- **Con l'antenna su una parte dei mezzi il conto per giorni sbaglia di molto**: con due mezzi su cinque sottostima di `{r} num(-max(parziali$scarto_giorni))`-`{r} num(-min(parziali$scarto_giorni))` conferimenti l'anno, su una media vera di `{r} num(mean(parziali$media_vera))`. Il conto per occasioni resta in media entro `{r} num(max(abs(parziali$scarto_occasioni)))` conferimenti dal vero, qualunque sia la copertura. Con tutti i mezzi i due conti si equivalgono: la differenza sta solo nella copertura.
+- **Pochi mesi con poche antenne non bastano per tutti**: da agosto con due mezzi su cinque ogni bidone ha in media `{r} num(tabella_scenari$occasioni[1])` occasioni, e le forniture con dati insufficienti sono `{r} quota(tabella_scenari$insufficienti[1])`. Con l'anno intero e tutti i mezzi quasi nessuna. L'analisi non inventa: dove i dati non bastano lo dice.
+- **Le forniture segnalate superano davvero il limite** in una quota dei casi tra `{r} quota(min(tabella_scenari$precisione))` e `{r} quota(max(tabella_scenari$precisione))`; tra le sole forniture «Oltre il limite», tra `{r} quota(min(tabella_scenari$precisione_oltre, na.rm = TRUE))` e `{r} quota(max(tabella_scenari$precisione_oltre, na.rm = TRUE))`. Gli errori sono per lo più forniture vicine al limite: delle forniture segnalate che non lo superano, `{r} quota(min(tabella_scenari$errori_vicini))` o più hanno conferimenti veri a meno di tre dal limite. Per un avviso, che non è una sanzione, è un buon compromesso; chi vuole meno errori può contattare solo le forniture «Oltre il limite».
 
-```{r esempio-bidone}
+```{r}
+#| label: esempio-bidone
 # Un bidone della simulazione con l'anno intero e due mezzi su cinque: tra
 # quelli che espongono spesso ma non sempre, quello con il numero di occasioni
 # più vicino alla mediana.
@@ -582,9 +619,13 @@ passaggi$stato <- ifelse(
 )
 ```
 
-Un esempio, dalla simulazione con l'antenna tutto l'anno su due mezzi su cinque. Il bidone `r scelto$RFID` ha un tasso vero di `r num(v$p, 2)`: in un anno conferisce in media `r num(v$veri)` volte. Delle 26 raccolte della sua zona, `r sum(passaggi$antenna)` le ha fatte un mezzo con l'antenna. Dopo la prima lettura le occasioni sono `r scelto$occasioni` e le esposizioni `r scelto$esposizioni`: il tasso stimato è `r num(scelto$tasso, 2)`, e i conferimenti dell'anno `r num(scelto$conferimenti_annui)`. Il conto per giorni ne vedrebbe `r num(scelto$conferimenti_per_giorni)`.
+Un esempio, dalla simulazione con l'antenna tutto l'anno su due mezzi su cinque. Il bidone `{r} scelto$RFID` ha un tasso vero di `{r} num(v$p, 2)`: in un anno conferisce in media `{r} num(v$veri)` volte. Delle 26 raccolte della sua zona, `{r} sum(passaggi$antenna)` le ha fatte un mezzo con l'antenna. Dopo la prima lettura le occasioni sono `{r} scelto$occasioni` e le esposizioni `{r} scelto$esposizioni`: il tasso stimato è `{r} num(scelto$tasso, 2)`, e i conferimenti dell'anno `{r} num(scelto$conferimenti_annui)`. Il conto per giorni ne vedrebbe `{r} num(scelto$conferimenti_per_giorni)`.
 
-```{r grafico-bidone, fig.width=10, fig.height=2.6, fig.alt="Raccolte della zona di un bidone simulato: con e senza antenna, con il bidone letto o no"}
+```{r}
+#| label: grafico-bidone
+#| fig-width: 10
+#| fig-height: 2.6
+#| fig-alt: "Raccolte della zona di un bidone simulato: con e senza antenna, con il bidone letto o no"
 ggplot(passaggi, aes(giorno, 1, colour = stato, shape = stato)) +
   geom_point(size = 3.2, stroke = 1.1) +
   scale_colour_manual(
@@ -632,7 +673,11 @@ ggplot(passaggi, aes(giorno, 1, colour = stato, shape = stato)) +
 
 ## Risultati
 
-```{r grafico-risultati, fig.width=10, fig.height=5.4, fig.alt="Conferimenti dell'anno stimati e consentiti di ogni fornitura domestica"}
+```{r}
+#| label: grafico-risultati
+#| fig-width: 10
+#| fig-height: 5.4
+#| fig-alt: "Conferimenti dell'anno stimati e consentiti di ogni fornitura domestica"
 grafico <- stimate
 grafico$classe <- factor(grafico$classe, levels = classi[1:4])
 if (nrow(grafico) > 0) {
@@ -671,9 +716,10 @@ if (nrow(grafico) > 0) {
 }
 ```
 
-`r if (nrow(contattare) > 0) sprintf("Le forniture da contattare sono %s. Le prime %s, dalla più alta stima dei conferimenti eccedenti:", intero(nrow(contattare)), min(30, nrow(contattare))) else "Nel periodo non ci sono forniture da contattare."`
+`{r} if (nrow(contattare) > 0) sprintf("Le forniture da contattare sono %s. Le prime %s, dalla più alta stima dei conferimenti eccedenti:", intero(nrow(contattare)), min(30, nrow(contattare))) else "Nel periodo non ci sono forniture da contattare."`
 
-```{r tabella-contattare}
+```{r}
+#| label: tabella-contattare
 if (nrow(contattare) > 0) {
   prime <- utils::head(contattare, 30)
   knitr::kable(
@@ -717,7 +763,7 @@ if (nrow(contattare) > 0) {
 }
 ```
 
-`r if (nzchar(params$cartella_csv)) sprintf("L'elenco completo, tutte le forniture e i non censiti sono nei file %s, nella cartella %s.", paste(basename(file_csv), collapse = ", "), params$cartella_csv) else "Con il parametro cartella_csv il report scrive anche l'elenco completo, tutte le forniture e i non censiti in tre file CSV."`
+`{r} if (nzchar(params$cartella_csv)) sprintf("L'elenco completo, tutte le forniture e i non censiti sono nei file %s, nella cartella %s.", paste(basename(file_csv), collapse = ", "), normalizePath(cartella_csv)) else "Con il parametro cartella_csv il report scrive anche l'elenco completo, tutte le forniture e i non censiti in tre file CSV."`
 
 ## Bidoni non censiti
 
@@ -726,9 +772,10 @@ Di un bidone non censito non si conoscono fornitura, nucleo né manovra. Si poss
 - **Raccolte e volume** non sono a database: si prendono quelli più frequenti tra i contenitori censiti vicini, nella stessa via di solito dello stesso tipo e raccolti con la stessa frequenza; senza censiti vicini, quelli più frequenti nel comune, poi tra tutti i censiti.
 - **Nucleo minimo**: il nucleo più piccolo il cui limite copre i litri stimati. Se nemmeno cinque componenti bastano, il bidone è compatibile solo con il potenziamento, oppure conferisce oltre il limite.
 - **Quota di potenziamento**: tra le forniture censite domestiche con una stima nella stessa fascia di litri, quante hanno il potenziamento. È la migliore risposta che i dati danno alla domanda «questo bidone fa parte di una manovra sociale?», ma non è una prova: un nucleo numeroso o un'attività non domestica conferiscono allo stesso modo.
-- **Candidato**: un bidone rotto o perso viene sostituito con uno nuovo, che a volte non viene legato alla fornitura. Il contenitore censito più vicino, entro `r intero(parametri$raggio_sostituzione_m)` metri, letto per l'ultima volta prima della prima lettura del non censito, è il candidato: se c'è, il non censito eredita con buona probabilità la sua fornitura, il suo nucleo e la sua manovra, da verificare sul posto. È anche il modo più rapido per censirlo.
+- **Candidato**: un bidone rotto o perso viene sostituito con uno nuovo, che a volte non viene legato alla fornitura. Il contenitore censito più vicino, entro `{r} intero(parametri$raggio_sostituzione_m)` metri, letto per l'ultima volta prima della prima lettura del non censito, è il candidato: se c'è, il non censito eredita con buona probabilità la sua fornitura, il suo nucleo e la sua manovra, da verificare sul posto. È anche il modo più rapido per censirlo.
 
-```{r tabella-fasce}
+```{r}
+#| label: tabella-fasce
 m <- analisi$manovra_per_fascia
 knitr::kable(
   data.frame(
@@ -753,7 +800,8 @@ knitr::kable(
 )
 ```
 
-```{r tabella-non-censiti}
+```{r}
+#| label: tabella-non-censiti
 mostrati <- utils::head(nc[nc$dati_sufficienti, ], 30)
 if (nrow(mostrati) > 0) {
   knitr::kable(
@@ -797,13 +845,14 @@ if (nrow(mostrati) > 0) {
 }
 ```
 
-`r intero(sum(!is.na(nc$fornitura_candidata)))` non censiti hanno un candidato; `r intero(sum(!nc$dati_sufficienti))` hanno meno di `r parametri$occasioni_minime` occasioni e non compaiono nella tabella.
+`{r} intero(sum(!is.na(nc$fornitura_candidata)))` non censiti hanno un candidato; `{r} intero(sum(!nc$dati_sufficienti))` hanno meno di `{r} parametri$occasioni_minime` occasioni e non compaiono nella tabella.
 
 ## Sottocategorie delle forniture
 
 L'analisi riguarda le sole forniture domestiche, e le riconosce dalla sottocategoria della fornitura: «D» per una domestica, «ND» per una non domestica. Un non censito non ha sottocategoria. Una fornitura con un altro valore, o senza, finisce tra quelle di categoria sconosciuta: succede alle forniture censite che non hanno una decorrenza dei componenti, e quindi nemmeno nucleo e categoria. Le sottocategorie trovate nel periodo, e come sono state lette:
 
-```{r tabella-sottocategorie}
+```{r}
+#| label: tabella-sottocategorie
 domestiche_tutte <- fornitura_domestica(f$sottocategoria) %in% TRUE
 sottocategorie <- as.data.frame(
   table(sottocategoria = f$sottocategoria, useNA = "ifany"),
@@ -826,7 +875,7 @@ knitr::kable(
 con_potenziamento <- sum(f$potenziamento)
 ```
 
-Forniture con il potenziamento del secco all'ultima lettura: `r intero(con_potenziamento)`, di cui `r intero(sum(f$potenziamento & domestiche_tutte))` domestiche. La tabella delle manovre sociali arriva già filtrata alle sole dichiarazioni del potenziamento; una fornitura lo ha se, nel giorno della lettura, ne ha almeno una in vigore.
+Forniture con il potenziamento del secco all'ultima lettura: `{r} intero(con_potenziamento)`, di cui `{r} intero(sum(f$potenziamento & domestiche_tutte))` domestiche. La tabella delle manovre sociali arriva già filtrata alle sole dichiarazioni del potenziamento; una fornitura lo ha se, nel giorno della lettura, ne ha almeno una in vigore.
 
 ## Limiti e scelte da confermare
 
@@ -838,7 +887,8 @@ Forniture con il potenziamento del secco all'ultima lettura: `r intero(con_poten
 - **Un nucleo di zero residenti vale come uno.** La tabella della tariffa comincia da un componente.
 - **Parametri.** Raggio dei vicini, peso della media, occasioni minime e soglie di probabilità sono scelti con la simulazione; si cambiano con `parametri_conferimenti()`.
 
-```{r tabella-parametri}
+```{r}
+#| label: tabella-parametri
 knitr::kable(
   data.frame(
     c(
