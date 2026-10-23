@@ -177,7 +177,11 @@ Il file dei giri contiene `{r} intero(nrow(giri))` righe: `{r} intero(length(uni
 
 # Come si scelgono le letture
 
-1. **Antenne.** Si tengono le letture del giorno dei giri, con `matricola_veicolo` in lista e `servizio_giro` uguale a quello della lista. Il confronto non distingue maiuscole e minuscole nel servizio, né gli zeri iniziali nella matricola (`0101` e `101` sono lo stesso mezzo).
+1. **Antenne.** Per ogni mezzo e giorno della lista si tengono le letture in cui:
+    - il `servizio_giro` è quello della lista (**giro del calendario**); oppure
+    - il `servizio_giro` è vuoto, perché il mezzo non ha un giro nel calendario, e il `servizio_atteso` è il servizio atteso della lista (**servizio dedotto dai censiti**). Per un mezzo senza giro il servizio atteso è il servizio più frequente dei bidoni censiti che ha letto quel giorno.
+
+    Il servizio atteso della lista si ricava dal nome del giro con la tabella di conversione (`SECCO PaP` dà `SECCO`, `CARTA CONT.STRADALI` dà `CARTA`) o si indica nella colonna facoltativa `servizio_atteso` del file dei giri. Il nome del giro non si sovrascrive mai. Il confronto non distingue maiuscole e minuscole nel servizio, né gli zeri iniziali nella matricola (`0101` e `101` sono lo stesso mezzo).
 2. **Trasmissioni delle saponette.** Si prendono le coppie di giorno e `id_trasmissione` delle letture storiche in cui compare, lo stesso giorno, almeno uno degli RFID del punto 1.
 3. **Saponette.** Si tengono **tutte** le letture di quelle trasmissioni, anche di RFID che le antenne non hanno letto.
 4. **Confronto.** Per ogni RFID del giorno si guarda se è stato letto dalle antenne, dalle saponette o da entrambe.
@@ -191,7 +195,7 @@ DiagrammeR::grViz(paste0('
 digraph selezione {
   graph [rankdir=TB];', stile_dot, '
   lista [label="Lista dei giri\\n', paste(data_it(giorni_giri), collapse = ", "), ': ', intero(n_mezzi_lista), ' mezzi\\nservizio del giro ', paste(unique(giri$servizio_giro), collapse = ", "), '", fillcolor="#f0efec", color="#898781"];
-  ant [label="Letture con le antenne dei mezzi della lista\\ncon quel servizio del giro\\n', intero(nrow(antenne_giri)), ' letture, ', intero(dplyr::n_distinct(antenne_giri$RFID)), ' RFID (', intero(n_mezzi_antenne), ' mezzi con letture)", fillcolor="#fdeee6", color="#eb6834"];
+  ant [label="Letture con le antenne dei mezzi della lista:\\nservizio del giro della lista, oppure senza giro\\ne servizio atteso della lista\\n', intero(nrow(antenne_giri)), ' letture, ', intero(dplyr::n_distinct(antenne_giri$RFID)), ' RFID (', intero(n_mezzi_antenne), ' mezzi con letture)", fillcolor="#fdeee6", color="#eb6834"];
   trasm [label="Trasmissioni delle saponette dello stesso giorno\\nche hanno letto almeno uno di quegli RFID\\n', intero(nrow(abbinamenti)), ' trasmissioni"];
   sap [label="Tutte le letture di quelle trasmissioni\\n', intero(nrow(storiche_giri)), ' letture, ', intero(dplyr::n_distinct(storiche_giri$RFID)), ' RFID", fillcolor="#e3eefb", color="#2a78d6"];
   conf [label="Per ogni RFID: letto da entrambi,\\nsolo dalle antenne, solo dalle saponette", fillcolor="#e4f4ec", color="#1baf7a"];
@@ -221,6 +225,29 @@ knitr::kable(
     ))
   ),
   align = "llrr"
+)
+```
+
+Le letture delle antenne entrano nel confronto con due criteri. Il secondo vale per i mezzi senza giro nel calendario, quindi il servizio atteso viene dai bidoni che il mezzo stesso ha letto: i due gruppi si tengono separati.
+
+```{r}
+#| label: criteri
+per_criterio <- antenne_giri |>
+  dplyr::summarise(
+    Letture = dplyr::n(),
+    RFID = dplyr::n_distinct(.data$RFID),
+    Mezzi = dplyr::n_distinct(.data$chiave_mezzo),
+    .by = "criterio"
+  ) |>
+  dplyr::arrange(.data$criterio)
+knitr::kable(
+  dplyr::tibble(
+    `Criterio di scelta` = as.character(per_criterio$criterio),
+    Letture = intero(per_criterio$Letture),
+    `RFID distinti` = intero(per_criterio$RFID),
+    Mezzi = intero(per_criterio$Mezzi)
+  ),
+  align = "lrrr"
 )
 ```
 
@@ -272,6 +299,39 @@ dplyr::tibble(
   ) +
   tema_grafico +
   theme(axis.text.y = element_blank(), panel.grid.major.x = element_line(colour = "#e9e8e4"))
+```
+
+## Per criterio di scelta delle antenne
+
+Gli RFID letti dalle antenne si dividono secondo il criterio con cui la lettura è entrata. Per ognuno, la quota letta anche dalle saponette. Se i due gruppi danno risultati molto diversi, il secondo criterio (servizio dedotto dai censiti) pesa sul confronto.
+
+```{r}
+#| label: risultato-per-criterio
+rfid_criterio <- antenne_giri |>
+  dplyr::distinct(.data$data_lettura, .data$RFID, .data$criterio) |>
+  dplyr::arrange(.data$criterio) |>
+  dplyr::distinct(.data$data_lettura, .data$RFID, .keep_all = TRUE) |>
+  dplyr::left_join(classi, by = c("data_lettura", "RFID"))
+dplyr::bind_rows(
+  rfid_criterio |>
+    dplyr::summarise(
+      `RFID delle antenne` = dplyr::n(),
+      `Letti anche dalle saponette` = sum(.data$classe == "Entrambi"),
+      .by = "criterio"
+    ) |>
+    dplyr::mutate(criterio = as.character(.data$criterio)),
+  dplyr::tibble(
+    criterio = "Tutti",
+    `RFID delle antenne` = nrow(rfid_criterio),
+    `Letti anche dalle saponette` = sum(rfid_criterio$classe == "Entrambi")
+  )
+) |>
+  dplyr::mutate(
+    `Quota letta anche dalle saponette` = quota(.data$`Letti anche dalle saponette` / .data$`RFID delle antenne`),
+    dplyr::across(c("RFID delle antenne", "Letti anche dalle saponette"), intero)
+  ) |>
+  dplyr::rename(`Criterio di scelta` = "criterio") |>
+  knitr::kable(align = "lrrr")
 ```
 
 # Mezzo per mezzo
@@ -333,6 +393,43 @@ cat(
     "- Ogni mezzo con letture delle antenne ha almeno una trasmissione abbinata.\n"
   },
   sep = ""
+)
+```
+
+## Che cosa hanno letto i mezzi della lista
+
+La tabella elenca tutte le letture delle antenne dei mezzi della lista nei giorni della lista, per servizio del giro e servizio atteso, e dice con quale criterio entrano nel confronto. «(senza giro)» vuol dire che la pipeline non ha associato la lettura a un giro del calendario (`servizio_giro` vuoto): entra solo se il servizio atteso è quello della lista. Un mezzo può risultare senza letture perché le ha fatte con un altro servizio.
+
+```{r}
+#| label: servizi-dei-mezzi
+servizi_mezzi <- servizi_dei_mezzi_della_lista(antenne_tutte, giri)
+senza_letture_in_assoluto <- giri |>
+  dplyr::distinct(data_lettura = .data$data_giro, .data$matricola_veicolo) |>
+  dplyr::anti_join(servizi_mezzi, by = c("data_lettura", "matricola_veicolo"))
+tabella_servizi <- dplyr::bind_rows(
+  servizi_mezzi |>
+    dplyr::mutate(
+      `Nel confronto` = dplyr::coalesce(as.character(.data$criterio), "no")
+    ),
+  senza_letture_in_assoluto |>
+    dplyr::mutate(
+      servizio_giro = "nessuna lettura quel giorno",
+      servizio_atteso = "",
+      letture = 0L,
+      `Nel confronto` = "no"
+    )
+) |>
+  dplyr::arrange(.data$data_lettura, .data$matricola_veicolo, dplyr::desc(.data$letture))
+knitr::kable(
+  dplyr::tibble(
+    Mezzo = tabella_servizi$matricola_veicolo,
+    Giorno = if (un_giorno) NULL else data_it(tabella_servizi$data_lettura),
+    `Servizio del giro` = tabella_servizi$servizio_giro,
+    `Servizio atteso` = tabella_servizi$servizio_atteso,
+    Letture = intero(tabella_servizi$letture),
+    `Nel confronto` = tabella_servizi$`Nel confronto`
+  ),
+  align = "lllrl"
 )
 ```
 
@@ -474,6 +571,7 @@ if (nrow(qualita) == 0) {
 
 - **Una lista di giri come denominatore.** Il confronto sulla lista dei giri evita di dedurre i giri dalle letture. Un mezzo in lista senza letture resta nel conteggio.
 - **Antenne: giorno, mezzo e servizio.** Il servizio del giro è quello del calendario (`servizio_giro`), senza distinguere maiuscole: `SECCO PaP` e `SECCO PAP` sono lo stesso giro. Le matricole si confrontano senza zeri iniziali.
+- **Mezzi senza giro nel calendario.** Se il mezzo non ha un giro quel giorno il `servizio_giro` è vuoto, ma la lista dice che il giro c'era: si tengono le sue letture con `servizio_atteso` uguale a quello della lista. Quel servizio è dedotto dagli stessi bidoni che il mezzo ha letto (il più frequente tra i censiti), quindi seleziona i mezzi che hanno letto soprattutto bidoni di quel servizio e non dimostra da solo che facessero quel giro: l'informazione viene dalla lista. Per questo il risultato si mostra anche diviso per criterio.
 - **Saponette: tutte le letture delle trasmissioni scelte.** Una trasmissione è scelta se ha letto, lo stesso giorno, almeno un RFID delle antenne dei giri. Un solo RFID in comune basta, come richiesto; la tabella degli abbinamenti dice quante trasmissioni dipendono da un solo RFID. Questo vuol dire che le trasmissioni scelte sono solo quelle che hanno qualcosa in comune con le antenne: un operatore che ha usato le saponette senza che le antenne leggessero lo stesso RFID non compare. Per le saponette non usate o non abbinabili il report dà il numero di mezzi senza trasmissioni.
 - **Le trasmissioni comprendono anche RFID di altri giri.** Se un operatore ha usato la saponetta su più mezzi o più giri nella stessa trasmissione, i suoi RFID in più finiscono tra i «solo saponette». Si controllano guardando se un'antenna li ha letti altrove.
 - **Un RFID al giorno.** Le letture con le antenne e le storiche tengono al più una lettura per RFID e giorno; un RFID letto due volte lo stesso giorno conta una volta.
@@ -492,6 +590,9 @@ Il file ha una riga per mezzo e giorno, con tre colonne:
 | `data_giro` | giorno del giro, `AAAA-MM-GG` oppure `GG/MM/AAAA` |
 | `matricola_veicolo` | matricola del mezzo; gli zeri iniziali non contano (`0101` e `101` sono lo stesso mezzo) |
 | `servizio_giro` | servizio del giro come nel calendario, per esempio `SECCO PaP`; le maiuscole non contano |
+| `servizio_atteso` | facoltativa: il servizio (tipologia) delle letture di un mezzo senza giro, per esempio `CARTA`; senza, si ricava dal nome del giro con la tabella di conversione |
+
+Se il nome del giro non è nella tabella di conversione (come `CARTA/CART.CONT.STRADALI`), il report si ferma e lo dice: si aggiunge il nome a `tipologie_servizio()` oppure si indica `servizio_atteso` nel file.
 
 Il separatore può essere la virgola o il punto e virgola. Le righe vuote si ignorano, e una riga a metà dà un errore con il numero di riga. Con più giorni, mezzi o servizi nello stesso file il confronto si fa su tutti insieme; per ogni mezzo e giorno vale il servizio della sua riga.
 

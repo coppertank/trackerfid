@@ -15,14 +15,40 @@ chiave_servizio_giro <- function(x) {
   toupper(trimws(as.character(x)))
 }
 
+#' Servizio atteso (tipologia) di un servizio del giro, dalla tabella di conversione
+#'
+#' `"SECCO PaP"` dà `"SECCO"`. Un nome che la tabella non riconosce dà un
+#' errore: va aggiunto a `tipologie_servizio()` o indicato nel file dei giri.
+#' @param servizio_giro Nomi del calendario.
+#' @return I servizi attesi, in maiuscolo.
+#' @noRd
+servizio_atteso_del_giro <- function(servizio_giro) {
+  noti <- unique(conversione_servizi()$servizio)
+  atteso <- stringr::str_to_upper(uniforma_servizio(servizio_giro))
+  ignoti <- unique(servizio_giro[!atteso %in% noti])
+  if (length(ignoti) > 0) {
+    stop(
+      "Servizio del giro non riconosciuto dalla tabella di conversione: ",
+      paste0("\u00ab", ignoti, "\u00bb", collapse = ", "),
+      ". Aggiungilo a `tipologie_servizio()` oppure indica il servizio atteso ",
+      "nella colonna `servizio_atteso` del file dei giri.",
+      call. = FALSE
+    )
+  }
+  atteso
+}
+
 #' I giri da controllare, letti da un CSV: una riga per giorno, mezzo e servizio del giro
 #'
 #' Colonne `data_giro` (`AAAA-MM-GG` o `GG/MM/AAAA`), `matricola_veicolo` e
-#' `servizio_giro`; separatore virgola o punto e virgola, nomi delle colonne
-#' senza badare alle maiuscole, righe vuote ignorate. Più giorni, mezzi e
-#' servizi nello stesso file valgono tutti.
+#' `servizio_giro`; facoltativa `servizio_atteso`, il servizio (tipologia)
+#' delle letture di un mezzo senza giro. Senza, si ricava dal nome del giro
+#' con la tabella di conversione (`SECCO PaP` dà `SECCO`). Separatore virgola
+#' o punto e virgola, nomi delle colonne senza badare alle maiuscole, righe
+#' vuote ignorate. Più giorni, mezzi e servizi nello stesso file valgono tutti.
 #' @param percorso Percorso del CSV.
-#' @return `data_giro` (data), `matricola_veicolo` e `servizio_giro` (testi).
+#' @return `data_giro` (data), `matricola_veicolo`, `servizio_giro` e
+#'   `servizio_atteso` (testi).
 #' @noRd
 giri_di_controllo <- function(percorso) {
   colonne <- c("data_giro", "matricola_veicolo", "servizio_giro")
@@ -36,7 +62,8 @@ giri_di_controllo <- function(percorso) {
   giri <- leggi_tabella_origine(percorso)
   names(giri) <- tolower(trimws(names(giri)))
   richiedi_colonne(giri, colonne, "giri_controllo")
-  giri <- giri[colonne] |>
+  giri$servizio_atteso <- giri[["servizio_atteso"]] %||% NA_character_
+  giri <- giri[c(colonne, "servizio_atteso")] |>
     dplyr::mutate(riga = dplyr::row_number() + 1L) |>
     dplyr::filter(dplyr::if_any(dplyr::all_of(colonne), \(x) !is.na(x)))
 
@@ -63,44 +90,128 @@ giri_di_controllo <- function(percorso) {
       call. = FALSE
     )
   }
+  giri$servizio_atteso <- stringr::str_to_upper(giri$servizio_atteso)
+  # La conversione solo dove il file non indica il servizio atteso.
+  da_ricavare <- is.na(giri$servizio_atteso)
+  if (any(da_ricavare)) {
+    giri$servizio_atteso[da_ricavare] <- servizio_atteso_del_giro(
+      giri$servizio_giro[da_ricavare]
+    )
+  }
   giri |>
-    dplyr::select(dplyr::all_of(colonne)) |>
+    dplyr::select(dplyr::all_of(c(colonne, "servizio_atteso"))) |>
     dplyr::distinct()
 }
 
-#' Letture con le antenne dei giri della lista
+#' Tutte le letture con le antenne dei mezzi della lista, con il criterio che le sceglie
 #'
-#' Si tengono le letture del giorno e del mezzo della lista con lo stesso
-#' servizio del giro, senza badare a maiuscole e zeri iniziali della matricola.
+#' Per ogni mezzo e giorno della lista una lettura entra nel confronto se:
+#' 1. il suo `servizio_giro` è quello della lista (`"giro del calendario"`); oppure
+#' 2. il suo `servizio_giro` è vuoto (il mezzo non ha un giro nel calendario) e
+#'    il suo `servizio_atteso` è il servizio atteso della lista
+#'    (`"servizio dedotto dai censiti"`).
+#' Il nome del giro non si sovrascrive mai: il servizio atteso di un mezzo
+#' senza giro viene dai bidoni censiti che ha letto quel giorno.
 #' @param antenne Letture con le antenne, con `data_ora_lettura`,
-#'   `matricola_veicolo` e `servizio_giro`.
+#'   `matricola_veicolo`, `servizio_giro` e `servizio_atteso`.
 #' @param giri Risultato di `giri_di_controllo()`.
-#' @return Le letture, con `data_lettura` e `chiave_mezzo`.
+#' @return Tutte le letture dei mezzi della lista nei giorni della lista, con
+#'   `data_lettura`, `chiave_mezzo`, `matricola_lista` (come nella lista) e
+#'   `criterio` (mancante se la lettura non entra nel confronto).
 #' @noRd
-antenne_dei_giri <- function(antenne, giri) {
+letture_dei_mezzi_della_lista <- function(antenne, giri) {
   richiedi_colonne(
     antenne,
-    c("matricola_veicolo", "servizio_giro"),
+    c("matricola_veicolo", "servizio_giro", "servizio_atteso"),
     "giri_controllo"
   )
   elenco <- giri |>
     dplyr::transmute(
       data_lettura = .data$data_giro,
+      matricola_lista = .data$matricola_veicolo,
       chiave_mezzo = chiave_matricola(.data$matricola_veicolo),
-      chiave_giro = chiave_servizio_giro(.data$servizio_giro)
+      chiave_giro = chiave_servizio_giro(.data$servizio_giro),
+      atteso_lista = chiave_servizio_giro(.data$servizio_atteso)
     ) |>
     dplyr::distinct()
+  criteri <- c("giro del calendario", "servizio dedotto dai censiti")
   antenne |>
     con_data_lettura() |>
     dplyr::mutate(
+      lettura = dplyr::row_number(),
       chiave_mezzo = chiave_matricola(.data$matricola_veicolo),
-      chiave_giro = chiave_servizio_giro(.data$servizio_giro)
+      giro_lettura = chiave_servizio_giro(.data$servizio_giro),
+      atteso_lettura = chiave_servizio_giro(.data$servizio_atteso)
     ) |>
-    dplyr::semi_join(
+    dplyr::inner_join(
       elenco,
-      by = c("data_lettura", "chiave_mezzo", "chiave_giro")
+      by = c("data_lettura", "chiave_mezzo"),
+      relationship = "many-to-many"
     ) |>
-    dplyr::select(-"chiave_giro")
+    dplyr::mutate(
+      criterio = dplyr::case_when(
+        (.data$giro_lettura == .data$chiave_giro) %in% TRUE ~ criteri[1],
+        is.na(.data$giro_lettura) &
+          (.data$atteso_lettura == .data$atteso_lista) %in% TRUE ~ criteri[2],
+        .default = NA_character_
+      )
+    ) |>
+    # Una lettura con due righe della lista: vale il criterio migliore.
+    dplyr::arrange(.data$lettura, is.na(.data$criterio), .data$criterio) |>
+    dplyr::distinct(.data$lettura, .keep_all = TRUE) |>
+    dplyr::mutate(
+      criterio = factor(.data$criterio, criteri)
+    ) |>
+    dplyr::select(
+      -"lettura", -"giro_lettura", -"atteso_lettura", -"chiave_giro", -"atteso_lista"
+    )
+}
+
+#' Letture con le antenne dei giri della lista
+#'
+#' Le letture dei mezzi della lista che entrano nel confronto, con il criterio
+#' che le ha scelte (`letture_dei_mezzi_della_lista()`).
+#' @inheritParams letture_dei_mezzi_della_lista
+#' @return Le letture, con `data_lettura`, `chiave_mezzo` e `criterio`.
+#' @noRd
+antenne_dei_giri <- function(antenne, giri) {
+  antenne |>
+    letture_dei_mezzi_della_lista(giri) |>
+    dplyr::filter(!is.na(.data$criterio)) |>
+    dplyr::select(-"matricola_lista")
+}
+
+#' Tutte le letture dei mezzi della lista nei giorni della lista, per servizio del giro
+#'
+#' Serve a capire perché un mezzo risulta senza letture: le letture ci sono
+#' ma con un altro servizio del giro, o senza giro (`servizio_giro` vuoto,
+#' quando la pipeline non lo ha associato al calendario).
+#' @inheritParams letture_dei_mezzi_della_lista
+#' @return `data_lettura`, `matricola_veicolo` (come nella lista),
+#'   `servizio_giro` (`"(senza giro)"` se vuoto), `servizio_atteso`
+#'   (`"(vuoto)"` se mancante), `criterio` (mancante se la lettura non entra) e
+#'   `letture`.
+#' @noRd
+servizi_dei_mezzi_della_lista <- function(antenne, giri) {
+  antenne |>
+    letture_dei_mezzi_della_lista(giri) |>
+    dplyr::mutate(
+      servizio_giro = dplyr::coalesce(.data$servizio_giro, "(senza giro)"),
+      servizio_atteso = dplyr::coalesce(.data$servizio_atteso, "(vuoto)")
+    ) |>
+    dplyr::count(
+      .data$data_lettura,
+      matricola_veicolo = .data$matricola_lista,
+      .data$servizio_giro,
+      .data$servizio_atteso,
+      .data$criterio,
+      name = "letture"
+    ) |>
+    dplyr::arrange(
+      .data$data_lettura,
+      .data$matricola_veicolo,
+      dplyr::desc(.data$letture)
+    )
 }
 
 #' Letture storiche di tutte le trasmissioni che hanno letto un RFID dei giri

@@ -29,6 +29,7 @@ antenne_prova <- function() {
       rep("SECCO PAP", 5), "UMIDO PAP", "SECCO PAP", "SECCO PAP", "SECCO PAP", "SECCO PAP"
     ),
     RFID = c("A", "B", "C", "D", "E", "F", "G", "Y", "A", "H"),
+    servizio_atteso = c("SECCO", "SECCO", "SECCO", "SECCO", "SECCO", "UMIDO", "SECCO", "SECCO", "SECCO", "SECCO"),
     servizio_transponder = c("SECCO", "SECCO", "SECCO", "SECCO", NA, "UMIDO", "SECCO", "SECCO", "SECCO", "SECCO")
   )
 }
@@ -193,4 +194,70 @@ test_that("i servizi per classe usano l'anagrafica di uno dei due sistemi", {
   e <- servizi[servizi$classe == "Solo antenne", ]
   expect_identical(e$servizio, "(non censito)")
   expect_identical(sum(servizi$n), nrow(classi))
+})
+
+test_that("i servizi dei mezzi della lista dicono che cosa hanno letto, anche senza giro", {
+  antenne <- dplyr::tibble(
+    data_ora_lettura = c(
+      "2026-10-20 07:00:00", "2026-10-20 07:05:00", "2026-10-20 07:10:00",
+      "2026-10-20 07:15:00", "2026-10-21 07:00:00"
+    ),
+    matricola_veicolo = c("101", "101", "101", "303", "101"),
+    servizio_giro = c("SECCO PAP", NA, NA, "UMIDO PAP", "SECCO PAP"),
+    servizio_atteso = c("SECCO", "SECCO", "CARTA", "UMIDO", "SECCO")
+  )
+  risultato <- servizi_dei_mezzi_della_lista(antenne, giri_prova())
+  # 0101 e 101 sono lo stesso mezzo; il 21/10 non è in lista
+  letture_101 <- risultato[risultato$matricola_veicolo == "0101", ]
+  expect_identical(letture_101$servizio_giro, c("(senza giro)", "(senza giro)", "SECCO PAP"))
+  expect_identical(letture_101$letture, c(1L, 1L, 1L))
+  # la lettura senza giro con servizio atteso SECCO entra, quella con CARTA no
+  expect_identical(
+    as.character(letture_101$criterio),
+    c(NA, "servizio dedotto dai censiti", "giro del calendario")
+  )
+  expect_identical(risultato$letture[risultato$matricola_veicolo == "303"], 1L)
+  expect_false("202" %in% risultato$matricola_veicolo)
+})
+
+test_that("un mezzo senza giro entra con le letture del servizio atteso della lista", {
+  antenne <- dplyr::tibble(
+    data_ora_lettura = rep("2026-10-20 07:00:00", 6),
+    matricola_veicolo = c("0101", "0101", "0101", "0101", "303", "303"),
+    servizio_giro = c(NA, NA, NA, "UMIDO PAP", "SECCO PaP", NA),
+    servizio_atteso = c("SECCO", "SECCO", "CARTA", "SECCO", "SECCO", "SECCO"),
+    RFID = c("A", "B", "C", "D", "E", "F")
+  )
+  risultato <- antenne_dei_giri(antenne, giri_prova())
+  # A e B: senza giro, servizio atteso SECCO. C: atteso CARTA. D: ha un altro giro.
+  # E: giro della lista. F: senza giro e SECCO
+  expect_setequal(risultato$RFID, c("A", "B", "E", "F"))
+  criteri <- stats::setNames(as.character(risultato$criterio), risultato$RFID)
+  expect_identical(
+    criteri[c("A", "B", "E", "F")],
+    c(A = "servizio dedotto dai censiti", B = "servizio dedotto dai censiti", E = "giro del calendario", F = "servizio dedotto dai censiti")
+  )
+})
+
+test_that("il servizio atteso della lista si ricava dalla tabella di conversione", {
+  percorso <- scrivi_giri(c(
+    "data_giro,matricola_veicolo,servizio_giro",
+    "2026-10-20,1,SECCO PaP",
+    "2026-10-20,2,CARTA CONT.STRADALI"
+  ))
+  expect_identical(giri_di_controllo(percorso)$servizio_atteso, c("SECCO", "CARTA"))
+  # un nome che la tabella non conosce ferma il report, con il modo di risolvere
+  ignoto <- scrivi_giri(c(
+    "data_giro,matricola_veicolo,servizio_giro",
+    "2026-10-20,1,CARTA/CART.CONT.STRADALI"
+  ))
+  expect_error(giri_di_controllo(ignoto), "tipologie_servizio")
+  # oppure lo si indica nel file
+  con_colonna <- scrivi_giri(c(
+    "data_giro,matricola_veicolo,servizio_giro,servizio_atteso",
+    "2026-10-20,1,CARTA/CART.CONT.STRADALI,carta",
+    "2026-10-20,2,SECCO PaP,"
+  ))
+  giri <- giri_di_controllo(con_colonna)
+  expect_identical(giri$servizio_atteso, c("CARTA", "SECCO"))
 })
