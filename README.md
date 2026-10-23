@@ -328,23 +328,41 @@ L'app non usa ancora questa analisi.
 
 ## Confronto tra letture storiche e letture con le antenne
 
-Il report `docs/confronto_antenne.qmd` confronta le letture dei lettori manuali (le saponette) con quelle delle antenne. Si compila a mano, come gli altri, e ha cinque parametri:
+Il report `docs/confronto_antenne.qmd` confronta le letture dei lettori manuali (le saponette) con quelle delle antenne. Si compila a mano, come gli altri, e ha questi parametri:
 
 | Parametro | Che cosa fa |
 |---|---|
 | `letture_antenne` | CSV delle letture con le antenne, di norma `data-raw/output/letture_app.csv` |
 | `letture_storiche` | CSV delle letture storiche, di norma `data-raw/output/letture_storiche.csv` |
-| `servizio` | tiene le letture con `servizio_atteso` **oppure** `servizio_transponder` uguale al valore, per esempio `"SECCO"` |
+| `servizio` | tiene le letture con `servizio_atteso` **oppure** `servizio_transponder` uguale al valore, per esempio `"SECCO"` (le storiche hanno solo il secondo) |
 | `categorie_escluse` | toglie le letture di quella `categoria`, per esempio `"34"`; i non censiti, senza categoria, restano |
 | `sottocategoria` | tiene solo le letture di quella `sottocategoria`, per esempio `"D"`; i non censiti, senza sottocategoria, escono |
+| `mezzi_totali` | mezzi della flotta, per la proiezione (analisi H); vuoto: niente proiezione |
+| `chip_condivisi_minimi` | RFID letti dai due sistemi perché una trasmissione delle saponette sia abbinata a un mezzo (analisi C), 3 |
+| `finestra_giorni` | giorni della finestra mobile della copertura (analisi B), 28 |
 
-Un parametro vuoto non filtra; per più valori si passa un elenco (`c("SECCO", "CARTA")`). I percorsi relativi partono dalla radice del progetto. Dopo i filtri si prendono gli RFID delle letture con le antenne; delle letture storiche si tengono le coppie di `data_lettura` e `id_trasmissione` in cui compare almeno uno di quegli RFID, e tutte le letture storiche di quelle coppie. Il report mostra i parametri, i conteggi di partenza e quanti RFID in un giorno sono stati letti solo dalle saponette, solo dalle antenne o da entrambe.
+Un parametro di filtro vuoto non filtra; per più valori si passa un elenco (`c("SECCO", "CARTA")`). I percorsi relativi partono dalla radice del progetto.
+
+Il report comincia dal confronto iniziale: degli RFID letti dalle antenne dopo i filtri si prendono le coppie di `data_lettura` e `id_trasmissione` in cui compaiono nelle letture storiche, e si tengono tutte le letture storiche di quelle coppie. Questo confronto resta, ma non è del tutto equo: un giro delle saponette comprende RFID che le antenne non hanno mai letto (un mezzo senza antenna, un bidone non raccolto da un mezzo attrezzato, un bidone non letto dall'antenna), quindi è a svantaggio delle antenne, e il primo e l'ultimo mese sono parziali. Il report lo spiega con diagrammi e statistiche, poi lo corregge e aggiunge otto analisi:
+
+| | Analisi |
+|---|---|
+| Correzione 1 | letture al giorno per mese, non totali del mese |
+| Correzione 2 | le saponette contano solo gli RFID delle antenne |
+| A | stesso periodo dell'anno prima (364 giorni), per giorno, con un intervallo al 95% |
+| B | quota dei contenitori attivi letti almeno una volta in ogni finestra mobile |
+| C | mezzi e giorni in cui i due sistemi hanno lavorato insieme: RFID letti da entrambi, solo dalle saponette, solo dalle antenne |
+| D | giri registrati al giorno e RFID per giro, nel tempo |
+| E | letture a settimana al crescere dei mezzi con antenna |
+| F | RFID delle antenne che nessuna saponetta ha mai letto |
+| G | coerenza delle letture con le antenne con il servizio e con il comune |
+| H | proiezione a tutta la flotta, come stima |
 
 ```r
 source("data-raw/compila_report.R")
 compila_report(
   "docs/confronto_antenne.qmd",
-  list(servizio = "SECCO", categorie_escluse = "34", sottocategoria = "D")
+  list(servizio = "SECCO", categorie_escluse = "34", sottocategoria = "D", mezzi_totali = 40)
 )   # crea data-raw/output/confronto_antenne.html
 ```
 

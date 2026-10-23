@@ -22,26 +22,28 @@ richiedi_colonne <- function(letture, colonne, filtro) {
   if (length(mancanti) > 0) {
     stop(
       "Il filtro `", filtro, "` richiede le colonne: ",
-      paste(mancanti, collapse = ", "),
+      paste(colonne, collapse = ", "),
       ".",
       call. = FALSE
     )
   }
 }
 
-#' Letture delle antenne filtrate per servizio, categoria e sottocategoria
+#' Letture filtrate per servizio, categoria e sottocategoria
 #'
-#' Un filtro vuoto (`NULL`, `NA` o `""`) non filtra; più valori in un filtro
-#' valgono "uno qualsiasi di".
+#' Vale per le letture con le antenne e per le storiche. Un filtro vuoto
+#' (`NULL`, `NA` o `""`) non filtra; più valori in un filtro valgono "uno
+#' qualsiasi di".
 #' @param letture Data frame con le colonne dei filtri usati.
 #' @param servizio Si tengono le letture con `servizio_atteso` oppure
-#'   `servizio_transponder` uguale a uno dei valori (maiuscole ininfluenti).
+#'   `servizio_transponder` uguale a uno dei valori (maiuscole ininfluenti);
+#'   le storiche hanno solo il secondo.
 #' @param categorie_escluse Si tolgono le letture di queste `categoria`; i non
 #'   censiti, senza categoria, restano.
 #' @param sottocategoria Si tengono solo le letture con questa
 #'   `sottocategoria`; i non censiti, senza sottocategoria, escono.
 #' @noRd
-filtra_letture_antenne <- function(
+filtra_letture <- function(
   letture,
   servizio = NULL,
   categorie_escluse = NULL,
@@ -54,15 +56,23 @@ filtra_letture_antenne <- function(
 
   if (!is.null(voci_servizio)) {
     voci_servizio <- toupper(voci_servizio)
-    richiedi_colonne(
-      letture,
+    colonne <- intersect(
       c("servizio_atteso", "servizio_transponder"),
-      "servizio"
+      names(letture)
     )
+    if (length(colonne) == 0) {
+      richiedi_colonne(
+        letture,
+        c("servizio_atteso", "servizio_transponder"),
+        "servizio"
+      )
+    }
     letture <- dplyr::filter(
       letture,
-      toupper(.data$servizio_atteso) %in% voci_servizio |
-        toupper(.data$servizio_transponder) %in% voci_servizio
+      dplyr::if_any(
+        dplyr::all_of(colonne),
+        \(x) toupper(x) %in% voci_servizio
+      )
     )
   }
   if (!is.null(voci_categorie)) {
@@ -103,33 +113,15 @@ storiche_di_confronto <- function(letture_storiche, letture_antenne) {
   dplyr::semi_join(storiche, giri, by = c("data_lettura", "id_trasmissione"))
 }
 
-#' RFID letti ogni giorno da saponette, antenne o entrambe
+#' RFID letti ogni giorno, con l'origine della lettura: unione di due serie
 #'
-#' 1. filtra le letture con le antenne (`filtra_letture_antenne()`);
-#' 2. tiene le letture storiche dei giri in cui le saponette hanno letto un
-#'    RFID di quelle letture (`storiche_di_confronto()`);
-#' 3. unisce letture storiche e letture con le antenne, un RFID al più una
-#'    volta al giorno.
-#' @param letture_storiche,letture_app Data frame (anche da `targets::tar_load()`)
-#'   o percorsi dei CSV della pipeline, con `RFID` e
-#'   `data_ora_lettura`; le storiche anche con `id_trasmissione`.
-#' @inheritParams filtra_letture_antenne
-#' @return Tibble con `data_lettura` (data), `RFID` e `origine`:
-#'   `"Saponette"`, `"Antenne"` o `"Entrambe"`, per giorno e RFID.
+#' Un RFID al più una volta al giorno per ognuno dei due metodi.
+#' @param storiche Letture storiche già scelte, con `data_lettura` e `RFID`.
+#' @param antenne Letture con le antenne già scelte, con `data_ora_lettura` e
+#'   `RFID`.
+#' @return Come `confronta_letture()`.
 #' @noRd
-confronta_letture <- function(
-  letture_storiche = "data-raw/output/letture_storiche.csv",
-  letture_app = "data-raw/output/letture_app.csv",
-  servizio = NULL,
-  categorie_escluse = NULL,
-  sottocategoria = NULL
-) {
-  antenne <- leggi_letture_confronto(letture_app) |>
-    filtra_letture_antenne(servizio, categorie_escluse, sottocategoria)
-  storiche <- leggi_letture_confronto(letture_storiche) |>
-    storiche_di_confronto(antenne)
-
-  # Un RFID al più una volta al giorno, per ognuno dei due metodi.
+unisci_origini <- function(storiche, antenne) {
   da_saponette <- storiche |>
     dplyr::distinct(.data$data_lettura, .data$RFID) |>
     dplyr::mutate(saponette = TRUE)
@@ -154,4 +146,33 @@ confronta_letture <- function(
     ) |>
     dplyr::select("data_lettura", "RFID", "origine") |>
     dplyr::arrange(.data$data_lettura, .data$RFID)
+}
+
+#' RFID letti ogni giorno da saponette, antenne o entrambe
+#'
+#' 1. filtra le letture con le antenne (`filtra_letture()`);
+#' 2. tiene le letture storiche dei giri in cui le saponette hanno letto un
+#'    RFID di quelle letture (`storiche_di_confronto()`);
+#' 3. unisce letture storiche e letture con le antenne, un RFID al più una
+#'    volta al giorno.
+#' @param letture_storiche,letture_app Data frame (anche da `targets::tar_load()`)
+#'   o percorsi dei CSV della pipeline, con `RFID` e
+#'   `data_ora_lettura`; le storiche anche con `id_trasmissione`.
+#' @inheritParams filtra_letture
+#' @return Tibble con `data_lettura` (data), `RFID` e `origine`:
+#'   `"Saponette"`, `"Antenne"` o `"Entrambe"`, per giorno e RFID.
+#' @noRd
+confronta_letture <- function(
+  letture_storiche = "data-raw/output/letture_storiche.csv",
+  letture_app = "data-raw/output/letture_app.csv",
+  servizio = NULL,
+  categorie_escluse = NULL,
+  sottocategoria = NULL
+) {
+  antenne <- leggi_letture_confronto(letture_app) |>
+    filtra_letture(servizio, categorie_escluse, sottocategoria)
+  storiche <- leggi_letture_confronto(letture_storiche) |>
+    storiche_di_confronto(antenne)
+
+  unisci_origini(storiche, antenne)
 }

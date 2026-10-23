@@ -45,11 +45,11 @@ antenne_filtri <- function() {
   )
 }
 
-test_that("filtra_letture_antenne senza parametri non filtra", {
+test_that("filtra_letture senza parametri non filtra", {
   antenne <- antenne_filtri()
-  expect_identical(filtra_letture_antenne(antenne), antenne)
+  expect_identical(filtra_letture(antenne), antenne)
   expect_identical(
-    filtra_letture_antenne(antenne, servizio = "", categorie_escluse = NA, sottocategoria = character(0)),
+    filtra_letture(antenne, servizio = "", categorie_escluse = NA, sottocategoria = character(0)),
     antenne
   )
 })
@@ -58,15 +58,15 @@ test_that("il servizio vale per il servizio atteso o per quello del transponder"
   antenne <- antenne_filtri()
   # B ha il secco solo nel transponder, E solo come servizio atteso
   expect_identical(
-    filtra_letture_antenne(antenne, servizio = "SECCO")$RFID,
+    filtra_letture(antenne, servizio = "SECCO")$RFID,
     c("A", "B", "E")
   )
   expect_identical(
-    filtra_letture_antenne(antenne, servizio = "secco")$RFID,
+    filtra_letture(antenne, servizio = "secco")$RFID,
     c("A", "B", "E")
   )
   expect_identical(
-    filtra_letture_antenne(antenne, servizio = c("SECCO", "CARTA"))$RFID,
+    filtra_letture(antenne, servizio = c("SECCO", "CARTA"))$RFID,
     c("A", "B", "C", "E")
   )
 })
@@ -74,26 +74,26 @@ test_that("il servizio vale per il servizio atteso o per quello del transponder"
 test_that("le categorie escluse tolgono quelle categorie e tengono i non censiti", {
   antenne <- antenne_filtri()
   expect_identical(
-    filtra_letture_antenne(antenne, categorie_escluse = "34")$RFID,
+    filtra_letture(antenne, categorie_escluse = "34")$RFID,
     c("A", "D", "E")
   )
   # anche un numero
   expect_identical(
-    filtra_letture_antenne(antenne, categorie_escluse = c(34, 44))$RFID,
+    filtra_letture(antenne, categorie_escluse = c(34, 44))$RFID,
     c("A", "D")
   )
 })
 
 test_that("la sottocategoria tiene solo quella, senza i non censiti", {
   expect_identical(
-    filtra_letture_antenne(antenne_filtri(), sottocategoria = "D")$RFID,
+    filtra_letture(antenne_filtri(), sottocategoria = "D")$RFID,
     c("A", "B")
   )
 })
 
 test_that("i filtri si combinano e una colonna mancante dà un errore chiaro", {
   expect_identical(
-    filtra_letture_antenne(
+    filtra_letture(
       antenne_filtri(),
       servizio = "SECCO",
       categorie_escluse = "34",
@@ -102,11 +102,11 @@ test_that("i filtri si combinano e una colonna mancante dà un errore chiaro", {
     "A"
   )
   expect_error(
-    filtra_letture_antenne(dplyr::tibble(RFID = "A"), servizio = "SECCO"),
+    filtra_letture(dplyr::tibble(RFID = "A"), servizio = "SECCO"),
     "servizio_atteso, servizio_transponder"
   )
   expect_error(
-    filtra_letture_antenne(dplyr::tibble(RFID = "A"), sottocategoria = "D"),
+    filtra_letture(dplyr::tibble(RFID = "A"), sottocategoria = "D"),
     "sottocategoria"
   )
 })
