@@ -346,4 +346,4 @@ La pipeline scrive in `data-raw/output/` l'elenco delle letture il cui comune fi
 
 # Come si cambia
 
-La scelta sta in `correggi_comune_lettura()`; l'importazione in `importa_letture()`; il calcolo del punto in `comune_del_punto()` (`R/utils_geografia.R`); l'ordine dei passi in `prepara_letture_app()`. I test sono in `test-fct_preparazione_letture.R` e `test-fct_importa_tabelle.R`. Quando la logica cambia vanno aggiornati questo file (la tabella dei casi si ricalcola da sola, il testo no), `CLAUDE.md` e il README, e il documento va ricompilato.
+La scelta sta in `correggi_comune_lettura()`; l'importazione in `importa_letture_antenne()`; il calcolo del punto in `comune_del_punto()` (`R/utils_geografia.R`); l'ordine dei passi in `prepara_letture_antenne()`. I test sono in `test-fct_preparazione_letture.R` e `test-fct_importa_tabelle.R`. Quando la logica cambia vanno aggiornati questo file (la tabella dei casi si ricalcola da sola, il testo no), `CLAUDE.md` e il README, e il documento va ricompilato.

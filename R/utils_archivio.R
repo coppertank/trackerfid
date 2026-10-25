@@ -2,14 +2,27 @@
 # in SQL, file .duckdb. In R arrivano solo le righe estratte da
 # `R/utils_selezione.R`.
 
-#' Versione dello schema dell'archivio: va aumentata se cambiano le colonne
+#' Versione dello schema dell'archivio
+#'
+#' Contesto: il `.duckdb` scritto dalla pipeline porta con sé la versione dello
+#' schema con cui è stato creato. Se le colonne cambiano, un file vecchio
+#' darebbe errori oscuri.
+#' Funzionamento: va aumentata a ogni cambio delle colonne di `colonne_app()`;
+#' `apri_file_archivio()` rifiuta un file di un'altra versione.
+#' Risultato: un intero (5).
 #' @noRd
 versione_archivio <- function() 5L
 
-#' Database DuckDB in memoria, senza estensioni, con la tabella `servizi_tipologie`
+#' Apre un database DuckDB in memoria, senza estensioni
 #'
-#' La tabella dà la tipologia di ogni servizio noto, come
-#' `tipologia_servizio()`.
+#' Contesto: le letture stanno in DuckDB per la velocità (2 milioni di righe
+#' l'anno). L'app non scarica niente e non usa fusi: `allow_extensions = FALSE`
+#' e `shared_home = FALSE` escludono ICU, quindi gli orari restano come scritti
+#' (UTC come ora locale).
+#' Funzionamento: crea la connessione e la tabella `servizi_tipologie`, con la
+#' tipologia di ogni servizio noto (stessa regola di `tipologia_servizio()`), che
+#' le query SQL usano per la coerenza del servizio.
+#' Risultato: una connessione DBI.
 #' @noRd
 connessione_duckdb <- function() {
   con <- DBI::dbConnect(
@@ -32,8 +45,12 @@ connessione_duckdb <- function() {
 
 #' Oggetto archivio attorno a una connessione
 #'
-#' La connessione si chiude con `chiudi_archivio()` o quando R libera la
-#' memoria.
+#' Contesto: tutta l'app lavora su un archivio: un riferimento alla tabella DuckDB
+#' con le letture validate, più un riepilogo calcolato una volta.
+#' Funzionamento: la connessione si chiude con `chiudi_archivio()` o quando R
+#' libera la memoria. Il riepilogo conta letture, RFID distinti e primo e ultimo
+#' istante.
+#' Risultato: una lista di classe `archivio_letture`.
 #' @param tabella `"letture"` o, per un file, `"archivio_file.letture"`.
 #' @param condiviso `TRUE` per un archivio delle sessioni, che non si chiude.
 #' @return Lista di classe `archivio_letture`: `con`, `tabella`, `colonne`,
@@ -80,6 +97,8 @@ nuovo_archivio <- function(con, tabella, origine = NULL, condiviso = FALSE) {
 }
 
 #' Chiude la connessione di un archivio, se non è condiviso
+#' Contesto: un archivio letto con `leggi_una_volta()` serve a tutte le
+#' sessioni e resta aperto; uno caricato dal browser è di una sola sessione.
 #' @noRd
 chiudi_archivio <- function(archivio) {
   if (is.null(archivio) || isTRUE(archivio$condiviso)) {
@@ -93,13 +112,17 @@ chiudi_archivio <- function(archivio) {
   invisible(NULL)
 }
 
-#' Esegue una query e restituisce un tibble
+#' Esegue una query sull'archivio e restituisce un tibble
+#' Contesto: unico punto di accesso alla connessione; le funzioni di
+#' `utils_selezione.R` costruiscono l'SQL e passano di qui.
 #' @noRd
 interroga <- function(archivio, sql) {
   dplyr::as_tibble(DBI::dbGetQuery(archivio$con, sql))
 }
 
 #' Testi tra apici, separati da virgole, per `IN (...)`
+#' Contesto: i valori dell'utente (RFID, comuni, servizi) non vanno mai
+#' incollati nell'SQL; `DBI::dbQuoteString()` ne gestisce gli apici.
 #' @noRd
 sql_elenco <- function(con, valori) {
   paste(DBI::dbQuoteString(con, as.character(valori)), collapse = ", ")
@@ -107,9 +130,10 @@ sql_elenco <- function(con, valori) {
 
 #' Colonne della tabella delle letture: quelle del dataset più `riga`
 #'
-#' `riga` è la posizione nel file: tra due letture dello stesso istante
-#' resta l'ultima.
+#' Contesto: `riga` è la posizione nel file. Tra due letture dello stesso istante
+#' (stesso RFID) le funzioni SQL tengono l'ultima, cioè quella di `riga` più alta.
 #' @param colonne `"app"` (`colonne_app()`) o `"tutte"` (`colonne_dataset()`).
+#' @return I nomi delle colonne.
 #' @noRd
 colonne_archivio <- function(colonne = c("app", "tutte")) {
   colonne <- match.arg(colonne)
@@ -118,10 +142,15 @@ colonne_archivio <- function(colonne = c("app", "tutte")) {
 
 #' Legge e valida un file di letture in un archivio DuckDB
 #'
-#' CSV, CSV gzip e Parquet si validano in SQL con `valida_archivio()`; un
-#' `.duckdb` di `scrivi_archivio()` si apre già validato. `colonne = "tutte"`
-#' tiene anche le colonne della pipeline (analisi dei conferimenti); un
-#' `.duckdb` ha le colonne con cui è stato scritto.
+#' Contesto: è il punto di ingresso dei dati nell'app, per il CSV della pipeline
+#' (`letture_antenne.csv`, anche compresso), per Parquet e per il `.duckdb`.
+#' Funzionamento: CSV, CSV gzip e Parquet si caricano in una tabella grezza e si
+#' validano in SQL con `valida_archivio()`; un `.duckdb` di `scrivi_archivio()` si
+#' apre già validato (`apri_file_archivio()`). `colonne = "tutte"` tiene anche le
+#' colonne della pipeline (analisi dei conferimenti); un `.duckdb` ha le colonne
+#' con cui è stato scritto.
+#' Risultato: l'archivio e gli avvisi di validazione (righe scartate, comuni non
+#' in tabella...).
 #' @param nome Nome originale: dà l'estensione di un file caricato dal browser.
 #' @return Lista con `archivio` e `avvisi`.
 #' @noRd
@@ -152,8 +181,8 @@ carica_archivio <- function(
 }
 
 #' Come `carica_archivio()`, ma restituisce le letture in un data frame
-#'
-#' Per script, report e test.
+#' Contesto: per script, report e test, che lavorano in R.
+#' Funzionamento: carica, estrae tutte le letture e chiude l'archivio.
 #' @inheritParams carica_archivio
 #' @return Lista con `dati` e `avvisi`.
 #' @noRd
@@ -168,6 +197,8 @@ carica_dataset <- function(
 }
 
 #' Letture di un archivio, tutte o quelle di una condizione SQL, nell'ordine del file
+#' Contesto: da usare con cautela: porta in R le letture. L'app lo fa solo per le
+#' ricerche piccole e l'analisi dei cluster; i filtri restano in SQL.
 #' @noRd
 letture_archivio <- function(
   archivio,
@@ -188,9 +219,9 @@ letture_archivio <- function(
 # --- Lettura del file ---------------------------------------------------------
 
 #' Carica il file nella tabella `grezze`, senza conversioni
-#'
-#' Un CSV si legge tutto come testo, con il separatore più frequente
-#' nell'intestazione: i codici tengono gli zeri iniziali.
+#' Contesto: prima passo della validazione. Un CSV si legge tutto come testo, con
+#' il separatore più frequente nell'intestazione: i codici (fornitura, matricola)
+#' tengono gli zeri iniziali e si evitano errori di tipo.
 #' @noRd
 leggi_grezze <- function(con, path, estensione) {
   if (!file.exists(path)) {
@@ -252,7 +283,9 @@ leggi_grezze <- function(con, path, estensione) {
   invisible(NULL)
 }
 
-#' Espressione SQL che pulisce un testo come `stringr::str_squish()`; vuoto e, in un CSV, `NA` mancano
+#' Espressione SQL che pulisce un testo come `stringr::str_squish()`
+#' Contesto: spazi doppi e ai bordi cambierebbero i confronti. Vuoto e, in un CSV,
+#' `NA` diventano mancanti.
 #' @noRd
 sql_pulito <- function(colonna, csv = TRUE) {
   pulito <- sprintf(
@@ -262,7 +295,8 @@ sql_pulito <- function(colonna, csv = TRUE) {
   if (csv) sprintf("nullif(%s, 'NA')", pulito) else pulito
 }
 
-#' Formati accettati per `data_ora_lettura`: anno-mese-giorno o giorno/mese/anno, con o senza ora
+#' Formati accettati per `data_ora_lettura`
+#' Risultato: anno-mese-giorno o giorno/mese/anno, con o senza ora.
 #' @noRd
 formati_data_ora <- function() {
   c(
@@ -290,14 +324,20 @@ formati_data_ora <- function() {
 
 #' Valida la tabella `grezze` e scrive la tabella `letture`, in SQL
 #'
-#' Le stesse regole delle funzioni in R (`aggiungi_geografia()`,
-#' `coerenza_comune()`, `coerenza_servizio()`): nomi alternativi; testi
-#' puliti, servizi e cantiere in maiuscolo, comuni nella grafia della
-#' tabella; valori non interpretabili fermano il caricamento, con le righe;
-#' righe senza un campo essenziale scartate, con un avviso. Con `tutte`
-#' tiene le colonne di `tipi_colonne_preparazione()`. Un file con
-#' `origine_servizio` (13-15 ottobre 2026) riporta il servizio del database
-#' nella sua colonna.
+#' Contesto: il file può venire da versioni diverse della pipeline o da chi lo ha
+#' modificato. La validazione rende i dati uniformi senza passarli in R: con 2
+#' milioni di righe dura pochi secondi.
+#' Funzionamento: applica le stesse regole delle funzioni in R
+#' (`aggiungi_geografia()`, `coerenza_comune()`, `coerenza_servizio()`): nomi
+#' alternativi (`alias_colonne()`); testi puliti, servizi e cantiere in
+#' maiuscolo, comuni nella grafia della tabella; valori non interpretabili
+#' fermano il caricamento indicando le righe; righe senza un campo essenziale
+#' scartate, con un avviso. Le due coerenze, il comune geografico e assegnato e
+#' il cantiere si ricalcolano sempre. Con `tutte` tiene le colonne di
+#' `tipi_colonne_preparazione()`. Un file con `origine_servizio` (13-15 ottobre
+#' 2026) riporta il servizio del database nella sua colonna. Una regola nuova va
+#' scritta qui e nella funzione in R.
+#' Risultato: la tabella `letture` nella connessione e gli avvisi.
 #' @param csv `TRUE` se le letture vengono da un CSV.
 #' @return Gli avvisi.
 #' @noRd
@@ -951,8 +991,11 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
 
 #' Scrive un archivio in un file `.duckdb`
 #'
-#' Tabelle `letture`, già validata, e `informazioni` (versione dello schema,
-#' origine, avvisi). Un file con lo stesso nome viene sostituito.
+#' Contesto: la pipeline scrive `letture_antenne.duckdb`, che l'app apre in
+#' mezzo secondo senza rivalidare le letture.
+#' Funzionamento: tabelle `letture`, già validata, e `informazioni` (versione dello
+#' schema, origine, avvisi). Un file con lo stesso nome viene sostituito.
+#' Risultato: il percorso del file.
 #' @param archivio Archivio, o percorso di un file da leggere con
 #'   `carica_archivio()`.
 #' @param avvisi Avvisi da mostrare all'apertura; con un percorso vengono da
@@ -1009,6 +1052,11 @@ scrivi_archivio <- function(
 }
 
 #' Apre in sola lettura un file `.duckdb` di `scrivi_archivio()`, senza copiare le letture
+#' Contesto: apertura quasi istantanea (0,06 s per 2 milioni di letture) e senza
+#' memoria in più.
+#' Funzionamento: controlla la versione dello schema e rifiuta un file di
+#' un'altra versione.
+#' Risultato: l'archivio e gli avvisi salvati nel file.
 #' @return Lista con `archivio` e `avvisi`.
 #' @noRd
 apri_file_archivio <- function(path, nome = basename(path)) {

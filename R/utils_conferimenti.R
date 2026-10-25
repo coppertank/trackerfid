@@ -7,7 +7,10 @@
 
 # --- Tariffa ----------------------------------------------------------------
 
-#' Litri annui per componenti residenti (fornitura domestica); da cinque in su non cresce
+#' Litri annui per componenti residenti (fornitura domestica)
+#' Contesto: solo il secco è fatturato; il limite dipende dal nucleo.
+#' Risultato: 720, 960, 1200, 1440 e 1680 litri; da cinque residenti in su non
+#' cresce.
 #' @noRd
 litri_conferibili <- function() {
   data.frame(
@@ -17,15 +20,18 @@ litri_conferibili <- function() {
 }
 
 #' Litri annui con il potenziamento del secco, al posto del limite del nucleo
+#' Contesto: la manovra sociale (`NEONATI`, `ANZIANI`, `DISABILI`) in vigore.
+#' Risultato: 6240 litri.
 #' @noRd
 litri_potenziamento <- function() {
   6240
 }
 
 #' Litri annui consentiti a una fornitura
-#'
-#' Con il potenziamento `litri_potenziamento()`; altrimenti dal nucleo (zero
-#' residenti come uno, cinque o più come cinque); senza nucleo, mancante.
+#' Funzionamento: con il potenziamento `litri_potenziamento()`; altrimenti dal
+#' nucleo (zero residenti come uno, cinque o più come cinque); senza nucleo,
+#' mancante.
+#' Risultato: un vettore di litri.
 #' @noRd
 litri_consentiti <- function(nucleo_residenti, potenziamento = FALSE) {
   tabella <- litri_conferibili()
@@ -104,9 +110,10 @@ classi_conferimenti <- function() {
 # --- Posizioni, vicini e occasioni -------------------------------------------------
 
 #' Posizione abituale di ogni contenitore, letture lontane e tag anomali
-#'
-#' Posizione: mediana delle letture nei giri del secco. Lontana: oltre
-#' `distanza_anomala_m`. Tag anomalo: letto in almeno cinque giorni e in più
+#' Contesto: un tag fermo in deposito o sul mezzo non descrive un contenitore in
+#' strada e falserebbe il conteggio.
+#' Funzionamento: posizione: mediana delle letture nei giri del secco. Lontana:
+#' oltre `distanza_anomala_m`. Tag anomalo: letto in almeno cinque giorni e in più
 #' di `quota_giorni_anomala` dei giorni tra prima e ultima lettura.
 #' @return Lista: `contenitori` (`RFID`, `lat`, `lon`, `giorni`,
 #'   `tag_anomalo`), `indice` e `lontana` per lettura.
@@ -176,10 +183,14 @@ vicini_contenitori <- function(lat, lon, raggio_m, massimo) {
 
 #' Occasioni di conferimento di ogni unità
 #'
-#' Un'occasione è un giorno in cui un mezzo con l'antenna, in un giro del
-#' secco, è passato: lo dice la lettura del contenitore o di un vicino sullo
-#' stesso percorso, cioè letto almeno una volta lo stesso giorno del
-#' contenitore.
+#' Contesto: il denominatore del tasso. Solo i giorni in cui un mezzo con
+#' l'antenna è passato davvero possono mostrare un conferimento.
+#' Funzionamento: un'occasione è un giorno in cui un mezzo con l'antenna, in un
+#' giro del secco, è passato: lo dice la lettura del contenitore o di un vicino
+#' sullo stesso percorso, cioè letto almeno una volta lo stesso giorno del
+#' contenitore. Con meno di `vicini_minimi` vicini le occasioni vengono dalle
+#' raccolte previste e il tasso esce basso.
+#' Risultato: le occasioni e i vicini di ogni unità.
 #' @param unita `contenitore`, `inizio`, `fine` (giorni interi).
 #' @param giorni_unita `u`, `giorno`: giorni di lettura di ogni unità.
 #' @param evidenza `c`, `giorno`: giorni di lettura di ogni contenitore.
@@ -244,7 +255,9 @@ occasioni_conferimento <- function(
 # --- Stima --------------------------------------------------------------------
 
 #' Tasso di esposizione: stima Beta, avvicinata alla media con il peso di `peso` occasioni
-#'
+#' Contesto: un contenitore con poche occasioni darebbe tassi estremi; la media
+#' del gruppo li stabilizza.
+#' Risultato: tasso con intervallo di credibilità.
 #' @param k,n Esposizioni e occasioni.
 #' @return Data frame con `tasso`, `basso`, `alto`, `alfa`, `beta`.
 #' @noRd
@@ -301,12 +314,19 @@ nucleo_minimo_compatibile <- function(litri) {
 
 #' Analisi dei conferimenti del secco
 #'
-#' 1. letture del periodo nei giri del secco, senza sacchetti, letture
-#'    lontane e tag anomali; 2. per ogni unità (contenitore censito in una
-#'    fornitura, o non censito stimato del secco) esposizioni e occasioni;
-#'    3. tasso di esposizione riportato a un anno; 4. per fornitura,
-#'    probabilità di superare il limite; 5. per non censito, nucleo minimo,
-#'    probabilità del potenziamento e contenitore forse sostituito.
+#' Contesto: il secco è l'unico rifiuto fatturato (di norma 26 raccolte l'anno);
+#' interessa quante forniture superano il limite di litri e se i non censiti
+#' potrebbero avere la manovra sociale. Le antenne leggono i contenitori ma non
+#' vedono lo svuotamento: si stima da quante volte il contenitore è stato letto
+#' quando il mezzo è passato.
+#' Funzionamento: 1. letture del periodo nei giri del secco, senza sacchetti,
+#' letture lontane e tag anomali; 2. per ogni unità (contenitore censito in una
+#' fornitura, o non censito stimato del secco) esposizioni e occasioni; 3. tasso
+#' di esposizione riportato a un anno; 4. per fornitura, probabilità di superare
+#' il limite; 5. per non censito, nucleo minimo, probabilità del potenziamento e
+#' contenitore forse sostituito.
+#' Risultato: una lista con le tabelle per fornitura e per non censito, il
+#' riepilogo e i parametri; la usa il report `docs/conferimenti_secco.qmd`.
 #' @param letture Letture con tutte le colonne della pipeline:
 #'   `carica_dataset(percorso, colonne = "tutte")`.
 #' @param dal,al Periodo; senza, dal primo gennaio dell'anno dell'ultima
@@ -628,9 +648,10 @@ completa_non_censiti <- function(unita, vicini, contenitori) {
 }
 
 #' Conferimenti stimati di ogni fornitura censita
-#'
-#' Somma esposizioni e occasioni dei suoi contenitori del secco e riporta il
-#' tasso alle raccolte annue dei contenitori attivi alla fine del periodo.
+#' Contesto: il limite vale per fornitura, non per contenitore.
+#' Funzionamento: somma esposizioni e occasioni dei suoi contenitori del secco e
+#' riporta il tasso alle raccolte annue dei contenitori attivi alla fine del
+#' periodo.
 #' @param al Ultimo giorno, come intero.
 #' @return Una riga per fornitura.
 #' @noRd
@@ -837,10 +858,11 @@ manovra_per_fascia <- function(forniture) {
 }
 
 #' Conferimenti stimati dei non censiti
-#'
-#' Come per le forniture, con raccolte e volume da `completa_non_censiti()`;
-#' in più nucleo minimo, quota del potenziamento nella fascia e candidato
-#' sostituito (`candidati_sostituzione()`).
+#' Contesto: un bidone non a database potrebbe appartenere a una fornitura con
+#' la manovra.
+#' Funzionamento: come per le forniture, con raccolte e volume da
+#' `completa_non_censiti()`; in più nucleo minimo, quota del potenziamento nella
+#' fascia e candidato sostituito (`candidati_sostituzione()`).
 #' @return Una riga per non censito.
 #' @noRd
 stima_non_censiti <- function(
@@ -913,9 +935,9 @@ stima_non_censiti <- function(
 }
 
 #' Contenitore censito che un non censito potrebbe aver sostituito
-#'
-#' Il più vicino entro `raggio_m`, del secco, letto l'ultima volta prima
-#' della prima lettura del non censito.
+#' Contesto: un bidone nuovo al posto di uno censito spiega molti non censiti.
+#' Funzionamento: il più vicino entro `raggio_m`, del secco, letto l'ultima volta
+#' prima della prima lettura del non censito.
 #' @noRd
 candidati_sostituzione <- function(unita, censite, contenitori, raggio_m) {
   vuoto <- rep(NA_character_, nrow(unita))
@@ -1009,8 +1031,7 @@ elenco_da_contattare <- function(analisi) {
 }
 
 #' Scrive tre CSV (forniture, da contattare, non censiti) per Excel in italiano
-#'
-#' Punto e virgola, virgola decimale, due decimali.
+#' Funzionamento: punto e virgola, virgola decimale, due decimali.
 #' @return I percorsi, invisibili.
 #' @noRd
 esporta_analisi_conferimenti <- function(analisi, cartella) {

@@ -3,13 +3,10 @@
 # già attrezzati, in cui gli operatori dovevano usare anche le saponette.
 # L'app non usa queste funzioni.
 
-#' Matricola senza spazi, zeri iniziali e maiuscole, per confrontare "0101" con "101"
-#' @noRd
-chiave_matricola <- function(x) {
-  toupper(sub("^0+", "", trimws(as.character(x))))
-}
-
 #' Nome del giro senza spazi ai bordi e in maiuscolo, per confrontare "SECCO PaP" con "SECCO PAP"
+#'
+#' Contesto: la lista dei giri da controllare è scritta a mano e può avere
+#' maiuscole diverse dal calendario. Risultato: la chiave di confronto.
 #' @noRd
 chiave_servizio_giro <- function(x) {
   toupper(trimws(as.character(x)))
@@ -17,8 +14,15 @@ chiave_servizio_giro <- function(x) {
 
 #' Servizio atteso (tipologia) di un servizio del giro, dalla tabella di conversione
 #'
-#' `"SECCO PaP"` dà `"SECCO"`. Un nome che la tabella non riconosce dà un
-#' errore: va aggiunto a `tipologie_servizio()` o indicato nel file dei giri.
+#' Contesto: per un mezzo senza giro nel calendario le letture hanno il servizio
+#' atteso dedotto dai bidoni (es. `SECCO`), non il nome del giro (`SECCO PAP`);
+#' per riconoscerle il report deve sapere quale tipologia corrisponde al giro
+#' della lista.
+#' Funzionamento: converte il nome con la tabella `conversione_servizi()`:
+#' `SECCO PaP` dà `SECCO`, `CARTA CONT.STRADALI` dà `CARTA`.
+#' Risultato: i servizi in maiuscolo. Un nome che la tabella non riconosce
+#' ferma con un messaggio: va aggiunto a `tipologie_servizio()` oppure indicato
+#' nella colonna `servizio_atteso` del file dei giri.
 #' @param servizio_giro Nomi del calendario.
 #' @return I servizi attesi, in maiuscolo.
 #' @noRd
@@ -40,12 +44,23 @@ servizio_atteso_del_giro <- function(servizio_giro) {
 
 #' I giri da controllare, letti da un CSV: una riga per giorno, mezzo e servizio del giro
 #'
-#' Colonne `data_giro` (`AAAA-MM-GG` o `GG/MM/AAAA`), `matricola_veicolo` e
-#' `servizio_giro`; facoltativa `servizio_atteso`, il servizio (tipologia)
-#' delle letture di un mezzo senza giro. Senza, si ricava dal nome del giro
-#' con la tabella di conversione (`SECCO PaP` dà `SECCO`). Separatore virgola
-#' o punto e virgola, nomi delle colonne senza badare alle maiuscole, righe
-#' vuote ignorate. Più giorni, mezzi e servizi nello stesso file valgono tutti.
+#' Contesto: il report `docs/controllo_giri_saponette.qmd` confronta i due
+#' sistemi su giri in cui si sa che il mezzo ha lavorato e gli operatori
+#' dovevano usare anche le saponette. La lista dei giri sta in un file
+#' (`data-raw/origine/giri_controllo.csv`), così per un nuovo confronto basta
+#' cambiare il file.
+#'
+#' Funzionamento: legge le colonne `data_giro` (`AAAA-MM-GG` o `GG/MM/AAAA`),
+#' `matricola_veicolo`, `servizio_giro` e, facoltativa, `servizio_atteso`
+#' (il servizio delle letture di un mezzo senza giro; senza, si ricava dal nome
+#' del giro con `servizio_atteso_del_giro()`). Separatore virgola o punto e
+#' virgola, nomi delle colonne senza badare alle maiuscole, righe vuote ignorate;
+#' righe a metà e date illeggibili fermano con il numero di riga. Più giorni,
+#' mezzi e servizi nello stesso file valgono tutti, ognuno con il servizio della
+#' sua riga.
+#'
+#' Risultato: `data_giro` (data), `matricola_veicolo`, `servizio_giro` e
+#' `servizio_atteso` (testi), senza righe ripetute.
 #' @param percorso Percorso del CSV.
 #' @return `data_giro` (data), `matricola_veicolo`, `servizio_giro` e
 #'   `servizio_atteso` (testi).
@@ -105,19 +120,26 @@ giri_di_controllo <- function(percorso) {
 
 #' Tutte le letture con le antenne dei mezzi della lista, con il criterio che le sceglie
 #'
-#' Per ogni mezzo e giorno della lista una lettura entra nel confronto se:
-#' 1. il suo `servizio_giro` è quello della lista (`"giro del calendario"`); oppure
-#' 2. il suo `servizio_giro` è vuoto (il mezzo non ha un giro nel calendario) e
-#'    il suo `servizio_atteso` è il servizio atteso della lista
-#'    (`"servizio dedotto dai censiti"`).
-#' Il nome del giro non si sovrascrive mai: il servizio atteso di un mezzo
-#' senza giro viene dai bidoni censiti che ha letto quel giorno.
+#' Contesto: un mezzo senza un giro nel calendario ha le letture con
+#' `servizio_giro` vuoto, ma la lista dice che il giro c'era. Il report tiene
+#' quindi due criteri e li mostra separati.
+#'
+#' Funzionamento: per ogni mezzo e giorno della lista (mezzo senza zeri iniziali)
+#' una lettura entra nel confronto se:
+#' 1. il suo `servizio_giro` è quello della lista («giro del calendario»); oppure
+#' 2. il suo `servizio_giro` è vuoto e il suo `servizio_atteso` è il servizio
+#'    atteso della lista («servizio dedotto dai censiti»).
+#' Il nome del giro non si sovrascrive mai: il servizio atteso di un mezzo senza
+#' giro viene dai bidoni censiti del tratto che ha letto. Se una lettura
+#' soddisfa due righe della lista vale il criterio del giro del calendario.
+#'
+#' Risultato: tutte le letture dei mezzi della lista nei giorni della lista, anche
+#' quelle che non entrano (`criterio` mancante).
 #' @param antenne Letture con le antenne, con `data_ora_lettura`,
 #'   `matricola_veicolo`, `servizio_giro` e `servizio_atteso`.
 #' @param giri Risultato di `giri_di_controllo()`.
-#' @return Tutte le letture dei mezzi della lista nei giorni della lista, con
-#'   `data_lettura`, `chiave_mezzo`, `matricola_lista` (come nella lista) e
-#'   `criterio` (mancante se la lettura non entra nel confronto).
+#' @return Letture con `data_lettura`, `chiave_mezzo`, `matricola_lista` (come
+#'   nella lista) e `criterio`.
 #' @noRd
 letture_dei_mezzi_della_lista <- function(antenne, giri) {
   richiedi_colonne(
@@ -169,8 +191,10 @@ letture_dei_mezzi_della_lista <- function(antenne, giri) {
 
 #' Letture con le antenne dei giri della lista
 #'
-#' Le letture dei mezzi della lista che entrano nel confronto, con il criterio
-#' che le ha scelte (`letture_dei_mezzi_della_lista()`).
+#' Contesto: la prima tappa del report sui giri di controllo: quali letture
+#' delle antenne appartengono ai giri che si vogliono confrontare.
+#' Risultato: le letture dei mezzi della lista che entrano nel confronto, con il
+#' criterio che le ha scelte (`letture_dei_mezzi_della_lista()`).
 #' @inheritParams letture_dei_mezzi_della_lista
 #' @return Le letture, con `data_lettura`, `chiave_mezzo` e `criterio`.
 #' @noRd
@@ -183,14 +207,14 @@ antenne_dei_giri <- function(antenne, giri) {
 
 #' Tutte le letture dei mezzi della lista nei giorni della lista, per servizio del giro
 #'
-#' Serve a capire perché un mezzo risulta senza letture: le letture ci sono
-#' ma con un altro servizio del giro, o senza giro (`servizio_giro` vuoto,
-#' quando la pipeline non lo ha associato al calendario).
+#' Contesto: serve a capire perché un mezzo risulta senza letture nel confronto:
+#' le letture ci sono ma con un altro servizio del giro, o senza giro
+#' (`servizio_giro` vuoto, quando la pipeline non lo ha associato al calendario).
+#' Risultato: per mezzo, giorno, servizio del giro, servizio atteso e criterio,
+#' quante letture, con `(senza giro)` e `(vuoto)` dove mancano i valori.
 #' @inheritParams letture_dei_mezzi_della_lista
-#' @return `data_lettura`, `matricola_veicolo` (come nella lista),
-#'   `servizio_giro` (`"(senza giro)"` se vuoto), `servizio_atteso`
-#'   (`"(vuoto)"` se mancante), `criterio` (mancante se la lettura non entra) e
-#'   `letture`.
+#' @return `data_lettura`, `matricola_veicolo` (come nella lista), `servizio_giro`,
+#'   `servizio_atteso`, `criterio` e `letture`.
 #' @noRd
 servizi_dei_mezzi_della_lista <- function(antenne, giri) {
   antenne |>
@@ -214,41 +238,49 @@ servizi_dei_mezzi_della_lista <- function(antenne, giri) {
     )
 }
 
-#' Letture storiche di tutte le trasmissioni che hanno letto un RFID dei giri
+#' Letture delle saponette di tutte le trasmissioni che hanno letto un RFID dei giri
 #'
-#' Una trasmissione in un giorno è un giro delle saponette: si prendono le
-#' coppie di giorno e `id_trasmissione` in cui compare, lo stesso giorno,
-#' almeno un RFID letto dalle antenne nei giri della lista, e tutte le
-#' letture storiche di quelle coppie.
-#' @param storiche Letture storiche, con `data_ora_lettura`,
+#' Contesto: le saponette non hanno il mezzo, ma hanno `id_trasmissione`: una
+#' trasmissione in un giorno è un giro delle saponette. Per sapere che cosa hanno
+#' letto le saponette nei giri della lista si parte dagli RFID letti dalle antenne.
+#' Funzionamento: prende le coppie giorno e `id_trasmissione` in cui compare,
+#' lo **stesso giorno**, almeno uno degli RFID delle antenne dei giri, e tutte le
+#' letture delle saponette di quelle coppie (anche di RFID che le antenne non
+#' hanno letto).
+#' Risultato: le letture delle saponette, con `data_lettura`.
+#' @param saponette Letture delle saponette, con `data_ora_lettura`,
 #'   `id_trasmissione` e `RFID`.
 #' @param antenne_giri Risultato di `antenne_dei_giri()`.
-#' @return Le letture storiche, con `data_lettura`.
+#' @return Le letture delle saponette, con `data_lettura`.
 #' @noRd
-trasmissioni_dei_giri <- function(storiche, antenne_giri) {
-  storiche <- con_data_lettura(storiche)
-  giri <- storiche |>
+trasmissioni_dei_giri <- function(saponette, antenne_giri) {
+  saponette <- con_data_lettura(saponette)
+  giri <- saponette |>
     dplyr::inner_join(
       dplyr::distinct(antenne_giri, .data$data_lettura, .data$RFID),
       by = c("data_lettura", "RFID")
     ) |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione)
-  dplyr::semi_join(storiche, giri, by = c("data_lettura", "id_trasmissione"))
+  dplyr::semi_join(saponette, giri, by = c("data_lettura", "id_trasmissione"))
 }
 
 #' A quale mezzo della lista appartiene ogni trasmissione delle saponette
 #'
-#' Le letture storiche non hanno il mezzo: una trasmissione è abbinata al
-#' mezzo con cui ha più RFID in comune lo stesso giorno (a parità, il primo
-#' in ordine di matricola).
-#' @param storiche_giri Risultato di `trasmissioni_dei_giri()`.
+#' Contesto: le letture delle saponette non hanno il mezzo, ma il confronto è
+#' per mezzo. Si deduce il mezzo dagli RFID che lui e la trasmissione hanno
+#' letto lo stesso giorno.
+#' Funzionamento: per ogni trasmissione conta gli RFID in comune con ogni mezzo
+#' della lista e sceglie il mezzo con più RFID in comune (a parità, il primo in
+#' ordine di matricola). Una trasmissione con un solo RFID in comune è la meno
+#' sicura.
+#' Risultato: `data_lettura`, `id_trasmissione`, `chiave_mezzo`, `condivisi`
+#' (RFID in comune con quel mezzo) e `mezzi_in_comune` (mezzi con almeno un RFID
+#' in comune).
+#' @param saponette_giri Risultato di `trasmissioni_dei_giri()`.
 #' @param antenne_giri Risultato di `antenne_dei_giri()`.
-#' @return `data_lettura`, `id_trasmissione`, `chiave_mezzo`, `condivisi`
-#'   (RFID in comune con quel mezzo) e `mezzi_in_comune` (mezzi con almeno un
-#'   RFID in comune).
 #' @noRd
-abbina_trasmissioni <- function(storiche_giri, antenne_giri) {
-  storiche_giri |>
+abbina_trasmissioni <- function(saponette_giri, antenne_giri) {
+  saponette_giri |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
     dplyr::inner_join(
       dplyr::distinct(
@@ -276,13 +308,18 @@ abbina_trasmissioni <- function(storiche_giri, antenne_giri) {
 }
 
 #' RFID del giorno letti da entrambi i sistemi, solo dalle antenne, solo dalle saponette
-#' @return `data_lettura`, `RFID` e `classe` (fattore).
+#'
+#' Contesto: il risultato principale del report sui giri di controllo: se le
+#' saponette fossero complete, ogni RFID sarebbe letto da entrambi.
+#' Risultato: per ogni giorno e RFID, la `classe` (fattore: `Solo saponette`,
+#' `Entrambi`, `Solo antenne`).
+#' @return `data_lettura`, `RFID` e `classe`.
 #' @noRd
-classi_rfid <- function(antenne_giri, storiche_giri) {
+classi_rfid <- function(antenne_giri, saponette_giri) {
   da_antenne <- antenne_giri |>
     dplyr::distinct(.data$data_lettura, .data$RFID) |>
     dplyr::mutate(antenne = TRUE)
-  da_saponette <- storiche_giri |>
+  da_saponette <- saponette_giri |>
     dplyr::distinct(.data$data_lettura, .data$RFID) |>
     dplyr::mutate(saponette = TRUE)
   dplyr::full_join(da_antenne, da_saponette, by = c("data_lettura", "RFID")) |>
@@ -303,23 +340,27 @@ classi_rfid <- function(antenne_giri, storiche_giri) {
 
 #' Per ogni mezzo della lista: RFID letti dalle antenne, dalle saponette e da entrambi
 #'
-#' Le saponette di un mezzo sono quelle delle trasmissioni abbinate a lui.
-#' Un mezzo senza letture delle antenne o senza trasmissioni abbinate resta
-#' nell'elenco, con zero.
+#' Contesto: il dettaglio per mezzo del report sui giri di controllo. Le
+#' saponette di un mezzo sono quelle delle trasmissioni abbinate a lui
+#' (`abbina_trasmissioni()`).
+#' Risultato: una riga per mezzo e giorno con le trasmissioni abbinate e gli RFID
+#' delle due serie. Un mezzo senza letture delle antenne o senza trasmissioni
+#' abbinate resta nell'elenco, con zero.
 #' @param giri Risultato di `giri_di_controllo()`.
+#' @param antenne_giri Risultato di `antenne_dei_giri()`.
+#' @param saponette_giri Risultato di `trasmissioni_dei_giri()`.
 #' @param abbinamenti Risultato di `abbina_trasmissioni()`.
-#' @return `data_lettura`, `matricola_veicolo`, `trasmissioni`,
-#'   `chip_antenne`, `chip_saponette`, `chip_entrambi`, `solo_antenne`,
-#'   `solo_saponette`.
+#' @return `data_lettura`, `matricola_veicolo`, `trasmissioni`, `chip_antenne`,
+#'   `chip_saponette`, `chip_entrambi`, `solo_antenne`, `solo_saponette`.
 #' @noRd
-confronto_per_mezzo <- function(giri, antenne_giri, storiche_giri, abbinamenti) {
+confronto_per_mezzo <- function(giri, antenne_giri, saponette_giri, abbinamenti) {
   mezzi <- giri |>
     dplyr::distinct(data_lettura = .data$data_giro, .data$matricola_veicolo) |>
     dplyr::mutate(chiave_mezzo = chiave_matricola(.data$matricola_veicolo)) |>
     dplyr::distinct(.data$data_lettura, .data$chiave_mezzo, .keep_all = TRUE)
   chip_antenne <- antenne_giri |>
     dplyr::distinct(.data$data_lettura, .data$chiave_mezzo, .data$RFID)
-  chip_saponette <- storiche_giri |>
+  chip_saponette <- saponette_giri |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
     dplyr::inner_join(
       abbinamenti[c("data_lettura", "id_trasmissione", "chiave_mezzo")],
@@ -364,10 +405,13 @@ confronto_per_mezzo <- function(giri, antenne_giri, storiche_giri, abbinamenti) 
 
 #' Dove sono gli RFID letti solo dalle saponette
 #'
-#' Se un'antenna li ha letti lo stesso giorno fuori dai giri della lista, la
-#' differenza non è una lettura mancata dell'antenna: l'RFID è passato in un
-#' altro giro. Per gli RFID letti solo dalle antenne la domanda non ha senso:
-#' una trasmissione che li avesse letti sarebbe già tra quelle scelte.
+#' Contesto: un RFID letto solo dalle saponette può essere una lettura mancata
+#' dall'antenna oppure un bidone passato in un altro giro. Se un'antenna fuori
+#' lista lo ha letto lo stesso giorno, è il secondo caso.
+#' Per gli RFID letti solo dalle antenne la domanda non ha senso: una
+#' trasmissione che li avesse letti sarebbe già tra quelle scelte.
+#' Risultato: quanti sono letti da un'antenna fuori dai giri della lista e
+#' quanti da nessuna antenna lo stesso giorno.
 #' @param classi Risultato di `classi_rfid()`.
 #' @param antenne_tutte Letture con le antenne di tutti i mezzi, senza filtri.
 #' @return `motivo` e `n`.
@@ -391,12 +435,18 @@ solo_saponette_altrove <- function(classi, antenne_tutte) {
 }
 
 #' Servizio a database degli RFID, per classe di lettura
-#' @return `classe`, `servizio` (`"(non censito)"` se manca) e `n`.
+#'
+#' Contesto: un giro di un servizio dovrebbe leggere i contenitori di quel
+#' servizio; la tabella dice quanto le tre classi (solo saponette, entrambi,
+#' solo antenne) lo rispettano.
+#' Risultato: per classe e servizio, quanti RFID (`(non censito)` se manca il
+#' servizio).
+#' @return `classe`, `servizio` e `n`.
 #' @noRd
-servizi_per_classe <- function(classi, antenne_giri, storiche_giri) {
+servizi_per_classe <- function(classi, antenne_giri, saponette_giri) {
   anagrafica <- dplyr::bind_rows(
     dplyr::select(antenne_giri, "data_lettura", "RFID", "servizio_transponder"),
-    dplyr::select(storiche_giri, "data_lettura", "RFID", "servizio_transponder")
+    dplyr::select(saponette_giri, "data_lettura", "RFID", "servizio_transponder")
   ) |>
     dplyr::arrange(is.na(.data$servizio_transponder)) |>
     dplyr::distinct(.data$data_lettura, .data$RFID, .keep_all = TRUE)
@@ -411,8 +461,9 @@ servizi_per_classe <- function(classi, antenne_giri, storiche_giri) {
 
 #' Trasmissioni per numero di RFID in comune con il mezzo abbinato
 #'
-#' Una trasmissione abbinata per un solo RFID è la meno sicura: la tabella
-#' dice quante ce ne sono.
+#' Contesto: una trasmissione abbinata per un solo RFID è la meno sicura.
+#' Risultato: quante trasmissioni hanno 1, da 2 a 4, o 5 e più RFID in comune.
+#' @param abbinamenti Risultato di `abbina_trasmissioni()`.
 #' @return `fascia` (fattore) e `trasmissioni`.
 #' @noRd
 fasce_di_abbinamento <- function(abbinamenti) {

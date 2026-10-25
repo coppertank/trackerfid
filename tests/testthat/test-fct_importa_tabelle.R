@@ -10,9 +10,10 @@ test_that("i file estratti hanno sempre lo stesso nome", {
       "servizi_sacchetti",
       "calendario",
       "non_pianificati",
+      "giri_aggiunti",
       "componenti",
       "manovre",
-      "storiche"
+      "saponette"
     )
   )
   expect_identical(
@@ -34,7 +35,7 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   # il trattino vale come mancante
   expect_true(is.na(test$esito[3]))
 
-  letture <- importa_letture(file$letture)
+  letture <- importa_letture_antenne(file$letture)
   expect_identical(
     names(letture),
     c(
@@ -63,7 +64,7 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   ))
   expect_true(all(is.na(letture$cantiere[letture$comune_lettura != "LIMENA"])))
   # un RFID letto più volte nello stesso giorno: resta la prima lettura valida
-  doppie <- importa_letture(scrivi_csv(c(
+  doppie <- importa_letture_antenne(scrivi_csv(c(
     "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
     "VIA ROMA 1, LIMENA;03/08/2026 10.00.00;123;AB123CD;45,4700;11,8400;1",
     "VIA ROMA 1, LIMENA;03/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1",
@@ -153,38 +154,38 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   expect_identical(manovre$id_fornitura, "F1")
   expect_identical(manovre$data_fine_dichiarazione, as.Date("2099-12-31"))
 
-  storiche <- importa_letture_storiche(file$storiche)
+  saponette <- importa_letture_saponette(file$saponette)
   # la riga ripetuta conta una volta, quella senza codice resta fuori; i
   # sacchetti si tolgono dopo, come per le letture con le antenne
   expect_named(
-    storiche,
+    saponette,
     c("data_ora_lettura", "data_lettura", "id_trasmissione", "RFID")
   )
   expect_identical(
-    storiche$RFID,
+    saponette$RFID,
     c("0000000123", "00BD00000000000000000001", "0000000123")
   )
-  expect_identical(storiche$id_trasmissione, c("T1", "T1", "T3"))
+  expect_identical(saponette$id_trasmissione, c("T1", "T1", "T3"))
   expect_identical(
-    storiche$data_lettura,
+    saponette$data_lettura,
     as.Date(c("2025-03-01", "2025-03-02", "2026-08-21"))
   )
   expect_identical(
-    format(storiche$data_ora_lettura[1], "%Y-%m-%d %H:%M:%S"),
+    format(saponette$data_ora_lettura[1], "%Y-%m-%d %H:%M:%S"),
     "2025-03-01 07:00:00"
   )
   expect_error(
-    importa_letture_storiche(file$storiche, colonna_rfid = "rfid"),
+    importa_letture_saponette(file$saponette, colonna_rfid = "rfid"),
     "mancano le colonne: rfid"
   )
   # anche le date italiane; un istante illeggibile si scarta, con un avviso
   expect_warning(
-    italiane <- importa_letture_storiche(scrivi_csv(c(
+    italiane <- importa_letture_saponette(scrivi_csv(c(
       "data_lettura,codice_transponder,id_trasmissione",
       "01/03/2025 07.00.00,123,T1",
       "ieri,124,T1"
     ))),
-    "1 letture storiche hanno un istante illeggibile.*ieri"
+    "1 letture delle saponette hanno un istante illeggibile.*ieri"
   )
   expect_identical(italiane$RFID, "0000000123")
   expect_identical(italiane$data_lettura, as.Date("2025-03-01"))
@@ -197,7 +198,7 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   messaggi <- character(0)
   avvisi <- character(0)
   letture <- withCallingHandlers(
-    prepara_letture_app(file),
+    prepara_letture_antenne(file),
     message = function(m) {
       messaggi <<- c(messaggi, conditionMessage(m))
       invokeRestart("muffleMessage")
@@ -266,7 +267,7 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   # il comune del database
   expect_true(all(censite$coerenza_comune == "Coerente"))
   expect_identical(
-    filtra_codici_app(data.frame(
+    filtra_solo_bidoni(data.frame(
       RFID = c("0000000000123", "00BD1", "12")
     ))$RFID,
     "12"
@@ -274,15 +275,15 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
 
   # CSV e archivio .duckdb, scritti come nella pipeline: l'app li carica
   output <- file.path(cartella, "output")
-  csv <- scrivi_csv_output(letture, "letture_app.csv", output)
+  csv <- scrivi_csv_output(letture, "letture_antenne.csv", output)
   percorsi <- c(
     csv,
-    scrivi_archivio(csv, file.path(output, "letture_app.duckdb")),
+    scrivi_archivio(csv, file.path(output, "letture_antenne.duckdb")),
     scrivi_csv_output(giri_da_controllare(letture), "controllo_giri.csv", output, na = "")
   )
   expect_identical(
     basename(percorsi),
-    c("letture_app.csv", "letture_app.duckdb", "controllo_giri.csv")
+    c("letture_antenne.csv", "letture_antenne.duckdb", "controllo_giri.csv")
   )
   # le letture con il comune del GPS sostituito: la frazione
   corretti <- comuni_corretti(letture)
@@ -322,23 +323,130 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   )
   expect_identical(dal_csv$id_fornitura, letture$id_fornitura)
 
-  # le letture storiche: la stessa anagrafica, senza sacchetti, con le
+  # le letture delle saponette: la stessa anagrafica, senza sacchetti, con le
   # colonne in comune con quelle dell'app e la trasmissione
-  storiche <- prepara_letture_storiche(file)
-  expect_named(storiche, colonne_letture_storiche())
+  saponette <- prepara_letture_saponette(file)
+  expect_named(saponette, colonne_letture_saponette())
   expect_true(all(
-    setdiff(names(storiche), "id_trasmissione") %in% names(letture)
+    setdiff(names(saponette), "id_trasmissione") %in% names(letture)
   ))
-  expect_identical(storiche$RFID, c("0000000123", "0000000123"))
-  expect_identical(storiche$presente_a_database, c("Presente", "Presente"))
-  expect_identical(storiche$id_fornitura, c("F1", "F1"))
-  expect_identical(storiche$servizio_transponder, c("SECCO", "SECCO"))
+  expect_identical(saponette$RFID, c("0000000123", "0000000123"))
+  expect_identical(saponette$presente_a_database, c("Presente", "Presente"))
+  expect_identical(saponette$id_fornitura, c("F1", "F1"))
+  expect_identical(saponette$servizio_transponder, c("SECCO", "SECCO"))
   # nucleo e potenziamento in vigore nel giorno della lettura
-  expect_identical(storiche$nucleo_residenti, c(2L, 3L))
-  expect_identical(storiche$potenziamento_secco, c(FALSE, TRUE))
-  percorso <- scrivi_csv_output(storiche, "letture_storiche.csv", output)
-  expect_identical(basename(percorso), "letture_storiche.csv")
+  expect_identical(saponette$nucleo_residenti, c(2L, 3L))
+  expect_identical(saponette$potenziamento_secco, c(FALSE, TRUE))
+  percorso <- scrivi_csv_output(saponette, "letture_saponette.csv", output)
+  expect_identical(basename(percorso), "letture_saponette.csv")
   scritte <- utils::read.csv(percorso, colClasses = "character")
-  expect_identical(names(scritte), colonne_letture_storiche())
+  expect_identical(names(scritte), colonne_letture_saponette())
   expect_identical(scritte$id_trasmissione, c("T1", "T3"))
+})
+
+test_that("i giri aggiunti a mano hanno le colonne del calendario pianificato", {
+  expect_identical(
+    colonne_giri_aggiunti(),
+    c(
+      "data_giro", "ora_inizio", "ora_fine", "matricola_mezzo", "id_giro",
+      "eseguito", "descrizione_servizio", "comune_giro"
+    )
+  )
+  percorso <- withr::local_tempfile(fileext = ".csv")
+  writeLines(
+    c(
+      "DATA_GIRO;ora_inizio;ora_fine;Matricola_Mezzo;id_giro;eseguito;descrizione_servizio;comune_giro",
+      "20/10/2026;06:00;12:00:00;0933;;si;secco pap;ROSA'",
+      ";;;;;;;",
+      "2026-10-21;13:00:00;18:00;1799;G7;SI;Carta/Cartone PAP;Bassano del Grappa"
+    ),
+    percorso
+  )
+  giri <- importa_giri_aggiunti(percorso)
+  expect_named(giri, colonne_giri_aggiunti())
+  expect_identical(giri$data_giro, as.Date(c("2026-10-20", "2026-10-21")))
+  # gli orari restano com'\u00e8, come nel calendario; la matricola non cambia
+  expect_identical(giri$ora_inizio, c("06:00", "13:00:00"))
+  expect_identical(giri$ora_fine, c("12:00:00", "18:00"))
+  expect_identical(giri$matricola_mezzo, c("0933", "1799"))
+  # servizio, comune ed eseguito in maiuscolo come nel calendario
+  expect_identical(giri$descrizione_servizio, c("SECCO PAP", "CARTA/CARTONE PAP"))
+  expect_identical(giri$comune_giro, c("ROS\u00c0", "BASSANO DEL GRAPPA"))
+  expect_identical(giri$eseguito, c("SI", "SI"))
+  expect_identical(giri$id_giro, c(NA, "G7"))
+})
+
+test_that("senza il file o senza righe non ci sono giri aggiunti", {
+  expect_null(importa_giri_aggiunti("non_esiste.csv"))
+  expect_null(importa_giri_aggiunti(NULL))
+  vuoto <- withr::local_tempfile(fileext = ".csv")
+  writeLines(paste(colonne_giri_aggiunti(), collapse = ","), vuoto)
+  expect_null(importa_giri_aggiunti(vuoto))
+})
+
+test_that("il file dei giri aggiunti dice che cosa non va", {
+  scrivi <- function(righe) {
+    percorso <- withr::local_tempfile(fileext = ".csv", .local_envir = parent.frame())
+    writeLines(righe, percorso)
+    percorso
+  }
+  testata <- paste(colonne_giri_aggiunti(), collapse = ",")
+  expect_error(
+    importa_giri_aggiunti(scrivi(c("data_giro,matricola_mezzo", "2026-10-20,1"))),
+    "ora_inizio, ora_fine"
+  )
+  # id_giro ed eseguito possono restare vuoti, il resto no
+  expect_error(
+    importa_giri_aggiunti(scrivi(c(testata, "2026-10-20,06:00,12:00,1,,,SECCO PAP,"))),
+    "riga del file\\): 2"
+  )
+  expect_error(
+    importa_giri_aggiunti(scrivi(c(testata, "ottobre,06:00,12:00,1,,,SECCO PAP,ROS\u00c0"))),
+    "AAAA-MM-GG o GG/MM/AAAA"
+  )
+  expect_error(
+    importa_giri_aggiunti(scrivi(c(testata, "2026-10-20,12:00,06:00,1,,,SECCO PAP,ROS\u00c0"))),
+    "inizio prima della fine"
+  )
+  expect_error(
+    importa_giri_aggiunti(scrivi(c(testata, "2026-10-20,6 di mattina,12:00,1,,,SECCO PAP,ROS\u00c0"))),
+    "Orari non validi"
+  )
+  expect_error(
+    importa_giri_aggiunti(scrivi(c(testata, "2026-10-20,06:00,12:00,1,,,SECCO PAAP,ROS\u00c0"))),
+    "SECCO PAAP"
+  )
+  # senza id_giro ed eseguito si legge
+  ok <- importa_giri_aggiunti(scrivi(c(testata, "2026-10-20,06:00,12:00,1,,,SECCO PAP,ROS\u00c0")))
+  expect_identical(nrow(ok), 1L)
+})
+
+test_that("i giri aggiunti a mano entrano nel calendario pianificato della preparazione", {
+  cartella <- withr::local_tempdir()
+  file <- scrivi_origine_prova(file.path(cartella, "origine"))
+  # un giro del mezzo 1601 a Venezia, che il calendario estratto non ha
+  writeLines(
+    c(
+      paste(colonne_giri_aggiunti(), collapse = ","),
+      "2026-08-03,09:20,10:00,1601,G99,SI,verde pap,Venezia"
+    ),
+    file$giri_aggiunti
+  )
+  messaggi <- character(0)
+  letture <- withCallingHandlers(
+    suppressWarnings(prepara_letture_antenne(file)),
+    message = function(m) {
+      messaggi <<- c(messaggi, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_match(messaggi, "Giri aggiunti a mano: 1 nuovi, 0", all = FALSE)
+  # nel suo orario e nel suo comune vince il pianificato aggiunto, con il suo codice
+  venezia <- letture[letture$RFID == "0000000129", ]
+  expect_identical(venezia$servizio_giro, "VERDE PAP")
+  expect_identical(venezia$comune_giro, "VENEZIA")
+  expect_identical(venezia$id_giro, "G99")
+  expect_identical(venezia$eseguito, "SI")
+  # le altre letture restano al loro giro
+  expect_true(all(letture$servizio_giro[letture$RFID == "0000000123"] == "SECCO PAP"))
 })

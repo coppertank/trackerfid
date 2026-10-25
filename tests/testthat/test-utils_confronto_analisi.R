@@ -17,8 +17,8 @@ test_that("i mesi parziali contano solo i giorni osservati", {
   expect_equal(antenne_febbraio$per_giorno, 0.5)
 })
 
-test_that("le storiche dei giri si dividono per rapporto con le antenne", {
-  storiche <- dplyr::tibble(
+test_that("le saponette dei giri si dividono per rapporto con le antenne", {
+  saponette <- dplyr::tibble(
     data_lettura = giorni(rep("2026-08-03", 5)),
     id_trasmissione = c("T1", "T1", "T1", "T1", "T2"),
     RFID = c("A", "B", "C", "D", "A")
@@ -26,7 +26,7 @@ test_that("le storiche dei giri si dividono per rapporto con le antenne", {
   antenne <- dplyr::tibble(RFID = "A")
   antenne_tutte <- dplyr::tibble(RFID = c("A", "B"))
 
-  gruppi <- composizione_storiche(storiche, antenne, antenne_tutte)
+  gruppi <- classifica_rfid_dei_giri_saponette(saponette, antenne, antenne_tutte)
   expect_identical(
     as.character(gruppi$gruppo[match(c("A", "B", "C"), gruppi$RFID)]),
     c(
@@ -37,7 +37,7 @@ test_that("le storiche dei giri si dividono per rapporto con le antenne", {
   )
   expect_s3_class(gruppi$gruppo, "factor")
 
-  giri <- composizione_giri(storiche, antenne)
+  giri <- copertura_antenne_per_giro(saponette, antenne)
   expect_identical(giri$id_trasmissione, c("T1", "T2"))
   expect_identical(giri$rfid, c(4L, 1L))
   expect_identical(giri$rfid_antenne, c(1L, 1L))
@@ -93,9 +93,9 @@ test_that("la copertura conta i contenitori attivi letti in ogni finestra", {
       data_cessazione_contenitore = NA_character_
     )
   }
-  storiche <- colonne(c("A", "B"), c("2025-01-01 07:00:00", "2025-01-02 07:00:00"))
+  saponette <- colonne(c("A", "B"), c("2025-01-01 07:00:00", "2025-01-02 07:00:00"))
   antenne <- colonne(c("C", "B"), rep("2025-01-03 08:00:00", 2))
-  copertura <- copertura_contenitori(storiche, antenne, finestra = 2L, passo = 1L)
+  copertura <- copertura_contenitori(saponette, antenne, finestra = 2L, passo = 1L)
   expect_identical(copertura$data_fine, giorni("2025-01-02", "2025-01-03"))
   expect_identical(copertura$attivi, c(3L, 3L))
   expect_identical(copertura$letti_saponette, c(2L, 1L))
@@ -105,23 +105,23 @@ test_that("la copertura conta i contenitori attivi letti in ogni finestra", {
 })
 
 test_that("un contenitore cessato prima della finestra non conta tra gli attivi", {
-  storiche <- dplyr::tibble(
+  saponette <- dplyr::tibble(
     RFID = c("A", "B"),
     data_ora_lettura = c("2025-01-01 07:00:00", "2025-01-05 07:00:00"),
     presente_a_database = "Presente",
     data_attivazione_contenitore = "2025-01-01",
     data_cessazione_contenitore = c("2025-01-02", NA)
   )
-  antenne <- storiche[0, ]
+  antenne <- saponette[0, ]
   antenne[1, ] <- list("B", "2025-01-05 08:00:00", "Presente", "2025-01-01", NA)
-  copertura <- copertura_contenitori(storiche, antenne, finestra = 2L, passo = 2L)
+  copertura <- copertura_contenitori(saponette, antenne, finestra = 2L, passo = 2L)
   # finestra 04-05/01: A è cessato il 2/1
   ultima <- copertura[nrow(copertura), ]
   expect_identical(ultima$attivi, 1L)
 })
 
 test_that("i giri in comune abbinano la trasmissione al mezzo con più RFID condivisi", {
-  storiche <- dplyr::tibble(
+  saponette <- dplyr::tibble(
     data_lettura = giorni(c(rep("2026-09-01", 5), rep("2026-09-02", 2))),
     id_trasmissione = c(rep("T1", 4), "T1", "T2", "T2"),
     RFID = c("A", "B", "C", "D", "A", "A", "Z"),
@@ -135,7 +135,7 @@ test_that("i giri in comune abbinano la trasmissione al mezzo con più RFID cond
     RFID = c("A", "B", "C", "E", "A", "F", "A"),
     presente_a_database = "Presente"
   )
-  risultato <- giri_in_comune(storiche, antenne, chip_minimi = 3L)
+  risultato <- giri_con_entrambi_i_sistemi(saponette, antenne, chip_minimi = 3L)
   # T1 condivide A, B, C con M1 e solo A con M2; T2 solo A con M1: non abbinata
   expect_identical(nrow(risultato), 1L)
   expect_identical(risultato$matricola_veicolo, "M1")
@@ -146,7 +146,7 @@ test_that("i giri in comune abbinano la trasmissione al mezzo con più RFID cond
 })
 
 test_that("la produttivita conta giri per giorno e RFID per giro", {
-  storiche <- dplyr::tibble(
+  saponette <- dplyr::tibble(
     data_lettura = giorni(c(rep("2025-01-10", 5), "2025-01-11")),
     id_trasmissione = c("T1", "T1", "T2", "T2", "T2", "T1"),
     RFID = c("A", "B", "A", "B", "C", "A"),
@@ -159,7 +159,7 @@ test_that("la produttivita conta giri per giorno e RFID per giro", {
     presente_a_database = "Presente"
   )
   produttivita <- produttivita_giri(
-    storiche, antenne, giorni("2025-01-10"), giorni("2025-02-02")
+    saponette, antenne, giorni("2025-01-10"), giorni("2025-02-02")
   )
   saponette <- produttivita[produttivita$sistema == "Saponette", ]
   expect_identical(saponette$giri, 3L)
@@ -204,11 +204,11 @@ test_that("i chip senza saponette si dividono per gruppo", {
     presente_a_database = c("Presente", "Presente", "Non Presente", "Non Presente"),
     data_attivazione_contenitore = c("2024-12-01", "2026-06-01", NA, NA)
   )
-  storiche_tutte <- dplyr::tibble(
+  saponette_tutte <- dplyr::tibble(
     data_ora_lettura = c("2025-01-05 07:00:00", "2025-01-06 07:00:00"),
     RFID = c("A", "X")
   )
-  risultato <- chip_senza_saponette(antenne, storiche_tutte)
+  risultato <- chip_senza_saponette(antenne, saponette_tutte)
   expect_identical(risultato$chip, c(1L, 1L, 1L))
   expect_identical(risultato$mai_letti, c(0L, 1L, 1L))
   expect_equal(risultato$quota, c(0, 1, 1))
@@ -275,20 +275,20 @@ test_that("l'intervallo del rapporto e' ripetibile e contiene il valore", {
   expect_gt(primo[2], sum(numeratore) / sum(denominatore))
 })
 
-test_that("le storiche degli stessi chip tolgono gli RFID mai letti dalle antenne", {
-  storiche <- dplyr::tibble(
+test_that("le saponette degli stessi chip tolgono gli RFID mai letti dalle antenne", {
+  saponette <- dplyr::tibble(
     data_ora_lettura = c("2025-03-01 07:00:00", "2025-03-01 07:05:00"),
     RFID = c("A", "B")
   )
-  risultato <- storiche_stessi_chip(storiche, dplyr::tibble(RFID = "A"))
+  risultato <- saponette_degli_stessi_rfid(saponette, dplyr::tibble(RFID = "A"))
   expect_identical(risultato$RFID, "A")
   expect_identical(risultato$data_lettura, giorni("2025-03-01"))
 })
 
 test_that("il filtro del servizio funziona anche senza servizio atteso", {
-  storiche <- dplyr::tibble(
+  saponette <- dplyr::tibble(
     RFID = c("A", "B"),
     servizio_transponder = c("SECCO", "CARTA")
   )
-  expect_identical(filtra_letture(storiche, servizio = "SECCO")$RFID, "A")
+  expect_identical(filtra_letture(saponette, servizio = "SECCO")$RFID, "A")
 })

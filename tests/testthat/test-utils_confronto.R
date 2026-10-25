@@ -1,5 +1,5 @@
 test_that("ogni RFID conta al più una volta al giorno, con la sua origine", {
-  storiche <- dplyr::tibble(
+  saponette <- dplyr::tibble(
     data_ora_lettura = c(
       "2026-08-03 07:00:00", # A: anche dalle antenne lo stesso giorno
       "2026-08-03 07:05:00", # A di nuovo, stessa trasmissione e giorno
@@ -14,7 +14,7 @@ test_that("ogni RFID conta al più una volta al giorno, con la sua origine", {
     data_ora_lettura = c("2026-08-03 09:00:00", "2026-08-03 10:00:00", "2026-08-05 09:00:00"),
     RFID = c("A", "A", "E")
   )
-  confronto <- confronta_letture(storiche, antenne)
+  confronto <- confronta_letture(saponette, antenne)
 
   expect_named(confronto, c("data_lettura", "RFID", "origine"))
   expect_identical(confronto$data_lettura, as.Date(c("2026-08-03", "2026-08-03", "2026-08-05")))
@@ -24,12 +24,12 @@ test_that("ogni RFID conta al più una volta al giorno, con la sua origine", {
 
 test_that("le letture si leggono anche dai CSV della pipeline", {
   cartella <- withr::local_tempdir()
-  storiche <- file.path(cartella, "letture_storiche.csv")
-  antenne <- file.path(cartella, "letture_app.csv")
-  writeLines(c("data_ora_lettura,data_lettura,id_trasmissione,RFID", "2026-08-03 07:00:00,2026-08-03,T1,0000000123"), storiche)
+  saponette <- file.path(cartella, "letture_saponette.csv")
+  antenne <- file.path(cartella, "letture_antenne.csv")
+  writeLines(c("data_ora_lettura,data_lettura,id_trasmissione,RFID", "2026-08-03 07:00:00,2026-08-03,T1,0000000123"), saponette)
   writeLines(c("data_ora_lettura,RFID", "2026-08-03 09:00:00,0000000123"), antenne)
 
-  confronto <- confronta_letture(storiche, antenne)
+  confronto <- confronta_letture(saponette, antenne)
   # gli zeri iniziali del codice restano
   expect_identical(confronto$RFID, "0000000123")
   expect_identical(confronto$origine, "Entrambe")
@@ -111,8 +111,8 @@ test_that("i filtri si combinano e una colonna mancante dà un errore chiaro", {
   )
 })
 
-test_that("le storiche di confronto sono quelle dei giri degli RFID filtrati", {
-  storiche <- dplyr::tibble(
+test_that("le saponette di confronto sono quelle dei giri degli RFID filtrati", {
+  saponette <- dplyr::tibble(
     data_ora_lettura = c(
       "2026-08-03 07:00:00", # A, giro T1 del 3/8
       "2026-08-03 07:10:00", # B, stesso giro
@@ -124,17 +124,17 @@ test_that("le storiche di confronto sono quelle dei giri degli RFID filtrati", {
     RFID = c("A", "B", "C", "D", "A")
   )
   antenne <- dplyr::tibble(RFID = "A")
-  risultato <- storiche_di_confronto(storiche, antenne)
+  risultato <- saponette_di_confronto(saponette, antenne)
   expect_identical(risultato$RFID, c("A", "B", "A"))
   expect_identical(
     risultato$data_lettura,
     as.Date(c("2026-08-03", "2026-08-03", "2026-08-05"))
   )
-  expect_identical(nrow(storiche_di_confronto(storiche, dplyr::tibble(RFID = "Z"))), 0L)
+  expect_identical(nrow(saponette_di_confronto(saponette, dplyr::tibble(RFID = "Z"))), 0L)
 })
 
 test_that("il confronto usa le letture delle antenne già filtrate", {
-  storiche <- dplyr::tibble(
+  saponette <- dplyr::tibble(
     data_ora_lettura = c(
       "2026-08-03 07:00:00", # A
       "2026-08-03 07:10:00", # B, stesso giro di A
@@ -149,12 +149,12 @@ test_that("il confronto usa le letture delle antenne già filtrate", {
     servizio_atteso = c("SECCO", "CARTA", "CARTA"),
     servizio_transponder = c("SECCO", "CARTA", "CARTA")
   )
-  tutte <- confronta_letture(storiche, antenne)
+  tutte <- confronta_letture(saponette, antenne)
   expect_identical(tutte$RFID, c("A", "B", "C", "E"))
   expect_identical(tutte$origine, c("Entrambe", "Saponette", "Entrambe", "Antenne"))
 
   # Solo il secco: resta il giro T1, quindi A e B; C ed E escono
-  secco <- confronta_letture(storiche, antenne, servizio = "SECCO")
+  secco <- confronta_letture(saponette, antenne, servizio = "SECCO")
   expect_identical(secco$RFID, c("A", "B"))
   expect_identical(secco$origine, c("Entrambe", "Saponette"))
 })

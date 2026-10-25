@@ -43,7 +43,7 @@ Avvia l'app
 \examples{
 if (interactive()) {
   run_app(demo = TRUE)
-  run_app(letture = "data-raw/output/letture_app.duckdb")
+  run_app(letture = "data-raw/output/letture_antenne.duckdb")
 }
 
 }

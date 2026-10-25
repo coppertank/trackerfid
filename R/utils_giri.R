@@ -3,6 +3,8 @@
 # giorno per un servizio e un comune (`servizio_giro`, `comune_giro`).
 
 #' Giro del calendario di ogni lettura: `servizio_giro` o, se manca, `servizio_atteso`
+#' Contesto: il giro ha il nome del calendario (`SECCO PAP`), il servizio atteso
+#' quello della tipologia (`SECCO`); i file più vecchi hanno solo il secondo.
 #' @noRd
 servizio_del_giro <- function(letture) {
   as.character(
@@ -34,8 +36,12 @@ colonne_riepilogo_giri <- function() {
 
 #' Riepilogo dei giri: una riga per giorno, mezzo, servizio e comune del giro
 #'
-#' Letture, bidoni, fuori giro, fuori comune, comuni di lettura e conferma:
-#' `NO` se una lettura ha `NO`, poi `SI`, altrimenti mancante.
+#' Contesto: alimenta la tabella di «Ricerca Giro». Il giro si ricava dalle
+#' colonne delle letture, non dal calendario.
+#' Funzionamento: raggruppa per giorno, mezzo, servizio del giro e comune del
+#' giro; conta letture, bidoni, fuori giro, fuori comune, comuni di lettura; la
+#' conferma è `NO` se una lettura ha `NO`, poi `SI`, altrimenti mancante.
+#' Risultato: un tibble ordinato per giorno, mezzo e prima lettura.
 #' @return Colonne di `colonne_riepilogo_giri()`, per giorno, mezzo e prima
 #'   lettura.
 #' @noRd
@@ -150,6 +156,7 @@ letture_del_giro <- function(letture, giro) {
 }
 
 #' Punti da inquadrare: le letture e, se sono al più `massimo`, i comuni dei giri
+#' Contesto: se i giri sono molti i comuni allargherebbero troppo la mappa.
 #' @noRd
 area_giri <- function(letture, massimo = 6) {
   if (is.null(letture) || nrow(letture) == 0) {
@@ -173,6 +180,7 @@ area_giri <- function(letture, massimo = 6) {
 }
 
 #' Letture da disegnare nella ricerca dei giri: prima le incongruenze, poi le più recenti
+#' Contesto: limite di marker sulla mappa (`limiti_mappa()`).
 #' @return In ordine di tempo, con l'attributo `totale`.
 #' @noRd
 limita_letture_giro <- function(df, massimo = limiti_mappa()$letture_ricerca) {
@@ -212,10 +220,10 @@ descrizione_giri <- function(letture) {
 }
 
 #' Tabella dei giri (reactable), un filtro per colonna
-#'
-#' In cima i giri con più letture fuori giro. Un click sceglie un giro, un
-#' secondo lo toglie. Le righe restano nell'ordine di `riepilogo`: reactable
-#' comunica il numero di riga dei dati, non della vista.
+#' Contesto: scheda «Ricerca Giro»: in cima i giri con più letture fuori giro.
+#' Funzionamento: un click sceglie un giro, un secondo lo toglie. Le righe
+#' restano nell'ordine di `riepilogo`: reactable comunica il numero di riga dei
+#' dati, non della vista.
 #' @noRd
 tabella_giri <- function(riepilogo) {
   ora <- function(x) format(x, "%H:%M", tz = "UTC")

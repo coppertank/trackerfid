@@ -3,7 +3,11 @@
 # `inst/extdata/comuni_confini.geojson`. Fuori dall'app; serve `sf`.
 # Con confini nuovi: sostituire la cartella e `Rscript data-raw/prepara_comuni.R`.
 
-#' Fonte dei confini: `fonte`, `licenza`, `indirizzo` della richiesta WFS, `cartella`
+#' Fonte dei confini dei comuni
+#' Contesto: i confini sono della Regione del Veneto (IODL 2.0): la fonte va
+#' citata e annotata nel GeoJSON.
+#' Risultato: `fonte`, `licenza`, `indirizzo` della richiesta WFS e `cartella`
+#' con lo shapefile scaricato.
 #' @noRd
 origine_confini <- function() {
   list(
@@ -14,10 +18,13 @@ origine_confini <- function() {
   )
 }
 
-#' Legge l'unico shapefile di una cartella e lo restituisce in WGS84, come `FeatureCollection`
+#' Legge lo shapefile della Regione e lo restituisce in WGS84
 #'
-#' Codifica dal file `.cpg` o `.cst`; da Monte Mario (o dal `.prj`) a WGS84;
-#' passa da un GeoJSON temporaneo letto con `jsonlite`.
+#' Contesto: la Regione pubblica i confini in Monte Mario; le mappe usano WGS84.
+#' Funzionamento: legge l'unico shapefile di una cartella (codifica dal file `.cpg`
+#' o `.cst`), lo trasforma (dal `.prj`) e passa da un GeoJSON temporaneo letto con
+#' `jsonlite`: serve `sf` (facoltativo, solo qui).
+#' Risultato: una `FeatureCollection` con tutti i comuni del Veneto.
 #' @param cartella Cartella, o percorso del `.shp`.
 #' @noRd
 leggi_confini_regione <- function(cartella = origine_confini()$cartella) {
@@ -86,12 +93,14 @@ leggi_confini_regione <- function(cartella = origine_confini()$cartella) {
   jsonlite::fromJSON(temporaneo, simplifyVector = FALSE)
 }
 
-#' Associa ogni comune della tabella al suo confine, o si ferma elencando quelli mancanti
-#'
-#' Nomi confrontati con `chiave_comune()`; tra omonimi vale quello che
-#' contiene il centro abitato, e un confine che non lo contiene è un errore.
-#' @return `FeatureCollection` nell'ordine della tabella, con `comune`,
-#'   `cantiere`, `nome_istat`, `codice_istat` (sei cifre), `provincia`.
+#' Associa ogni comune della tabella al suo confine
+#' Contesto: la tabella dei comuni serviti (`comuni_cantieri.csv`) è l'unico
+#' elenco; i confini devono corrispondere uno a uno.
+#' Funzionamento: nomi confrontati con `chiave_comune()`; tra omonimi vale quello
+#' che contiene il centro abitato. Si ferma elencando i comuni senza confine e
+#' quelli il cui confine non contiene il centro.
+#' Risultato: una `FeatureCollection` nell'ordine della tabella, con `comune`,
+#' `cantiere`, `nome_istat`, `codice_istat` (sei cifre), `provincia`.
 #' @noRd
 seleziona_confini_comuni <- function(geojson, comuni = comuni_cantieri()) {
   elementi <- geojson$features
@@ -203,6 +212,8 @@ seleziona_confini_comuni <- function(geojson, comuni = comuni_cantieri()) {
 }
 
 #' Scrive il GeoJSON, un comune per riga, sei decimali
+#' Contesto: un comune per riga rende leggibili le differenze in git; sei
+#' decimali sono centimetri, abbastanza per le tolleranze.
 #' @noRd
 scrivi_confini_comuni <- function(confini, file) {
   in_json <- function(x) {
@@ -228,10 +239,11 @@ scrivi_confini_comuni <- function(confini, file) {
 }
 
 #' Prepara `inst/extdata/comuni_confini.geojson`; chiamata da `data-raw/prepara_comuni.R`
-#'
-#' Annota fonte, licenza e data dello shapefile. Poi va rigenerato il
-#' dataset di esempio.
-#' @return Il percorso, invisibile.
+#' Contesto: va rieseguita se cambiano i comuni serviti o lo shapefile; dopo va
+#' rigenerato il dataset di esempio (cambiano le coerenze).
+#' Funzionamento: legge lo shapefile, seleziona i comuni della tabella, annota
+#' fonte, licenza e data e scrive il file.
+#' Risultato: il percorso, invisibile.
 #' @noRd
 prepara_confini_comuni <- function(
   cartella = origine_confini()$cartella,

@@ -1,10 +1,13 @@
 # Analisi del report `docs/confronto_antenne.qmd`, sul confronto tra letture
-# storiche (saponette) e letture con le antenne. L'app non usa queste funzioni.
+# letture delle saponette e letture con le antenne. L'app non usa queste funzioni.
 #
 # Dove non diversamente detto, `confronto` è la tabella di `confronta_letture()`
 # o di `unisci_origini()`: `data_lettura`, `RFID` e `origine`.
 
 #' Letture con `data_lettura` (data) ricavata da `data_ora_lettura`
+#'
+#' Contesto: i CSV letti come testo non hanno una vera data; i confronti
+#' lavorano per giorno. Risultato: le stesse letture con `data_lettura` come data.
 #' @noRd
 con_data_lettura <- function(letture) {
   dplyr::mutate(
@@ -14,6 +17,10 @@ con_data_lettura <- function(letture) {
 }
 
 #' Solo le letture dei contenitori censiti, se la colonna c'è
+#'
+#' Contesto: copertura, giri in comune e produttività si calcolano sui censiti,
+#' perché solo per loro si conosce il servizio e la data di attivazione.
+#' Risultato: le letture con `presente_a_database` uguale a `Presente`.
 #' @noRd
 solo_censiti <- function(letture) {
   if (!"presente_a_database" %in% names(letture)) {
@@ -22,20 +29,27 @@ solo_censiti <- function(letture) {
   dplyr::filter(letture, .data$presente_a_database %in% "Presente")
 }
 
-#' Letture storiche degli RFID letti dalle antenne, in qualunque giro
+#' Letture delle saponette degli RFID letti dalle antenne, in qualunque giro
 #'
-#' A differenza di `storiche_di_confronto()`, che tiene tutte le letture dei
-#' giri in cui compare un RFID delle antenne, qui restano i soli RFID delle
-#' antenne: i due lati confrontano gli stessi contenitori.
+#' Contesto: è la correzione 2 del report di confronto. A differenza di
+#' `saponette_di_confronto()`, che tiene tutte le letture dei giri in cui
+#' compare un RFID delle antenne, qui restano i soli RFID delle antenne: i due lati
+#' confrontano gli stessi contenitori.
+#' Risultato: le letture delle saponette con `data_lettura`, solo di quegli RFID.
 #' @noRd
-storiche_stessi_chip <- function(letture_storiche, letture_antenne) {
-  letture_storiche |>
+saponette_degli_stessi_rfid <- function(letture_saponette, letture_antenne) {
+  letture_saponette |>
     con_data_lettura() |>
     dplyr::filter(.data$RFID %in% letture_antenne$RFID)
 }
 
 #' Giorni di ogni mese compresi tra `dal` e `al`
+#'
+#' Contesto: il primo e l'ultimo mese del periodo osservato sono parziali; per
+#' confrontare i mesi si divide per i giorni osservati.
 #' @param mesi Primo giorno di ogni mese.
+#' @param dal,al Primo e ultimo giorno osservati.
+#' @return I giorni del mese dentro il periodo (zero se il mese è fuori).
 #' @noRd
 giorni_del_mese <- function(mesi, dal, al) {
   inizio <- pmax(mesi, dal)
@@ -45,8 +59,14 @@ giorni_del_mese <- function(mesi, dal, al) {
 
 #' RFID letti in un giorno per mese e origine, con la media per giorno
 #'
-#' I mesi parziali (il primo e l'ultimo del periodo osservato) contano solo i
-#' giorni osservati, così le barre si confrontano.
+#' Contesto: correzione 1 del report di confronto. Un mese parziale (agosto
+#' 2026 comincia il 5, ottobre finisce il 21) non è confrontabile con uno intero:
+#' si divide per i giorni osservati.
+#' Funzionamento: conta le righe di `confronto` per mese e origine e le divide
+#' per `giorni_del_mese()`.
+#' Risultato: `mese`, `origine`, `n`, `giorni` e `per_giorno`.
+#' @param confronto Tabella di `confronta_letture()` o `unisci_origini()`.
+#' @param dal,al Periodo osservato (di norma il primo e l'ultimo giorno).
 #' @return `mese`, `origine`, `n`, `giorni` e `per_giorno`.
 #' @noRd
 riepilogo_mensile <- function(
@@ -67,23 +87,29 @@ riepilogo_mensile <- function(
     )
 }
 
-#' RFID delle storiche dei giri di confronto, per rapporto con le antenne
+#' Classifica gli RFID dei giri delle saponette secondo il loro rapporto con le antenne
 #'
-#' Dice perché le letture storiche dei giri sono più di quelle delle antenne:
-#' un giro comprende RFID che le antenne non hanno letto (mezzo non attrezzato,
-#' bidone non raccolto da un mezzo attrezzato, bidone non letto dall'antenna).
-#' @param storiche_confronto Risultato di `storiche_di_confronto()`.
+#' Contesto: spiega perché il confronto iniziale non è equo. Le letture delle
+#' saponette dei giri di confronto sono più di quelle delle antenne perché un
+#' giro comprende RFID che le antenne non hanno letto: un mezzo senza antenna,
+#' un bidone non raccolto da un mezzo attrezzato, un bidone non letto
+#' dall'antenna.
+#' Funzionamento: ogni RFID-giorno delle saponette è «letto dalle antenne»
+#' (dopo i filtri), «letto dalle antenne ma fuori dai filtri» o «mai letto dalle
+#' antenne».
+#' Risultato: `data_lettura`, `RFID` e `gruppo` (fattore a tre livelli).
+#' @param saponette_confronto Risultato di `saponette_di_confronto()`.
 #' @param antenne Letture con le antenne dopo i filtri.
 #' @param antenne_tutte Letture con le antenne, senza filtri.
 #' @return `data_lettura`, `RFID` e `gruppo` (fattore).
 #' @noRd
-composizione_storiche <- function(storiche_confronto, antenne, antenne_tutte) {
+classifica_rfid_dei_giri_saponette <- function(saponette_confronto, antenne, antenne_tutte) {
   gruppi <- c(
     "RFID letti dalle antenne",
     "RFID letti dalle antenne, ma fuori dai filtri",
     "RFID mai letti dalle antenne"
   )
-  storiche_confronto |>
+  saponette_confronto |>
     dplyr::distinct(.data$data_lettura, .data$RFID) |>
     dplyr::mutate(
       gruppo = dplyr::case_when(
@@ -95,12 +121,18 @@ composizione_storiche <- function(storiche_confronto, antenne, antenne_tutte) {
     )
 }
 
-#' Per ogni giro delle storiche, quanti RFID ha e quanti ne hanno letti le antenne
-#' @inheritParams composizione_storiche
+#' Per ogni giro delle saponette, quanti RFID ha e quanti ne hanno letti le antenne
+#'
+#' Contesto: mostra quanto ogni giro (trasmissione) del confronto iniziale è
+#' «coperto» dagli RFID delle antenne; i giri con poca copertura gonfiano il lato
+#' delle saponette.
+#' Risultato: `data_lettura`, `id_trasmissione`, `rfid`, `rfid_antenne` e
+#' `quota` (la quota letta anche dalle antenne).
+#' @inheritParams classifica_rfid_dei_giri_saponette
 #' @return `data_lettura`, `id_trasmissione`, `rfid`, `rfid_antenne`, `quota`.
 #' @noRd
-composizione_giri <- function(storiche_confronto, antenne) {
-  storiche_confronto |>
+copertura_antenne_per_giro <- function(saponette_confronto, antenne) {
+  saponette_confronto |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
     # Una volta sola: dentro un raggruppamento sarebbe una ricerca per giro.
     dplyr::mutate(delle_antenne = .data$RFID %in% antenne$RFID) |>
@@ -113,6 +145,8 @@ composizione_giri <- function(storiche_confronto, antenne) {
 }
 
 #' Letture al giorno in un elenco di giorni, 0 dove non ce ne sono
+#' Risultato: un intero per giorno, nell'ordine dato; serve ai confronti per
+#' giorno (`anno_su_anno()`, `serie_settimanale()`).
 #' @noRd
 n_per_giorno <- function(confronto, giorni) {
   conteggi <- dplyr::count(confronto, .data$data_lettura, name = "n")
@@ -120,7 +154,17 @@ n_per_giorno <- function(confronto, giorni) {
 }
 
 #' Intervallo al 95% del rapporto tra due somme, ricampionando i giorni
+#'
+#' Contesto: dice quanto è incerto un rapporto calcolato su pochi giorni
+#' (per esempio gli RFID letti con le antenne contro un anno prima).
+#' Funzionamento: ricampiona con reinserimento le coppie di giorni (così i giorni
+#' della settimana restano allineati), calcola ogni volta il rapporto tra le
+#' somme e prende i percentili 2,5 e 97,5. Il seme è fisso: il risultato è
+#' ripetibile.
+#' Risultato: i due limiti, o `NA` se il denominatore è zero.
 #' @param numeratore,denominatore Una cifra per giorno, allineate.
+#' @param ripetizioni Numero di ricampionamenti.
+#' @param seme Seme del generatore casuale.
 #' @return Limite basso e alto, o `NA` senza denominatore.
 #' @noRd
 intervallo_rapporto <- function(
@@ -145,12 +189,18 @@ intervallo_rapporto <- function(
 
 #' Il periodo delle antenne contro lo stesso periodo di un anno prima
 #'
-#' Il periodo di confronto è spostato di `giorni_indietro` giorni (364: 52
-#' settimane, stessi giorni della settimana), così stagionalità e giorni di
-#' calendario coincidono. Si confrontano gli RFID letti in un giorno, da
-#' qualunque sistema, nei due periodi.
+#' Contesto: analisi A del report di confronto. Un mese si confronta con lo
+#' stesso mese dell'anno prima per togliere la stagionalità.
+#' Funzionamento: il periodo di confronto è spostato di `giorni_indietro` giorni
+#' (364: 52 settimane, stessi giorni della settimana). Si contano gli RFID letti
+#' in un giorno, da qualunque sistema, nei due periodi, e si calcola il
+#' rapporto con il suo intervallo (`intervallo_rapporto()`).
+#' Risultato: una lista con `riepilogo` (una riga: giorni, totali e medie dei
+#' due periodi, rapporto e intervallo) e `giorni` (una riga per giorno).
 #' @param confronto Tabella con le letture di entrambi gli anni.
 #' @param dal,al Periodo delle antenne.
+#' @param giorni_indietro Giorni di scarto del periodo di confronto.
+#' @param ripetizioni,seme Vedi `intervallo_rapporto()`.
 #' @return Lista: `riepilogo` (una riga) e `giorni` (una riga per giorno).
 #' @noRd
 anno_su_anno <- function(
@@ -191,33 +241,38 @@ anno_su_anno <- function(
 
 #' Quota dei contenitori attivi letti almeno una volta in ogni finestra mobile
 #'
-#' Il denominatore sono i contenitori censiti attivi nella finestra, ricavati
-#' dalle letture stesse (date di attivazione e cessazione del contenitore): un
-#' contenitore mai letto da nessuno dei due sistemi non c'è, e la quota è per
-#' difetto per entrambi.
-#' @param storiche,antenne Letture già filtrate, con `RFID`,
-#'   `data_ora_lettura`, `presente_a_database` e le date di attivazione e
-#'   cessazione del contenitore.
+#' Contesto: analisi B. Misura quanto del parco contenitori ciascun sistema
+#' riesce a vedere, con un denominatore che non dipende da quanti mezzi hanno le
+#' antenne.
+#' Funzionamento: ricava dalle letture stesse quando ogni contenitore censito è
+#' attivo (attivazione e cessazione); per ogni finestra di `finestra` giorni,
+#' spostata di `passo` giorni, conta i contenitori attivi e quelli letti dalle
+#' saponette, dalle antenne e da almeno uno dei due. Un contenitore mai letto da
+#' nessuno dei due sistemi non c'è: la quota è per difetto per entrambi.
+#' Risultato: una riga per finestra con `data_fine`, `attivi`, `letti_saponette`,
+#' `letti_antenne`, `letti_unione` e `antenne_complete`.
+#' @param saponette,antenne Letture già filtrate, con `RFID`, `data_ora_lettura`,
+#'   `presente_a_database` e le date di attivazione e cessazione del contenitore.
 #' @param finestra Giorni di ogni finestra; `passo` giorni tra una e l'altra.
 #' @return `data_fine`, `attivi`, `letti_saponette`, `letti_antenne`,
-#'   `letti_unione` e `antenne_complete` (la finestra è tutta nel periodo
-#'   delle antenne).
+#'   `letti_unione` e `antenne_complete` (la finestra è tutta nel periodo delle
+#'   antenne).
 #' @noRd
 copertura_contenitori <- function(
-  storiche,
+  saponette,
   antenne,
   finestra = 28L,
   passo = 7L
 ) {
   colonne <- c("data_attivazione_contenitore", "data_cessazione_contenitore")
-  richiedi_colonne(storiche, colonne, "copertura")
+  richiedi_colonne(saponette, colonne, "copertura")
   richiedi_colonne(antenne, colonne, "copertura")
-  storiche <- storiche |> con_data_lettura() |> solo_censiti()
+  saponette <- saponette |> con_data_lettura() |> solo_censiti()
   antenne <- antenne |> con_data_lettura() |> solo_censiti()
 
   # Quando ogni contenitore è attivo; una data di attivazione mancante vale da sempre.
   contenitori <- dplyr::bind_rows(
-    dplyr::select(storiche, "RFID", dplyr::all_of(colonne)),
+    dplyr::select(saponette, "RFID", dplyr::all_of(colonne)),
     dplyr::select(antenne, "RFID", dplyr::all_of(colonne))
   ) |>
     # Pochi periodi distinti per contenitore: si raggruppa dopo averli ridotti.
@@ -246,9 +301,9 @@ copertura_contenitori <- function(
       dplyr::mutate(numero = match(.data$RFID, contenitori$RFID)) |>
       dplyr::filter(!is.na(.data$numero))
   }
-  da_saponette <- giorni_letti(storiche)
+  da_saponette <- giorni_letti(saponette)
   da_antenne <- giorni_letti(antenne)
-  tutti <- c(storiche$data_lettura, antenne$data_lettura)
+  tutti <- c(saponette$data_lettura, antenne$data_lettura)
   fine_finestre <- seq(min(tutti) + finestra - 1, max(tutti), by = passo)
   prima_antenne <- min(antenne$data_lettura)
 
@@ -273,23 +328,29 @@ copertura_contenitori <- function(
     dplyr::bind_rows()
 }
 
-#' Chip letti da entrambi i sistemi sullo stesso mezzo nello stesso giorno
+#' RFID letti da entrambi i sistemi sullo stesso mezzo nello stesso giorno
 #'
-#' Una trasmissione delle saponette in un giorno è abbinata al mezzo con
-#' antenna che ha letto con lei almeno `chip_minimi` RFID lo stesso giorno (il
-#' mezzo con più RFID in comune). Per ogni mezzo e giorno abbinati si contano
-#' gli RFID letti dalle saponette, dalle antenne e da entrambe. L'abbinamento
-#' richiede almeno un'attività dei due sistemi: dove le saponette sono state
-#' usate solo a metà giro, gli RFID letti solo dalle antenne sono per difetto.
-#' @param storiche Letture storiche già filtrate, con `data_lettura`,
+#' Contesto: analisi C. Per sapere quanto un sistema vede rispetto all'altro
+#' bisogna guardare le giornate in cui hanno lavorato insieme. Le saponette non
+#' hanno il mezzo: si abbina ogni trasmissione al mezzo con antenna con cui
+#' condivide gli RFID.
+#' Funzionamento: una trasmissione in un giorno è abbinata al mezzo con antenna
+#' che ha letto lo stesso giorno almeno `chip_minimi` degli stessi RFID (il mezzo
+#' con più RFID in comune). Per ogni mezzo e giorno abbinati conta gli RFID
+#' letti dalle saponette, dalle antenne e da entrambe. Dove le saponette sono
+#' state usate solo a metà giro, gli RFID letti solo dalle antenne sono per difetto.
+#' Risultato: `matricola_veicolo`, `data_lettura`, `giri`, `chip_saponette`,
+#' `chip_antenne` e `chip_entrambi`.
+#' @param saponette Letture delle saponette già filtrate, con `data_lettura`,
 #'   `id_trasmissione` e `RFID`; solo censiti.
 #' @param antenne Letture con le antenne già filtrate, con `data_ora_lettura`,
 #'   `matricola_veicolo` e `RFID`; solo censiti.
+#' @param chip_minimi RFID in comune richiesti per abbinare una trasmissione.
 #' @return `matricola_veicolo`, `data_lettura`, `giri`, `chip_saponette`,
 #'   `chip_antenne` e `chip_entrambi`.
 #' @noRd
-giri_in_comune <- function(storiche, antenne, chip_minimi = 3L) {
-  solo_saponette <- storiche |>
+giri_con_entrambi_i_sistemi <- function(saponette, antenne, chip_minimi = 3L) {
+  solo_saponette <- saponette |>
     solo_censiti() |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID)
   solo_antenne <- antenne |>
@@ -355,16 +416,19 @@ giri_in_comune <- function(storiche, antenne, chip_minimi = 3L) {
 
 #' Giri o mezzi al giorno e RFID per giro, per mese e sistema
 #'
-#' Scompone le letture in quanti giri sono stati registrati e quanti RFID ha
-#' letto ogni giro: per le saponette un giro è una trasmissione in un giorno,
-#' per le antenne un mezzo in un giorno. Solo censiti.
-#' @param storiche,antenne Letture già filtrate; le storiche con
+#' Contesto: analisi D. Le letture sono il prodotto di quanti giri si registrano
+#' e di quanti RFID legge ogni giro: se calano i giri e non gli RFID per giro, il
+#' calo è mancato utilizzo del lettore e non una lettura incompleta.
+#' Funzionamento: per le saponette un giro è una trasmissione in un giorno, per
+#' le antenne un mezzo in un giorno; conta i giri per mese e li divide per i
+#' giorni osservati; calcola gli RFID medi per giro. Solo censiti.
+#' Risultato: `mese`, `sistema`, `giri`, `giorni`, `giri_per_giorno`, `rfid_per_giro`.
+#' @param saponette,antenne Letture già filtrate; le saponette con
 #'   `id_trasmissione`, le antenne con `matricola_veicolo`.
-#' @return `mese`, `sistema`, `giri`, `giorni`, `giri_per_giorno`,
-#'   `rfid_per_giro`.
+#' @param dal,al Periodo osservato.
 #' @noRd
-produttivita_giri <- function(storiche, antenne, dal, al) {
-  giri_saponette <- storiche |>
+produttivita_giri <- function(saponette, antenne, dal, al) {
+  giri_saponette <- saponette |>
     solo_censiti() |>
     dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
     dplyr::summarise(
@@ -405,8 +469,9 @@ produttivita_giri <- function(storiche, antenne, dal, al) {
 
 #' Primo giorno di lettura di ogni mezzo con le antenne
 #'
-#' Un mezzo conta come attrezzato dal giorno della sua prima lettura con le
-#' antenne, di qualunque servizio.
+#' Contesto: non si conosce la data di installazione dell'antenna di ogni
+#' mezzo dai file di lettura; si usa la prima lettura, di qualunque servizio.
+#' Risultato: `matricola_veicolo` e `prima_lettura`.
 #' @noRd
 attivazioni_mezzi <- function(antenne_tutte) {
   antenne_tutte |>
@@ -418,6 +483,9 @@ attivazioni_mezzi <- function(antenne_tutte) {
 }
 
 #' Mezzi attrezzati ogni giorno di un elenco
+#'
+#' Risultato: per ogni giorno, quanti mezzi hanno la prima lettura entro quel
+#' giorno (`attivazioni_mezzi()`).
 #' @noRd
 mezzi_attivi_per_giorno <- function(attivazioni, giorni) {
   vapply(
@@ -429,14 +497,19 @@ mezzi_attivi_per_giorno <- function(attivazioni, giorni) {
 
 #' Una riga per settimana con letture per giorno e mezzi attrezzati
 #'
-#' La settimana comincia il lunedì e conta i soli giorni tra `dal` e `al`.
-#' `base` sono le letture delle stesse settimane di `giorni_indietro` giorni
-#' prima, `rapporto` il rapporto tra le letture della settimana e la base.
+#' Contesto: analisi E. I mezzi sono attrezzati un po' alla volta: se le letture
+#' crescono con i mezzi attrezzati, l'effetto è attribuibile alle antenne e non a
+#' un andamento generale.
+#' Funzionamento: la settimana comincia il lunedì e conta i soli giorni tra `dal`
+#' e `al`; calcola le letture per giorno (totali, delle saponette, delle antenne)
+#' e quelle delle stesse settimane di `giorni_indietro` giorni prima (`base`), e il
+#' rapporto.
+#' Risultato: `settimana`, `giorni`, `mezzi_attrezzati`, `per_giorno`,
+#' `per_giorno_saponette`, `per_giorno_antenne`, `per_giorno_base`, `rapporto`.
 #' @param confronto Tabella con le letture di entrambi gli anni.
 #' @param antenne_tutte Letture con le antenne, senza filtri.
-#' @return `settimana`, `giorni`, `mezzi_attrezzati`, `per_giorno`,
-#'   `per_giorno_saponette`, `per_giorno_antenne`, `per_giorno_base`,
-#'   `rapporto`.
+#' @param dal,al Periodo delle antenne.
+#' @param giorni_indietro Giorni di scarto della base.
 #' @noRd
 serie_settimanale <- function(
   confronto,
@@ -485,16 +558,26 @@ serie_settimanale <- function(
     )
 }
 
-#' Chip delle antenne che nessuna saponetta ha mai letto
+#' RFID delle antenne che nessuna saponetta ha mai letto
 #'
+#' Contesto: analisi F. Sono contenitori che i lettori manuali non hanno mai
+#' visto: la prova più semplice che le antenne arrivano dove le saponette non
+#' arrivano. Un contenitore attivato dopo l'inizio delle saponette può non essere
+#' mai stato letto semplicemente perché non c'era, e i non censiti non sono in
+#' anagrafica.
+#' Funzionamento: per ogni RFID delle antenne dice se è censito e da quando è
+#' attivo; lo classifica in tre gruppi (censiti attivi dall'inizio delle saponette,
+#' censiti attivati dopo, non censiti) e conta quanti non compaiono mai nelle
+#' letture delle saponette.
+#' Risultato: una riga per gruppo con `gruppo`, `chip`, `mai_letti`, `quota`.
 #' @param antenne Letture con le antenne dopo i filtri, con `RFID`,
 #'   `presente_a_database` e `data_attivazione_contenitore`.
-#' @param storiche_tutte Tutte le letture storiche, senza filtri: un chip
+#' @param saponette_tutte Tutte le letture delle saponette, senza filtri: un RFID
 #'   conta come letto dalle saponette in qualunque giro.
 #' @return Una riga per gruppo: `gruppo`, `chip`, `mai_letti`, `quota`.
 #' @noRd
-chip_senza_saponette <- function(antenne, storiche_tutte) {
-  inizio_storiche <- min(lubridate::as_date(storiche_tutte$data_ora_lettura))
+chip_senza_saponette <- function(antenne, saponette_tutte) {
+  inizio_saponette <- min(lubridate::as_date(saponette_tutte$data_ora_lettura))
   gruppi <- c(
     "Censiti attivi dall'inizio delle saponette",
     "Censiti attivati dopo l'inizio delle saponette",
@@ -513,11 +596,11 @@ chip_senza_saponette <- function(antenne, storiche_tutte) {
       gruppo = dplyr::case_when(
         !.data$RFID %in% censiti ~ gruppi[3],
         is.na(.data$attivazione) |
-          .data$attivazione <= inizio_storiche ~ gruppi[1],
+          .data$attivazione <= inizio_saponette ~ gruppi[1],
         .default = gruppi[2]
       ),
       gruppo = factor(.data$gruppo, gruppi),
-      mai_letto = !.data$RFID %in% storiche_tutte$RFID
+      mai_letto = !.data$RFID %in% saponette_tutte$RFID
     ) |>
     dplyr::summarise(
       chip = dplyr::n(),
@@ -530,10 +613,12 @@ chip_senza_saponette <- function(antenne, storiche_tutte) {
 
 #' Coerenza del servizio e del comune delle letture con le antenne
 #'
-#' Una lettura con un RFID fuori posto (un tag sul mezzo, un bidone di un altro
-#' comune, un servizio diverso dal giro) fa salire il numero di letture senza
-#' fare un conferimento in più: la quota di letture coerenti dice quanto le
-#' letture in più sono credibili.
+#' Contesto: analisi G. Una lettura con un RFID fuori posto (un tag sul mezzo,
+#' un bidone di un altro comune, un servizio diverso dal giro) fa salire il
+#' numero di letture senza un conferimento in più: la quota di letture coerenti
+#' dice quanto le letture in più sono credibili.
+#' Risultato: per `coerenza_servizio` e `coerenza_comune`, quante letture e
+#' quale quota hanno ogni valore (i vuoti compaiono come `(vuoto)`).
 #' @param antenne Letture con le antenne, con `coerenza_servizio` e
 #'   `coerenza_comune`.
 #' @return `indicatore`, `valore`, `n` e `quota` (sul totale dell'indicatore).
@@ -559,16 +644,22 @@ qualita_letture_antenne <- function(antenne) {
 
 #' Letture del periodo delle antenne proiettate a tutta la flotta
 #'
-#' Per ogni giorno, le letture con le antenne sono divise per i mezzi
-#' attrezzati quel giorno e moltiplicate per i mezzi della flotta: la
-#' proiezione assume che un mezzo non ancora attrezzato legga come uno
-#' attrezzato. È una stima, non una misura.
+#' Contesto: analisi H. Le antenne sono su una parte dei mezzi; la proiezione
+#' stima quante letture ci sarebbero con tutti i mezzi attrezzati. È una stima,
+#' non una misura.
+#' Funzionamento: per ogni giorno divide le letture con le antenne per i mezzi
+#' attrezzati quel giorno e le moltiplica per i mezzi della flotta; la proiezione
+#' assume che un mezzo non ancora attrezzato legga come uno attrezzato. Il
+#' rapporto con la base di un anno prima ha il suo intervallo.
+#' Risultato: una riga con `per_giorno_antenne`, `per_giorno_proiettato`,
+#' `per_giorno_base`, `rapporto`, `rapporto_basso`, `rapporto_alto` e
+#' `quota_mezzi` (media dei mezzi attrezzati sulla flotta).
 #' @inheritParams anno_su_anno
 #' @inheritParams serie_settimanale
 #' @param mezzi_totali Mezzi della flotta.
 #' @return Una riga: `per_giorno_antenne`, `per_giorno_proiettato`,
 #'   `per_giorno_base`, `rapporto`, `rapporto_basso`, `rapporto_alto`,
-#'   `quota_mezzi` (media dei mezzi attrezzati sulla flotta).
+#'   `quota_mezzi`.
 #' @noRd
 proiezione_flotta <- function(
   confronto,

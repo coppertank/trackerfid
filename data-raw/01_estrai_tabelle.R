@@ -8,7 +8,7 @@
 # Dopo l'estrazione, la pipeline di preparazione, targets::tar_make(),
 # riconosce i file cambiati e rifà quello che serve: vedi data-raw/_targets.R.
 # I nomi che si aspetta sono quelli di file_origine(): le letture delle
-# antenne, letture_antenne.csv, e i test dei mezzi, AppSheet.ViewData.csv,
+# antenne, letture_grezze.csv, e i test dei mezzi, AppSheet.ViewData.csv,
 # arrivano da altri sistemi e vanno salvati in data-raw/origine/ con quel
 # nome.
 

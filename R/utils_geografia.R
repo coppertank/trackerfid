@@ -5,7 +5,14 @@
 # Tabelle lette una sola volta per sessione di R.
 memoria_geografia <- new.env(parent = emptyenv())
 
-#' Comuni serviti: `comune`, `cantiere`, `latitudine`, `longitudine` del centro abitato
+#' Comuni serviti con il loro cantiere e il centro abitato
+#'
+#' Contesto: la tabella `inst/extdata/comuni_cantieri.csv` è l'unico elenco dei
+#' 66 comuni serviti dall'azienda; ogni comune appartiene a un cantiere (`ASIAGO`,
+#' `BASSANO`, `CAMPOSAMPIERO`, `RUBANO`). Fatta a mano.
+#' Risultato: un tibble con `comune`, `cantiere`, `latitudine`, `longitudine` del
+#' centro abitato. I comuni fuori tabella (per esempio `VALSTAGNA`, soppresso nel
+#' 2019) non hanno cantiere.
 #' @noRd
 comuni_cantieri <- function() {
   if (is.null(memoria_geografia$comuni)) {
@@ -24,7 +31,9 @@ comuni_cantieri <- function() {
 cantieri <- function() sort(unique(comuni_cantieri()$cantiere))
 
 #' Vertici di ogni comune, per contorno e inquadratura dei giri
-#'
+#' Contesto: l'app non decide con i confini (lo fa la pipeline); li usa per
+#' disegnare il comune del giro e inquadrare la mappa. Si calcola una volta.
+#' Risultato: una lista nell'ordine della tabella.
 #' @return Lista nell'ordine della tabella: `x`, `y`, `anello` e il riquadro
 #'   `x_min`, `x_max`, `y_min`, `y_max`; `NULL` senza confine.
 #' @noRd
@@ -57,6 +66,8 @@ lati_comuni <- function() {
 }
 
 #' Riga della tabella dei comuni di ogni nome, in qualsiasi grafia; `NA` fuori tabella
+#' Contesto: confronta con `chiave_comune()`, quindi `Rosà`, `ROSA'` e `ROSÀ`
+#' coincidono.
 #' @noRd
 indice_comune <- function(comune) {
   per_valori_distinti(as.character(comune), function(nomi) {
@@ -65,14 +76,18 @@ indice_comune <- function(comune) {
 }
 
 #' Percorso del file con i confini dei comuni serviti
+#' Contesto: `inst/extdata/comuni_confini.geojson`, scritto da
+#' `prepara_confini_comuni()`.
 #' @noRd
 percorso_confini_comuni <- function() {
   app_sys("extdata", "comuni_confini.geojson")
 }
 
 #' Vertici di una geometria GeoJSON `Polygon` o `MultiPolygon`
-#'
-#' Il primo anello di un poligono è il contorno, gli altri sono fori.
+#' Contesto: un comune può avere più poligoni (isole, exclavi) e fori.
+#' Funzionamento: il primo anello di un poligono è il contorno, gli altri sono
+#' fori.
+#' Risultato: un tibble per punto.
 #' @return Tibble: `poligono`, `anello`, `punto`, `longitudine`, `latitudine`.
 #' @noRd
 anelli_geometria <- function(geometria) {
@@ -122,8 +137,9 @@ anelli_geojson <- function(geojson) {
 }
 
 #' Vertici dei confini dei comuni serviti (Regione del Veneto, IODL 2.0)
-#'
-#' Per `ggplot2::geom_polygon()`: `group = poligono`, `subgroup = anello`.
+#' Contesto: per i grafici e i report che disegnano i comuni.
+#' Risultato: per `ggplot2::geom_polygon()`: `group = poligono`, `subgroup =
+#' anello`.
 #' @noRd
 poligoni_comuni <- function() {
   if (is.null(memoria_geografia$poligoni)) {
@@ -141,6 +157,8 @@ poligoni_comuni <- function() {
 }
 
 #' Il punto è dentro i poligoni? Semiretta e numero dispari di lati attraversati
+#' Contesto: base di `comune_del_punto()`. I fori sono anelli, quindi contano da
+#' soli.
 #' @noRd
 dentro_poligoni <- function(lng, lat, poligoni) {
   x <- poligoni$longitudine
@@ -197,9 +215,11 @@ baricentro_poligoni <- function(poligoni) {
 }
 
 #' Baricentro di ogni comune, sempre dentro il suo confine: punto della bolla del comune
-#'
-#' Se il baricentro dell'area è fuori, quello della parte più grande; poi il
-#' centro abitato della tabella.
+#' Contesto: da lontano la mappa mostra una bolla per comune, ferma al variare
+#' dei filtri.
+#' Funzionamento: se il baricentro dell'area è fuori dal confine (`POVE DEL
+#' GRAPPA`, `TEOLO`), quello della parte più grande; poi il centro abitato della
+#' tabella.
 #' @noRd
 baricentri_comuni <- function() {
   if (is.null(memoria_geografia$baricentri)) {
@@ -246,8 +266,7 @@ baricentri_comuni <- function() {
 }
 
 #' Punti dentro un comune e, se chiesta, loro distanza dal confine in metri
-#'
-#' Scorre i lati una volta per tutti i punti; proiezione locale.
+#' Funzionamento: scorre i lati una volta per tutti i punti; proiezione locale.
 #' @param lati Un elemento di `lati_comuni()`.
 #' @return Lista con `dentro` e `distanza` (o `NULL`).
 #' @noRd
@@ -290,6 +309,7 @@ misura_comune <- function(lng, lat, lati, distanza = FALSE) {
 }
 
 #' Comune servito che contiene ogni punto, o `NA`; per pipeline e dataset di esempio
+#' Contesto: la pipeline la usa in `correggi_comune_lettura()`. L'app no.
 #' @noRd
 comune_del_punto <- function(lat, lng) {
   esito <- rep(NA_character_, length(lat))
@@ -327,6 +347,8 @@ comune_del_punto <- function(lat, lng) {
 }
 
 #' Metri di ogni punto da un comune servito, zero dentro; `NA` se il comune non ha confine
+#' Contesto: la pipeline scrive `distanza_comune_dichiarato`; la usa anche
+#' `scegli_giro()` per il comune più vicino.
 #' @noRd
 distanza_dal_comune <- function(lat, lng, comune) {
   esito <- rep(NA_real_, length(lat))
@@ -345,6 +367,7 @@ distanza_dal_comune <- function(lat, lng, comune) {
 }
 
 #' Riquadro della zona servita: `lat_min`, `lat_max`, `lng_min`, `lng_max`
+#' Contesto: inquadratura di partenza delle mappe.
 #' @noRd
 riquadro_zona <- function() {
   if (is.null(memoria_geografia$zona)) {
@@ -360,6 +383,9 @@ riquadro_zona <- function() {
 }
 
 #' Applica `f` ai soli valori distinti di `x`
+#' Contesto: i testi si ripetono (milioni di righe, poche centinaia di comuni):
+#' trattarli una volta sola è molto più veloce.
+#' Risultato: un vettore lungo come `x`.
 #' @noRd
 per_valori_distinti <- function(x, f) {
   distinti <- unique(x)
@@ -367,6 +393,8 @@ per_valori_distinti <- function(x, f) {
 }
 
 #' Chiave di confronto dei comuni: maiuscolo, senza accenti né punteggiatura
+#' Contesto: i comuni arrivano con grafie diverse (`ROSA'`, `Rosà`). Ogni
+#' confronto di nomi passa da qui.
 #' @noRd
 chiave_comune <- function(x) {
   x <- stringr::str_to_upper(as.character(x))
@@ -402,11 +430,15 @@ cantiere_di_comune <- function(comune) {
 
 #' Completa la geografia delle letture dal comune di lettura del file
 #'
-#' `comune_lettura` nella grafia della tabella; `comune_geografico`, lo
-#' stesso ma vuoto fuori tabella; `comune_assegnato`, il geografico o, per
-#' un censito fuori tabella, quello del database; `cantiere` del comune
-#' assegnato (fuori tabella resta quello del file); `coerenza_comune`. Il
-#' calendario non assegna comuni. Stessa regola in SQL in `valida_archivio()`.
+#' Contesto: il comune di una lettura viene dal file (la pipeline lo ricava dalla
+#' posizione); questa funzione lo porta alla grafia della tabella e ricava i
+#' campi che filtri e bolle usano. Il calendario non assegna comuni.
+#' Funzionamento: `comune_lettura` nella grafia della tabella; `comune_geografico`,
+#' lo stesso ma vuoto fuori tabella; `comune_assegnato`, il geografico o, per un
+#' censito fuori tabella, quello del database; `cantiere` del comune assegnato
+#' (fuori tabella resta quello del file); `coerenza_comune`. Stessa regola in SQL
+#' in `valida_archivio()`.
+#' Risultato: le letture con le colonne geografiche.
 #' @noRd
 aggiungi_geografia <- function(letture) {
   for (campo in colonne_geografiche()) {
@@ -430,9 +462,9 @@ aggiungi_geografia <- function(letture) {
 }
 
 #' Comune e cantiere di ogni RFID, per la tabella dei cluster
-#'
-#' Censito: l'ultimo comune del database. Non censito: il comune geografico
-#' più frequente. Fuori tabella vale il cantiere del file.
+#' Contesto: nel cluster il «comune» di un bidone non è quello di una lettura.
+#' Funzionamento: censito: l'ultimo comune del database. Non censito: il comune
+#' geografico più frequente. Fuori tabella vale il cantiere del file.
 #' @param gruppo Gruppo di ogni lettura, da `indice_gruppi()`.
 #' @noRd
 geografia_per_gruppo <- function(letture, gruppo, n_gruppi = max(gruppo)) {

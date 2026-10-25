@@ -1,13 +1,13 @@
 ---
-title: "Confronto tra letture storiche e letture con le antenne"
+title: "Confronto tra letture delle saponette e letture con le antenne"
 subtitle: "Quali RFID vedono le saponette, quali le antenne, quali entrambe"
 author: "Aldo Caumo"
 date: today
 date-format: DD/MM/YYYY
 lang: it
 params:
-  letture_antenne: "data-raw/output/letture_app.csv"
-  letture_storiche: "data-raw/output/letture_storiche.csv"
+  letture_antenne: "data-raw/output/letture_antenne.csv"
+  letture_saponette: "data-raw/output/letture_saponette.csv"
   servizio: ""
   categorie_escluse: ""
   sottocategoria: ""
@@ -46,8 +46,8 @@ knitr:
 # data.table, withr e pkgload.
 #
 # Parametri (i percorsi relativi partono dalla radice del progetto):
-#   letture_antenne        CSV delle letture con le antenne (`letture_app.csv`)
-#   letture_storiche       CSV delle letture storiche (`letture_storiche.csv`)
+#   letture_antenne        CSV delle letture con le antenne (`letture_antenne.csv`)
+#   letture_saponette       CSV delle letture delle saponette (`letture_saponette.csv`)
 #   servizio               si tengono le letture con `servizio_atteso` oppure
 #                          `servizio_transponder` uguale a questo ("SECCO");
 #                          più servizi, un elenco
@@ -142,11 +142,11 @@ dot_testo <- function(x) gsub("'", "’", x, fixed = TRUE)
 antenne_tutte <- leggi_tabella_origine(
   percorso_progetto(params$letture_antenne)
 )
-storiche_tutte <- leggi_tabella_origine(
-  percorso_progetto(params$letture_storiche)
+saponette_tutte <- leggi_tabella_origine(
+  percorso_progetto(params$letture_saponette)
 )
 
-# Letture con le antenne e letture storiche dopo i filtri dei parametri.
+# Letture con le antenne e letture delle saponette dopo i filtri dei parametri.
 antenne <- filtra_letture(
   antenne_tutte,
   servizio = params$servizio,
@@ -156,27 +156,27 @@ antenne <- filtra_letture(
 if (nrow(antenne) == 0) {
   stop("Nessuna lettura con le antenne rispetta i filtri.", call. = FALSE)
 }
-storiche_filtrate <- filtra_letture(
-  storiche_tutte,
+saponette_filtrate <- filtra_letture(
+  saponette_tutte,
   servizio = params$servizio,
   categorie_escluse = params$categorie_escluse,
   sottocategoria = params$sottocategoria
 )
 
-# Il confronto iniziale: le storiche di tutti i giri in cui compare un RFID
+# Il confronto iniziale: le saponette di tutti i giri in cui compare un RFID
 # delle antenne.
-storiche <- storiche_di_confronto(storiche_tutte, antenne)
+saponette <- saponette_di_confronto(saponette_tutte, antenne)
 confronto <- confronta_letture(
-  storiche_tutte,
+  saponette_tutte,
   antenne_tutte,
   servizio = params$servizio,
   categorie_escluse = params$categorie_escluse,
   sottocategoria = params$sottocategoria
 )
 
-# Il confronto corretto: le storiche dei soli RFID delle antenne.
+# Il confronto corretto: le saponette dei soli RFID delle antenne.
 confronto_chip <- unisci_origini(
-  storiche_stessi_chip(storiche_tutte, antenne),
+  saponette_degli_stessi_rfid(saponette_tutte, antenne),
   antenne
 )
 
@@ -202,7 +202,7 @@ knitr::kable(
   dplyr::tibble(
     Parametro = c(
       "`letture_antenne`",
-      "`letture_storiche`",
+      "`letture_saponette`",
       "`servizio`",
       "`categorie_escluse`",
       "`sottocategoria`",
@@ -212,7 +212,7 @@ knitr::kable(
     ),
     Valore = c(
       params$letture_antenne,
-      params$letture_storiche,
+      params$letture_saponette,
       elenco(params$servizio),
       elenco(params$categorie_escluse),
       elenco(params$sottocategoria),
@@ -232,8 +232,8 @@ knitr::kable(
     - `servizio`: `servizio_atteso` **oppure** `servizio_transponder` uguale al valore;
     - `categorie_escluse`: si tolgono le letture di quella `categoria`; i non censiti, che non ne hanno una, restano;
     - `sottocategoria`: si tengono solo le letture di quella `sottocategoria`; i non censiti escono.
-2. Dalle letture storiche si prendono le coppie distinte di `data_lettura` e `id_trasmissione` in cui compare almeno uno degli RFID letti dalle antenne al punto 1: una trasmissione in un giorno è un giro.
-3. Delle letture storiche si tengono **tutte** quelle di quei giri, anche di RFID che le antenne non hanno letto.
+2. Dalle letture delle saponette si prendono le coppie distinte di `data_lettura` e `id_trasmissione` in cui compare almeno uno degli RFID letti dalle antenne al punto 1: una trasmissione in un giorno è un giro.
+3. Delle letture delle saponette si tengono **tutte** quelle di quei giri, anche di RFID che le antenne non hanno letto.
 4. Le due serie si uniscono, un RFID al più una volta al giorno, con l'origine `Saponette`, `Antenne` o `Entrambe`.
 
 ## Le letture di partenza
@@ -251,7 +251,7 @@ riga <- function(nome, letture, giri = NA) {
     Al = data_it(max(giorni))
   )
 }
-giri_storiche <- function(letture) {
+giri_saponette <- function(letture) {
   nrow(dplyr::distinct(
     dplyr::mutate(letture, giorno = lubridate::as_date(.data$data_ora_lettura)),
     .data$giorno,
@@ -261,8 +261,8 @@ giri_storiche <- function(letture) {
 knitr::kable(dplyr::bind_rows(
   riga("Antenne, tutte", antenne_tutte),
   riga("Antenne, dopo i filtri", antenne),
-  riga("Storiche, tutte", storiche_tutte, giri_storiche(storiche_tutte)),
-  riga("Storiche dei giri di confronto", storiche, giri_storiche(storiche))
+  riga("Saponette, tutte", saponette_tutte, giri_saponette(saponette_tutte)),
+  riga("Saponette dei giri di confronto", saponette, giri_saponette(saponette))
 ))
 ```
 
@@ -327,7 +327,7 @@ knitr::kable(
   dplyr::tribble(
     ~Punto, ~`Che cosa verifica`, ~Dove,
     "1", "**Mesi incompleti.** Il periodo delle antenne comincia e finisce a metà mese: le barre vanno confrontate per giorno, non per totale del mese.", "Correzione 1",
-    "2", "**Insiemi di RFID diversi sui due lati.** Le storiche dei giri comprendono RFID che le antenne non hanno letto; il lato delle antenne ha solo quelli filtrati.", "Perché non è equo; correzione 2",
+    "2", "**Insiemi di RFID diversi sui due lati.** Le saponette dei giri comprendono RFID che le antenne non hanno letto; il lato delle antenne ha solo quelli filtrati.", "Perché non è equo; correzione 2",
     "3", "**Stagionalità.** Un mese si confronta con lo stesso periodo dell'anno prima.", "Analisi A",
     "A", "Stesso periodo dell'anno prima, per giorno, sugli stessi RFID, con un intervallo di incertezza.", "Analisi A",
     "B", "Copertura del parco: quota dei contenitori attivi letti almeno una volta in ogni finestra mobile. Il denominatore non dipende dal sistema di lettura.", "Analisi B",
@@ -347,7 +347,7 @@ Il lato delle antenne contiene solo gli RFID che rispettano i filtri. Il lato de
 
 ```{r}
 #| label: composizione
-composizione <- composizione_storiche(storiche, antenne, antenne_tutte)
+composizione <- classifica_rfid_dei_giri_saponette(saponette, antenne, antenne_tutte)
 per_gruppo <- composizione |>
   dplyr::summarise(
     rfid = dplyr::n_distinct(.data$RFID),
@@ -356,7 +356,7 @@ per_gruppo <- composizione |>
   ) |>
   dplyr::arrange(.data$gruppo)
 tutti_rfid <- dplyr::n_distinct(composizione$RFID)
-giri_confronto <- giri_storiche(storiche)
+giri_confronto <- giri_saponette(saponette)
 ```
 
 ```{r}
@@ -415,8 +415,8 @@ composizione |>
   scale_x_date(date_labels = "%m/%Y", date_breaks = "1 month") +
   scale_y_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
   labs(
-    title = "Le letture storiche dei giri di confronto, per tipo di RFID",
-    subtitle = "Le letture storiche del confronto iniziale: solo la parte arancione ha un corrispondente nelle antenne",
+    title = "Le letture delle saponette dei giri di confronto, per tipo di RFID",
+    subtitle = "Le letture delle saponette del confronto iniziale: solo la parte arancione ha un corrispondente nelle antenne",
     x = NULL,
     y = "RFID letti in un giorno"
   ) +
@@ -429,7 +429,7 @@ composizione |>
 #| label: grafico-giri
 #| fig-height: 3.6
 #| fig-alt: "Numero di giri delle saponette per quota di RFID letti anche dalle antenne"
-giri_quota <- composizione_giri(storiche, antenne)
+giri_quota <- copertura_antenne_per_giro(saponette, antenne)
 ggplot(giri_quota, aes(quota)) +
   geom_histogram(binwidth = 0.1, boundary = 0, fill = "#eb6834", colour = "#fcfcfb", linewidth = 0.5) +
   scale_x_continuous(labels = function(x) paste0(100 * x, "%")) +
@@ -613,7 +613,7 @@ Quanti contenitori attivi sono letti almeno una volta in ogni finestra di `{r} f
 ```{r}
 #| label: copertura
 copertura <- copertura_contenitori(
-  storiche_filtrate,
+  saponette_filtrate,
   antenne,
   finestra = finestra,
   passo = 7L
@@ -713,8 +713,8 @@ digraph abbinamento {
 
 ```{r}
 #| label: giri-in-comune
-comune <- giri_in_comune(
-  storiche_filtrate |> con_data_lettura(),
+comune <- giri_con_entrambi_i_sistemi(
+  saponette_filtrate |> con_data_lettura(),
   antenne,
   chip_minimi = as.integer(params$chip_condivisi_minimi)
 )
@@ -808,9 +808,9 @@ Le letture sono il prodotto di quanti giri vengono registrati e di quanti RFID l
 ```{r}
 #| label: produttivita
 prod <- produttivita_giri(
-  storiche_filtrate |> con_data_lettura(),
+  saponette_filtrate |> con_data_lettura(),
   antenne,
-  dal = min(c(storiche_filtrate$data_ora_lettura, antenne$data_ora_lettura) |> lubridate::as_date()),
+  dal = min(c(saponette_filtrate$data_ora_lettura, antenne$data_ora_lettura) |> lubridate::as_date()),
   al = al
 )
 ```
@@ -938,15 +938,15 @@ if (nrow(valide) >= 4 && length(unique(valide$mezzi_attrezzati)) > 1) {
 }
 ```
 
-Il test più solido sarebbe confrontare, nelle stesse settimane, i mezzi appena passati alle antenne con quelli ancora con le saponette. Per farlo serve sapere con quale mezzo è stata fatta una trasmissione delle saponette, informazione che le letture storiche oggi non hanno (hanno solo data, codice e trasmissione).
+Il test più solido sarebbe confrontare, nelle stesse settimane, i mezzi appena passati alle antenne con quelli ancora con le saponette. Per farlo serve sapere con quale mezzo è stata fatta una trasmissione delle saponette, informazione che le letture delle saponette oggi non hanno (hanno solo data, codice e trasmissione).
 
 # Analisi F: RFID mai letti dalle saponette
 
-Quanti degli RFID letti dalle antenne non compaiono mai, in qualunque giro, nelle letture storiche. Sono contenitori che i lettori manuali non hanno mai visto nel periodo delle saponette (dal `{r} data_it(min(lubridate::as_date(storiche_tutte$data_ora_lettura)))`).
+Quanti degli RFID letti dalle antenne non compaiono mai, in qualunque giro, nelle letture delle saponette. Sono contenitori che i lettori manuali non hanno mai visto nel periodo delle saponette (dal `{r} data_it(min(lubridate::as_date(saponette_tutte$data_ora_lettura)))`).
 
 ```{r}
 #| label: senza-saponette
-senza <- chip_senza_saponette(antenne, storiche_tutte)
+senza <- chip_senza_saponette(antenne, saponette_tutte)
 knitr::kable(
   dplyr::tibble(
     Gruppo = as.character(senza$gruppo),
@@ -1080,4 +1080,4 @@ knitr::kable(dplyr::bind_rows(righe), align = "llr")
 
 # Come si cambia
 
-Le funzioni di selezione e di unione sono in `R/utils_confronto.R` (`filtra_letture()`, `storiche_di_confronto()`, `unisci_origini()`, `confronta_letture()`); quelle delle analisi in `R/utils_confronto_analisi.R`. I test sono in `tests/testthat/test-utils_confronto.R` e `test-utils_confronto_analisi.R`. Questo report mostra misure e non conclusioni: ogni frase spiega come leggere un numero, e i numeri si ricalcolano a ogni compilazione.
+Le funzioni di selezione e di unione sono in `R/utils_confronto.R` (`filtra_letture()`, `saponette_di_confronto()`, `unisci_origini()`, `confronta_letture()`); quelle delle analisi in `R/utils_confronto_analisi.R`. I test sono in `tests/testthat/test-utils_confronto.R` e `test-utils_confronto_analisi.R`. Questo report mostra misure e non conclusioni: ogni frase spiega come leggere un numero, e i numeri si ricalcolano a ogni compilazione.

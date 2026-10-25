@@ -2,7 +2,14 @@
 # SQL, senza copie. Filtri, ricerche, giri e dettaglio portano in R solo le
 # righe che servono.
 
-#' Selezione delle letture di un periodo (due date incluse, o `NULL` per tutte)
+#' Selezione delle letture di un periodo
+#'
+#' Contesto: ogni scheda lavora su un periodo (all'avvio l'anno più recente).
+#' La selezione non copia le letture: è l'archivio più la condizione SQL del
+#' periodo.
+#' Funzionamento: conta letture e RFID del periodo; due date incluse, o `NULL`
+#' per tutte.
+#' Risultato: una lista di classe `selezione_letture`.
 #' @return Lista di classe `selezione_letture`: `archivio`, `periodo`, `n`,
 #'   `n_rfid`.
 #' @noRd
@@ -29,6 +36,8 @@ seleziona_periodo <- function(archivio, periodo = NULL) {
 }
 
 #' Condizione SQL del periodo di una selezione
+#' Contesto: da inserire nel `WHERE` delle query sulle letture; `TRUE` se non
+#' c'è un periodo.
 #' @noRd
 sql_periodo <- function(selezione) {
   periodo <- selezione$periodo
@@ -43,6 +52,7 @@ sql_periodo <- function(selezione) {
 }
 
 #' Condizione SQL che riconosce i sacchetti, come `rfid_sacchetto()`
+#' Contesto: 24 caratteri con prefisso `00BD`. Va scritta nei due posti.
 #' @noRd
 sql_sacchetto <- function(colonna = "RFID") {
   sprintf(
@@ -54,8 +64,15 @@ sql_sacchetto <- function(colonna = "RFID") {
 
 #' Tabella temporanea del servizio stimato dei non censiti nel periodo
 #'
-#' Regola di `servizio_prevalente_non_censiti()`. Calcolata una volta per
-#' periodo, resta finché l'archivio è aperto ed è condivisa tra le sessioni.
+#' Contesto: un non censito non ha un servizio a database; icona, filtri e
+#' statistiche usano quello stimato. Ricalcolarlo a ogni filtro rallentava, quindi
+#' si calcola una volta per periodo.
+#' Funzionamento: sulle letture `Non Presente` del periodo, se la tipologia
+#' prevalente raggiunge `soglia` (80%) il servizio è il giro più letto di quella
+#' tipologia; altrimenti `NA` (stima incerta). Regola di
+#' `servizio_prevalente_non_censiti()`. La tabella resta finché l'archivio è
+#' aperto ed è condivisa tra le sessioni.
+#' Risultato: il nome della tabella, con `RFID` e `stimato`.
 #' @return Il nome della tabella, con `RFID` e `stimato`.
 #' @noRd
 tabella_stima <- function(selezione, soglia = 0.8) {
@@ -91,7 +108,11 @@ tabella_stima <- function(selezione, soglia = 0.8) {
   nome
 }
 
-#' Sottoquery delle letture del periodo con `servizio_icona` (vedi `aggiungi_servizio_icona()`)
+#' Sottoquery delle letture del periodo con `servizio_icona`
+#' Contesto: unisce le letture alla tabella della stima, così filtri, icona e
+#' statistiche dicono lo stesso servizio. Regola di riferimento in R:
+#' `aggiungi_servizio_icona()`.
+#' Risultato: una sottoquery SQL da usare in `FROM`.
 #' @noRd
 sql_con_icona <- function(selezione) {
   sprintf(
@@ -108,9 +129,10 @@ sql_con_icona <- function(selezione) {
 }
 
 #' SQL delle righe dell'ultima lettura di ogni RFID che soddisfa una condizione
-#'
-#' Con `arg_max()`, più veloce di una funzione finestra; a parità di istante
-#' vale l'ultima riga del file.
+#' Contesto: la mappa principale mostra un marker per bidone, nell'ultima lettura.
+#' Funzionamento: `arg_max()` con `GROUP BY`, più veloce di una funzione finestra;
+#' a parità di istante vale l'ultima riga del file.
+#' Risultato: una query SQL, una riga per RFID.
 #' @noRd
 sql_ultime <- function(selezione, condizione = "TRUE") {
   sprintf(
@@ -121,6 +143,8 @@ sql_ultime <- function(selezione, condizione = "TRUE") {
 }
 
 #' Colonne restituite dalle interrogazioni sulle letture
+#' Contesto: porta in R solo ciò che serve alle mappe e ai popup; con `icona`
+#' anche `servizio_icona`.
 #' @noRd
 colonne_risultato <- function(icona = TRUE) {
   paste(c(colonne_app(), if (icona) "servizio_icona"), collapse = ", ")
@@ -128,10 +152,14 @@ colonne_risultato <- function(icona = TRUE) {
 
 #' Condizione SQL dei filtri della mappa principale, sulle letture di `sql_con_icona()`
 #'
-#' Servizi, giri, cantieri e coerenze per esclusione (un mancante non è mai
-#' escluso), comuni e stato a database per scelta. I non censiti con la
-#' stima incerta passano con `includi_stima_incerta`; una coerenza del
-#' servizio mancante sta con le coerenti.
+#' Contesto: i filtri sopra la mappa vanno applicati a tutte le letture del
+#' periodo, prima di tenere l'ultima per RFID: un bidone letto due volte in
+#' servizi diversi compare in base all'ultima lettura che passa i filtri.
+#' Funzionamento: servizi, giri, cantieri e coerenze per esclusione (un mancante
+#' non è mai escluso), comuni e stato a database per scelta. I non censiti con la
+#' stima incerta passano con `includi_stima_incerta`; una coerenza del servizio
+#' mancante sta con le coerenti.
+#' Risultato: un testo SQL per il `WHERE`.
 #' @param comuni Comuni da tenere; vuoto: tutti.
 #' @noRd
 condizione_filtri <- function(
@@ -204,8 +232,10 @@ condizione_filtri <- function(
 }
 
 #' Ultima lettura di ogni RFID tra quelle che superano i filtri
-#'
-#' Prima i filtri su tutte le letture del periodo, poi l'ultima per RFID.
+#' Contesto: i dati della mappa principale.
+#' Funzionamento: prima i filtri su tutte le letture del periodo, poi l'ultima per
+#' RFID (`sql_ultime()`).
+#' Risultato: un tibble con una riga per RFID e la colonna `riga`.
 #' @param ... Filtri di `condizione_filtri()`.
 #' @return Una riga per RFID, con la colonna `riga`.
 #' @noRd
@@ -223,6 +253,7 @@ ultime_letture <- function(selezione, ..., colonne = NULL) {
 }
 
 #' Numero delle letture del periodo che superano i filtri
+#' Contesto: l'intestazione della mappa dice «N letture di M RFID».
 #' @inheritParams ultime_letture
 #' @noRd
 conta_letture <- function(selezione, ...) {
@@ -239,6 +270,7 @@ conta_letture <- function(selezione, ...) {
 }
 
 #' Letture per cantiere che superano i filtri, nell'ordine di `ordina_cantieri()`
+#' Contesto: statistiche della barra laterale.
 #' @inheritParams ultime_letture
 #' @noRd
 conteggi_cantieri <- function(selezione, ...) {
@@ -259,6 +291,9 @@ conteggi_cantieri <- function(selezione, ...) {
 }
 
 #' Voci dei filtri presenti nel periodo
+#' Contesto: i menu mostrano solo servizi, giri, cantieri e comuni che compaiono
+#' nelle letture del periodo.
+#' Risultato: una lista con le voci e `con_geografia` (se c'è almeno un cantiere).
 #' @return Lista con `servizi`, `giri`, `cantieri`, `comuni` (con
 #'   `cantiere` e `comune_assegnato`) e `con_geografia`.
 #' @noRd
@@ -290,6 +325,7 @@ scelte_periodo <- function(selezione) {
 }
 
 #' Riquadro delle letture dei cantieri e comuni scelti: due punti, o zero righe
+#' Contesto: la mappa si sposta sull'area scelta nei filtri.
 #' @noRd
 area_filtri <- function(
   selezione,
@@ -330,6 +366,8 @@ sql_codici <- function(con, codici) {
 }
 
 #' Letture degli RFID cercati, senza badare alle maiuscole
+#' Contesto: scheda «Ricerca RFID».
+#' Risultato: per RFID e data decrescente, con `servizio_icona` e `is_ultimo`.
 #' @return Per RFID e data decrescente, con `servizio_icona` e `is_ultimo`.
 #' @noRd
 cerca_per_rfid <- function(selezione, codici) {
@@ -348,7 +386,9 @@ cerca_per_rfid <- function(selezione, codici) {
   )
 }
 
-#' Ultima lettura dei bidoni la cui utenza attuale, nell'ultima lettura, è tra quelle cercate
+#' Ultima lettura dei bidoni la cui utenza attuale è tra quelle cercate
+#' Contesto: scheda «Ricerca Utenza»; un bidone che ha cambiato utenza compare
+#' solo per l'utenza dell'ultima lettura.
 #' @noRd
 filtra_ultimo_per_utenza <- function(selezione, utenze) {
   interroga(
@@ -367,6 +407,7 @@ filtra_ultimo_per_utenza <- function(selezione, utenze) {
 }
 
 #' Matricole dei mezzi, con etichette "matricola (targa)" per l'elenco
+#' Contesto: scheda «Ricerca Giro».
 #' @noRd
 mezzi_presenti <- function(selezione) {
   if (is.null(selezione) || selezione$n == 0) {
@@ -407,6 +448,7 @@ giorni_letture <- function(selezione) {
 }
 
 #' Letture dei mezzi in un intervallo di giorni, per la ricerca dei giri
+#' Contesto: la tabella dei giri e la mappa di «Ricerca Giro» partono da qui.
 #' @param mezzo Matricola; tutti se vuota.
 #' @param solo Tra `"fuori_giro"` e `"fuori_comune"`: tiene le letture con
 #'   almeno una delle due; vuoto: tutte.
@@ -450,6 +492,7 @@ cerca_giri <- function(selezione, mezzo = NULL, dal, al, solo = character(0)) {
 }
 
 #' Letture di un RFID, in ordine di tempo
+#' Contesto: dettaglio del bidone.
 #' @param origine Selezione (letture del periodo) o archivio (tutte).
 #' @noRd
 letture_del_rfid <- function(origine, rfid) {
@@ -473,6 +516,8 @@ letture_del_rfid <- function(origine, rfid) {
 }
 
 #' Tutte le letture di una selezione, per l'analisi dei cluster
+#' Contesto: l'unico caso in cui l'app porta in R il periodo intero (al click di
+#' «Genera Analisi»).
 #' @noRd
 letture_periodo <- function(selezione) {
   letture_archivio(selezione$archivio, sql_periodo(selezione), colonne_app())

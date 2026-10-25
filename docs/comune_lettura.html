@@ -3425,7 +3425,7 @@ vertical-align: top;
     <div>
     <div class="quarto-title-meta-heading">Data di Pubblicazione</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">23/10/2026</p>
+      <p class="date">25/10/2026</p>
     </div>
   </div>
   
@@ -3442,8 +3442,8 @@ vertical-align: top;
 <h1>Da quali dati si ricava</h1>
 <div class="cell">
 <div class="cell-output-display">
-<div id="htmlwidget-45fa0a4a708bfa0803e1" style="width:100%;height:480px;" class="grViz html-widget"></div>
-<script type="application/json" data-for="htmlwidget-45fa0a4a708bfa0803e1">{"x":{"diagram":"\ndigraph dati {\n  graph [rankdir=LR];\n  graph [fontname=\"Helvetica\", nodesep=0.45, ranksep=0.35];\n  node [fontname=\"Helvetica\", fontsize=12, shape=box, style=\"rounded,filled\",\n        fillcolor=\"#ffffff\", color=\"#8a948e\", margin=\"0.14,0.08\"];\n  edge [fontname=\"Helvetica\", fontsize=11, color=\"#5b655f\"];\n  gps [label=\"Indirizzo del sistema\\ndi localizzazione\\n«via, comune»\", fillcolor=\"#f3f4f2\"];\n  pos [label=\"Posizione\\nlatitudine e longitudine\", fillcolor=\"#f3f4f2\"];\n  conf [label=\"Confini dei 66 comuni serviti\\n(Regione del Veneto)\", fillcolor=\"#f3f4f2\"];\n  forn [label=\"Comune della fornitura\\n(database, nel giorno\\ndella lettura)\", fillcolor=\"#f3f4f2\"];\n  cg [label=\"comune del GPS\\n(dopo la prima virgola)\"];\n  cp [label=\"comune della posizione\"];\n  fin [label=\"comune_lettura\", fillcolor=\"#dcefe3\", color=\"#2f7d4f\"];\n  gps -> cg; pos -> cp; conf -> cp;\n  cg -> fin; cp -> fin; forn -> fin;\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-8655f1b32a7b3a925c67" style="width:100%;height:480px;" class="grViz html-widget"></div>
+<script type="application/json" data-for="htmlwidget-8655f1b32a7b3a925c67">{"x":{"diagram":"\ndigraph dati {\n  graph [rankdir=LR];\n  graph [fontname=\"Helvetica\", nodesep=0.45, ranksep=0.35];\n  node [fontname=\"Helvetica\", fontsize=12, shape=box, style=\"rounded,filled\",\n        fillcolor=\"#ffffff\", color=\"#8a948e\", margin=\"0.14,0.08\"];\n  edge [fontname=\"Helvetica\", fontsize=11, color=\"#5b655f\"];\n  gps [label=\"Indirizzo del sistema\\ndi localizzazione\\n«via, comune»\", fillcolor=\"#f3f4f2\"];\n  pos [label=\"Posizione\\nlatitudine e longitudine\", fillcolor=\"#f3f4f2\"];\n  conf [label=\"Confini dei 66 comuni serviti\\n(Regione del Veneto)\", fillcolor=\"#f3f4f2\"];\n  forn [label=\"Comune della fornitura\\n(database, nel giorno\\ndella lettura)\", fillcolor=\"#f3f4f2\"];\n  cg [label=\"comune del GPS\\n(dopo la prima virgola)\"];\n  cp [label=\"comune della posizione\"];\n  fin [label=\"comune_lettura\", fillcolor=\"#dcefe3\", color=\"#2f7d4f\"];\n  gps -> cg; pos -> cp; conf -> cp;\n  cg -> fin; cp -> fin; forn -> fin;\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
 </div>
 </div>
 <ul>
@@ -3466,8 +3466,8 @@ vertical-align: top;
 <p>La scelta avviene dopo l’associazione al database, perché serve il comune della fornitura.</p>
 <div class="cell">
 <div class="cell-output-display">
-<div id="htmlwidget-fb5b737e78f780eac6b2" style="width:100%;height:480px;" class="grViz html-widget"></div>
-<script type="application/json" data-for="htmlwidget-fb5b737e78f780eac6b2">{"x":{"diagram":"\ndigraph percorso {\n  graph [rankdir=TB];\n  graph [fontname=\"Helvetica\", nodesep=0.45, ranksep=0.35];\n  node [fontname=\"Helvetica\", fontsize=12, shape=box, style=\"rounded,filled\",\n        fillcolor=\"#ffffff\", color=\"#8a948e\", margin=\"0.14,0.08\"];\n  edge [fontname=\"Helvetica\", fontsize=11, color=\"#5b655f\"];\n  inizio [label=\"Una lettura:\\ncomune del GPS, posizione, comune della fornitura\", style=\"rounded\"];\n  d1 [label=\"Il comune del GPS è\\nquello della fornitura?\", shape=diamond, style=\"filled\", fillcolor=\"#f3f4f2\"];\n  gps [label=\"Vale il comune del GPS\", fillcolor=\"#dcefe3\", color=\"#2f7d4f\"];\n  d2 [label=\"La posizione cade in un\\ncomune servito?\", shape=diamond, style=\"filled\", fillcolor=\"#f3f4f2\"];\n  pos [label=\"Vale il comune\\ndella posizione\", fillcolor=\"#dcefe3\", color=\"#2f7d4f\"];\n  res [label=\"Resta il comune del GPS\\n(anche se fuori tabella)\", fillcolor=\"#fbf1dd\", color=\"#e08a2e\"];\n  inizio -> d1;\n  d1 -> gps [label=\" sì\"];\n  d1 -> d2 [label=\" no, o la fornitura manca\"];\n  d2 -> pos [label=\" sì\"];\n  d2 -> res [label=\" no, o senza coordinate\"];\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
+<div id="htmlwidget-029cee8c40686ab02235" style="width:100%;height:480px;" class="grViz html-widget"></div>
+<script type="application/json" data-for="htmlwidget-029cee8c40686ab02235">{"x":{"diagram":"\ndigraph percorso {\n  graph [rankdir=TB];\n  graph [fontname=\"Helvetica\", nodesep=0.45, ranksep=0.35];\n  node [fontname=\"Helvetica\", fontsize=12, shape=box, style=\"rounded,filled\",\n        fillcolor=\"#ffffff\", color=\"#8a948e\", margin=\"0.14,0.08\"];\n  edge [fontname=\"Helvetica\", fontsize=11, color=\"#5b655f\"];\n  inizio [label=\"Una lettura:\\ncomune del GPS, posizione, comune della fornitura\", style=\"rounded\"];\n  d1 [label=\"Il comune del GPS è\\nquello della fornitura?\", shape=diamond, style=\"filled\", fillcolor=\"#f3f4f2\"];\n  gps [label=\"Vale il comune del GPS\", fillcolor=\"#dcefe3\", color=\"#2f7d4f\"];\n  d2 [label=\"La posizione cade in un\\ncomune servito?\", shape=diamond, style=\"filled\", fillcolor=\"#f3f4f2\"];\n  pos [label=\"Vale il comune\\ndella posizione\", fillcolor=\"#dcefe3\", color=\"#2f7d4f\"];\n  res [label=\"Resta il comune del GPS\\n(anche se fuori tabella)\", fillcolor=\"#fbf1dd\", color=\"#e08a2e\"];\n  inizio -> d1;\n  d1 -> gps [label=\" sì\"];\n  d1 -> d2 [label=\" no, o la fornitura manca\"];\n  d2 -> pos [label=\" sì\"];\n  d2 -> res [label=\" no, o senza coordinate\"];\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
 </div>
 </div>
 <p>Il GPS e la fornitura si confrontano senza badare a maiuscole, accenti e apostrofi (<code>chiave_comune()</code>), e un nome del GPS portato alla grafia della tabella non conta come correzione («Rosa’» e <code>ROSÀ</code> sono lo stesso comune).</p>
@@ -3592,7 +3592,7 @@ vertical-align: top;
 </section>
 <section id="come-si-cambia" class="level1">
 <h1>Come si cambia</h1>
-<p>La scelta sta in <code>correggi_comune_lettura()</code>; l’importazione in <code>importa_letture()</code>; il calcolo del punto in <code>comune_del_punto()</code> (<code>R/utils_geografia.R</code>); l’ordine dei passi in <code>prepara_letture_app()</code>. I test sono in <code>test-fct_preparazione_letture.R</code> e <code>test-fct_importa_tabelle.R</code>. Quando la logica cambia vanno aggiornati questo file (la tabella dei casi si ricalcola da sola, il testo no), <code>CLAUDE.md</code> e il README, e il documento va ricompilato.</p>
+<p>La scelta sta in <code>correggi_comune_lettura()</code>; l’importazione in <code>importa_letture_antenne()</code>; il calcolo del punto in <code>comune_del_punto()</code> (<code>R/utils_geografia.R</code>); l’ordine dei passi in <code>prepara_letture_antenne()</code>. I test sono in <code>test-fct_preparazione_letture.R</code> e <code>test-fct_importa_tabelle.R</code>. Quando la logica cambia vanno aggiornati questo file (la tabella dei casi si ricalcola da sola, il testo no), <code>CLAUDE.md</code> e il README, e il documento va ricompilato.</p>
 </section>
 
 </main>

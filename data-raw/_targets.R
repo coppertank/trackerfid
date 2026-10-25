@@ -1,16 +1,16 @@
 # Pipeline della preparazione dei dati reali, con {targets}.
 #
 # Dai file estratti dal passo 1 (data-raw/origine/) scrive in data-raw/output/:
-# letture_app.csv, letture_app.duckdb e controllo_giri.csv per l'app;
-# letture_storiche.csv, le letture delle saponette con la stessa anagrafica.
+# letture_antenne.csv, letture_antenne.duckdb e controllo_giri.csv per l'app;
+# letture_saponette.csv, le letture delle saponette con la stessa anagrafica.
 # I report non fanno parte della pipeline: si compilano a mano con
 # data-raw/compila_report.R.
-# I due dataset si leggono anche con targets::tar_load(letture_app) e
-# targets::tar_load(letture_storiche); le tabelle intermedie non si salvano.
+# I due dataset si leggono anche con targets::tar_load(letture_antenne) e
+# targets::tar_load(letture_saponette); le tabelle intermedie non si salvano.
 #
 # Dalla radice del progetto:
 #   targets::tar_make()                      tutto quello che è da rifare
-#   targets::tar_make(names = duckdb_letture_app)   solo i file dell'app
+#   targets::tar_make(names = duckdb_letture_antenne)   solo i file dell'app
 #   targets::tar_outdated()                  che cosa è da rifare
 #   targets::tar_visnetwork()                la catena dei passi
 # Il passo 1, data-raw/01_estrai_tabelle.R, si collega al database aziendale
@@ -23,9 +23,9 @@ library(targets)
 pkgload::load_all(".", quiet = TRUE)
 tar_option_set(imports = "trackerfid")
 
-# Nomi delle colonne del file delle letture storiche: codice, istante e
+# Nomi delle colonne del file delle letture delle saponette: codice, istante e
 # trasmissione.
-colonne_storiche <- list(
+colonne_saponette <- list(
   rfid = "codice_transponder",
   data_ora = "data_lettura",
   trasmissione = "id_trasmissione"
@@ -33,15 +33,17 @@ colonne_storiche <- list(
 
 list(
   # --- File di partenza: la pipeline ne segue il contenuto ------------------
-  # Antenne: test dei mezzi, letture e calendari. Il file dei giri non
-  # pianificati può mancare: si seguono quelli che ci sono.
+  # Antenne: test dei mezzi, letture e calendari. I file dei giri non
+  # pianificati e dei giri aggiunti a mano possono mancare: si seguono quelli
+  # che ci sono.
   tar_target(
     file_antenne,
     file_origine()[c(
       "test_mezzi",
       "letture",
       "calendario",
-      "non_pianificati"
+      "non_pianificati",
+      "giri_aggiunti"
     )] |>
       unlist() |>
       purrr::keep(file.exists),
@@ -59,58 +61,58 @@ list(
     )]),
     format = "file"
   ),
-  tar_target(file_storiche, file_origine()$storiche, format = "file"),
+  tar_target(file_saponette, file_origine()$saponette, format = "file"),
 
   # --- Letture per l'app: dataset, CSV, archivio .duckdb, giri da controllare
   tar_target(
-    letture_app,
+    letture_antenne,
     {
       file_antenne
       file_anagrafica
-      prepara_letture_app(file_origine())
+      prepara_letture_antenne(file_origine())
     }
   ),
   tar_target(
-    csv_letture_app,
-    scrivi_csv_output(letture_app, "letture_app.csv"),
+    csv_letture_antenne,
+    scrivi_csv_output(letture_antenne, "letture_antenne.csv"),
     format = "file"
   ),
   # L'archivio dell'app: lo stesso CSV, validato come lo valida l'app.
   tar_target(
-    duckdb_letture_app,
-    scrivi_archivio(csv_letture_app, "data-raw/output/letture_app.duckdb"),
+    duckdb_letture_antenne,
+    scrivi_archivio(csv_letture_antenne, "data-raw/output/letture_antenne.duckdb"),
     format = "file"
   ),
   tar_target(
     csv_controllo_giri,
-    scrivi_csv_output(giri_da_controllare(letture_app), "controllo_giri.csv", na = ""),
+    scrivi_csv_output(giri_da_controllare(letture_antenne), "controllo_giri.csv", na = ""),
     format = "file"
   ),
 
   # Le letture il cui comune del GPS è stato sostituito da quello della posizione.
   tar_target(
     csv_comuni_corretti,
-    scrivi_csv_output(comuni_corretti(letture_app), "comuni_corretti.csv", na = ""),
+    scrivi_csv_output(comuni_corretti(letture_antenne), "comuni_corretti.csv", na = ""),
     format = "file"
   ),
 
-  # --- Letture storiche, con la stessa anagrafica -----------------------------
+  # --- Letture delle saponette, con la stessa anagrafica -----------------------------
   tar_target(
-    letture_storiche,
+    letture_saponette,
     {
-      file_storiche
+      file_saponette
       file_anagrafica
-      prepara_letture_storiche(
+      prepara_letture_saponette(
         file_origine(),
-        colonna_rfid = colonne_storiche$rfid,
-        colonna_data_ora = colonne_storiche$data_ora,
-        colonna_trasmissione = colonne_storiche$trasmissione
+        colonna_rfid = colonne_saponette$rfid,
+        colonna_data_ora = colonne_saponette$data_ora,
+        colonna_trasmissione = colonne_saponette$trasmissione
       )
     }
   ),
   tar_target(
-    csv_letture_storiche,
-    scrivi_csv_output(letture_storiche, "letture_storiche.csv"),
+    csv_letture_saponette,
+    scrivi_csv_output(letture_saponette, "letture_saponette.csv"),
     format = "file"
   )
 )

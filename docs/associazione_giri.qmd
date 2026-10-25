@@ -63,6 +63,7 @@ Documento scritto per spiegare, a chi non legge il codice, come una lettura rice
 - **Letture**, con mezzo, data e ora, comune e posizione.
 - **Giri pianificati**: mezzo, giorno, ora di inizio e di fine, servizio, comune, codice del giro.
 - **Giri non pianificati**: mezzo, giorno, servizio, comune, codice del giro. Non hanno orari: non si sa quando iniziano e finiscono.
+- **Giri aggiunti a mano**: quelli che si sa essere stati compiuti (da un consuntivo) ma che il calendario estratto non ha. Hanno tutti i campi dei giri pianificati e si rimettono tra i pianificati a ogni preparazione (vedi più sotto).
 
 **Regola di base.** Una lettura può avere solo un giro dello *stesso mezzo* (matricola) e dello *stesso giorno*. Mai di un altro mezzo o di un altro giorno. I codici dei giri non pianificati hanno la stessa logica di quelli dei pianificati (un servizio in un comune) e possono coincidere con quelli di un pianificato di un altro giorno. I comuni si confrontano senza badare a maiuscole, accenti e apostrofi.
 
@@ -187,11 +188,15 @@ tabella <- dplyr::bind_rows(
     Passo = c("senza giro", "`censiti`"),
     `Quando vale` = c(
       "Nessuno dei passi vale.",
-      "Il mezzo quel giorno non ha nessun giro."
+      "Il mezzo quel giorno non ha nessun giro, nemmeno aggiunto a mano."
     ),
     `Cosa assegna` = c(
       "niente: giro, servizio atteso e comune del giro restano vuoti",
-      "solo il servizio atteso: il servizio più frequente dei bidoni censiti letti dal mezzo (ogni bidone conta una volta; con un pareggio, niente). Il giro resta vuoto"
+      paste0(
+        "solo il servizio atteso: il servizio più frequente dei bidoni censiti del tratto continuo della lettura (ogni bidone conta una volta; servono almeno ",
+        censiti_minimi_per_tratto(),
+        " bidoni diversi; con un pareggio o con meno bidoni, niente). Il giro resta vuoto"
+      )
     )
   )
 )
@@ -533,6 +538,217 @@ digraph servizio {
 
 Il servizio (CARTA) è lo stesso nei due giri, quindi è certo; il giro è N1, il comune più vicino. Una lettura fuori da tutti i comuni dei giri resta «fuori giro»: il servizio è giusto, il comune no.
 
+# Un mezzo senza giri: il servizio dai censiti del tratto
+
+Un mezzo che quel giorno non ha nessun giro nel calendario non ha un `id_giro` (servizio e comune) da cui prendere il servizio atteso. Il giro non si inventa: resta vuoto, insieme al suo comune. Si deduce solo il servizio, dai bidoni che il mezzo ha letto.
+
+Il giro si approssima con il **tratto**: le letture di seguito, senza pause di oltre `{r} ritardo_giro_minuti()` minuti. Un mezzo non scarrabile raccoglie un rifiuto alla volta, quindi in un tratto il servizio è uno solo, mentre una pausa lunga può separare due servizi. Non si guarda il comune: serve il servizio, e un mezzo che attraversa due comuni con lo stesso servizio non va diviso.
+
+```{r}
+#| label: diagramma-tratto
+#| fig-height: 4.6
+DiagrammeR::grViz(sprintf('
+digraph tratto {
+  graph [rankdir=TB, nodesep=0.35, ranksep=0.35, fontname="Helvetica"];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];
+  l [label="Una lettura di un mezzo\\nche quel giorno non ha giri", style="rounded"];
+  t [label="Il suo tratto: letture di seguito,\\nsenza pause di oltre %d minuti"];
+  q [label="Almeno %d bidoni censiti\\ndiversi nel tratto?", shape=diamond, fillcolor="#f3f4f2"];
+  p [label="Un servizio ha più bidoni\\ndi ogni altro?", shape=diamond, fillcolor="#f3f4f2"];
+  si [label="servizio atteso = il servizio\\npiù frequente dei bidoni", fillcolor="%s", color="%s"];
+  v1 [label="servizio atteso vuoto", style="rounded,dashed"];
+  v2 [label="servizio atteso vuoto", style="rounded,dashed"];
+  l -> t; t -> q;
+  q -> p [label=" sì"]; q -> v1 [label=" no"];
+  p -> si [label=" sì"]; p -> v2 [label=" no: pareggio"];
+}', ritardo_giro_minuti(), censiti_minimi_per_tratto(), colori[["verde_chiaro"]], colori[["verde"]]), width = "100%")
+```
+
+Il disegno è il risultato di `servizio_dei_censiti_del_mezzo()` su quattro tratti di un mezzo senza giri: ogni bidone conta una volta, anche se letto più volte.
+
+```{r}
+#| label: tratti-censiti
+#| fig-height: 3.2
+quando <- c(
+  "08:00", "08:10", "08:20", "08:25",
+  "10:00", "10:10", "10:20",
+  "12:00", "12:10",
+  "14:00", "14:10", "14:20", "14:30"
+)
+rifiuti <- c(
+  "SECCO", "SECCO", "CARTA", NA,
+  "CARTA", "CARTA", "CARTA",
+  "SECCO", "SECCO",
+  "SECCO", "SECCO", "CARTA", "CARTA"
+)
+esempio <- dplyr::tibble(
+  data_ora_lettura = as.POSIXct(paste("2026-03-02", quando), tz = "UTC"),
+  data_lettura = as.Date("2026-03-02"),
+  matricola_veicolo = "5",
+  RFID = sprintf("R%02d", seq_along(quando)),
+  presente_a_database = ifelse(is.na(rifiuti), "Non Presente", "Presente"),
+  servizio_transponder = rifiuti,
+  senza_giri = TRUE
+)
+esempio$atteso <- servizio_dei_censiti_del_mezzo(esempio)
+atteso_tratti <- c("SECCO", "CARTA", NA, NA)
+if (!identical(esempio$atteso, rep(atteso_tratti, c(4, 3, 2, 4)))) {
+  stop("L'esempio dei tratti non dà più i servizi del testo: aggiorna il documento.")
+}
+esempio$ore <- as.numeric(format(esempio$data_ora_lettura, "%H")) +
+  as.numeric(format(esempio$data_ora_lettura, "%M")) / 60
+esempio$tratto <- rep(1:4, c(4, 3, 2, 4))
+bande <- esempio |>
+  dplyr::summarise(
+    inizio = min(.data$ore) - 0.25,
+    fine = max(.data$ore) + 0.25,
+    .by = "tratto"
+  ) |>
+  dplyr::mutate(
+    etichetta = c(
+      "SECCO",
+      "CARTA",
+      "nessuno:\nsolo 2 bidoni",
+      "nessuno:\npareggio"
+    ),
+    medio = (.data$inizio + .data$fine) / 2
+  )
+esempio$tipo <- factor(
+  dplyr::coalesce(esempio$servizio_transponder, "non censito"),
+  c("SECCO", "CARTA", "non censito")
+)
+ggplot() +
+  geom_rect(
+    data = bande,
+    aes(xmin = inizio, xmax = fine, ymin = 0.5, ymax = 1.5),
+    fill = NA,
+    colour = colori[["grigio"]],
+    linetype = "dashed"
+  ) +
+  geom_text(
+    data = bande,
+    aes(x = medio, y = 1.7, label = etichetta),
+    size = 3.4,
+    lineheight = 0.95,
+    vjust = 0
+  ) +
+  geom_point(
+    data = esempio,
+    aes(ore, 1, fill = tipo, shape = tipo),
+    size = 4.2,
+    colour = colori[["testo"]],
+    stroke = 0.6
+  ) +
+  scale_fill_manual(
+    values = c(SECCO = colori[["arancio"]], CARTA = colori[["azzurro"]], `non censito` = "#ffffff")
+  ) +
+  scale_shape_manual(values = c(SECCO = 21, CARTA = 21, `non censito` = 22)) +
+  scale_x_continuous(
+    breaks = seq(8, 14, 2),
+    labels = function(x) sprintf("%02d:00", x)
+  ) +
+  scale_y_continuous(limits = c(0.4, 2.3)) +
+  labs(x = NULL, y = NULL, fill = "bidone", shape = "bidone") +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "top"
+  )
+```
+
+Il servizio atteso dà poi la coerenza del servizio (`SI` o `NO`) a ogni lettura. Un tratto con pochi bidoni darebbe quasi sempre `SI`, perché il servizio più frequente sarebbe quello del bidone stesso: per questo servono almeno `{r} censiti_minimi_per_tratto()` bidoni diversi.
+
+# Giri aggiunti a mano
+
+Il calendario estratto può non avere un giro che si sa compiuto (per esempio da un consuntivo). I giri mancanti si scrivono a mano in un file, `data-raw/origine/giri_aggiunti.csv`, che l'estrazione non tocca: a ogni aggiornamento del calendario vengono rimessi tra i giri pianificati dalla preparazione, e non si perdono.
+
+```{r}
+#| label: diagramma-giri-aggiunti
+#| fig-height: 3.2
+DiagrammeR::grViz(paste0('
+digraph aggiunti {
+  graph [rankdir=LR, nodesep=0.3, ranksep=0.5, fontname="Helvetica"];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];
+  est [label="Calendario dei giri pianificati\\nestratto", fillcolor="#f3f4f2"];
+  man [label="giri_aggiunti.csv\\nscritto a mano, non toccato\\ndall\u2019estrazione", fillcolor="#fdeee6", color="#e08a2e"];
+  uni [label="aggiungi_giri_a_mano()\\nuno già nel calendario\\nnon si ripete"];
+  cal [label="Giri pianificati\\ncompleti", fillcolor="', colori[["verde_chiaro"]], '", color="', colori[["verde"]], '"];
+  sce [label="scegli_giro()"];
+  est -> uni; man -> uni; uni -> cal -> sce;
+}'), width = "100%")
+```
+
+Il file ha **tutte le colonne del calendario dei giri pianificati**, perché i dati del giro si ricavano dal consuntivo:
+
+| Colonna | Contenuto |
+|---|---|
+| `data_giro` | giorno del giro, `AAAA-MM-GG` oppure `GG/MM/AAAA` |
+| `ora_inizio`, `ora_fine` | orario del giro, `HH:MM` o `HH:MM:SS`, l'inizio prima della fine |
+| `matricola_mezzo` | matricola del mezzo; gli zeri iniziali non contano (`0933` e `933` sono lo stesso mezzo) |
+| `id_giro` | codice del giro; può restare vuoto |
+| `eseguito` | `SI` o `NO`; può restare vuoto |
+| `descrizione_servizio` | servizio del giro come nel calendario, per esempio `SECCO PAP`; un nome che la tabella di conversione non conosce ferma la preparazione |
+| `comune_giro` | comune del giro |
+
+Un giro aggiunto vale come ogni giro pianificato: ha gli orari, l'`id_giro` e la conferma, e le sue letture seguono gli stessi passi (prima di tutto, quelle nel suo orario e nel suo comune). Un giro che il calendario ha già (stesso giorno, mezzo, servizio e comune) non si aggiunge due volte; un messaggio della pipeline dice quanti giri sono nuovi e quanti già presenti, che si possono togliere dal file. L'esempio mostra una lettura di un mezzo che il calendario non ha, prima e dopo l'aggiunta di un giro.
+
+```{r}
+#| label: giri-aggiunti-esempio
+rosa <- comuni_cantieri()[comuni_cantieri()$comune == "ROSÀ", ]
+lettura <- dplyr::tibble(
+  data_ora_lettura = as.POSIXct("2026-03-02 09:00:00", tz = "UTC"),
+  data_lettura = as.Date("2026-03-02"),
+  matricola_veicolo = "933",
+  comune_lettura = "ROSÀ",
+  latitudine = rosa$latitudine,
+  longitudine = rosa$longitudine
+)
+pianificati <- dplyr::tibble(
+  data_giro = as.Date("2026-03-02"),
+  ora_inizio = "05:00",
+  ora_fine = "06:00",
+  matricola_mezzo = "9",
+  id_giro = "X",
+  eseguito = "SI",
+  descrizione_servizio = "ALTRO",
+  comune_giro = "NOVE"
+)
+aggiunti <- dplyr::tibble(
+  data_giro = as.Date("2026-03-02"),
+  ora_inizio = "08:00",
+  ora_fine = "11:00",
+  matricola_mezzo = "0933",
+  id_giro = "G1",
+  eseguito = "SI",
+  descrizione_servizio = "SECCO PAP",
+  comune_giro = "ROSÀ"
+)
+esito <- function(calendario) {
+  scelta <- scegli_giro(lettura, calendario)
+  if (is.na(scelta$riga)) {
+    return(c("nessun giro", "—"))
+  }
+  c(calendario$descrizione_servizio[scelta$riga], scelta$passo)
+}
+senza <- esito(unisci_calendari(pianificati))
+con <- esito(unisci_calendari(
+  suppressMessages(aggiungi_giri_a_mano(pianificati, aggiunti))
+))
+if (!identical(senza[1], "nessun giro") || !identical(con[1], "SECCO PAP")) {
+  stop("L'esempio dei giri aggiunti non dà più il risultato del testo.")
+}
+knitr::kable(dplyr::tibble(
+  Calendario = c("Estratto, senza il giro", "Con il giro aggiunto a mano"),
+  `Giro della lettura` = c(senza[1], con[1]),
+  Passo = c(senza[2], con[2])
+))
+```
+
+La matricola del file è `0933`, quella della lettura `933`: il confronto non guarda gli zeri iniziali.
+
 # Soglie e dove cambiarle
 
 ```{r}
@@ -542,19 +758,22 @@ knitr::kable(dplyr::tibble(
     "Ritardo dopo la fine di un pianificato",
     "Pausa che apre un tratto nuovo",
     "Tolleranza dall'orario di un pianificato",
-    "Distanza massima del comune più vicino"
+    "Distanza massima del comune più vicino",
+    "Bidoni censiti diversi in un tratto di un mezzo senza giri"
   ),
   Valore = c(
     paste(ritardo_giro_minuti(), "minuti"),
     paste(ritardo_giro_minuti(), "minuti (lo stesso ritardo)"),
     paste(tolleranza_giro_minuti(), "minuti"),
-    paste(soglia_comune_vicino_m() / 1000, "km")
+    paste(soglia_comune_vicino_m() / 1000, "km"),
+    paste(censiti_minimi_per_tratto(), "bidoni")
   ),
   Funzione = c(
     "`ritardo_giro_minuti()`",
     "`assegna_tratti()`",
     "`tolleranza_giro_minuti()`",
-    "`soglia_comune_vicino_m()`"
+    "`soglia_comune_vicino_m()`",
+    "`censiti_minimi_per_tratto()`"
   )
 ))
 ```
@@ -566,6 +785,8 @@ knitr::kable(dplyr::tibble(
 - **Pareggi.** A parità di distanza o di voti tra servizi diversi non si assegna niente. A parità di giro dello stesso servizio vale il primo del calendario.
 - **Un tratto può unire giri diversi.** Se due giri si susseguono senza pause, le orfane prendono il più frequente: è un'approssimazione.
 - **Zone fuori tabella.** Un comune del giro che non è un comune servito (per esempio il Massiccio del Grappa) non ha confini: le distanze mancano, e il passo 6 non vale per quei giri.
+- **Un mezzo senza giri non ha un giro inventato.** Si deduce solo il servizio atteso, dai bidoni censiti del tratto; giro, comune del giro e `id_giro` restano vuoti. Quel servizio viene dai bidoni letti dal mezzo, quindi non dimostra da solo che facesse quel giro. Se si sa che il giro c'è stato, si aggiunge a mano.
+- **Giri aggiunti a mano.** Valgono come i giri pianificati, con i loro orari; si rimettono nel calendario a ogni preparazione e non cambiano il file estratto. L'`eseguito` del file entra nei controlli dei giri (un giro `SI` senza letture dell'antenna dà un avviso).
 - **Niente turni a cavallo della mezzanotte** né pianificati sovrapposti dello stesso mezzo.
 
 # Come verificare che l'associazione funzioni
@@ -574,4 +795,4 @@ I bidoni censiti vengono raccolti dal loro servizio. Per le loro letture, la quo
 
 # Come si cambia
 
-La logica sta in `scegli_giro()` e nelle funzioni accanto (`passi_associazione()`, `allunga_fine()`, `assegna_tratti()`, `servizio_dei_censiti_del_mezzo()`) in `R/fct_preparazione_letture.R`, con i test in `tests/testthat/test-fct_preparazione_letture.R`. Quando un passo cambia, vanno aggiornati la tabella `passi` in questo file, il paragrafo «Associazione lettura-giro» di `CLAUDE.md` e il README, e il documento va ricompilato.
+La logica sta in `scegli_giro()` e nelle funzioni accanto (`passi_associazione()`, `allunga_fine()`, `assegna_tratti()`, `servizio_dei_censiti_del_mezzo()`, `aggiungi_giri_a_mano()`) in `R/fct_preparazione_letture.R`, con i test in `tests/testthat/test-fct_preparazione_letture.R`. Quando un passo cambia, vanno aggiornati la tabella `passi` in questo file, il paragrafo «Associazione lettura-giro» di `CLAUDE.md` e il README, e il documento va ricompilato.

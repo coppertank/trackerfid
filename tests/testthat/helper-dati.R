@@ -395,7 +395,7 @@ scrivi_origine_prova <- function(cartella) {
     )
   )
   scrivi(
-    "storiche",
+    "saponette",
     c(
       "data_lettura,codice_transponder,id_trasmissione",
       "2025-03-01 07:00:00,123,T1",

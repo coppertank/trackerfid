@@ -35,7 +35,7 @@ knitr:
 #   source("data-raw/compila_report.R")
 #   compila_report(
 #     "docs/conferimenti_secco.qmd",
-#     list(letture = "data-raw/output/letture_app.csv",
+#     list(letture = "data-raw/output/letture_antenne.csv",
 #          cartella_csv = "data-raw/output")
 #   )
 # Il report non fa parte della pipeline: `targets::tar_make()` non lo compila.
@@ -938,6 +938,6 @@ knitr::kable(
 Sui dati aziendali, dalla radice del progetto:
 
 1. il passo 1, `source("data-raw/01_estrai_tabelle.R")`, estrae le tabelle dal database aziendale in `data-raw/origine/`;
-2. la pipeline di preparazione, `targets::tar_make()`, scrive `data-raw/output/letture_app.csv`, con le colonne della fornitura: nucleo, categoria e sottocategoria in vigore al momento di ogni lettura, e se la fornitura aveva il potenziamento del secco. Scrive anche l'archivio `letture_app.duckdb` per l'app, che ha solo le colonne dell'app. Poi compila questo report dal CSV e scrive in `data-raw/output/` il report in HTML e i tre CSV: tutte le forniture, quelle da contattare e i non censiti. Il periodo si cambia in cima a `data-raw/_targets.R`. Se le estrazioni e le regole non sono cambiate, la pipeline non rifà niente.
+2. la pipeline di preparazione, `targets::tar_make()`, scrive `data-raw/output/letture_antenne.csv`, con le colonne della fornitura: nucleo, categoria e sottocategoria in vigore al momento di ogni lettura, e se la fornitura aveva il potenziamento del secco. Scrive anche l'archivio `letture_antenne.duckdb` per l'app, che ha solo le colonne dell'app. Poi compila questo report dal CSV e scrive in `data-raw/output/` il report in HTML e i tre CSV: tutte le forniture, quelle da contattare e i non censiti. Il periodo si cambia in cima a `data-raw/_targets.R`. Se le estrazioni e le regole non sono cambiate, la pipeline non rifà niente.
 
 Il report compilato sui dati aziendali contiene codici di forniture e utenze: resta in `data-raw/output/`, fuori dal repository.

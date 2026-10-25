@@ -34,7 +34,7 @@ antenne_prova <- function() {
   )
 }
 
-storiche_prova <- function() {
+saponette_prova <- function() {
   dplyr::tibble(
     data_ora_lettura = c(
       rep("2026-10-20 08:00:00", 4), # T1: A B C X
@@ -105,18 +105,18 @@ test_that("le antenne dei giri tengono giorno, mezzo e servizio, senza badare a 
 
 test_that("le trasmissioni dei giri sono quelle che hanno letto lo stesso giorno un RFID dei giri", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
-  storiche_giri <- trasmissioni_dei_giri(storiche_prova(), antenne_giri)
+  saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
   # T1 e T2; T3 non ha RFID in comune, T4 ha solo G (di un mezzo fuori lista),
   # T1 del 21/10 è un altro giro
-  expect_setequal(unique(storiche_giri$id_trasmissione), c("T1", "T2"))
-  expect_identical(nrow(storiche_giri), 6L)
-  expect_true(all(storiche_giri$data_lettura == giorno))
+  expect_setequal(unique(saponette_giri$id_trasmissione), c("T1", "T2"))
+  expect_identical(nrow(saponette_giri), 6L)
+  expect_true(all(saponette_giri$data_lettura == giorno))
 })
 
 test_that("ogni trasmissione va al mezzo con cui ha piu' RFID in comune", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
-  storiche_giri <- trasmissioni_dei_giri(storiche_prova(), antenne_giri)
-  abbinamenti <- abbina_trasmissioni(storiche_giri, antenne_giri)
+  saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
+  abbinamenti <- abbina_trasmissioni(saponette_giri, antenne_giri)
   expect_identical(abbinamenti$id_trasmissione, c("T1", "T2"))
   expect_identical(abbinamenti$chiave_mezzo, c("101", "303"))
   expect_identical(abbinamenti$condivisi, c(3L, 1L))
@@ -131,12 +131,12 @@ test_that("una trasmissione che condivide RFID con due mezzi va a quello con piu
     chiave_mezzo = c("1", "1", "1", "2"),
     RFID = c("A", "B", "C", "D")
   )
-  storiche_giri <- dplyr::tibble(
+  saponette_giri <- dplyr::tibble(
     data_lettura = giorno,
     id_trasmissione = "T1",
     RFID = c("A", "B", "C", "D")
   )
-  abbinamenti <- abbina_trasmissioni(storiche_giri, antenne_giri)
+  abbinamenti <- abbina_trasmissioni(saponette_giri, antenne_giri)
   expect_identical(abbinamenti$chiave_mezzo, "1")
   expect_identical(abbinamenti$condivisi, 3L)
   expect_identical(abbinamenti$mezzi_in_comune, 2L)
@@ -144,8 +144,8 @@ test_that("una trasmissione che condivide RFID con due mezzi va a quello con piu
 
 test_that("le classi dicono chi ha letto che cosa", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
-  storiche_giri <- trasmissioni_dei_giri(storiche_prova(), antenne_giri)
-  classi <- classi_rfid(antenne_giri, storiche_giri)
+  saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
+  classi <- classi_rfid(antenne_giri, saponette_giri)
   per_rfid <- stats::setNames(as.character(classi$classe), classi$RFID)
   expect_identical(
     per_rfid[c("A", "B", "C", "D", "E", "X", "Y")],
@@ -156,9 +156,9 @@ test_that("le classi dicono chi ha letto che cosa", {
 
 test_that("il confronto per mezzo conta anche i mezzi senza letture", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
-  storiche_giri <- trasmissioni_dei_giri(storiche_prova(), antenne_giri)
-  abbinamenti <- abbina_trasmissioni(storiche_giri, antenne_giri)
-  per_mezzo <- confronto_per_mezzo(giri_prova(), antenne_giri, storiche_giri, abbinamenti)
+  saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
+  abbinamenti <- abbina_trasmissioni(saponette_giri, antenne_giri)
+  per_mezzo <- confronto_per_mezzo(giri_prova(), antenne_giri, saponette_giri, abbinamenti)
   expect_identical(per_mezzo$matricola_veicolo, c("0101", "202", "303"))
   expect_identical(per_mezzo$trasmissioni, c(1L, 0L, 1L))
   expect_identical(per_mezzo$chip_antenne, c(3L, 0L, 2L))
@@ -170,8 +170,8 @@ test_that("il confronto per mezzo conta anche i mezzi senza letture", {
 
 test_that("gli RFID solo delle saponette si dividono tra letti da un'antenna fuori lista e non letti", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
-  storiche_giri <- trasmissioni_dei_giri(storiche_prova(), antenne_giri)
-  classi <- classi_rfid(antenne_giri, storiche_giri)
+  saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
+  classi <- classi_rfid(antenne_giri, saponette_giri)
   altrove <- solo_saponette_altrove(classi, antenne_prova())
   # X non è letto da nessuna antenna; Y lo ha letto il mezzo 1000, fuori lista
   expect_identical(sum(altrove$n), 2L)
@@ -187,10 +187,10 @@ test_that("gli RFID solo delle saponette si dividono tra letti da un'antenna fuo
 
 test_that("i servizi per classe usano l'anagrafica di uno dei due sistemi", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
-  storiche_giri <- trasmissioni_dei_giri(storiche_prova(), antenne_giri)
-  classi <- classi_rfid(antenne_giri, storiche_giri)
-  servizi <- servizi_per_classe(classi, antenne_giri, storiche_giri)
-  # E non ha servizio nelle antenne e non è nelle storiche: non censito
+  saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
+  classi <- classi_rfid(antenne_giri, saponette_giri)
+  servizi <- servizi_per_classe(classi, antenne_giri, saponette_giri)
+  # E non ha servizio nelle antenne e non è nelle saponette: non censito
   e <- servizi[servizi$classe == "Solo antenne", ]
   expect_identical(e$servizio, "(non censito)")
   expect_identical(sum(servizi$n), nrow(classi))
