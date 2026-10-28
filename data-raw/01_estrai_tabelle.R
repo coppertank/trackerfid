@@ -8,9 +8,9 @@
 # Dopo l'estrazione, la pipeline di preparazione, targets::tar_make(),
 # riconosce i file cambiati e rifà quello che serve: vedi data-raw/_targets.R.
 # I nomi che si aspetta sono quelli di file_origine(): le letture delle
-# antenne, letture_grezze.csv, e i test dei mezzi, AppSheet.ViewData.csv,
-# arrivano da altri sistemi e vanno salvati in data-raw/origine/ con quel
-# nome.
+# antenne, letture_antenne_grezze.csv, e i test dei mezzi,
+# AppSheet.ViewData.csv, arrivano da altri sistemi e vanno salvati in
+# data-raw/origine/ con quel nome.
 
 library(odbc)
 library(DBI)
@@ -36,6 +36,10 @@ tabelle <- c(
 )
 
 
+# Le letture delle saponette si salvano con un nome diverso da quello della
+# tabella: letture_saponette_grezze.csv, come in file_origine().
+nome_file <- c(dv_cnt_letture = "letture_saponette_grezze")
+
 for (target_label in tabelle) {
   # Applica il filtro se la tabella è "dv_cnt_letture", altrimenti query standard
   if (target_label == "dv_cnt_letture") {
@@ -49,7 +53,11 @@ for (target_label in tabelle) {
 
   df_temp <- dbGetQuery(con, query_sql)
 
-  output_path <- paste0("data-raw/origine/", target_label, ".csv")
+  output_path <- paste0(
+    "data-raw/origine/",
+    dplyr::coalesce(unname(nome_file[target_label]), target_label),
+    ".csv"
+  )
 
   write.csv(
     df_temp,

@@ -103,13 +103,29 @@ test_that("i filtri senza scelte non escludono niente", {
   con <- archivio_esempio()$con
   expect_identical(
     condizione_filtri(con),
-    "(presente_a_database IN ('Presente', 'Non Presente'))"
+    "(presente_a_database IN ('PIA', 'PIT', 'NP'))"
   )
   # nessuno stato scelto: nessuna lettura
   expect_match(condizione_filtri(con, stato_db = character(0)), "(FALSE)", fixed = TRUE)
   # un nome con l'apostrofo resta un testo
   ultime <- ultime_esempio(comuni = "ROSA' D'ORO")
   expect_equal(nrow(ultime), 0)
+})
+
+test_that("il filtro dello stato a database sceglie tra PIA, PIT e NP", {
+  letture <- letture_test()
+  letture$presente_a_database[letture$RFID == "C"] <- "PIT"
+  ultime <- function(...) ultime_di(letture, ...)
+
+  expect_setequal(ultime()$RFID, c("A", "B", "C"))
+  expect_identical(ultime(stato_db = "PIT")$RFID, "C")
+  expect_identical(ultime(stato_db = "NP")$RFID, character(0))
+  expect_setequal(ultime(stato_db = c("PIA", "PIT"))$RFID, c("A", "B", "C"))
+  # un non censito resta non censito anche se e' PIT: la stima incerta vale per tutti e due
+  expect_equal(
+    nrow(ultime(stato_db = "PIT", includi_stima_incerta = FALSE)),
+    nrow(ultime(stato_db = "PIT")) - sum(is.na(ultime(stato_db = "PIT")$servizio_icona))
+  )
 })
 
 test_that("l'ultima lettura restituisce le colonne chieste, con la riga del file", {
@@ -191,8 +207,8 @@ test_that("le letture che superano i filtri si contano tutte, non solo le ultime
   letture <- letture_periodo(selezione)
   expect_identical(conta_letture(selezione), nrow(letture))
   expect_identical(
-    conta_letture(selezione, stato_db = "Non Presente"),
-    sum(letture$presente_a_database == "Non Presente")
+    conta_letture(selezione, stato_db = "NP"),
+    sum(letture$presente_a_database == "NP")
   )
   # gli stessi filtri di conteggi_cantieri()
   expect_identical(

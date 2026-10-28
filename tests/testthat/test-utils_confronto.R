@@ -7,7 +7,7 @@ test_that("ogni RFID conta al più una volta al giorno, con la sua origine", {
       "2026-08-04 07:00:00", # C: stessa trasmissione, ma un altro giorno: fuori
       "2026-08-03 08:00:00" # D: trasmissione senza RFID visti dalle antenne
     ),
-    id_trasmissione = c("T1", "T1", "T1", "T1", "T2"),
+    matricola_saponetta = c("T1", "T1", "T1", "T1", "T2"),
     RFID = c("A", "A", "B", "C", "D")
   )
   antenne <- dplyr::tibble(
@@ -26,7 +26,7 @@ test_that("le letture si leggono anche dai CSV della pipeline", {
   cartella <- withr::local_tempdir()
   saponette <- file.path(cartella, "letture_saponette.csv")
   antenne <- file.path(cartella, "letture_antenne.csv")
-  writeLines(c("data_ora_lettura,data_lettura,id_trasmissione,RFID", "2026-08-03 07:00:00,2026-08-03,T1,0000000123"), saponette)
+  writeLines(c("data_ora_lettura,data_lettura,matricola_saponetta,RFID", "2026-08-03 07:00:00,2026-08-03,T1,0000000123"), saponette)
   writeLines(c("data_ora_lettura,RFID", "2026-08-03 09:00:00,0000000123"), antenne)
 
   confronto <- confronta_letture(saponette, antenne)
@@ -120,7 +120,7 @@ test_that("le saponette di confronto sono quelle dei giri degli RFID filtrati", 
       "2026-08-03 08:00:00", # D, giro T2
       "2026-08-05 08:00:00" # A, giro T3 del 5/8
     ),
-    id_trasmissione = c("T1", "T1", "T1", "T2", "T3"),
+    matricola_saponetta = c("T1", "T1", "T1", "T2", "T3"),
     RFID = c("A", "B", "C", "D", "A")
   )
   antenne <- dplyr::tibble(RFID = "A")
@@ -140,7 +140,7 @@ test_that("il confronto usa le letture delle antenne già filtrate", {
       "2026-08-03 07:10:00", # B, stesso giro di A
       "2026-08-03 08:00:00" # C, giro T2
     ),
-    id_trasmissione = c("T1", "T1", "T2"),
+    matricola_saponetta = c("T1", "T1", "T2"),
     RFID = c("A", "B", "C")
   )
   antenne <- dplyr::tibble(

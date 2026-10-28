@@ -94,7 +94,7 @@ aggrega_marker <- function(df, livello = c("cantiere", "comune")) {
     longitudine = longitudine,
     n = tabulate(gruppo, n_gruppi),
     censiti = as.integer(somma_per_gruppo(
-      df$presente_a_database == "Presente",
+      df$presente_a_database == "PIA",
       gruppo,
       n_gruppi
     )),

@@ -172,16 +172,16 @@ test_that("senza dataset non c'è periodo e un nuovo dataset lo reimposta", {
 
 test_that("i filtri partono senza esclusioni e reagiscono agli input", {
   ultimi <- ultime_esempio()
-  n_presenti <- sum(ultimi$presente_a_database == "Presente")
+  n_presenti <- sum(ultimi$presente_a_database == "PIA")
   dati <- shiny::reactiveVal(seleziona_periodo(archivio_esempio()))
   shiny::testServer(mod_filtri_server, args = list(dati = dati), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     session$flushReact()
     expect_equal(nrow(filtrati()), nrow(ultimi))
 
-    session$setInputs(presente_filter = "Presente")
+    session$setInputs(presente_filter = "PIA")
     expect_equal(nrow(filtrati()), n_presenti)
-    expect_true(all(filtrati()$presente_a_database == "Presente"))
+    expect_true(all(filtrati()$presente_a_database == "PIA"))
     expect_match(
       as.character(output$stat_box$html),
       sprintf("<b>%d</b>", n_presenti),
@@ -190,10 +190,10 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
 
     # il servizio atteso vale per i censiti e per i non censiti: per i primi
     # quello della lettura, per i secondi quello stimato
-    session$setInputs(presente_filter = c("Presente", "Non Presente"))
+    session$setInputs(presente_filter = c("PIA", "NP"))
     session$setInputs(servizio_check = c("SECCO", "CARTA"))
     expect_setequal(stato$servizi_esclusi, setdiff(scelte_servizio(), c("SECCO", "CARTA")))
-    censiti <- filtrati()$presente_a_database == "Presente"
+    censiti <- filtrati()$presente_a_database == "PIA"
     expect_setequal(
       unique(filtrati()$servizio_atteso[censiti]),
       c("SECCO", "CARTA")
@@ -204,8 +204,8 @@ test_that("i filtri partono senza esclusioni e reagiscono agli input", {
       c("SECCO", "CARTA", NA)
     )
     # lo stato a database si sceglie a parte
-    session$setInputs(presente_filter = "Presente")
-    expect_true(all(filtrati()$presente_a_database == "Presente"))
+    session$setInputs(presente_filter = "PIA")
+    expect_true(all(filtrati()$presente_a_database == "PIA"))
     expect_setequal(unique(filtrati()$servizio_atteso), c("SECCO", "CARTA"))
 
     session$setInputs(reset = 1)
@@ -237,17 +237,17 @@ test_that("i filtri sul giro e sulla coerenza dei servizi restringono la mappa",
     expect_true(all(filtrati()$servizio_giro == "SECCO PAP"))
     expect_setequal(
       unique(filtrati()$presente_a_database),
-      c("Presente", "Non Presente")
+      c("PIA", "NP")
     )
     expect_match(
       as.character(output$stat_box$html),
       "SECCO PAP:</span>\\s*<b>115</b>"
     )
     # con lo stato a database: i soli censiti letti da quel giro
-    session$setInputs(presente_filter = "Presente")
-    expect_true(all(filtrati()$presente_a_database == "Presente"))
+    session$setInputs(presente_filter = "PIA")
+    expect_true(all(filtrati()$presente_a_database == "PIA"))
     expect_lt(nrow(filtrati()), 115)
-    session$setInputs(presente_filter = c("Presente", "Non Presente"))
+    session$setInputs(presente_filter = c("PIA", "NP"))
 
     # le scelte rapide
     session$setInputs(giro_nessuno = 1)
@@ -306,7 +306,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
   shiny::testServer(mod_filtri_server, args = list(dati = dati, azzera = origine), {
     filtrati <- function() session$getReturned()$dati_filtrati()
     non_censiti <- function() {
-      filtrati()[filtrati()$presente_a_database == "Non Presente", ]
+      filtrati()[filtrati()$presente_a_database == "NP", ]
     }
     session$flushReact()
 
@@ -342,7 +342,7 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     # la sola stima incerta: i marker con il punto di domanda
     session$setInputs(includi_stima_incerta = TRUE)
     expect_equal(nrow(filtrati()), 19)
-    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+    expect_true(all(filtrati()$presente_a_database == "NP"))
     expect_true(all(is.na(filtrati()$servizio_icona)))
     expect_true("D250920250" %in% filtrati()$RFID)
     expect_match(
@@ -359,15 +359,15 @@ test_that("le scelte rapide spuntano o tolgono tutti i servizi attesi", {
     expect_equal(nrow(filtrati()), 87)
     expect_equal(nrow(non_censiti()), 5)
     # per i censiti è il servizio del contenitore a database
-    censiti <- filtrati()[filtrati()$presente_a_database == "Presente", ]
+    censiti <- filtrati()[filtrati()$presente_a_database == "PIA", ]
     expect_true(all(censiti$servizio_transponder == "SECCO"))
     expect_true(all(servizio_mostrato(filtrati()) == "SECCO"))
     expect_true("D250915201" %in% non_censiti()$RFID)
     expect_no_match(as.character(output$stat_box$html), "Stima incerta")
     # con lo stato a database: i soli non censiti
-    session$setInputs(presente_filter = "Non Presente")
+    session$setInputs(presente_filter = "NP")
     expect_equal(nrow(filtrati()), 5)
-    session$setInputs(presente_filter = c("Presente", "Non Presente"))
+    session$setInputs(presente_filter = c("PIA", "NP"))
 
     # "Tutti": di nuovo tutti, incerti compresi
     session$setInputs(servizio_tutti = 1)
@@ -413,19 +413,19 @@ test_that("i filtri si azzerano con un nuovo dataset ma non al cambio di periodo
 
       dati(seleziona_periodo(archivio_esempio(), periodo_anno(2025)))
       session$flushReact()
-      session$setInputs(presente_filter = "Non Presente")
-      expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+      session$setInputs(presente_filter = "NP")
+      expect_true(all(filtrati()$presente_a_database == "NP"))
 
       # cambio di periodo: le scelte dell'utente restano
       dati(seleziona_periodo(archivio_esempio(), periodo_anno(2024)))
       session$flushReact()
-      expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+      expect_true(all(filtrati()$presente_a_database == "NP"))
       expect_true(all(lubridate::year(filtrati()$data_ora_lettura) == 2024))
 
       # nuovo dataset: filtri ai valori predefiniti
       origine(2)
       session$flushReact()
-      expect_true("Presente" %in% filtrati()$presente_a_database)
+      expect_true("PIA" %in% filtrati()$presente_a_database)
     }
   )
 })
@@ -711,6 +711,9 @@ test_that("l'interfaccia contiene le schede e i controlli richiesti", {
     "Caricamento Dati",
     "Periodo di analisi",
     "Stato database",
+    "Presente in associazione (PIA)",
+    "Presente in tag (PIT)",
+    "Non presente (NP)",
     "Servizio del contenitore",
     "Giro del calendario",
     "Coerenza",
@@ -941,7 +944,7 @@ test_that("i filtri geografici restringono cantieri e comuni e danno l'area da i
     expect_match(statistiche, "RUBANO:", fixed = TRUE)
 
     # l'area segue cantieri e comuni, non gli altri filtri
-    session$setInputs(presente_filter = "Non Presente")
+    session$setInputs(presente_filter = "NP")
     expect_equal(restituito$area(), nei_due_comuni)
     session$setInputs(presente_filter = stati_database())
 
@@ -1215,7 +1218,7 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
     letture_rfid(
       sacchetto(2),
       date_2025(3),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = "VETRO PAP"
     ),
     letture_rfid(
@@ -1227,7 +1230,7 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
     letture_rfid(
       "0000ABC124",
       date_2025(3),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = "SECCO PAP"
     )
   )
@@ -1258,9 +1261,9 @@ test_that("i sacchetti hanno la loro voce tra i servizi e seguono le scelte rapi
     session$setInputs(servizio_check = servizio_sacchetti())
     expect_setequal(filtrati()$RFID, c(sacchetto(1), sacchetto(2)))
     # con lo stato a database: il solo sacchetto non censito
-    session$setInputs(presente_filter = "Non Presente")
+    session$setInputs(presente_filter = "NP")
     expect_identical(filtrati()$RFID, sacchetto(2))
-    session$setInputs(presente_filter = c("Presente", "Non Presente"))
+    session$setInputs(presente_filter = c("PIA", "NP"))
     # "Nessuno" toglie anche i sacchetti, "Tutti" li rimette
     session$setInputs(servizio_nessuno = 1)
     expect_equal(nrow(filtrati()), 0)
@@ -1312,7 +1315,7 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
     expect_identical(attr(filtrati(), "letture"), sum(letture$coerenza_comune == "Fuori giro"))
     expect_true("D241001301" %in% filtrati()$RFID)
     # un censito non è mai fuori giro
-    expect_true(all(filtrati()$presente_a_database == "Non Presente"))
+    expect_true(all(filtrati()$presente_a_database == "NP"))
 
     # solo la coerenza ignota: i sacchetti censiti, senza comune a database,
     # e i non censiti letti dal giro di zona
@@ -1322,7 +1325,7 @@ test_that("il filtro sulla coerenza del comune restringe la mappa alle voci spun
     expect_true(all(
       ignoti$comune_giro[!rfid_sacchetto(ignoti$RFID)] == "MASSICCIO DEL GRAPPA"
     ))
-    expect_true(all(ignoti$presente_a_database[!rfid_sacchetto(ignoti$RFID)] == "Non Presente"))
+    expect_true(all(ignoti$presente_a_database[!rfid_sacchetto(ignoti$RFID)] == "NP"))
     expect_equal(nrow(ignoti), 10)
     expect_match(
       as.character(output$stat_box$html),

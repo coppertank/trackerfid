@@ -1,0 +1,873 @@
+---
+title: "Indicatori delle letture e analisi economica del secco"
+subtitle: "Antenne e saponette a confronto, per un periodo e per i giri scelti"
+author: "Aldo Caumo"
+date: today
+date-format: DD/MM/YYYY
+lang: it
+params:
+  dal: ""
+  al: ""
+  letture_antenne: "data-raw/output/letture_antenne.csv"
+  letture_saponette: "data-raw/output/letture_saponette.csv"
+  scartate_antenne: "data-raw/output/letture_scartate_antenne.csv"
+  scartate_saponette: "data-raw/output/letture_scartate_saponette.csv"
+  cartella_origine: "data-raw/origine"
+  giri: ""
+  servizio: ""
+  componenti: ""
+  margine_minuti: 30
+  cartella_csv: ""
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Per compilare il report, con l'HTML in data-raw/output/, dalla radice del
+# progetto:
+#   source("data-raw/compila_report.R")
+#   compila_report("docs/indicatori_letture.qmd")                 # tutto
+#   compila_report("docs/indicatori_letture.qmd",
+#     list(dal = "2026-01-01", al = "2026-06-30", componenti = "2"))
+#   compila_report("docs/indicatori_letture.qmd",
+#     list(giri = "data-raw/origine/giri_analisi.csv"))
+# Il report non fa parte della pipeline: `targets::tar_make()` non lo compila.
+# Servono il programma quarto e i pacchetti quarto, ggplot2, data.table e
+# pkgload.
+#
+# Parametri (i percorsi relativi partono dalla radice del progetto; un parametro
+# vuoto non filtra):
+#   dal, al             primo e ultimo giorno del periodo (AAAA-MM-GG); vuoti:
+#                       tutte le letture disponibili (o i giorni dei giri)
+#   letture_antenne, letture_saponette    CSV delle letture finali della pipeline
+#   scartate_antenne, scartate_saponette  CSV del registro delle letture scartate
+#   cartella_origine    cartella dei file estratti: contenitori, componenti, manovre
+#   giri                CSV dei giri da analizzare: data_giro, matricola_veicolo,
+#                       servizio_giro, matricola_saponetta e, facoltative,
+#                       ora_inizio, ora_fine (HH:MM). Vuoto: tutte le letture
+#   servizio            servizio da analizzare (SECCO, CARTA...); vale senza giri
+#   componenti          fascia di componenti per forniture, propensione ed
+#                       economia: 0 (casa vuota), 1-5, 6+ o potenziamento
+#   margine_minuti      minuti aggiunti ai due lati della finestra ricavata dalle
+#                       letture delle antenne di un giro
+#   cartella_csv        se indicata, vi scrive i CSV delle forniture e dei giri
+
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+library(ggplot2)
+
+# Un percorso relativo dei parametri parte dalla radice del progetto, ma la
+# compilazione avviene in docs/.
+percorso_progetto <- function(percorso) {
+  if (is.null(percorso) || !nzchar(percorso)) {
+    return("")
+  }
+  if (grepl("^(/|~|[A-Za-z]:)", percorso)) {
+    path.expand(percorso)
+  } else {
+    file.path("..", percorso)
+  }
+}
+vuoto <- function(x) {
+  is.null(x) || length(x) == 0 || is.na(x[[1]]) || !nzchar(trimws(as.character(x[[1]])))
+}
+
+# Numeri con la virgola decimale.
+intero <- function(x) formatta_numero(round(x))
+num <- function(x, cifre = 1) {
+  formatC(x, format = "f", digits = cifre, decimal.mark = ",", big.mark = ".")
+}
+quota <- function(x, cifre = 1) ifelse(is.na(x), "n.d.", paste0(num(100 * x, cifre), "%"))
+euro <- function(x) ifelse(is.na(x), "n.d.", paste0(num(x, 2), " €"))
+data_it <- function(x) format(as.Date(x), "%d/%m/%Y")
+ora_it <- function(x) format(x, "%H:%M")
+
+# Slot 1-3 della palette categorica dei report, validati insieme: il verde ha un
+# contrasto sotto 3:1 con lo sfondo, quindi ogni barra ha il suo valore scritto e
+# ogni grafico una tabella.
+colori_classi <- c(
+  "Solo saponette" = "#2a78d6",
+  "Entrambe" = "#1baf7a",
+  "Solo antenne" = "#eb6834"
+)
+colori_stati <- c(
+  "PIA" = "#1baf7a",
+  "PIT" = "#2a78d6",
+  "NP" = "#eb6834",
+  "Scartata" = "#8a948e"
+)
+colori_economia <- c(
+  "Premialità" = "#1baf7a",
+  "Ordinaria" = "#2a78d6",
+  "Eccedente" = "#eb6834"
+)
+colori <- list(primario = "#0b0b0b", secondario = "#52514e", sfondo = "#fcfcfb")
+tema_grafico <- theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13.5, colour = colori$primario),
+    plot.subtitle = element_text(
+      size = 10.5,
+      colour = colori$secondario,
+      margin = margin(t = 5, b = 12)
+    ),
+    plot.title.position = "plot",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.title = element_text(size = 10, colour = colori$secondario),
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+```
+
+```{r}
+#| label: dati
+# --- Le letture e il periodo ---------------------------------------------------
+antenne <- leggi_letture_indicatori(percorso_progetto(params$letture_antenne))
+saponette <- leggi_letture_indicatori(percorso_progetto(params$letture_saponette))
+scartate_antenne <- leggi_letture_indicatori(percorso_progetto(params$scartate_antenne))
+scartate_saponette <- leggi_letture_indicatori(percorso_progetto(params$scartate_saponette))
+
+con_giri <- !vuoto(params$giri)
+giri <- if (con_giri) giri_di_analisi(percorso_progetto(params$giri))
+# Con i giri il servizio è quello di ogni giro: il parametro non serve.
+servizio <- if (vuoto(params$servizio) || con_giri) NULL else toupper(trimws(params$servizio))
+gruppo_scelto <- gruppo_da_filtro(params$componenti)
+
+date_base <- if (con_giri) {
+  giri$data_giro
+} else {
+  c(antenne$data_lettura, saponette$data_lettura)
+}
+if (all(is.na(date_base))) {
+  stop("Nessuna lettura trovata: controlla i percorsi dei file delle letture.", call. = FALSE)
+}
+dal <- if (vuoto(params$dal)) min(date_base, na.rm = TRUE) else as.Date(params$dal)
+al <- if (vuoto(params$al)) max(date_base, na.rm = TRUE) else as.Date(params$al)
+if (al < dal) {
+  stop("Il periodo è al contrario: `dal` viene dopo `al`.", call. = FALSE)
+}
+if (con_giri) {
+  giri <- giri[giri$data_giro >= dal & giri$data_giro <= al, ]
+  if (nrow(giri) == 0) {
+    stop("Nessun giro del file cade nel periodo scelto.", call. = FALSE)
+  }
+}
+
+letture <- list(
+  antenne = nel_periodo(antenne, dal, al),
+  saponette = nel_periodo(saponette, dal, al),
+  scartate_antenne = nel_periodo(scartate_antenne, dal, al),
+  scartate_saponette = nel_periodo(scartate_saponette, dal, al)
+)
+
+# --- La selezione: i giri indicati, oppure tutte le letture --------------------
+if (con_giri) {
+  selezione <- seleziona_per_giri(letture, giri, params$margine_minuti)
+} else {
+  selezione <- letture
+  if (!is.null(servizio)) {
+    selezione$antenne <- filtra_letture(selezione$antenne, servizio = servizio)
+    selezione$saponette <- filtra_letture(selezione$saponette, servizio = servizio)
+    # Le letture scartate non hanno un servizio: con un servizio scelto lo scarto
+    # non si può calcolare.
+    selezione$scartate_antenne <- selezione$scartate_antenne[0, ]
+    selezione$scartate_saponette <- selezione$scartate_saponette[0, ]
+  }
+}
+scarto_calcolabile <- is.null(servizio)
+if (nrow(selezione$antenne) + nrow(selezione$saponette) == 0) {
+  stop(
+    "Nessuna lettura nella selezione (periodo ",
+    data_it(dal), " - ", data_it(al),
+    if (!is.null(servizio)) paste0(", servizio ", servizio),
+    if (con_giri) ", giri indicati",
+    ").",
+    call. = FALSE
+  )
+}
+con_antenne <- nrow(selezione$antenne) + nrow(selezione$scartate_antenne) > 0
+con_saponette <- nrow(selezione$saponette) + nrow(selezione$scartate_saponette) > 0
+
+unita <- unita_di_lettura(
+  selezione$antenne,
+  selezione$saponette,
+  selezione$scartate_antenne,
+  selezione$scartate_saponette
+)
+ind <- indicatori_letture(unita)
+
+# --- Le forniture del periodo, dalle tabelle estratte ---------------------------
+file <- file_origine(percorso_progetto(params$cartella_origine))
+anagrafica_presente <- all(file.exists(unlist(file[c("contenitori", "componenti", "manovre")])))
+anagrafica <- if (anagrafica_presente) {
+  leggi_anagrafica_forniture(file, dal, al)
+}
+# Servizio e fascia scelti; con i giri solo le forniture lette in quei giri,
+# perché le altre non si sanno attribuire.
+anagrafica_scelta <- anagrafica
+if (!is.null(anagrafica_scelta)) {
+  if (!is.null(servizio)) {
+    anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$servizio %in% servizio)
+  }
+  if (!is.null(gruppo_scelto)) {
+    anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$gruppo == gruppo_scelto)
+  }
+}
+lette <- unique(unita$id_fornitura[unita$stato %in% "PIA"])
+anagrafica_analisi <- anagrafica_scelta
+if (con_giri && !is.null(anagrafica_analisi)) {
+  anagrafica_analisi <- dplyr::filter(anagrafica_analisi, .data$id_fornitura %in% lette)
+}
+economia_possibile <- !is.null(anagrafica) && (is.null(servizio) || servizio == "SECCO")
+```
+
+```{r}
+#| label: avvisi-iniziali
+#| results: asis
+if (!anagrafica_presente) {
+  cat(
+    "::: {.callout-warning}\n",
+    "I file delle forniture non ci sono (",
+    paste(basename(unlist(file[c("contenitori", "componenti", "manovre")])), collapse = ", "),
+    " in `", params$cartella_origine, "`): mancano le sezioni su forniture, ",
+    "propensione ed economia.\n:::\n\n",
+    sep = ""
+  )
+}
+registri_assenti <- c(
+  if (nrow(antenne) > 0 && !file.exists(percorso_progetto(params$scartate_antenne))) "delle antenne",
+  if (nrow(saponette) > 0 && !file.exists(percorso_progetto(params$scartate_saponette))) "delle saponette"
+)
+if (length(registri_assenti) > 0) {
+  cat(
+    "::: {.callout-warning}\nIl registro delle letture scartate ",
+    paste(registri_assenti, collapse = " e "),
+    " non c'è: gli indici di scarto contano solo i codici che stanno nei file finali (`PIT` e `NP`), non quelli scartati dalla pulizia. Rifai `targets::tar_make()` per scriverlo.\n:::\n\n",
+    sep = ""
+  )
+}
+if (!con_antenne) {
+  cat("::: {.callout-note}\nNella selezione non ci sono letture delle antenne: l'analisi riguarda le sole saponette e gli indici di confronto non si possono calcolare.\n:::\n\n")
+}
+if (!con_saponette) {
+  cat("::: {.callout-note}\nNella selezione non ci sono letture delle saponette: l'analisi riguarda le sole antenne e gli indici di confronto non si possono calcolare.\n:::\n\n")
+}
+```
+
+# Che cosa si analizza
+
+```{r}
+#| label: selezione
+righe_selezione <- dplyr::tibble(
+  Voce = c(
+    "Periodo",
+    "Letture",
+    "Servizio",
+    "Fascia di componenti",
+    "Sistemi con letture"
+  ),
+  Valore = c(
+    paste0(data_it(dal), " - ", data_it(al), " (", intero(as.numeric(al - dal) + 1), " giorni)"),
+    if (con_giri) {
+      paste0(intero(nrow(giri)), " giri indicati; antenne e saponette nella stessa finestra oraria")
+    } else {
+      "tutte le letture disponibili"
+    },
+    if (con_giri) {
+      "quello di ogni giro"
+    } else if (is.null(servizio)) {
+      "tutti"
+    } else {
+      servizio
+    },
+    if (is.null(gruppo_scelto)) "tutte" else gruppo_scelto,
+    paste(
+      c(
+        if (con_antenne) "antenne",
+        if (con_saponette) "saponette"
+      ),
+      collapse = " e "
+    )
+  )
+)
+knitr::kable(righe_selezione, align = "ll")
+```
+
+Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Una lettura è **compatibile** se ha una fornitura associata (`presente_a_database` uguale a `PIA`); tutte le altre sono **scartate**, perché non si potranno mai fatturare: sia i codici che la pulizia ha scartato, sia i codici validi che il database conosce solo tra i tag (`PIT`) o per niente (`NP`).
+
+```{r}
+#| label: tabella-giri
+#| eval: !expr con_giri
+finestre <- selezione$finestre
+knitr::kable(
+  dplyr::tibble(
+    Giro = finestre$riga_giro,
+    Giorno = data_it(finestre$data_giro),
+    Mezzo = finestre$matricola_veicolo,
+    Servizio = finestre$servizio_giro,
+    Saponetta = dplyr::coalesce(finestre$matricola_saponetta, "(nessuna)"),
+    Finestra = paste0(ora_it(finestre$da), " - ", ora_it(finestre$a)),
+    `Come si è ricavata` = finestre$finestra
+  ),
+  align = "rllllll"
+)
+```
+
+# Forniture e contenitori
+
+```{r}
+#| label: forniture
+#| eval: !expr "!is.null(anagrafica)"
+conteggi <- conta_forniture(anagrafica_scelta)
+knitr::kable(
+  dplyr::tibble(
+    Gruppo = conteggi$gruppo,
+    Forniture = intero(conteggi$forniture),
+    Contenitori = intero(conteggi$contenitori)
+  ),
+  align = "lrr"
+)
+```
+
+```{r}
+#| label: non-domestiche
+#| eval: !expr "!is.null(anagrafica)"
+#| results: asis
+nd <- conta_non_domestiche(anagrafica_scelta)
+if (nrow(nd) > 0) {
+  cat("\nForniture non domestiche per categoria:\n\n")
+  print(knitr::kable(
+    dplyr::tibble(Categoria = nd$categoria, Forniture = intero(nd$forniture)),
+    align = "lr"
+  ))
+}
+```
+
+Le forniture sono quelle con almeno un contenitore dotato di tag attivo nel periodo. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio.
+
+# Le letture
+
+```{r}
+#| label: letture
+righe_letture <- dplyr::tibble(
+  Voce = c("Letture totali", "Compatibili (con fornitura)", "Scartate"),
+  `Solo saponette` = c(ind$letture_solo_saponette, ind$compatibili_solo_saponette, ind$scartate_solo_saponette),
+  `In comune` = c(ind$letture_in_comune, ind$compatibili_in_comune, ind$scartate_in_comune),
+  `Solo antenne` = c(ind$letture_solo_antenne, ind$compatibili_solo_antenne, ind$scartate_solo_antenne),
+  Totale = c(ind$letture_totali, ind$compatibili_totali, ind$scartate_totali)
+)
+knitr::kable(
+  dplyr::mutate(righe_letture, dplyr::across(-"Voce", intero)),
+  align = "lrrrr"
+)
+```
+
+```{r}
+#| label: grafico-letture
+#| fig-height: 3.6
+dati_grafico <- dplyr::bind_rows(
+  dplyr::tibble(
+    voce = "Letture totali",
+    classe = names(colori_classi),
+    letture = c(ind$letture_solo_saponette, ind$letture_in_comune, ind$letture_solo_antenne)
+  ),
+  dplyr::tibble(
+    voce = "Compatibili (PIA)",
+    classe = names(colori_classi),
+    letture = c(ind$compatibili_solo_saponette, ind$compatibili_in_comune, ind$compatibili_solo_antenne)
+  )
+) |>
+  dplyr::mutate(
+    classe = factor(.data$classe, names(colori_classi)),
+    voce = factor(.data$voce, c("Letture totali", "Compatibili (PIA)"))
+  )
+ggplot(dati_grafico, aes(x = .data$letture, y = .data$classe, fill = .data$classe)) +
+  geom_col(width = 0.55) +
+  geom_text(
+    aes(label = intero(.data$letture)),
+    hjust = -0.15,
+    size = 3.6,
+    colour = colori$primario
+  ) +
+  facet_wrap(vars(.data$voce), ncol = 2, scales = "free_x") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.25)), labels = intero) +
+  scale_fill_manual(values = colori_classi) +
+  labs(
+    title = "Chi ha letto che cosa",
+    subtitle = "Ogni lettura conta una volta: «Entrambe» è lo stesso codice letto dai due sistemi nello stesso giorno",
+    x = "Letture",
+    y = NULL
+  ) +
+  tema_grafico +
+  theme(legend.position = "none")
+```
+
+## Come si dividono le letture di ogni sistema
+
+```{r}
+#| label: composizione
+composizione <- composizione_letture(unita) |>
+  dplyr::mutate(stato = factor(as.character(.data$stato), names(colori_stati)))
+knitr::kable(
+  composizione |>
+    dplyr::transmute(
+      Sistema = .data$sistema,
+      Stato = .data$stato,
+      Letture = intero(.data$letture),
+      Quota = quota(.data$quota)
+    ),
+  align = "llrr"
+)
+```
+
+```{r}
+#| label: grafico-composizione
+#| fig-height: 2.8
+ggplot(
+  composizione[composizione$letture > 0, ],
+  aes(x = .data$letture, y = .data$sistema, fill = .data$stato)
+) +
+  geom_col(position = position_fill(reverse = TRUE), width = 0.55, colour = colori$sfondo, linewidth = 0.8) +
+  geom_text(
+    aes(label = ifelse(.data$quota >= 0.04, quota(.data$quota, 0), "")),
+    position = position_fill(vjust = 0.5, reverse = TRUE),
+    size = 3.4,
+    colour = "#0b0b0b"
+  ) +
+  scale_x_continuous(labels = scales::label_percent()) +
+  scale_fill_manual(values = colori_stati) +
+  labs(
+    title = "Da che cosa dipende lo scarto",
+    subtitle = "PIA: con fornitura · PIT: contenitore dell'azienda senza fornitura · NP: codice valido non presente · Scartata: scartata dalla pulizia",
+    x = NULL,
+    y = NULL
+  ) +
+  tema_grafico
+```
+
+```{r}
+#| label: non-conteggiate
+#| results: asis
+non_conteggiate <- righe_non_conteggiate(selezione$scartate_antenne, selezione$scartate_saponette)
+if (nrow(non_conteggiate) > 0) {
+  cat("\nRighe del registro che non sono letture distinte (non entrano nei conteggi): ")
+  cat(paste0(
+    non_conteggiate$sistema, ", ", gsub("_", " ", non_conteggiate$motivo), ": ",
+    intero(non_conteggiate$righe),
+    collapse = "; "
+  ))
+  cat(". Un doppione è la stessa lettura già contata; una riga senza RFID o con l'istante illeggibile non ha una chiave per riconoscerla.\n")
+}
+if (!scarto_calcolabile) {
+  cat("\n::: {.callout-note}\nCon un servizio scelto le letture scartate dalla pulizia non entrano: non hanno un servizio. Gli indici di scarto non sono calcolabili e le letture sono le sole che hanno un servizio.\n:::\n")
+}
+```
+
+# Indici di confronto
+
+```{r}
+#| label: kpi
+#| eval: !expr "con_antenne && con_saponette"
+kpi <- dplyr::tibble(
+  Indice = c(
+    "Scarto delle saponette",
+    "Scarto delle antenne",
+    "Scarto totale",
+    "Efficacia delle saponette",
+    "Efficacia delle antenne",
+    "Efficacia in comune"
+  ),
+  Valore = c(
+    ind$indice_scarto_saponette,
+    ind$indice_scarto_antenne,
+    ind$indice_scarto_totale,
+    ind$efficacia_saponette,
+    ind$efficacia_antenne,
+    ind$efficacia_in_comune
+  ),
+  `Come si calcola` = c(
+    "(scartate solo saponette + scartate in comune) / letture totali",
+    "(scartate solo antenne + scartate in comune) / letture totali",
+    "scartate totali / letture totali",
+    "(compatibili solo saponette + in comune) / compatibili totali",
+    "(compatibili solo antenne + in comune) / compatibili totali",
+    "compatibili in comune / compatibili totali"
+  )
+)
+if (!scarto_calcolabile) {
+  kpi$Valore[1:3] <- NA_real_
+}
+knitr::kable(
+  dplyr::mutate(kpi, Valore = quota(.data$Valore)),
+  align = "lrl"
+)
+```
+
+L'**indice di scarto** dice quanto è inefficiente il filtro dei codici non utili per un sistema: la quota delle letture totali che quel sistema porta e che non diventeranno mai una fornitura. L'**indice di efficacia** dice quanta parte delle letture compatibili (quelle fatturabili) vede un sistema; l'efficacia in comune è la parte vista da tutti e due. Le efficacie di saponette e antenne non si sommano a 1: la parte in comune conta in tutte e due.
+
+```{r}
+#| label: grafico-kpi
+#| eval: !expr "con_antenne && con_saponette"
+#| fig-height: 3
+dati_efficacia <- dplyr::tibble(
+  sistema = factor(
+    c("Saponette", "Antenne", "In comune"),
+    c("Saponette", "Antenne", "In comune")
+  ),
+  efficacia = c(ind$efficacia_saponette, ind$efficacia_antenne, ind$efficacia_in_comune)
+)
+ggplot(dati_efficacia, aes(x = .data$efficacia, y = .data$sistema, fill = .data$sistema)) +
+  geom_col(width = 0.55) +
+  geom_text(
+    aes(label = quota(.data$efficacia)),
+    hjust = -0.15,
+    size = 3.6,
+    colour = colori$primario
+  ) +
+  scale_x_continuous(limits = c(0, 1.12), breaks = seq(0, 1, 0.25), labels = scales::label_percent()) +
+  scale_fill_manual(values = c(
+    "Saponette" = colori_classi[["Solo saponette"]],
+    "Antenne" = colori_classi[["Solo antenne"]],
+    "In comune" = colori_classi[["Entrambe"]]
+  )) +
+  labs(
+    title = "Efficacia: quante letture compatibili vede ogni sistema",
+    subtitle = "Sulle letture compatibili (con fornitura) dei due sistemi insieme, ognuna una volta",
+    x = NULL,
+    y = NULL
+  ) +
+  tema_grafico +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: indicatori-giro
+#| eval: !expr con_giri
+#| results: asis
+per_giro <- indicatori_per_giro(selezione)
+cat("\n## Giro per giro\n\n")
+cat("Gli indici di ogni giro, con il totale dei giri in fondo (una lettura che sta in più giri conta una volta sola nel totale). Antenne e saponette di un giro sono quelle dello stesso giorno e della stessa finestra oraria.\n\n")
+tabella_giri_ind <- dplyr::tibble(
+  Giro = per_giro$giro,
+  Giorno = ifelse(per_giro$giro == "Totale", "", data_it(per_giro$data_giro)),
+  Mezzo = dplyr::coalesce(per_giro$matricola_veicolo, ""),
+  `Solo saponette` = intero(per_giro$letture_solo_saponette),
+  `In comune` = intero(per_giro$letture_in_comune),
+  `Solo antenne` = intero(per_giro$letture_solo_antenne),
+  Compatibili = intero(per_giro$compatibili_totali),
+  `Scarto sap.` = quota(per_giro$indice_scarto_saponette),
+  `Scarto ant.` = quota(per_giro$indice_scarto_antenne),
+  `Efficacia sap.` = quota(per_giro$efficacia_saponette),
+  `Efficacia ant.` = quota(per_giro$efficacia_antenne)
+)
+print(knitr::kable(tabella_giri_ind, align = "lllrrrrrrrr"))
+if (!vuoto(params$cartella_csv)) {
+  dir.create(percorso_progetto(params$cartella_csv), recursive = TRUE, showWarnings = FALSE)
+  utils::write.table(
+    per_giro,
+    file.path(percorso_progetto(params$cartella_csv), "indicatori_per_giro.csv"),
+    sep = ";", dec = ",", row.names = FALSE, na = ""
+  )
+}
+```
+
+# Propensione al conferimento
+
+```{r}
+#| label: propensione
+#| eval: !expr "!is.null(anagrafica_analisi)"
+propensione <- propensione_conferimento(unita, anagrafica_analisi, servizio)
+propensione <- propensione[propensione$forniture > 0, ]
+knitr::kable(
+  dplyr::tibble(
+    Gruppo = propensione$gruppo,
+    Forniture = intero(propensione$forniture),
+    Contenitori = intero(propensione$contenitori),
+    Letture = intero(propensione$letture),
+    `Letture per contenitore` = num(propensione$propensione_numerica, 2),
+    `Raccolte attese` = intero(propensione$raccolte_attese),
+    `Letture / attese` = quota(propensione$propensione_sulle_attese),
+    `Propensione volumetrica` = quota(propensione$propensione_volumetrica)
+  ),
+  align = "lrrrrrrr"
+)
+```
+
+La **propensione numerica** è il numero di letture compatibili (dei due sistemi insieme) diviso i contenitori delle forniture domestiche del gruppo. Le **raccolte attese** sono le raccolte annue previste × i giorni di attività / i giorni dell'anno × i contenitori: la propensione «letture / attese» dice a che frazione delle raccolte previste corrispondono i conferimenti rilevati. La **propensione volumetrica** è il volume letto (letture × volume del contenitore) diviso la capacità (volume dei contenitori × raccolte attese). Un valore sotto 100% non vuol dire che mancano conferimenti: un contenitore può non essere esposto a ogni raccolta, e le letture mancanti di un sistema abbassano i valori.
+
+# Analisi economica del secco
+
+```{r}
+#| label: economia
+#| eval: !expr economia_possibile
+economia <- analisi_economica(unita, anagrafica_analisi)
+riepilogo <- riepilogo_economico(economia)
+nuovo_riepilogo <- dplyr::tibble(
+  Scenario = riepilogo$scenario,
+  Forniture = intero(riepilogo$forniture),
+  Premialità = paste0(intero(riepilogo$premialita), " (", quota(riepilogo$quota_premialita), ")"),
+  Ordinarie = paste0(intero(riepilogo$ordinarie), " (", quota(riepilogo$quota_ordinarie), ")"),
+  Eccedenti = paste0(intero(riepilogo$eccedenti), " (", quota(riepilogo$quota_eccedenti), ")"),
+  `Litri conferiti` = intero(riepilogo$litri),
+  `Premi` = euro(riepilogo$premi_eur),
+  `Eccedenze` = euro(riepilogo$eccedenze_eur),
+  `Importo netto` = euro(riepilogo$importo_eur)
+)
+```
+
+```{r}
+#| label: economia-testo
+#| eval: !expr economia_possibile
+#| results: asis
+cat(
+  "Le forniture domestiche del secco con almeno un conferimento nel periodo e una composizione del nucleo nota: **",
+  intero(nrow(economia[economia$scenario == names(scenari_rilevazione())[1], ])),
+  "**",
+  sep = ""
+)
+if (!is.null(gruppo_scelto)) cat(" (fascia ", gruppo_scelto, ")", sep = "")
+cat(". Condomini e non domestiche hanno altre regole di fatturazione e non entrano. Le tariffe sono quelle attuali, anche per gli anni passati; soglie e conferimenti attesi sono riportati al periodo (giorni di attività / giorni dell'anno).\n\n")
+```
+
+## Riepilogo per scenario
+
+```{r}
+#| label: economia-riepilogo
+#| eval: !expr economia_possibile
+knitr::kable(nuovo_riepilogo, align = "lrrrrrrrr")
+```
+
+Gli scenari rispondono alla domanda: che cosa sarebbe successo fatturando con le letture di un solo sistema? **Saponette e antenne** unisce i due (ogni lettura una volta) ed è il riferimento. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.
+
+```{r}
+#| label: grafico-economia
+#| eval: !expr economia_possibile
+#| fig-height: 3.4
+conteggi_classi <- dplyr::bind_rows(
+  dplyr::tibble(scenario = riepilogo$scenario, classe = "Premialità", forniture = riepilogo$premialita),
+  dplyr::tibble(scenario = riepilogo$scenario, classe = "Ordinaria", forniture = riepilogo$ordinarie),
+  dplyr::tibble(scenario = riepilogo$scenario, classe = "Eccedente", forniture = riepilogo$eccedenti)
+) |>
+  dplyr::mutate(classe = factor(.data$classe, names(colori_economia)))
+ggplot(conteggi_classi, aes(x = .data$forniture, y = .data$scenario, fill = .data$classe)) +
+  geom_col(position = position_stack(reverse = TRUE), width = 0.55, colour = colori$sfondo, linewidth = 0.8) +
+  geom_text(
+    aes(label = ifelse(.data$forniture > 0, intero(.data$forniture), "")),
+    position = position_stack(vjust = 0.5, reverse = TRUE),
+    size = 3.4,
+    colour = "#0b0b0b"
+  ) +
+  scale_x_continuous(labels = intero) +
+  scale_y_discrete(limits = rev) +
+  scale_fill_manual(values = colori_economia) +
+  labs(
+    title = "Forniture per classe e scenario",
+    subtitle = "Premialità: litri sotto il massimo per accedere al premio · Eccedente: oltre i litri inclusi nella tariffa",
+    x = "Forniture",
+    y = NULL
+  ) +
+  tema_grafico
+```
+
+## Premialità, eccedenze e litri
+
+```{r}
+#| label: economia-litri
+#| eval: !expr economia_possibile
+knitr::kable(
+  dplyr::tibble(
+    Scenario = riepilogo$scenario,
+    `Litri in premialità` = intero(riepilogo$litri_in_premialita),
+    `Litri sotto il massimo` = intero(riepilogo$litri_sotto_massimo),
+    `Litri eccedenti` = intero(riepilogo$litri_eccedenti)
+  ),
+  align = "lrrr"
+)
+```
+
+I **litri in premialità** sono quelli conferiti dalle forniture che accedono al premio; i **litri sotto il massimo** sono la somma di quanto hanno conferito in meno del volume massimo per la premialità (ogni 120 litri in meno sono 5 euro di premio per un carrellato, fino al volume minimo addebitato); i **litri eccedenti** sono quelli oltre i litri inclusi nella tariffa.
+
+```{r}
+#| label: economia-fasce
+#| eval: !expr economia_possibile
+#| results: asis
+cat("\n### Quote di premio\n\n")
+premi <- forniture_per_fascia(economia, "premio")
+print(knitr::kable(
+  premi |>
+    dplyr::select("scenario", "intervallo", "forniture", "quota") |>
+    dplyr::mutate(quota = quota(.data$quota)) |>
+    tidyr::pivot_wider(
+      names_from = "scenario",
+      values_from = c("forniture", "quota"),
+      names_glue = "{scenario}: {.value}"
+    ),
+  align = "lrrrrrr"
+))
+cat("\n### Fasce di eccedenza\n\n")
+fasce <- forniture_per_fascia(economia, "eccedenza")
+print(knitr::kable(
+  fasce |>
+    dplyr::select("scenario", "intervallo", "forniture", "quota") |>
+    dplyr::mutate(quota = quota(.data$quota)) |>
+    tidyr::pivot_wider(
+      names_from = "scenario",
+      values_from = c("forniture", "quota"),
+      names_glue = "{scenario}: {.value}"
+    ),
+  align = "lrrrrrr"
+))
+cat("\nLa quota è sul totale delle forniture dello scenario. Le quote di premio e le fasce di eccedenza si cambiano con l'argomento `limiti` di `forniture_per_fascia()`.\n")
+```
+
+## Per gruppo di forniture
+
+```{r}
+#| label: economia-gruppi
+#| eval: !expr economia_possibile
+per_gruppo <- riepilogo_economico(economia, per_gruppo = TRUE)
+per_gruppo <- per_gruppo[per_gruppo$scenario == names(scenari_rilevazione())[1], ]
+knitr::kable(
+  dplyr::tibble(
+    Gruppo = per_gruppo$gruppo,
+    Forniture = intero(per_gruppo$forniture),
+    Premialità = paste0(intero(per_gruppo$premialita), " (", quota(per_gruppo$quota_premialita), ")"),
+    Ordinarie = paste0(intero(per_gruppo$ordinarie), " (", quota(per_gruppo$quota_ordinarie), ")"),
+    Eccedenti = paste0(intero(per_gruppo$eccedenti), " (", quota(per_gruppo$quota_eccedenti), ")"),
+    Premi = euro(per_gruppo$premi_eur),
+    Eccedenze = euro(per_gruppo$eccedenze_eur)
+  ),
+  align = "lrrrrrr"
+)
+```
+
+Scenario di riferimento, saponette e antenne insieme. La casa vuota (limite di 240 litri) e il potenziamento del secco (6.240 litri) non hanno né volume minimo né premio: per loro ci sono solo la classe ordinaria e l'eccedenza.
+
+## Che cosa cambierebbe con un solo sistema
+
+```{r}
+#| label: economia-impatto
+#| eval: !expr "economia_possibile && con_antenne && con_saponette"
+impatto <- impatto_dei_sistemi(economia)
+knitr::kable(
+  dplyr::tibble(
+    Scenario = impatto$scenario,
+    Forniture = intero(impatto$forniture),
+    `Lette dallo scenario` = intero(impatto$rilevate),
+    `Stessa classe` = intero(impatto$stessa_classe),
+    `Classe diversa` = intero(impatto$classe_diversa),
+    `Premi in più` = intero(impatto$premi_in_piu),
+    `Premi in meno` = intero(impatto$premi_in_meno),
+    `Importo riferimento` = euro(impatto$importo_riferimento_eur),
+    `Importo scenario` = euro(impatto$importo_scenario_eur),
+    Differenza = euro(impatto$differenza_eur)
+  ),
+  align = "lrrrrrrrrr"
+)
+```
+
+Il confronto più vicino al costo reale di un sistema. Per ogni fornitura si confronta la classe di ogni scenario a sistema singolo con quella di «Saponette e antenne». Una fornitura che il sistema non ha letto mai ha zero litri, e quindi il premio massimo: sono i **premi in più** (premialità solo nello scenario). I **premi in meno** sono quelli che il riferimento darebbe e lo scenario no. La **differenza** è l'importo dello scenario meno quello del riferimento: negativa vuol dire meno da pagare, cioè premi dati o eccedenze mancate per letture che il sistema non ha fatto.
+
+## Forniture senza conferimenti rilevati
+
+```{r}
+#| label: senza-conferimenti
+#| eval: !expr "!is.null(anagrafica_scelta) && !con_giri && (is.null(servizio) || servizio == 'SECCO')"
+#| results: asis
+secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
+senza <- forniture_senza_conferimenti(unita, secco)
+cat(
+  "\nForniture del secco con almeno una raccolta attesa nel periodo e **nessuna lettura compatibile**, da nessuno dei due sistemi: **",
+  intero(nrow(senza)), "** su ", intero(nrow(secco)),
+  " (", quota(rapporto(nrow(senza), nrow(secco))), ").\n\n",
+  sep = ""
+)
+if (nrow(senza) > 0) {
+  print(knitr::kable(
+    dplyr::tibble(
+      Gruppo = senza$gruppo,
+      Forniture = intero(table(senza$gruppo)[as.character(unique(senza$gruppo))]),
+      Contenitori = intero(vapply(unique(senza$gruppo), \(g) sum(senza$contenitori[senza$gruppo == g]), numeric(1)))
+    ) |>
+      dplyr::distinct(),
+    align = "lrr"
+  ))
+  elenco <- senza |>
+    dplyr::arrange(dplyr::desc(.data$raccolte_attese)) |>
+    utils::head(30)
+  cat("\nLe prime 30 per raccolte attese:\n\n")
+  print(knitr::kable(
+    dplyr::tibble(
+      Fornitura = elenco$id_fornitura,
+      Utenza = dplyr::coalesce(elenco$id_utenza, ""),
+      Gruppo = elenco$gruppo,
+      Contenitori = intero(elenco$contenitori),
+      `Raccolte attese` = num(elenco$raccolte_attese, 1),
+      `Giorni di attività` = intero(elenco$giorni_attivi)
+    ),
+    align = "lllrrr"
+  ))
+  cat("\nUna fornitura senza letture non è una fornitura virtuosa: può avere il tag rotto o non letto, il contenitore non esposto o lo smaltimento in un altro modo. Non entra nell'analisi economica, che altrimenti le darebbe il premio massimo per mancanza di dati.\n")
+  if (!vuoto(params$cartella_csv)) {
+    dir.create(percorso_progetto(params$cartella_csv), recursive = TRUE, showWarnings = FALSE)
+    utils::write.table(
+      senza,
+      file.path(percorso_progetto(params$cartella_csv), "forniture_senza_conferimenti.csv"),
+      sep = ";", dec = ",", row.names = FALSE, na = ""
+    )
+  }
+}
+```
+
+```{r}
+#| label: avviso-senza-conferimenti
+#| eval: !expr con_giri
+#| results: asis
+cat("\n::: {.callout-note}\nCon i giri indicati le forniture senza conferimenti non si possono cercare: non si sa quali forniture dovevano essere servite da quei mezzi. Le forniture dell'analisi sono quelle lette in quei giri.\n:::\n")
+```
+
+```{r}
+#| label: esporta-economia
+#| eval: !expr "economia_possibile && !vuoto(params$cartella_csv)"
+dir.create(percorso_progetto(params$cartella_csv), recursive = TRUE, showWarnings = FALSE)
+utils::write.table(
+  economia,
+  file.path(percorso_progetto(params$cartella_csv), "economia_forniture.csv"),
+  sep = ";", dec = ",", row.names = FALSE, na = ""
+)
+```
+
+```{r}
+#| label: avviso-economia
+#| eval: !expr "!economia_possibile"
+#| results: asis
+cat("\n::: {.callout-note}\nL'analisi economica vale solo per il secco, l'unico rifiuto fatturato, e richiede i file delle forniture")
+if (!is.null(servizio) && servizio != "SECCO") cat(": con il servizio ", servizio, " non si fa", sep = "")
+cat(".\n:::\n")
+```
+
+# Come sono fatti i conti
+
+- **Tariffe.** Per ogni fascia di componenti la tabella dell'azienda dà i litri annui inclusi nella tariffa, il volume minimo addebitato e il volume massimo per accedere alla premialità. Oltre i litri inclusi si paga l'eccedenza (10 € ogni 120 litri per un carrellato); fino al volume massimo per la premialità si riceve un premio di 5 € a cui se ne aggiungono 5 per ogni 120 litri in meno, fino al volume minimo. Le tariffe stanno in `tariffe_secco()` e `tariffe_contenitori()` (`R/utils_tariffe.R`); si usano le attuali anche per gli anni passati.
+- **Contenitori diversi.** I volumi si sommano in litri; eccedenza e premio si calcolano al litro, con la tariffa del contenitore più frequente della fornitura (un volume che la tabella non ha usa quella del carrellato da 120 litri). Su un anno intero il risultato è quello dei conferimenti interi.
+- **Periodo.** Litri inclusi, volume minimo e massimo per la premialità si moltiplicano per i giorni di attività della fornitura nel periodo diviso i giorni dell'anno (366 solo per un periodo dentro un anno bisestile); il premio di un conferimento si riduce allo stesso modo, così premio ed eccedenza sono la quota del periodo dell'importo annuo.
+- **Un conferimento è una lettura compatibile.** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
+- **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento vale il limite di 6.240 litri.
+- **Anagrafica.** Forniture e contenitori vengono dalle tabelle estratte (`dv_cnt_associazione_contenitori`, `dv_associazione_componenti`, `dv_potenziamento_secco`), non dalle letture. Un contenitore senza tag non compare.
+- **Con i giri.** Vedi sopra: la finestra oraria di un giro è, in ordine, quella indicata nel file, quella delle letture delle antenne del giro allargata di `margine_minuti` minuti, o la giornata intera. Le forniture sono quelle lette nei giri, i litri sono quelli di quelle letture e le soglie annue valgono per il periodo scelto: va letto come un campione, non come l'anno di quelle forniture.

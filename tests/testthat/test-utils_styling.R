@@ -1,6 +1,6 @@
 test_that("il colore del marker dipende dallo stato a database", {
   expect_identical(
-    get_color(c("Presente", "Non Presente", NA)),
+    get_color(c("PIA", "NP", NA)),
     c("#2ecc71", "#e74c3c", "#e74c3c")
   )
 })
@@ -89,8 +89,8 @@ test_that("i sacchetti hanno una tipologia e un'icona loro", {
   expect_false(sacchetti$emoji %in% altre$emoji)
   # il marker di un sacchetto non è quello con il punto di domanda
   expect_false(identical(
-    svg_marker(servizio_sacchetti(), "Presente"),
-    svg_marker(NA, "Presente")
+    svg_marker(servizio_sacchetti(), "PIA"),
+    svg_marker(NA, "PIA")
   ))
   expect_match(html_legenda("cluster"), "Sacchetti", fixed = TRUE)
   # nell'ordine dei servizi stanno dopo le sei tipologie di rifiuto
@@ -142,8 +142,8 @@ test_that("le icone Font Awesome usate esistono", {
 })
 
 test_that("il marker SVG codifica stato, servizio e stile", {
-  censito <- svg_marker("CARTA", "Presente")
-  non_censito <- svg_marker(NA, "Non Presente")
+  censito <- svg_marker("CARTA", "PIA")
+  non_censito <- svg_marker(NA, "NP")
   expect_match(censito, "#2ecc71", fixed = TRUE)
   expect_match(non_censito, "#e74c3c", fixed = TRUE)
   # forma diversa oltre al colore, per chi non distingue rosso e verde
@@ -151,20 +151,20 @@ test_that("il marker SVG codifica stato, servizio e stile", {
   expect_false(identical(sagoma(censito), sagoma(non_censito)))
 
   expect_match(
-    svg_marker("CARTA", "Presente", "ultimo"),
+    svg_marker("CARTA", "PIA", "ultimo"),
     "stroke-width=\"3\"",
     fixed = TRUE
   )
-  precedente <- svg_marker("CARTA", "Presente", "precedente")
+  precedente <- svg_marker("CARTA", "PIA", "precedente")
   expect_match(precedente, "stroke-width=\"1\"", fixed = TRUE)
   expect_match(precedente, "stroke-dasharray=\"5,5\"", fixed = TRUE)
 })
 
 test_that("i segnali sul marker dicono fuori comune e fuori giro", {
-  semplice <- svg_marker("CARTA", "Presente")
-  fuori_comune <- svg_marker("CARTA", "Presente", fuori_comune = TRUE)
-  fuori_giro <- svg_marker("CARTA", "Presente", fuori_giro = TRUE)
-  entrambi <- svg_marker("CARTA", "Presente", fuori_comune = TRUE, fuori_giro = TRUE)
+  semplice <- svg_marker("CARTA", "PIA")
+  fuori_comune <- svg_marker("CARTA", "PIA", fuori_comune = TRUE)
+  fuori_giro <- svg_marker("CARTA", "PIA", fuori_giro = TRUE)
+  entrambi <- svg_marker("CARTA", "PIA", fuori_comune = TRUE, fuori_giro = TRUE)
   expect_no_match(semplice, "<text", fixed = TRUE)
   expect_match(fuori_comune, ">C</text>", fixed = TRUE)
   expect_no_match(fuori_comune, ">G</text>", fixed = TRUE)
@@ -176,7 +176,7 @@ test_that("i segnali sul marker dicono fuori comune e fuori giro", {
 
   icone <- indice_icona(
     rep("CARTA", 5),
-    "Presente",
+    "PIA",
     fuori_comune = c(FALSE, TRUE, TRUE, NA, FALSE),
     fuori_giro = c(FALSE, FALSE, TRUE, FALSE, FALSE)
   )
@@ -203,6 +203,10 @@ test_that("i segnali sul marker dicono fuori comune e fuori giro", {
       "G: non censito fuori dal comune del giro",
       fixed = TRUE
     )
+  }
+  # la legenda dello stato a database ha le tre voci
+  for (voce in c("PIA: presente in associazione", "PIT: presente in tag", "NP: non presente")) {
+    expect_match(html_legenda("cluster"), voce, fixed = TRUE)
   }
   expect_match(html_legenda("giro"), "Comune del giro", fixed = TRUE)
   expect_no_match(html_legenda("cluster"), "legenda-comune-giro", fixed = TRUE)

@@ -120,7 +120,7 @@ filtra_letture <- function(
 #' Letture delle saponette dei giri in cui le antenne hanno letto almeno un RFID
 #'
 #' Contesto: le saponette non hanno il mezzo né il giro del calendario, ma
-#' hanno `id_trasmissione`: i codici di una trasmissione in un giorno sono letti
+#' hanno `matricola_saponetta`: i codici di una trasmissione in un giorno sono letti
 #' nello stesso giro. Per confrontare i due sistemi sugli stessi giri si
 #' parte dagli RFID delle antenne e si cerca dove le saponette li hanno letti.
 #' Il confronto che ne esce non è del tutto equo (un giro comprende anche RFID
@@ -129,7 +129,7 @@ filtra_letture <- function(
 #'
 #' Funzionamento:
 #' 1. tiene le letture delle saponette degli RFID letti dalle antenne;
-#' 2. ne prende le coppie distinte di `data_lettura` e `id_trasmissione`;
+#' 2. ne prende le coppie distinte di `data_lettura` e `matricola_saponetta`;
 #' 3. tiene tutte le letture delle saponette di quelle coppie.
 #' Gli RFID si abbinano senza guardare la data; per abbinare giorno per giorno
 #' c'è `trasmissioni_dei_giri()`.
@@ -137,7 +137,7 @@ filtra_letture <- function(
 #' Risultato: le letture delle saponette di quei giri, con `data_lettura`
 #' (data) al posto di quella del file.
 #' @param letture_saponette Data frame con `RFID`, `data_ora_lettura` e
-#'   `id_trasmissione`.
+#'   `matricola_saponetta`.
 #' @param letture_antenne Data frame con `RFID`: le letture già filtrate.
 #' @return Le letture delle saponette di quei giri.
 #' @noRd
@@ -146,8 +146,8 @@ saponette_di_confronto <- function(letture_saponette, letture_antenne) {
     dplyr::mutate(data_lettura = lubridate::as_date(.data$data_ora_lettura))
   giri <- saponette |>
     dplyr::filter(.data$RFID %in% letture_antenne$RFID) |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione)
-  dplyr::semi_join(saponette, giri, by = c("data_lettura", "id_trasmissione"))
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta)
+  dplyr::semi_join(saponette, giri, by = c("data_lettura", "matricola_saponetta"))
 }
 
 #' RFID letti ogni giorno, con l'origine della lettura: unione di due serie
@@ -205,7 +205,7 @@ unisci_origini <- function(saponette, antenne) {
 #' `Entrambe`), per giorno e RFID.
 #' @param letture_saponette,letture_antenne Data frame (anche da `targets::tar_load()`)
 #'   o percorsi dei CSV della pipeline, con `RFID` e `data_ora_lettura`; le
-#'   saponette anche con `id_trasmissione`.
+#'   saponette anche con `matricola_saponetta`.
 #' @inheritParams filtra_letture
 #' @return Tibble con `data_lettura` (data), `RFID` e `origine`.
 #' @noRd

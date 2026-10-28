@@ -4,8 +4,9 @@ test_that("i file estratti hanno sempre lo stesso nome", {
     file,
     c(
       "test_mezzi",
-      "letture",
+      "antenne_grezze",
       "contenitori",
+      "tag_contenitori",
       "gruppi_sacchetti",
       "servizi_sacchetti",
       "calendario",
@@ -13,8 +14,13 @@ test_that("i file estratti hanno sempre lo stesso nome", {
       "giri_aggiunti",
       "componenti",
       "manovre",
-      "saponette"
+      "saponette_grezze"
     )
+  )
+  # i file grezzi delle letture hanno un nome diverso dai risultati della pipeline
+  expect_identical(
+    basename(unlist(file[c("antenne_grezze", "saponette_grezze")])),
+    c("letture_antenne_grezze.csv", "letture_saponette_grezze.csv")
   )
   expect_identical(
     file$test_mezzi,
@@ -35,7 +41,7 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   # il trattino vale come mancante
   expect_true(is.na(test$esito[3]))
 
-  letture <- importa_letture_antenne(file$letture)
+  letture <- importa_letture_antenne(file$antenne_grezze)
   expect_identical(
     names(letture),
     c(
@@ -154,41 +160,91 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   expect_identical(manovre$id_fornitura, "F1")
   expect_identical(manovre$data_fine_dichiarazione, as.Date("2099-12-31"))
 
-  saponette <- importa_letture_saponette(file$saponette)
+  saponette <- importa_letture_saponette(file$saponette_grezze)
   # la riga ripetuta conta una volta, quella senza codice resta fuori; i
-  # sacchetti si tolgono dopo, come per le letture con le antenne
+  # sacchetti restano, come per le letture con le antenne
   expect_named(
     saponette,
-    c("data_ora_lettura", "data_lettura", "id_trasmissione", "RFID")
+    c("data_ora_lettura", "data_lettura", "matricola_saponetta", "RFID")
   )
+  # l'importazione normalizza i codici ma non li ripara e non li scarta
   expect_identical(
     saponette$RFID,
-    c("0000000123", "00BD00000000000000000001", "0000000123")
+    c(
+      "0000000123",
+      "00BD00000000000000000001",
+      "0000000123",
+      "000000084C",
+      "12345678901",
+      "48455241AABB"
+    )
   )
-  expect_identical(saponette$id_trasmissione, c("T1", "T1", "T3"))
+  expect_identical(
+    saponette$matricola_saponetta,
+    c("T1", "T1", "T3", "T4", "T5", "T5")
+  )
   expect_identical(
     saponette$data_lettura,
-    as.Date(c("2025-03-01", "2025-03-02", "2026-08-21"))
+    as.Date(c(
+      "2025-03-01",
+      "2025-03-02",
+      "2026-08-21",
+      "2026-08-22",
+      "2026-08-23",
+      "2026-08-24"
+    ))
   )
   expect_identical(
     format(saponette$data_ora_lettura[1], "%Y-%m-%d %H:%M:%S"),
     "2025-03-01 07:00:00"
   )
+  # il file di prima di ottobre 2026 aveva altri nomi: un errore chiaro
   expect_error(
-    importa_letture_saponette(file$saponette, colonna_rfid = "rfid"),
-    "mancano le colonne: rfid"
+    importa_letture_saponette(scrivi_csv(c(
+      "data_lettura,codice_transponder,id_trasmissione",
+      "2025-03-01 07:00:00,123,T1"
+    ))),
+    "mancano le colonne: data_ora_lettura, RFID, matricola_saponetta"
   )
   # anche le date italiane; un istante illeggibile si scarta, con un avviso
   expect_warning(
     italiane <- importa_letture_saponette(scrivi_csv(c(
-      "data_lettura,codice_transponder,id_trasmissione",
-      "01/03/2025 07.00.00,123,T1",
-      "ieri,124,T1"
+      "data_ora_lettura,data_lettura,RFID,matricola_saponetta",
+      "01/03/2025 07:00:00,01/03/2025,123,T1",
+      "ieri,2025-03-01,124,T1"
     ))),
     "1 letture delle saponette hanno un istante illeggibile.*ieri"
   )
   expect_identical(italiane$RFID, "0000000123")
   expect_identical(italiane$data_lettura, as.Date("2025-03-01"))
+  # il nome della colonna scritto con lo spazio vale come con il trattino basso
+  con_spazio <- importa_letture_saponette(scrivi_csv(c(
+    "data_ora_lettura,data_lettura,RFID,matricola saponetta",
+    "2025-03-01 07:00:00,2025-03-01,123,T1"
+  )))
+  expect_identical(con_spazio$matricola_saponetta, "T1")
+  # senza un giorno leggibile in data_lettura vale quello dell'istante
+  senza_giorno <- importa_letture_saponette(scrivi_csv(c(
+    "data_ora_lettura,data_lettura,RFID,matricola_saponetta",
+    "2025-03-01 07:00:00,,123,T1"
+  )))
+  expect_identical(senza_giorno$data_lettura, as.Date("2025-03-01"))
+
+  tag <- importa_tag_contenitori(file$tag_contenitori)
+  # il primo valore non vuoto tra codice_transponder e codice_etichetta
+  expect_identical(tag$codice_transponder, c("0000000128", "0000000999"))
+  # basta uno dei due campi; senza nessuno è un errore
+  solo_etichetta <- importa_tag_contenitori(scrivi_csv(c(
+    "codice_etichetta,altro",
+    "abc,1",
+    ",2",
+    "abc,3"
+  )))
+  expect_identical(solo_etichetta$codice_transponder, "0000000ABC")
+  expect_error(
+    importa_tag_contenitori(scrivi_csv(c("altro", "1"))),
+    "manca sia codice_transponder sia codice_etichetta"
+  )
 })
 
 test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie", {
@@ -233,15 +289,37 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     colonne_nucleo_manovra()
   )
   expect_equal(ncol(letture), 35)
-  # censito tre volte, tre non censiti una; il sacchetto resta fuori
+  # censito tre volte, tre non censiti una; il sacchetto resta, con la
+  # fornitura del suo gruppo
   expect_identical(
     sort(unique(letture$RFID)),
-    c("0000000123", "0000000128", "0000000129", "0000000999")
+    c("0000000123", "0000000128", "0000000129", "0000000999", "00BD00000000000000000001")
   )
+  # le letture scartate dalla pulizia stanno nel registro: posizione zero e
+  # senza comune; quelle del mezzo non collaudato e prima del collaudo non
+  # contano
+  scartate_antenne <- letture_scartate(letture)
+  expect_identical(
+    sort(scartate_antenne$motivo),
+    c("senza_posizione_o_comune", "senza_posizione_o_comune")
+  )
+  # il codice è già nel formato comune, per confrontarlo con quello delle saponette
+  expect_identical(sort(scartate_antenne$RFID), c("0000000124", "0000000125"))
+  expect_true(all(scartate_antenne$matricola_veicolo == "1601"))
+  expect_true(all(c("data_ora_lettura", "data_lettura", "RFID") %in% names(scartate_antenne)))
+  sacchetto <- letture[letture$RFID == "00BD00000000000000000001", ]
+  expect_identical(sacchetto$presente_a_database, "PIA")
+  expect_identical(sacchetto$id_fornitura, "S1")
   # la frazione era dentro LIMENA: il comune del giro, coerente
   frazione <- letture[letture$RFID == "0000000128", ]
   expect_identical(frazione$comune_lettura, "LIMENA")
   expect_identical(frazione$cantiere, "RUBANO")
+  # la frazione (128) e il non censito di LIMENA (999) sono tra i tag
+  # dell'azienda, ma senza fornitura: PIT; VENEZIA (129) non e' conosciuto: NP
+  expect_identical(frazione$presente_a_database, "PIT")
+  expect_true(all(letture$presente_a_database[letture$RFID == "0000000999"] == "PIT"))
+  expect_true(all(letture$presente_a_database[letture$RFID == "0000000129"] == "NP"))
+  expect_true(all(is.na(frazione$id_fornitura)))
   expect_identical(frazione$coerenza_comune, "Coerente")
   expect_true(is.na(frazione$distanza_comune_dichiarato))
   # VENEZIA non e' un comune servito: resta, fuori giro, lontano da LIMENA
@@ -254,7 +332,7 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   expect_identical(venezia$id_giro, "10")
   expect_gt(venezia$distanza_comune_dichiarato, 25000)
   censite <- letture[letture$RFID == "0000000123", ]
-  expect_true(all(censite$presente_a_database == "Presente"))
+  expect_true(all(censite$presente_a_database == "PIA"))
   expect_true(all(censite$id_fornitura == "F1"))
   expect_true(all(censite$servizio_giro == "SECCO PAP"))
   expect_true(all(censite$servizio_atteso == "SECCO"))
@@ -267,10 +345,10 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   # il comune del database
   expect_true(all(censite$coerenza_comune == "Coerente"))
   expect_identical(
-    filtra_solo_bidoni(data.frame(
+    scarta_codici_nulli(data.frame(
       RFID = c("0000000000123", "00BD1", "12")
     ))$RFID,
-    "12"
+    c("00BD1", "12")
   )
 
   # CSV e archivio .duckdb, scritti come nella pipeline: l'app li carica
@@ -323,25 +401,68 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   )
   expect_identical(dal_csv$id_fornitura, letture$id_fornitura)
 
-  # le letture delle saponette: la stessa anagrafica, senza sacchetti, con le
+  # le letture delle saponette: la stessa anagrafica, sacchetti compresi, con le
   # colonne in comune con quelle dell'app e la trasmissione
-  saponette <- prepara_letture_saponette(file)
+  messaggi_saponette <- character(0)
+  saponette <- withCallingHandlers(
+    prepara_letture_saponette(file),
+    message = function(m) {
+      messaggi_saponette <<- c(messaggi_saponette, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
   expect_named(saponette, colonne_letture_saponette())
+  # il registro: una riga ripetuta, una senza RFID, un codice oltre 10 cifre
+  scartate_saponette <- letture_scartate(saponette)
+  expect_setequal(
+    scartate_saponette$motivo,
+    c("doppione", "senza_rfid", "codice_non_compatibile")
+  )
+  expect_identical(
+    scartate_saponette$matricola_saponetta[
+      scartate_saponette$motivo == "codice_non_compatibile"
+    ],
+    "T5"
+  )
+  expect_identical(
+    scartate_saponette$RFID[scartate_saponette$motivo == "codice_non_compatibile"],
+    "12345678901"
+  )
   expect_true(all(
-    setdiff(names(saponette), "id_trasmissione") %in% names(letture)
+    setdiff(names(saponette), "matricola_saponetta") %in% names(letture)
   ))
-  expect_identical(saponette$RFID, c("0000000123", "0000000123"))
-  expect_identical(saponette$presente_a_database, c("Presente", "Presente"))
-  expect_identical(saponette$id_fornitura, c("F1", "F1"))
-  expect_identical(saponette$servizio_transponder, c("SECCO", "SECCO"))
+  # il codice 84C era il 123 con i bit invertiti: riparato; quello di 11 cifre
+  # e' scartato; quello HERA resta com'e'
+  expect_match(messaggi_saponette, "non compatibile.*: 1\\.", all = FALSE)
+  expect_match(messaggi_saponette, "riparati.*1 trasposizione", all = FALSE)
+  expect_identical(
+    saponette$RFID,
+    c(
+      "0000000123",
+      "00BD00000000000000000001",
+      "0000000123",
+      "0000000123",
+      "48455241AABB"
+    )
+  )
+  # il sacchetto resta, con la fornitura del suo gruppo e senza servizio
+  expect_identical(
+    saponette$presente_a_database,
+    c("PIA", "PIA", "PIA", "PIA", "NP")
+  )
+  expect_identical(saponette$id_fornitura, c("F1", "S1", "F1", "F1", NA))
+  expect_identical(
+    saponette$servizio_transponder,
+    c("SECCO", NA, "SECCO", "SECCO", NA)
+  )
   # nucleo e potenziamento in vigore nel giorno della lettura
-  expect_identical(saponette$nucleo_residenti, c(2L, 3L))
-  expect_identical(saponette$potenziamento_secco, c(FALSE, TRUE))
+  expect_identical(saponette$nucleo_residenti, c(2L, NA, 3L, 3L, NA))
+  expect_identical(saponette$potenziamento_secco, c(FALSE, FALSE, TRUE, TRUE, NA))
   percorso <- scrivi_csv_output(saponette, "letture_saponette.csv", output)
   expect_identical(basename(percorso), "letture_saponette.csv")
   scritte <- utils::read.csv(percorso, colClasses = "character")
   expect_identical(names(scritte), colonne_letture_saponette())
-  expect_identical(scritte$id_trasmissione, c("T1", "T3"))
+  expect_identical(scritte$matricola_saponetta, c("T1", "T1", "T3", "T4", "T5"))
 })
 
 test_that("i giri aggiunti a mano hanno le colonne del calendario pianificato", {

@@ -93,7 +93,7 @@ letture <- data.table(
   id_giro = i_mezzo * 10L + i_giro,
   eseguito = "SI",
   RFID = bidoni$RFID[k],
-  presente_a_database = fifelse(censito, "Presente", "Non Presente"),
+  presente_a_database = fifelse(censito, "PIA", "NP"),
   servizio_transponder = del_contenitore,
   # il servizio del giro, con il nome del database: i giri sono nello stesso
   # ordine dei servizi del database

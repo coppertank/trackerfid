@@ -182,10 +182,33 @@ colonne_dataset <- function() {
 }
 
 #' Valori ammessi per `presente_a_database`
-#' Contesto: `Presente` = censito (il bidone ha una fornitura), `Non Presente` =
-#' non censito.
+#' Contesto: dove il database conosce il codice. `PIA` (presente in
+#' associazione) = censito: il bidone ha una fornitura; `PIT` (presente in tag)
+#' = contenitore dell'azienda senza fornitura; `NP` = non presente. Fino al
+#' 28/10/2026 erano `Presente` e `Non Presente` (la validazione li accetta
+#' ancora, come `PIA` e `NP`).
 #' @noRd
-stati_database <- function() c("Presente", "Non Presente")
+stati_database <- function() c("PIA", "PIT", "NP")
+
+#' Parole con cui l'app mostra gli stati di `stati_database()`
+#' Risultato: un vettore con nome per i menu: etichetta -> valore.
+#' @noRd
+etichette_stati_database <- function() {
+  c(
+    "Presente in associazione (PIA)" = "PIA",
+    "Presente in tag (PIT)" = "PIT",
+    "Non presente (NP)" = "NP"
+  )
+}
+
+#' Etichetta di uno stato a database, per popup e dettaglio
+#' Risultato: «Presente in associazione (PIA)»...; un valore sconosciuto resta com'è.
+#' @param stato Vettore di valori di `stati_database()`.
+#' @noRd
+descrizione_stato_database <- function(stato) {
+  etichette <- etichette_stati_database()
+  dplyr::coalesce(names(etichette)[match(stato, etichette)], as.character(stato))
+}
 
 #' Valori di `coerenza_comune`, con i nomi usati dai filtri
 #' Risultato: `Coerente`, `Fuori comune`, `Fuori giro`, `Coerenza ignota`.
@@ -228,7 +251,7 @@ coerenza_comune <- function(data) {
     })
   }
   lettura <- chiave("comune_lettura")
-  censito <- data[["presente_a_database"]] %in% "Presente"
+  censito <- data[["presente_a_database"]] %in% "PIA"
   giro <- chiave("comune_giro")
   dichiarato <- giro
   dichiarato[censito] <- chiave("comune_fornitura")[censito]
@@ -319,7 +342,7 @@ coerenza_servizio <- function(data) {
 
 #' Servizio dato ai sacchetti, che non hanno una tipologia di rifiuto
 #' Contesto: `SACCHETTI` non è un valore del file: lo assegna l'app a icone,
-#' filtri e statistiche. Nei dati reali la pipeline scarta i sacchetti.
+#' filtri e statistiche. Nei dati reali la pipeline li tiene.
 #' @noRd
 servizio_sacchetti <- function() "SACCHETTI"
 
@@ -477,7 +500,7 @@ etichetta_periodo <- function(periodo) {
 #' Contesto: un bidone non censito non ha un servizio a database; lo si stima
 #' da dove è stato letto. È la regola di riferimento: l'app usa la versione SQL
 #' (`tabella_stima()`), questa serve ai test.
-#' Funzionamento: sulle letture `Non Presente` di ogni RFID, se la tipologia più
+#' Funzionamento: sulle letture non censite (`PIT` o `NP`) di ogni RFID, se la tipologia più
 #' frequente del servizio atteso raggiunge `soglia` (80%) il servizio è il giro più
 #' letto di quella tipologia; altrimenti `NA` (stima incerta, punto di domanda).
 #' Risultato: `RFID`, `quota` e `servizio_prevalente`, solo per gli RFID con
@@ -485,7 +508,7 @@ etichetta_periodo <- function(periodo) {
 #' @return Tibble con `RFID`, `quota`, `servizio_prevalente`.
 #' @noRd
 servizio_prevalente_non_censiti <- function(data, soglia = 0.8) {
-  stimate <- data$presente_a_database == "Non Presente" &
+  stimate <- data$presente_a_database != "PIA" &
     !is.na(data$servizio_atteso)
   conteggi <- dplyr::count(
     dplyr::tibble(
@@ -551,7 +574,7 @@ aggiungi_servizio_icona <- function(
     letture$RFID,
     prevalenti$RFID
   )]
-  censita <- letture$presente_a_database == "Presente"
+  censita <- letture$presente_a_database == "PIA"
   del_contenitore <- letture[["servizio_transponder"]] %||%
     rep(NA_character_, nrow(letture))
   letture$servizio_icona <- ifelse(
@@ -628,13 +651,14 @@ conta_cantieri <- function(valori) {
 #' @param letture_cantieri Letture per cantiere, da `conteggi_cantieri()`.
 #' @noRd
 calcola_statistiche <- function(data, letture_cantieri = NULL) {
-  censiti <- data$presente_a_database == "Presente"
+  censiti <- data$presente_a_database == "PIA"
   servizio <- servizio_mostrato(data)
   incongruenze <- incongruenze_comune(data)
   list(
     totale = nrow(data),
-    presente = sum(censiti),
-    non_presente = sum(!censiti),
+    presente = sum(data$presente_a_database %in% "PIA"),
+    in_tag = sum(data$presente_a_database %in% "PIT"),
+    non_presente = sum(data$presente_a_database %in% "NP"),
     servizio_censiti = conta_servizi(servizio[censiti]),
     servizio_stimato = conta_servizi(servizio[!censiti]),
     stima_incerta = sum(!censiti & is.na(servizio)),
@@ -707,7 +731,7 @@ cronologia_transizioni <- function(letture, campo) {
   dplyr::mutate(out, attuale = dplyr::row_number() == dplyr::n())
 }
 
-#' Stima del servizio di un non censito, dalle sue letture "Non Presente"
+#' Stima del servizio di un non censito, dalle sue letture non censite (`PIT` o `NP`)
 #' Contesto: un non censito non ha un servizio a database; si guarda in quali
 #' giri è stato letto.
 #' Risultato: `servizio`, `n` e `pct`, dal più frequente.
@@ -716,7 +740,7 @@ cronologia_transizioni <- function(letture, campo) {
 stima_servizio_atteso <- function(letture) {
   letture |>
     dplyr::filter(
-      .data$presente_a_database == "Non Presente",
+      .data$presente_a_database != "PIA",
       !is.na(.data$servizio_atteso)
     ) |>
     dplyr::count(servizio = .data$servizio_atteso, name = "n") |>
@@ -738,7 +762,7 @@ stima_servizio_atteso <- function(letture) {
 analizza_rfid <- function(letture) {
   letture <- dplyr::arrange(letture, .data$data_ora_lettura)
   ultima <- letture[nrow(letture), ]
-  censito <- identical(ultima$presente_a_database, "Presente")
+  censito <- identical(ultima$presente_a_database, "PIA")
 
   # Cambi di servizio a database: il servizio atteso cambia con il mezzo.
   servizi <- cronologia_transizioni(

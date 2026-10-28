@@ -18,7 +18,7 @@ letture_via <- function(
       righe[[length(righe) + 1]] <- data.frame(
         data_ora_lettura = as.POSIXct(primo_giorno + 14 * (j - 1), tz = "UTC") + 8 * 3600 + b$posizione * 10,
         RFID = nome,
-        presente_a_database = if (is.null(b$fornitura)) "Non Presente" else "Presente",
+        presente_a_database = if (is.null(b$fornitura)) "NP" else "PIA",
         servizio_transponder = if (is.null(b$fornitura)) NA_character_ else "SECCO",
         servizio_atteso = b$giro %||% "SECCO",
         id_fornitura = b$fornitura %||% NA_character_,
@@ -328,7 +328,7 @@ test_that("l'analisi del dataset di esempio separa domestiche e non domestiche",
   expect_false(any(f$potenziamento[f$id_fornitura %in% und]))
   expect_identical(f$litri_consentiti[f$potenziamento], rep(litri_potenziamento(), sum(f$potenziamento)))
   expect_named(f, names(forniture_vuote()))
-  expect_true(all(analisi$non_censiti$RFID %in% esempio$RFID[esempio$presente_a_database == "Non Presente"]))
+  expect_true(all(analisi$non_censiti$RFID %in% esempio$RFID[esempio$presente_a_database == "NP"]))
 })
 
 test_that("i risultati si scrivono in tre CSV", {

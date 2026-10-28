@@ -373,7 +373,7 @@ analisi_conferimenti <- function(
       call. = FALSE
     )
   }
-  censite <- letture$presente_a_database == "Presente" &
+  censite <- letture$presente_a_database == "PIA" &
     !rfid_sacchetto(letture$RFID)
   if (any(censite) && all(is.na(letture$id_fornitura[censite]))) {
     stop(
@@ -437,13 +437,13 @@ analisi_conferimenti <- function(
   # 2. Unità: contenitore censito del secco in una fornitura, o non censito
   # stimato del secco.
   censita <- valida &
-    ls$presente_a_database == "Presente" &
+    ls$presente_a_database == "PIA" &
     servizio_secco(ls$servizio_transponder) &
     !is.na(ls$id_fornitura)
   stime <- servizio_prevalente_non_censiti(letture)
   rfid_nc <- stime$RFID[servizio_secco(stime$servizio_prevalente)]
   non_censita <- valida &
-    ls$presente_a_database == "Non Presente" &
+    ls$presente_a_database != "PIA" &
     ls$RFID %in% rfid_nc
   riepilogo$contenitori_censiti <- length(unique(ls$RFID[censita]))
   riepilogo$non_censiti <- length(unique(ls$RFID[non_censita]))

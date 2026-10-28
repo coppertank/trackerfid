@@ -87,7 +87,7 @@ icone_mappa <- function() {
     )]
     combinazioni <- expand.grid(
       glifo = seq_len(nrow(glifi)),
-      presente = stati_database(),
+      presente = c("PIA", "NP"),
       stile = c("normale", "ultimo", "precedente"),
       segnali = c("00", "10", "01"),
       stringsAsFactors = FALSE
@@ -97,7 +97,7 @@ icone_mappa <- function() {
     memoria_mappa$icone <- dplyr::tibble(
       id = sprintf(
         "m-%s-%d-%s-%s",
-        ifelse(combinazioni$presente == "Presente", "p", "n"),
+        ifelse(combinazioni$presente == "PIA", "p", "n"),
         combinazioni$glifo,
         substr(combinazioni$stile, 1, 1),
         combinazioni$segnali
@@ -149,14 +149,14 @@ indice_icona <- function(
   })
   chiave <- paste(
     info,
-    rep_len(presente, n) %in% "Presente",
+    rep_len(presente, n) %in% "PIA",
     rep_len(stile, n),
     rep_len(fuori_comune %in% TRUE, n),
     rep_len(fuori_giro %in% TRUE, n)
   )
   catalogo <- paste(
     paste(icone$icona, icone$colore),
-    icone$presente == "Presente",
+    icone$presente == "PIA",
     icone$stile,
     icone$fuori_comune,
     icone$fuori_giro
@@ -583,7 +583,7 @@ punti_mappa <- function(df, modalita) {
       incongruenze$fuori_comune,
       incongruenze$fuori_giro
     ),
-    c = as.integer(df$presente_a_database %in% "Presente"),
+    c = as.integer(df$presente_a_database %in% "PIA"),
     r = as.character(df$RFID)
   )
   if (modalita == "rfid") {

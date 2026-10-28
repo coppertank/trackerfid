@@ -1,11 +1,5 @@
 giorno <- as.Date("2026-10-20")
 
-scrivi_giri <- function(righe, env = parent.frame()) {
-  percorso <- withr::local_tempfile(fileext = ".csv", .local_envir = env)
-  writeLines(righe, percorso)
-  percorso
-}
-
 giri_prova <- function(env = parent.frame()) {
   giri_di_controllo(scrivi_giri(
     c(
@@ -43,7 +37,7 @@ saponette_prova <- function() {
       "2026-10-20 11:00:00", # T4: G, letto da un mezzo fuori lista
       "2026-10-21 08:00:00" # T1 di un altro giorno
     ),
-    id_trasmissione = c(rep("T1", 4), rep("T2", 2), rep("T3", 2), "T4", "T1"),
+    matricola_saponetta = c(rep("T1", 4), rep("T2", 2), rep("T3", 2), "T4", "T1"),
     RFID = c("A", "B", "C", "X", "D", "Y", "Z", "W", "G", "A"),
     servizio_transponder = "SECCO"
   )
@@ -108,7 +102,7 @@ test_that("le trasmissioni dei giri sono quelle che hanno letto lo stesso giorno
   saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
   # T1 e T2; T3 non ha RFID in comune, T4 ha solo G (di un mezzo fuori lista),
   # T1 del 21/10 è un altro giro
-  expect_setequal(unique(saponette_giri$id_trasmissione), c("T1", "T2"))
+  expect_setequal(unique(saponette_giri$matricola_saponetta), c("T1", "T2"))
   expect_identical(nrow(saponette_giri), 6L)
   expect_true(all(saponette_giri$data_lettura == giorno))
 })
@@ -117,7 +111,7 @@ test_that("ogni trasmissione va al mezzo con cui ha piu' RFID in comune", {
   antenne_giri <- antenne_dei_giri(antenne_prova(), giri_prova())
   saponette_giri <- trasmissioni_dei_giri(saponette_prova(), antenne_giri)
   abbinamenti <- abbina_trasmissioni(saponette_giri, antenne_giri)
-  expect_identical(abbinamenti$id_trasmissione, c("T1", "T2"))
+  expect_identical(abbinamenti$matricola_saponetta, c("T1", "T2"))
   expect_identical(abbinamenti$chiave_mezzo, c("101", "303"))
   expect_identical(abbinamenti$condivisi, c(3L, 1L))
   expect_identical(abbinamenti$mezzi_in_comune, c(1L, 1L))
@@ -133,7 +127,7 @@ test_that("una trasmissione che condivide RFID con due mezzi va a quello con piu
   )
   saponette_giri <- dplyr::tibble(
     data_lettura = giorno,
-    id_trasmissione = "T1",
+    matricola_saponetta = "T1",
     RFID = c("A", "B", "C", "D")
   )
   abbinamenti <- abbina_trasmissioni(saponette_giri, antenne_giri)

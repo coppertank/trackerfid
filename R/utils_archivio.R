@@ -7,11 +7,11 @@
 #' Contesto: il `.duckdb` scritto dalla pipeline porta con sé la versione dello
 #' schema con cui è stato creato. Se le colonne cambiano, un file vecchio
 #' darebbe errori oscuri.
-#' Funzionamento: va aumentata a ogni cambio delle colonne di `colonne_app()`;
+#' Funzionamento: va aumentata a ogni cambio delle colonne di `colonne_app()` o dei loro valori;
 #' `apri_file_archivio()` rifiuta un file di un'altra versione.
-#' Risultato: un intero (5).
+#' Risultato: un intero (6).
 #' @noRd
-versione_archivio <- function() 5L
+versione_archivio <- function() 6L
 
 #' Apre un database DuckDB in memoria, senza estensioni
 #'
@@ -653,12 +653,19 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       )
     }
   }
+  # `Presente` e `Non Presente` sono i valori di prima del 28/10/2026.
   presente <- sprintf(
-    "CASE lower(t_presente) WHEN %s THEN %s WHEN %s THEN %s END",
-    DBI::dbQuoteString(con, tolower(stati_database()[1])),
-    DBI::dbQuoteString(con, stati_database()[1]),
-    DBI::dbQuoteString(con, tolower(stati_database()[2])),
-    DBI::dbQuoteString(con, stati_database()[2])
+    "CASE lower(t_presente) WHEN %s THEN %s WHEN %s THEN %s WHEN %s THEN %s WHEN %s THEN %s WHEN %s THEN %s END",
+    DBI::dbQuoteString(con, "pia"),
+    DBI::dbQuoteString(con, "PIA"),
+    DBI::dbQuoteString(con, "pit"),
+    DBI::dbQuoteString(con, "PIT"),
+    DBI::dbQuoteString(con, "np"),
+    DBI::dbQuoteString(con, "NP"),
+    DBI::dbQuoteString(con, "presente"),
+    DBI::dbQuoteString(con, "PIA"),
+    DBI::dbQuoteString(con, "non presente"),
+    DBI::dbQuoteString(con, "NP")
   )
   non_ammessi <- sprintf("t_presente IS NOT NULL AND %s IS NULL", presente)
   problema <- righe_con(non_ammessi)
@@ -673,7 +680,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     errori <- c(
       errori,
       sprintf(
-        "presente_a_database: valori non ammessi (%s). Sono accettati solo \"Presente\" e \"Non Presente\". Righe del file: %s.",
+        "presente_a_database: valori non ammessi (%s). Sono accettati solo \"PIA\", \"PIT\" e \"NP\" (e i vecchi \"Presente\" e \"Non Presente\"). Righe del file: %s.",
         paste(valori, collapse = ", "),
         problema$righe
       )
@@ -790,7 +797,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   # servizio atteso dal giro.
   dal_database <- if (con_origine) {
     sprintf(
-      "(%s = 'Presente' AND upper(l.origine_servizio) = 'DATABASE')",
+      "(%s = 'PIA' AND upper(l.origine_servizio) = 'DATABASE')",
       presente
     )
   } else {
@@ -826,7 +833,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       "LEFT JOIN mappa_comuni cl ON cl.valore = l.comune_lettura ",
       "LEFT JOIN mappa_giri g ON g.servizio_giro = l.servizio_giro), ",
       "completa AS (SELECT *, coalesce(comune_geografico, comune_fornitura) AS comune_assegnato, ",
-      "CASE WHEN presente_a_database = 'Presente' THEN chiave_database ELSE chiave_giro END AS chiave_dichiarata ",
+      "CASE WHEN presente_a_database = 'PIA' THEN chiave_database ELSE chiave_giro END AS chiave_dichiarata ",
       "FROM base WHERE data_ora_lettura IS NOT NULL AND RFID IS NOT NULL AND presente_a_database IS NOT NULL ",
       "AND latitudine IS NOT NULL AND longitudine IS NOT NULL) ",
       "SELECT c.data_ora_lettura, c.targa_veicolo, c.matricola_veicolo, c.RFID, c.presente_a_database, ",
@@ -836,7 +843,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       "c.eseguito, c.distanza_comune_dichiarato, ",
       "c.comune_assegnato, c.comune_geografico, ",
       # Giro di zona di un non censito: ignota. Entro la tolleranza: coerente.
-      "CASE WHEN c.presente_a_database <> 'Presente' AND c.chiave_giro IS NOT NULL AND c.giro_servito IS NULL THEN ",
+      "CASE WHEN c.presente_a_database <> 'PIA' AND c.chiave_giro IS NOT NULL AND c.giro_servito IS NULL THEN ",
       q(stati_comune[["ignota"]]),
       " ",
       "WHEN c.chiave_lettura IS NULL OR c.chiave_dichiarata IS NULL THEN ",
@@ -850,7 +857,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
       " THEN ",
       q(stati_comune[["coerente"]]),
       " ",
-      "WHEN c.presente_a_database = 'Presente' THEN ",
+      "WHEN c.presente_a_database = 'PIA' THEN ",
       q(stati_comune[["fuori_comune"]]),
       " ",
       "ELSE ",
@@ -905,7 +912,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
   incoerenti <- DBI::dbGetQuery(
     con,
     paste(
-      "SELECT count(*) AS n FROM letture WHERE presente_a_database = 'Non Presente'",
+      "SELECT count(*) AS n FROM letture WHERE presente_a_database <> 'PIA'",
       "AND (servizio_transponder IS NOT NULL OR id_utenza IS NOT NULL)"
     )
   )$n
@@ -913,7 +920,7 @@ valida_archivio <- function(con, csv = TRUE, tutte = FALSE) {
     avvisi <- c(
       avvisi,
       sprintf(
-        "%d letture \"Non Presente\" riportano comunque servizio_transponder o id_utenza.",
+        "%d letture non censite (PIT o NP) riportano comunque servizio_transponder o id_utenza.",
         incoerenti
       )
     )

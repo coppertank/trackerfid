@@ -182,7 +182,7 @@ Il file dei giri contiene `{r} intero(nrow(giri))` righe: `{r} intero(length(uni
     - il `servizio_giro` è vuoto, perché il mezzo non ha un giro nel calendario, e il `servizio_atteso` è il servizio atteso della lista (**servizio dedotto dai censiti**). Per un mezzo senza giro il servizio atteso è il servizio più frequente dei bidoni censiti che ha letto quel giorno.
 
     Il servizio atteso della lista si ricava dal nome del giro con la tabella di conversione (`SECCO PaP` dà `SECCO`, `CARTA CONT.STRADALI` dà `CARTA`) o si indica nella colonna facoltativa `servizio_atteso` del file dei giri. Il nome del giro non si sovrascrive mai. Il confronto non distingue maiuscole e minuscole nel servizio, né gli zeri iniziali nella matricola (`0101` e `101` sono lo stesso mezzo).
-2. **Trasmissioni delle saponette.** Si prendono le coppie di giorno e `id_trasmissione` delle letture delle saponette in cui compare, lo stesso giorno, almeno uno degli RFID del punto 1.
+2. **Trasmissioni delle saponette.** Si prendono le coppie di giorno e `matricola_saponetta` delle letture delle saponette in cui compare, lo stesso giorno, almeno uno degli RFID del punto 1.
 3. **Saponette.** Si tengono **tutte** le letture di quelle trasmissioni, anche di RFID che le antenne non hanno letto.
 4. **Confronto.** Per ogni RFID del giorno si guarda se è stato letto dalle antenne, dalle saponette o da entrambe.
 

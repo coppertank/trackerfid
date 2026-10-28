@@ -60,12 +60,15 @@ servizio_atteso_del_giro <- function(servizio_giro) {
 #' sua riga.
 #'
 #' Risultato: `data_giro` (data), `matricola_veicolo`, `servizio_giro` e
-#' `servizio_atteso` (testi), senza righe ripetute.
+#' `servizio_atteso` (testi), senza righe ripetute. Con `facoltative`, anche
+#' quelle colonne, come testo (vuote se il file non le ha): il report degli
+#' indicatori ne usa tre, `matricola_saponetta`, `ora_inizio` e `ora_fine`.
 #' @param percorso Percorso del CSV.
+#' @param facoltative Altre colonne da leggere, se ci sono.
 #' @return `data_giro` (data), `matricola_veicolo`, `servizio_giro` e
-#'   `servizio_atteso` (testi).
+#'   `servizio_atteso` (testi), più le colonne facoltative.
 #' @noRd
-giri_di_controllo <- function(percorso) {
+giri_di_controllo <- function(percorso, facoltative = character(0)) {
   colonne <- c("data_giro", "matricola_veicolo", "servizio_giro")
   if (!file.exists(percorso)) {
     stop(
@@ -78,7 +81,10 @@ giri_di_controllo <- function(percorso) {
   names(giri) <- tolower(trimws(names(giri)))
   richiedi_colonne(giri, colonne, "giri_controllo")
   giri$servizio_atteso <- giri[["servizio_atteso"]] %||% NA_character_
-  giri <- giri[c(colonne, "servizio_atteso")] |>
+  for (colonna in setdiff(facoltative, names(giri))) {
+    giri[[colonna]] <- NA_character_
+  }
+  giri <- giri[c(colonne, "servizio_atteso", facoltative)] |>
     dplyr::mutate(riga = dplyr::row_number() + 1L) |>
     dplyr::filter(dplyr::if_any(dplyr::all_of(colonne), \(x) !is.na(x)))
 
@@ -114,7 +120,7 @@ giri_di_controllo <- function(percorso) {
     )
   }
   giri |>
-    dplyr::select(dplyr::all_of(c(colonne, "servizio_atteso"))) |>
+    dplyr::select(dplyr::all_of(c(colonne, "servizio_atteso", facoltative))) |>
     dplyr::distinct()
 }
 
@@ -134,12 +140,13 @@ giri_di_controllo <- function(percorso) {
 #' soddisfa due righe della lista vale il criterio del giro del calendario.
 #'
 #' Risultato: tutte le letture dei mezzi della lista nei giorni della lista, anche
-#' quelle che non entrano (`criterio` mancante).
+#' quelle che non entrano (`criterio` mancante), con `riga_lista`, la riga della
+#' lista che le ha scelte.
 #' @param antenne Letture con le antenne, con `data_ora_lettura`,
 #'   `matricola_veicolo`, `servizio_giro` e `servizio_atteso`.
 #' @param giri Risultato di `giri_di_controllo()`.
 #' @return Letture con `data_lettura`, `chiave_mezzo`, `matricola_lista` (come
-#'   nella lista) e `criterio`.
+#'   nella lista), `riga_lista` e `criterio`.
 #' @noRd
 letture_dei_mezzi_della_lista <- function(antenne, giri) {
   richiedi_colonne(
@@ -149,6 +156,7 @@ letture_dei_mezzi_della_lista <- function(antenne, giri) {
   )
   elenco <- giri |>
     dplyr::transmute(
+      riga_lista = dplyr::row_number(),
       data_lettura = .data$data_giro,
       matricola_lista = .data$matricola_veicolo,
       chiave_mezzo = chiave_matricola(.data$matricola_veicolo),
@@ -240,16 +248,16 @@ servizi_dei_mezzi_della_lista <- function(antenne, giri) {
 
 #' Letture delle saponette di tutte le trasmissioni che hanno letto un RFID dei giri
 #'
-#' Contesto: le saponette non hanno il mezzo, ma hanno `id_trasmissione`: una
+#' Contesto: le saponette non hanno il mezzo, ma hanno `matricola_saponetta`: una
 #' trasmissione in un giorno è un giro delle saponette. Per sapere che cosa hanno
 #' letto le saponette nei giri della lista si parte dagli RFID letti dalle antenne.
-#' Funzionamento: prende le coppie giorno e `id_trasmissione` in cui compare,
+#' Funzionamento: prende le coppie giorno e `matricola_saponetta` in cui compare,
 #' lo **stesso giorno**, almeno uno degli RFID delle antenne dei giri, e tutte le
 #' letture delle saponette di quelle coppie (anche di RFID che le antenne non
 #' hanno letto).
 #' Risultato: le letture delle saponette, con `data_lettura`.
 #' @param saponette Letture delle saponette, con `data_ora_lettura`,
-#'   `id_trasmissione` e `RFID`.
+#'   `matricola_saponetta` e `RFID`.
 #' @param antenne_giri Risultato di `antenne_dei_giri()`.
 #' @return Le letture delle saponette, con `data_lettura`.
 #' @noRd
@@ -260,8 +268,8 @@ trasmissioni_dei_giri <- function(saponette, antenne_giri) {
       dplyr::distinct(antenne_giri, .data$data_lettura, .data$RFID),
       by = c("data_lettura", "RFID")
     ) |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione)
-  dplyr::semi_join(saponette, giri, by = c("data_lettura", "id_trasmissione"))
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta)
+  dplyr::semi_join(saponette, giri, by = c("data_lettura", "matricola_saponetta"))
 }
 
 #' A quale mezzo della lista appartiene ogni trasmissione delle saponette
@@ -273,7 +281,7 @@ trasmissioni_dei_giri <- function(saponette, antenne_giri) {
 #' della lista e sceglie il mezzo con più RFID in comune (a parità, il primo in
 #' ordine di matricola). Una trasmissione con un solo RFID in comune è la meno
 #' sicura.
-#' Risultato: `data_lettura`, `id_trasmissione`, `chiave_mezzo`, `condivisi`
+#' Risultato: `data_lettura`, `matricola_saponetta`, `chiave_mezzo`, `condivisi`
 #' (RFID in comune con quel mezzo) e `mezzi_in_comune` (mezzi con almeno un RFID
 #' in comune).
 #' @param saponette_giri Risultato di `trasmissioni_dei_giri()`.
@@ -281,7 +289,7 @@ trasmissioni_dei_giri <- function(saponette, antenne_giri) {
 #' @noRd
 abbina_trasmissioni <- function(saponette_giri, antenne_giri) {
   saponette_giri |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .data$RFID) |>
     dplyr::inner_join(
       dplyr::distinct(
         antenne_giri,
@@ -294,17 +302,17 @@ abbina_trasmissioni <- function(saponette_giri, antenne_giri) {
     ) |>
     dplyr::count(
       .data$data_lettura,
-      .data$id_trasmissione,
+      .data$matricola_saponetta,
       .data$chiave_mezzo,
       name = "condivisi"
     ) |>
     dplyr::mutate(
       mezzi_in_comune = dplyr::n(),
-      .by = c("data_lettura", "id_trasmissione")
+      .by = c("data_lettura", "matricola_saponetta")
     ) |>
     dplyr::arrange(dplyr::desc(.data$condivisi), .data$chiave_mezzo) |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .keep_all = TRUE) |>
-    dplyr::arrange(.data$data_lettura, .data$id_trasmissione)
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .keep_all = TRUE) |>
+    dplyr::arrange(.data$data_lettura, .data$matricola_saponetta)
 }
 
 #' RFID del giorno letti da entrambi i sistemi, solo dalle antenne, solo dalle saponette
@@ -361,10 +369,10 @@ confronto_per_mezzo <- function(giri, antenne_giri, saponette_giri, abbinamenti)
   chip_antenne <- antenne_giri |>
     dplyr::distinct(.data$data_lettura, .data$chiave_mezzo, .data$RFID)
   chip_saponette <- saponette_giri |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .data$RFID) |>
     dplyr::inner_join(
-      abbinamenti[c("data_lettura", "id_trasmissione", "chiave_mezzo")],
-      by = c("data_lettura", "id_trasmissione")
+      abbinamenti[c("data_lettura", "matricola_saponetta", "chiave_mezzo")],
+      by = c("data_lettura", "matricola_saponetta")
     ) |>
     dplyr::distinct(.data$data_lettura, .data$chiave_mezzo, .data$RFID)
   entrambi <- dplyr::inner_join(

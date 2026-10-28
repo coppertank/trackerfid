@@ -14,7 +14,7 @@ letture_giri <- function() {
     targa_veicolo = c(rep("AA111AA", 4), "BB222BB", "AA111AA", "BB222BB"),
     matricola_veicolo = c(rep("M1", 4), "M2", "M1", "M2"),
     RFID = c("R1", "R2", "R1", "R3", "R4", "R1", "R5"),
-    presente_a_database = "Presente",
+    presente_a_database = "PIA",
     servizio_atteso = c(rep("SECCO PAP", 3), "CARTA/CARTONE PAP", "VETRO PAP", "SECCO PAP", NA),
     comune_giro = c(rep("ASIAGO", 3), "GALLIO", "ROANA", "ASIAGO", NA),
     comune_lettura = c("ASIAGO", "ASIAGO", "ROANA", "GALLIO", "ROANA", "FOZA", NA),
@@ -251,7 +251,7 @@ test_that("un giro \u00e8 quello del calendario anche se il servizio atteso vien
   # dai censiti letti nello stesso giro, ed \u00e8 il secco
   d <- letture_giri()[1:3, ]
   d$data_lettura <- lubridate::as_date(d$data_ora_lettura)
-  d$presente_a_database <- c("Presente", "Presente", "Non Presente")
+  d$presente_a_database <- c("PIA", "PIA", "NP")
   d$servizio_giro <- "CARTA"
   d$servizio_atteso <- c("CARTA", "CARTA", "SECCO")
   expect_identical(servizio_del_giro(d), rep("CARTA", 3))

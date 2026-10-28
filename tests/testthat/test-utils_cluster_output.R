@@ -106,7 +106,7 @@ test_that("la tabella ha 29 colonne e una riga per cluster", {
     letture_rfid(
       "IGNOTO",
       date_2025(10),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = c(rep("SECCO PAP", 9), "VETRO PAP")
     )
   )
@@ -154,7 +154,7 @@ test_that("la tabella ha 29 colonne e una riga per cluster", {
 
   # servizio, volume e raccolte previste: transponder per i censiti, atteso per gli altri
   ignoto <- analisi[analisi$RFID == "IGNOTO", ]
-  expect_identical(ignoto$presente_a_database, "Non Presente")
+  expect_identical(ignoto$presente_a_database, "NP")
   expect_true(is.na(ignoto$servizio_transponder))
   expect_identical(ignoto$servizio_atteso, "SECCO PAP")
   expect_identical(
@@ -179,7 +179,7 @@ test_that("il servizio atteso sotto l'80% resta vuoto ma la composizione è ripo
   letture <- letture_rfid(
     "INCERTO",
     date_2025(20),
-    presente = "Non Presente",
+    presente = "NP",
     atteso = c(
       rep("CARTA CONT.STRADALI", 8),
       rep("SECCO PAP", 7),
@@ -193,7 +193,7 @@ test_that("il servizio atteso sotto l'80% resta vuoto ma la composizione è ripo
     "CARTA CONT.STRADALI (40%); SECCO PAP (35%); UMIDO PAP (25%)"
   )
 
-  senza_stima <- letture_rfid("MUTO", date_2025(6), presente = "Non Presente")
+  senza_stima <- letture_rfid("MUTO", date_2025(6), presente = "NP")
   analisi <- calcola_analisi_cluster(senza_stima, "2025-01-01", "2025-12-31")
   expect_true(is.na(analisi$servizio_atteso))
   expect_true(is.na(analisi$servizio_atteso_dettaglio))
@@ -315,7 +315,7 @@ test_that("periodi senza letture o non validi sono gestiti", {
 test_that("i sacchetti restano fuori dall'analisi", {
   bidoni <- dplyr::bind_rows(
     letture_rfid("A", date_2025(8)),
-    letture_rfid("B", date_2025(3), presente = "Non Presente", atteso = "SECCO PAP")
+    letture_rfid("B", date_2025(3), presente = "NP", atteso = "SECCO PAP")
   )
   sacchetti <- dplyr::bind_rows(
     # censito e non censito, uno letto prima e uno dopo tutti i bidoni
@@ -329,7 +329,7 @@ test_that("i sacchetti restano fuori dall'analisi", {
     letture_rfid(
       sprintf("00BD%020d", 2),
       "2025-12-30",
-      presente = "Non Presente",
+      presente = "NP",
       atteso = "SECCO PAP"
     )
   )

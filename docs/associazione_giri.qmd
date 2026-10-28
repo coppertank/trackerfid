@@ -587,7 +587,7 @@ esempio <- dplyr::tibble(
   data_lettura = as.Date("2026-03-02"),
   matricola_veicolo = "5",
   RFID = sprintf("R%02d", seq_along(quando)),
-  presente_a_database = ifelse(is.na(rifiuti), "Non Presente", "Presente"),
+  presente_a_database = ifelse(is.na(rifiuti), "NP", "PIA"),
   servizio_transponder = rifiuti,
   senza_giri = TRUE
 )

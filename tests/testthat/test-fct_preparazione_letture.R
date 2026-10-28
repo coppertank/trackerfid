@@ -135,7 +135,7 @@ letture_associate <- function(
     id_fornitura = ifelse(censito, "F1", NA_character_),
     stato_fornitura = ifelse(censito, "ATTIVA", NA_character_),
     id_utenza = ifelse(censito, "U1", NA_character_),
-    presente_a_database = ifelse(censito, "Presente", "Non Presente"),
+    presente_a_database = ifelse(censito, "PIA", "NP"),
     comune_fornitura = ifelse(censito, "ROSÀ", NA_character_)
   )
 }
@@ -174,7 +174,7 @@ test_that("restano solo le letture dei mezzi collaudati, dopo il collaudo", {
   )
 })
 
-test_that("i codici RFID sono portati a 10 o 24 caratteri", {
+test_that("i codici RFID sono portati a 10 caratteri; sacchetti e HERA restano come sono", {
   formato <- function(codici) formatta_rfid(dplyr::tibble(RFID = codici))$RFID
 
   # maiuscolo e riempimento a 10
@@ -182,11 +182,21 @@ test_that("i codici RFID sono portati a 10 o 24 caratteri", {
   expect_identical(formato("0000000001"), "0000000001")
   # gli zeri in eccesso spariscono prima del riempimento
   expect_identical(formato("000000000000000000000042"), "0000000042")
-  # oltre 10 caratteri significativi: riempimento a 24
-  expect_identical(formato("12345678901"), "000000000000012345678901")
+  # oltre 10 caratteri significativi: nessun riempimento (non è compatibile)
+  expect_identical(formato("12345678901"), "12345678901")
   expect_identical(
     formato("E28011700000020F1A2B3C4D"),
     "E28011700000020F1A2B3C4D"
+  )
+  # i sacchetti (00BD) restano come sono, di qualunque lunghezza
+  expect_identical(
+    formato(c("00bd00000000000000000001", "00BD0001")),
+    c("00BD00000000000000000001", "00BD0001")
+  )
+  # i bidoni HERA (48455241) non si riempiono, nemmeno dopo gli zeri iniziali
+  expect_identical(
+    formato(c("48455241aabbccdd11", "004845524100", "48455241")),
+    c("48455241AABBCCDD11", "4845524100", "48455241")
   )
   # un carattere letto male tra i primi 14, che dovrebbero essere zeri
   expect_identical(formato("00000100000000ABCDEF1234"), "ABCDEF1234")
@@ -195,7 +205,177 @@ test_that("i codici RFID sono portati a 10 o 24 caratteri", {
   expect_identical(formato(NA_character_), NA_character_)
   expect_identical(
     formato(c("abc123", "12345678901")),
-    c("0000ABC123", "000000000000012345678901")
+    c("0000ABC123", "12345678901")
+  )
+})
+
+test_that("si scartano i codici con piu' di 10 cifre che non sono sacchetti ne' HERA", {
+  codici <- c(
+    "0000ABC123",
+    "12345678901",
+    "00BD00000000000000000001",
+    "48455241AABBCCDD11",
+    "E28011700000020F1A2B3C4D",
+    NA
+  )
+  expect_identical(
+    codice_compatibile(codici),
+    c(TRUE, FALSE, TRUE, TRUE, FALSE, TRUE)
+  )
+  letture <- dplyr::tibble(RFID = codici, n = seq_along(codici))
+  expect_message(
+    tenute <- filtra_codici_compatibili(letture),
+    "Letture scartate per codice RFID non compatibile.*: 2\\."
+  )
+  expect_identical(tenute$n, c(1L, 3L, 4L, 6L))
+  # senza codici da scartare non dice niente
+  expect_no_message(filtra_codici_compatibili(letture[c(1, 3), ]))
+})
+
+test_that("la trasposizione inverte i quattro bit di ogni cifra esadecimale", {
+  # la tabella della funzione di trasposizione del database
+  cifre <- strsplit("0123456789ABCDEF", "")[[1]]
+  trasposte <- strsplit("084C2A6E195D3B7F", "")[[1]]
+  expect_identical(trasponi_codice(cifre), trasposte)
+  expect_identical(trasponi_codice("0123456789ABCDEF"), "084C2A6E195D3B7F")
+  # e' una involuzione: applicata due volte restituisce il codice
+  codici <- c("D250901001", "00AB12CD34", "FFFF000012")
+  expect_identical(trasponi_codice(trasponi_codice(codici)), codici)
+  expect_identical(trasponi_codice("abc"), "5D3")
+  expect_identical(trasponi_codice(NA_character_), NA_character_)
+})
+
+test_that("lo scambio a coppie e' quello di inverti_coppie() del proprietario", {
+  inverti_coppie <- function(testo) {
+    sapply(testo, function(x) {
+      if (is.na(x) || nchar(x) <= 1) return(x)
+      caratteri <- strsplit(x, "")[[1]]
+      n <- length(caratteri)
+      limite <- n - (n %% 2)
+      dispari <- seq(1, limite, by = 2)
+      pari <- dispari + 1
+      caratteri[c(dispari, pari)] <- caratteri[c(pari, dispari)]
+      paste(caratteri, collapse = "")
+    }, USE.NAMES = FALSE)
+  }
+  expect_identical(scambia_coppie("A1B2C3"), "1A2B3C")
+  # con un numero dispari di caratteri l'ultimo resta dov'e'
+  expect_identical(scambia_coppie("ABCDE"), "BADCE")
+  set.seed(7)
+  casuali <- vapply(
+    1:300,
+    function(i) paste(sample(c(0:9, LETTERS[1:6]), sample(1:25, 1), TRUE), collapse = ""),
+    ""
+  )
+  codici <- c(casuali, "", "A", NA)
+  expect_identical(scambia_coppie(codici), inverti_coppie(codici))
+  # trasposizione e scambio commutano: l'ordine dei due passi non conta
+  expect_identical(
+    scambia_coppie(trasponi_codice(casuali)),
+    trasponi_codice(scambia_coppie(casuali))
+  )
+})
+
+test_that("un codice letto male si ripara con i tre passi, nell'ordine, e il database lo riconosce", {
+  contenitori <- dplyr::tibble(
+    codice_transponder = c("0012345678", "00AB12CD34", "0091827364"),
+    data_attivazione_contenitore = as.Date(c("2025-01-01", "2025-01-01", "2025-01-01")),
+    data_cessazione_contenitore = as.Date(c("2099-12-31", "2099-12-31", "2026-02-28")),
+    id_fornitura = c("F1", "F2", "F3")
+  )
+  tag <- dplyr::tibble(codice_transponder = "0012F3A4B5")
+  giorno <- as.Date("2026-03-10")
+  # il codice del database, poi lo stesso passato per ognuno dei tre passi
+  letture <- dplyr::tibble(
+    RFID = c(
+      "0012345678", # gia' noto: resta
+      trasponi_codice("00AB12CD34"), # passo 1
+      scambia_coppie("0091827364"), # sarebbe il passo 2, ma il contenitore e' cessato
+      scambia_coppie("0012F3A4B5"), # passo 2 (tag)
+      scambia_coppie(trasponi_codice("0012345678")), # passo 3
+      "0000000042", # nessun passo: resta com'e'
+      "00BD00000000000000000001" # un sacchetto non si prova
+    ),
+    data_lettura = giorno,
+    n = 1:7
+  )
+  expect_message(
+    riparate <- ripara_codici_rfid(letture, contenitori, tag),
+    "Codici RFID riparati \\(letture\\): 1 trasposizione; 1 coppie; 1 trasposizione_e_coppie\\."
+  )
+  expect_identical(
+    riparate$RFID,
+    c(
+      "0012345678",
+      "00AB12CD34",
+      scambia_coppie("0091827364"),
+      "0012F3A4B5",
+      "0012345678",
+      "0000000042",
+      "00BD00000000000000000001"
+    )
+  )
+  # le altre colonne e l'ordine non cambiano
+  expect_identical(riparate$n, 1:7)
+
+  # il contenitore del passo 2 era cessato il 28 febbraio: la sera prima si ripara
+  prima <- dplyr::mutate(letture[3, ], data_lettura = as.Date("2026-02-20"))
+  expect_identical(
+    suppressMessages(ripara_codici_rfid(prima, contenitori, tag))$RFID,
+    "0091827364"
+  )
+
+  # nessun codice da riparare: nessun messaggio
+  intatte <- letture[c(1, 6), ]
+  expect_no_message(ripara_codici_rfid(intatte, contenitori, tag))
+
+  # un codice che non cambia con il passo non e' riparato (palindromo di coppie)
+  expect_identical(
+    suppressMessages(
+      ripara_codici_rfid(
+        dplyr::tibble(RFID = "0000000000", data_lettura = giorno),
+        contenitori,
+        tag
+      )$RFID
+    ),
+    "0000000000"
+  )
+})
+
+test_that("presente_a_database dice dove il database conosce il codice: PIA, PIT o NP", {
+  letture <- dplyr::tibble(
+    RFID = c("0000ABC123", "0000ABC123", "0000000001", "00FF00FF00", "0000000042", "0000ABC124", "000000000000012345678901"),
+    data_lettura = as.Date(c("2026-03-02", "2026-03-10", "2026-03-02", "2026-03-02", "2026-03-02", "2026-03-02", "2026-03-02"))
+  )
+  tag <- dplyr::tibble(codice_transponder = c("00FF00FF00", "0000000001", "0000ABC124"))
+  associate <- associa_contenitore_e_fornitura(
+    letture,
+    contenitori_prova,
+    sacchetti_prova,
+    tag
+  )
+  # 0000000001 e' in associazione dal 1/6/2025 ma e' anche tra i tag: vince l'associazione;
+  # 0000ABC124 e' solo tra i tag; il sacchetto ha la fornitura del suo gruppo
+  expect_identical(
+    associate$presente_a_database,
+    c("PIA", "PIA", "PIA", "PIT", "NP", "PIT", "PIA")
+  )
+  expect_identical(
+    associate$id_fornitura,
+    c("F1", "F2", "F3", NA, NA, NA, "S9")
+  )
+  # un contenitore in associazione ma non ancora attivo non e' PIA: se e' tra i tag e' PIT
+  presto <- associa_contenitore_e_fornitura(
+    dplyr::tibble(RFID = "0000000001", data_lettura = as.Date("2025-01-01")),
+    contenitori_prova,
+    sacchetti_prova,
+    tag
+  )
+  expect_identical(presto$presente_a_database, "PIT")
+  # senza la tabella dei tag nessuna lettura e' PIT
+  expect_identical(
+    associa_contenitore_e_fornitura(letture, contenitori_prova, sacchetti_prova)$presente_a_database,
+    c("PIA", "PIA", "PIA", "NP", "NP", "NP", "PIA")
   )
 })
 
@@ -222,7 +402,7 @@ test_that("ogni lettura riceve il contenitore valido nel suo giorno", {
   expect_identical(associate$id_fornitura, c("F1", "F1", "F2", "S9", NA))
   expect_identical(
     associate$presente_a_database,
-    c(rep("Presente", 4), "Non Presente")
+    c(rep("PIA", 4), "NP")
   )
   # l'utenza viene dalla fornitura del contenitore: un sacchetto non ce l'ha
   expect_identical(associate$id_utenza, c("U1", "U1", "U2", NA, NA))
@@ -1049,7 +1229,7 @@ test_that("il risultato ha le colonne dell'app e supera la sua validazione", {
   )
   expect_identical(
     caricate$presente_a_database,
-    c("Presente", "Non Presente", "Presente", "Presente")
+    c("PIA", "NP", "PIA", "PIA")
   )
   # volume e raccolte arrivano con i nomi dell'anagrafica
   expect_equal(caricate$volume_previsto, c(240, NA, 1100, 240))
@@ -1285,11 +1465,11 @@ test_that("la distanza dal comune dichiarato c'e' solo per le letture in un altr
   limena <- cc[cc$comune == "LIMENA", ]
   letture <- data.frame(
     presente_a_database = c(
-      "Presente",
-      "Presente",
-      "Non Presente",
-      "Non Presente",
-      "Presente"
+      "PIA",
+      "PIA",
+      "NP",
+      "NP",
+      "PIA"
     ),
     comune_fornitura = c("LIMENA", "CITTADELLA", NA, NA, NA),
     comune_giro = c(

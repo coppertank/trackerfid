@@ -20,7 +20,7 @@ test_that("i mesi parziali contano solo i giorni osservati", {
 test_that("le saponette dei giri si dividono per rapporto con le antenne", {
   saponette <- dplyr::tibble(
     data_lettura = giorni(rep("2026-08-03", 5)),
-    id_trasmissione = c("T1", "T1", "T1", "T1", "T2"),
+    matricola_saponetta = c("T1", "T1", "T1", "T1", "T2"),
     RFID = c("A", "B", "C", "D", "A")
   )
   antenne <- dplyr::tibble(RFID = "A")
@@ -38,7 +38,7 @@ test_that("le saponette dei giri si dividono per rapporto con le antenne", {
   expect_s3_class(gruppi$gruppo, "factor")
 
   giri <- copertura_antenne_per_giro(saponette, antenne)
-  expect_identical(giri$id_trasmissione, c("T1", "T2"))
+  expect_identical(giri$matricola_saponetta, c("T1", "T2"))
   expect_identical(giri$rfid, c(4L, 1L))
   expect_identical(giri$rfid_antenne, c(1L, 1L))
   expect_equal(giri$quota, c(0.25, 1))
@@ -88,7 +88,7 @@ test_that("la copertura conta i contenitori attivi letti in ogni finestra", {
     dplyr::tibble(
       RFID = rfid,
       data_ora_lettura = quando,
-      presente_a_database = "Presente",
+      presente_a_database = "PIA",
       data_attivazione_contenitore = "2025-01-01",
       data_cessazione_contenitore = NA_character_
     )
@@ -108,12 +108,12 @@ test_that("un contenitore cessato prima della finestra non conta tra gli attivi"
   saponette <- dplyr::tibble(
     RFID = c("A", "B"),
     data_ora_lettura = c("2025-01-01 07:00:00", "2025-01-05 07:00:00"),
-    presente_a_database = "Presente",
+    presente_a_database = "PIA",
     data_attivazione_contenitore = "2025-01-01",
     data_cessazione_contenitore = c("2025-01-02", NA)
   )
   antenne <- saponette[0, ]
-  antenne[1, ] <- list("B", "2025-01-05 08:00:00", "Presente", "2025-01-01", NA)
+  antenne[1, ] <- list("B", "2025-01-05 08:00:00", "PIA", "2025-01-01", NA)
   copertura <- copertura_contenitori(saponette, antenne, finestra = 2L, passo = 2L)
   # finestra 04-05/01: A è cessato il 2/1
   ultima <- copertura[nrow(copertura), ]
@@ -123,9 +123,9 @@ test_that("un contenitore cessato prima della finestra non conta tra gli attivi"
 test_that("i giri in comune abbinano la trasmissione al mezzo con più RFID condivisi", {
   saponette <- dplyr::tibble(
     data_lettura = giorni(c(rep("2026-09-01", 5), rep("2026-09-02", 2))),
-    id_trasmissione = c(rep("T1", 4), "T1", "T2", "T2"),
+    matricola_saponetta = c(rep("T1", 4), "T1", "T2", "T2"),
     RFID = c("A", "B", "C", "D", "A", "A", "Z"),
-    presente_a_database = "Presente"
+    presente_a_database = "PIA"
   )
   antenne <- dplyr::tibble(
     data_ora_lettura = c(
@@ -133,7 +133,7 @@ test_that("i giri in comune abbinano la trasmissione al mezzo con più RFID cond
     ),
     matricola_veicolo = c("M1", "M1", "M1", "M1", "M2", "M2", "M1"),
     RFID = c("A", "B", "C", "E", "A", "F", "A"),
-    presente_a_database = "Presente"
+    presente_a_database = "PIA"
   )
   risultato <- giri_con_entrambi_i_sistemi(saponette, antenne, chip_minimi = 3L)
   # T1 condivide A, B, C con M1 e solo A con M2; T2 solo A con M1: non abbinata
@@ -148,15 +148,15 @@ test_that("i giri in comune abbinano la trasmissione al mezzo con più RFID cond
 test_that("la produttivita conta giri per giorno e RFID per giro", {
   saponette <- dplyr::tibble(
     data_lettura = giorni(c(rep("2025-01-10", 5), "2025-01-11")),
-    id_trasmissione = c("T1", "T1", "T2", "T2", "T2", "T1"),
+    matricola_saponetta = c("T1", "T1", "T2", "T2", "T2", "T1"),
     RFID = c("A", "B", "A", "B", "C", "A"),
-    presente_a_database = "Presente"
+    presente_a_database = "PIA"
   )
   antenne <- dplyr::tibble(
     data_ora_lettura = rep("2025-02-01 08:00:00", 3),
     matricola_veicolo = "M1",
     RFID = c("A", "B", "C"),
-    presente_a_database = "Presente"
+    presente_a_database = "PIA"
   )
   produttivita <- produttivita_giri(
     saponette, antenne, giorni("2025-01-10"), giorni("2025-02-02")
@@ -201,7 +201,7 @@ test_that("la serie settimanale conta i mezzi attrezzati e le letture per giorno
 test_that("i chip senza saponette si dividono per gruppo", {
   antenne <- dplyr::tibble(
     RFID = c("A", "B", "C", "C"),
-    presente_a_database = c("Presente", "Presente", "Non Presente", "Non Presente"),
+    presente_a_database = c("PIA", "PIA", "NP", "NP"),
     data_attivazione_contenitore = c("2024-12-01", "2026-06-01", NA, NA)
   )
   saponette_tutte <- dplyr::tibble(

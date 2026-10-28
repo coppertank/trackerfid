@@ -83,7 +83,7 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
   expect_setequal(aggrega_marker(senza, "cantiere")$nome, c(cantieri(), NA))
   expect_equal(
     sum(per_cantiere$censiti),
-    sum(ultimi$presente_a_database == "Presente")
+    sum(ultimi$presente_a_database == "PIA")
   )
 
   # la bolla di un cantiere sta nel punto medio dei suoi bidoni e ne riporta
@@ -91,7 +91,7 @@ test_that("le bolle contano bidoni e censiti di ogni gruppo", {
   bassano <- per_cantiere[which(per_cantiere$nome == "BASSANO"), ]
   suoi <- ultimi[which(ultimi$cantiere == "BASSANO"), ]
   expect_equal(bassano$n, 66)
-  expect_equal(bassano$censiti, sum(suoi$presente_a_database == "Presente"))
+  expect_equal(bassano$censiti, sum(suoi$presente_a_database == "PIA"))
   expect_equal(bassano$latitudine, mean(suoi$latitudine))
   expect_equal(bassano$longitudine, mean(suoi$longitudine))
   expect_equal(c(bassano$lat_min, bassano$lat_max), range(suoi$latitudine))

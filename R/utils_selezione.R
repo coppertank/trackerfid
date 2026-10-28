@@ -94,7 +94,7 @@ tabella_stima <- function(selezione, soglia = 0.8) {
         "CREATE TEMP TABLE IF NOT EXISTS %s AS",
         "WITH conteggi AS (SELECT p.RFID, p.servizio_atteso AS servizio, coalesce(t.tipologia, p.servizio_atteso) AS tipologia, count(*) AS n",
         "FROM %s p LEFT JOIN servizi_tipologie t ON t.servizio = p.servizio_atteso",
-        "WHERE %s AND p.presente_a_database = 'Non Presente' AND p.servizio_atteso IS NOT NULL GROUP BY ALL),",
+        "WHERE %s AND p.presente_a_database <> 'PIA' AND p.servizio_atteso IS NOT NULL GROUP BY ALL),",
         "quote AS (SELECT *, sum(n) OVER (PARTITION BY RFID) AS totale, sum(n) OVER (PARTITION BY RFID, tipologia) AS n_tipologia FROM conteggi)",
         "SELECT RFID, CASE WHEN n_tipologia / totale >= %s THEN servizio END AS stimato FROM quote",
         "QUALIFY row_number() OVER (PARTITION BY RFID ORDER BY n_tipologia DESC, tipologia, n DESC, servizio) = 1"
@@ -117,7 +117,7 @@ tabella_stima <- function(selezione, soglia = 0.8) {
 sql_con_icona <- function(selezione) {
   sprintf(
     paste(
-      "(SELECT p.*, CASE WHEN %s THEN %s WHEN p.presente_a_database = 'Presente' THEN p.servizio_transponder ELSE s.stimato END AS servizio_icona",
+      "(SELECT p.*, CASE WHEN %s THEN %s WHEN p.presente_a_database = 'PIA' THEN p.servizio_transponder ELSE s.stimato END AS servizio_icona",
       "FROM %s p LEFT JOIN %s s ON s.RFID = p.RFID WHERE %s)"
     ),
     sql_sacchetto("p.RFID"),
@@ -189,7 +189,7 @@ condizione_filtri <- function(
     },
     escluso("servizio_icona", servizi_esclusi),
     if (!isTRUE(includi_stima_incerta)) {
-      "NOT (presente_a_database = 'Non Presente' AND servizio_icona IS NULL)"
+      "NOT (presente_a_database <> 'PIA' AND servizio_icona IS NULL)"
     },
     escluso("servizio_giro", giri_esclusi)
   )

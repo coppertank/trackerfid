@@ -136,7 +136,7 @@ Risposte alle richieste di consiglio della specifica. Per ognuna: cosa è stato 
 
 **Una differenza da conoscere.** Per l'icona sulla mappa la quota si calcola per tipologia; nella tabella dei cluster sul nome esatto scritto nel file. Con un file preparato oggi i due conti coincidono: la preparazione dei dati riporta i nomi dei giri a quelli del database, e `CARTA CONT.STRADALI` e `CARTA/CARTONE PAP` arrivano entrambi come `CARTA`. Con un file preparato in passato, che ha ancora i nomi del calendario, nella tabella dei cluster stradale e porta a porta restano distinti.
 
-**Quali letture contano.** Il servizio atteso c'è su ogni lettura, anche su quelle dei contenitori censiti: ogni lettura è fatta da un mezzo durante un giro. Per la composizione contano le sole letture «Non Presente», come per l'icona sulla mappa e per i filtri dell'app. I giri che non raccolgono un rifiuto compaiono con il nome della loro tipologia, ad esempio `SERVIZI` e `PULIZIA TERRITORIO`.
+**Quali letture contano.** Il servizio atteso c'è su ogni lettura, anche su quelle dei contenitori censiti: ogni lettura è fatta da un mezzo durante un giro. Per la composizione contano le sole letture dei non censiti (`PIT` e `NP`), come per l'icona sulla mappa e per i filtri dell'app. I giri che non raccolgono un rifiuto compaiono con il nome della loro tipologia, ad esempio `SERVIZI` e `PULIZIA TERRITORIO`.
 
 ### Periodo di analisi
 

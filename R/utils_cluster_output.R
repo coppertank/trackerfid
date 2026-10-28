@@ -406,7 +406,7 @@ calcola_analisi_cluster <- function(
     )
   ) |>
     dplyr::mutate(
-      censito = .data$presente_a_database == "Presente",
+      censito = .data$presente_a_database == "PIA",
       # Servizio, volume e raccolte previste valgono solo per i censiti.
       servizio_transponder = dplyr::if_else(
         .data$censito,
@@ -474,7 +474,7 @@ calcola_analisi_cluster <- function(
 
   # Composizione del servizio atteso: solo letture non censite, come l'icona.
   con_atteso <- which(
-    !is.na(dati$servizio_atteso) & dati$presente_a_database == "Non Presente"
+    !is.na(dati$servizio_atteso) & dati$presente_a_database != "PIA"
   )
   if (length(con_atteso) > 0) {
     atteso <- dplyr::count(

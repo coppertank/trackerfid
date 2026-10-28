@@ -196,12 +196,12 @@ uniforma_servizio <- function(servizio) {
   })
 }
 
-#' Colore dello stato a database: verde "Presente", rosso altrimenti
+#' Colore dello stato a database: verde `PIA` (censito), rosso altrimenti
 #' @noRd
 get_color <- function(presente) {
   colori <- colori_stato()
   ifelse(
-    !is.na(presente) & presente == "Presente",
+    !is.na(presente) & presente == "PIA",
     colori$presente,
     colori$non_presente
   )
@@ -308,7 +308,7 @@ svg_marker <- function(
   fuori_giro = FALSE
 ) {
   colori <- colori_stato()
-  censito <- !is.na(presente) && presente == "Presente"
+  censito <- !is.na(presente) && presente == "PIA"
   sagoma <- if (censito) {
     "M18 45.5C16.5 39 4 28.5 4 17a14 14 0 1 1 28 0c0 11.5-12.5 22-14 28.5z"
   } else {
@@ -428,12 +428,12 @@ html_legenda <- function(modalita = "cluster") {
     rfid = list(
       tags$div(class = "legenda-titolo", "Letture"),
       voce(
-        immagine(svg_marker(NA, "Presente", "ultimo", glifo = FALSE), 15, 20),
+        immagine(svg_marker(NA, "PIA", "ultimo", glifo = FALSE), 15, 20),
         "Ultima lettura"
       ),
       voce(
         immagine(
-          svg_marker(NA, "Presente", "precedente", glifo = FALSE),
+          svg_marker(NA, "PIA", "precedente", glifo = FALSE),
           15,
           20
         ),
@@ -455,7 +455,7 @@ html_legenda <- function(modalita = "cluster") {
     NULL
   )
   segnale <- function(...) {
-    immagine(svg_marker(NA, "Presente", glifo = FALSE, ...), 15, 20)
+    immagine(svg_marker(NA, "PIA", glifo = FALSE, ...), 15, 20)
   }
   voci_coerenza_comune <- list(
     tags$div(class = "legenda-titolo", "Coerenza comune"),
@@ -499,12 +499,16 @@ html_legenda <- function(modalita = "cluster") {
     ),
     tags$div(class = "legenda-titolo", "Stato a database"),
     voce(
-      immagine(svg_marker(NA, "Presente", glifo = FALSE), 15, 20),
-      "Presente (censito)"
+      immagine(svg_marker(NA, "PIA", glifo = FALSE), 15, 20),
+      "PIA: presente in associazione (censito)"
     ),
     voce(
-      immagine(svg_marker(NA, "Non Presente", glifo = FALSE), 15, 20),
-      "Non Presente"
+      immagine(svg_marker(NA, "PIT", glifo = FALSE), 15, 20),
+      "PIT: presente in tag, senza fornitura"
+    ),
+    voce(
+      immagine(svg_marker(NA, "NP", glifo = FALSE), 15, 20),
+      "NP: non presente"
     ),
     tags$div(class = "legenda-titolo", "Servizio"),
     voci_servizio,

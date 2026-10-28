@@ -232,7 +232,7 @@ knitr::kable(
     - `servizio`: `servizio_atteso` **oppure** `servizio_transponder` uguale al valore;
     - `categorie_escluse`: si tolgono le letture di quella `categoria`; i non censiti, che non ne hanno una, restano;
     - `sottocategoria`: si tengono solo le letture di quella `sottocategoria`; i non censiti escono.
-2. Dalle letture delle saponette si prendono le coppie distinte di `data_lettura` e `id_trasmissione` in cui compare almeno uno degli RFID letti dalle antenne al punto 1: una trasmissione in un giorno è un giro.
+2. Dalle letture delle saponette si prendono le coppie distinte di `data_lettura` e `matricola_saponetta` in cui compare almeno uno degli RFID letti dalle antenne al punto 1: una trasmissione in un giorno è un giro.
 3. Delle letture delle saponette si tengono **tutte** quelle di quei giri, anche di RFID che le antenne non hanno letto.
 4. Le due serie si uniscono, un RFID al più una volta al giorno, con l'origine `Saponette`, `Antenne` o `Entrambe`.
 
@@ -255,7 +255,7 @@ giri_saponette <- function(letture) {
   nrow(dplyr::distinct(
     dplyr::mutate(letture, giorno = lubridate::as_date(.data$data_ora_lettura)),
     .data$giorno,
-    .data$id_trasmissione
+    .data$matricola_saponetta
   ))
 }
 knitr::kable(dplyr::bind_rows(

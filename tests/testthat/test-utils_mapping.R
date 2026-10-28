@@ -113,11 +113,11 @@ test_that("ogni combinazione di marker ha un'icona", {
   # il numero dell'icona parte da 0, come nell'elenco del browser
   k <- indice_icona(
     c("CARTA", "SECCO PAP", NA, "NOME IGNOTO", servizio_sacchetti()),
-    c("Presente", "Presente", "Non Presente", "Non Presente", "Presente")
+    c("PIA", "PIA", "NP", "NP", "PIA")
   )
   expect_false(anyNA(k))
   scelte <- icone[k + 1, ]
-  expect_identical(scelte$presente, c("Presente", "Presente", "Non Presente", "Non Presente", "Presente"))
+  expect_identical(scelte$presente, c("PIA", "PIA", "NP", "NP", "PIA"))
   expect_identical(scelte$icona[1], info_servizio("CARTA")$icona)
   # un giro del calendario ha l'icona della sua tipologia
   expect_identical(scelte$icona[2], info_servizio("SECCO")$icona)
@@ -126,17 +126,17 @@ test_that("ogni combinazione di marker ha un'icona", {
   expect_identical(scelte$icona[5], info_servizio(servizio_sacchetti())$icona)
   # stile e segnali
   segnati <- icone[
-    indice_icona("CARTA", "Presente", "ultimo", fuori_comune = TRUE) + 1,
+    indice_icona("CARTA", "PIA", "ultimo", fuori_comune = TRUE) + 1,
   ]
   expect_identical(segnati$stile, "ultimo")
   expect_true(segnati$fuori_comune)
   expect_false(segnati$fuori_giro)
   expect_identical(
     segnati$svg,
-    svg_marker("CARTA", "Presente", "ultimo", fuori_comune = TRUE)
+    svg_marker("CARTA", "PIA", "ultimo", fuori_comune = TRUE)
   )
   # il marker di un non censito resta rosso anche con l'icona del servizio
-  expect_match(icone$svg[indice_icona("VETRO", "Non Presente") + 1], "#e74c3c", fixed = TRUE)
+  expect_match(icone$svg[indice_icona("VETRO", "NP") + 1], "#e74c3c", fixed = TRUE)
 })
 
 test_that("la mappa principale ha le bolle del territorio e i cluster colorati", {
@@ -238,14 +238,14 @@ test_that("i punti viaggiano in colonne compatte", {
   # l'icona di un non censito segue il servizio stimato
   letture <- dplyr::tibble(
     RFID = c("N1", "N2"),
-    presente_a_database = "Non Presente",
+    presente_a_database = "NP",
     servizio_icona = c("VETRO PAP", NA),
     latitudine = c(41.9, 41.91),
     longitudine = c(12.5, 12.51)
   )
   k <- punti_mappa(letture, "utenza")$k
   expect_identical(icone$icona[k + 1], c(info_servizio("VETRO")$icona, "question"))
-  expect_identical(icone$presente[k + 1], rep("Non Presente", 2))
+  expect_identical(icone$presente[k + 1], rep("NP", 2))
 })
 
 test_that("la mappa principale riceve bidoni e bolle di cantieri e comuni", {

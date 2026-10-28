@@ -1019,8 +1019,8 @@ letture$targa_veicolo <- veicoli$targa[match(
 )]
 letture$presente_a_database <- ifelse(
   letture$presente,
-  "Presente",
-  "Non Presente"
+  "PIA",
+  "NP"
 )
 letture$volume_previsto <- bidoni$volume[letture$chiave]
 letture$numero_raccolte_annue_previste <- bidoni$raccolte[letture$chiave]
@@ -1380,7 +1380,7 @@ finale <- data.frame(
 # ---- Controlli di conformita' -------------------------------------------------
 
 per_rfid <- split(finale, finale$RFID)
-non_presente <- finale$presente_a_database == "Non Presente"
+non_presente <- finale$presente_a_database == "NP"
 nel_2025 <- substr(finale$data_ora_lettura, 1, 4) == "2025"
 # Le righe dei sacchetti, riconosciute dal codice con la regola dell'app.
 sacchetto <- rfid_sacchetto(finale$RFID)

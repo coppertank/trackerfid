@@ -11,10 +11,15 @@
 #' Due file non vengono dall'estrazione: i test dei mezzi (scaricati da AppSheet
 #' e salvati come `AppSheet.ViewData.csv`) e `giri_aggiunti.csv`, scritto a mano.
 #'
-#' Funzionamento: associa a ogni nome logico (`test_mezzi`, `letture`,
-#' `contenitori`, `calendario`, `non_pianificati`, `giri_aggiunti`, `saponette`...)
-#' il suo file dentro `cartella`. `letture` sono le letture grezze delle antenne,
-#' `saponette` quelle dei lettori UHF manuali.
+#' Funzionamento: associa a ogni nome logico (`test_mezzi`, `antenne_grezze`,
+#' `contenitori`, `tag_contenitori`, `calendario`, `non_pianificati`,
+#' `giri_aggiunti`, `saponette_grezze`...) il suo file dentro `cartella`.
+#' `antenne_grezze` sono le letture grezze delle antenne
+#' (`letture_antenne_grezze.csv`, da non confondere con il risultato della
+#' pipeline, `letture_antenne.csv`), `saponette_grezze` quelle dei lettori UHF
+#' manuali (`letture_saponette_grezze.csv`). `contenitori` è l'associazione
+#' contenitore-fornitura, `tag_contenitori` l'elenco dei tag che l'azienda sa
+#' suoi.
 #'
 #' Risultato: una lista con nome, in cui ogni elemento è un percorso (il file può
 #' non esistere: spetta a chi legge controllarlo).
@@ -23,8 +28,9 @@
 file_origine <- function(cartella = "data-raw/origine") {
   nomi <- c(
     test_mezzi = "AppSheet.ViewData.csv",
-    letture = "letture_grezze.csv",
+    antenne_grezze = "letture_antenne_grezze.csv",
     contenitori = "dv_cnt_associazione_contenitori.csv",
+    tag_contenitori = "dv_cnt_tag_contenitori.csv",
     gruppi_sacchetti = "dv_cnt_gruppi_sacchetti.csv",
     servizi_sacchetti = "dv_cnt_gruppi_sacchetti_servizi.csv",
     calendario = "iv_estrazione_giri_servizi_rifiuti_filtered.csv",
@@ -32,7 +38,7 @@ file_origine <- function(cartella = "data-raw/origine") {
     giri_aggiunti = "giri_aggiunti.csv",
     componenti = "dv_associazione_componenti.csv",
     manovre = "dv_potenziamento_secco.csv",
-    saponette = "dv_cnt_letture.csv"
+    saponette_grezze = "letture_saponette_grezze.csv"
   )
   as.list(stats::setNames(file.path(cartella, nomi), names(nomi)))
 }
@@ -140,7 +146,7 @@ importa_test_mezzi <- function(percorso) {
 #' Contesto: le antenne montate sui mezzi sono il metodo nuovo con cui l'azienda
 #' legge i bidoni; ogni lettura ha istante, mezzo (targa), RFID, indirizzo e
 #' posizione GPS. Questa è la prima tappa della preparazione: dal file grezzo
-#' (`letture_grezze.csv` in `data-raw/origine/`) alle colonne del progetto.
+#' (`letture_antenne_grezze.csv` in `data-raw/origine/`) alle colonne del progetto.
 #'
 #' Funzionamento: ricava il comune di lettura dal testo dopo la prima virgola di
 #' `IndirizzoLocalizzazione` («indirizzo, comune», in maiuscolo) e il cantiere
@@ -152,12 +158,14 @@ importa_test_mezzi <- function(percorso) {
 #'
 #' Risultato: `data_ora_lettura`, `data_lettura`, `targa_veicolo`, `RFID`,
 #' `comune_lettura` (quello del GPS, non ancora corretto con la posizione),
-#' `NumeroLetture`, `latitudine`, `longitudine`, `cantiere`.
+#' `NumeroLetture`, `latitudine`, `longitudine`, `cantiere`. Le letture scartate
+#' (posizione zero, senza comune, doppioni) stanno nell'attributo `scartate`,
+#' vedi `righe_scartate()`.
 #' @param percorso Percorso del CSV delle letture.
 #' @param comuni Tabella dei comuni serviti con il loro cantiere.
 #' @noRd
 importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
-  leggi_tabella_origine(percorso, na = c("", "NA")) |>
+  lette <- leggi_tabella_origine(percorso, na = c("", "NA")) |>
     dplyr::transmute(
       data_ora_lettura = as.POSIXct(
         .data$DataeOraPrimaLettura,
@@ -178,16 +186,21 @@ importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
       NumeroLetture = .data$NumeroLetture,
       latitudine = numero_testo(.data$Latitudine),
       longitudine = numero_testo(.data$Longitudine)
-    ) |>
-    # prima via i dati sporchi, poi la prima lettura valida di un transponder
-    # nello stesso giorno, anche se letto più volte
-    dplyr::filter(.data$latitudine != 0, .data$comune_lettura != "") |>
-    dplyr::arrange(.data$data_ora_lettura) |>
-    dplyr::distinct(.data$data_lettura, .data$RFID, .keep_all = TRUE) |>
+    )
+  # prima via i dati sporchi, poi la prima lettura valida di un transponder
+  # nello stesso giorno, anche se letto più volte
+  valide <- (lette$latitudine != 0 & lette$comune_lettura != "") %in% TRUE
+  ordinate <- dplyr::arrange(lette[valide, ], .data$data_ora_lettura)
+  ripetute <- duplicated(ordinate[c("data_lettura", "RFID")])
+  ordinate[!ripetute, ] |>
     dplyr::left_join(
       dplyr::select(comuni, "comune", "cantiere"),
       by = c("comune_lettura" = "comune")
-    )
+    ) |>
+    con_scartate(dplyr::bind_rows(
+      righe_scartate(lette, !valide, "senza_posizione_o_comune"),
+      righe_scartate(ordinate, ripetute, "doppione")
+    ))
 }
 
 #' Anagrafica dei contenitori con un codice transponder, e loro forniture
@@ -197,22 +210,31 @@ importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
 #' ad `associa_contenitore_e_fornitura()` per dire quale servizio, volume,
 #' fornitura e utenza aveva il bidone nel giorno della lettura.
 #'
-#' Funzionamento: tiene le righe con un codice transponder, converte volume e
-#' raccolte in numeri e le date in date (una cessazione mancante vuol dire
-#' ancora attivo, `data_o_aperta()`), e rinomina i campi del database
+#' Funzionamento: tiene le righe con un codice transponder, lo porta al formato
+#' comune dei codici (`normalizza_codice_rfid()`, lo stesso delle letture),
+#' converte volume e raccolte in numeri e le date in date (una cessazione
+#' mancante vuol dire ancora attivo, `data_o_aperta()`), e rinomina i campi del database
 #' (`id_servizio` diventa `id_fornitura`, `comune_servizio` `comune_fornitura`).
 #' Corregge due nomi di comune: `LUSINA CONCO` in `LUSIANA CONCO` e `VALSTAGNA`,
 #' soppresso nel 2019 e oggi parte di `VALBRENTA`, in `VALBRENTA`.
 #'
 #' Risultato: una riga per contenitore e periodo di attività, con le colonne di
-#' `colonne_contenitore()` più `codice_transponder`.
+#' `colonne_contenitore()` più `codice_transponder`. Con `categoria = TRUE` anche
+#' `categoria_contenitore`, il `codice_categoria` del file (31 e 32 domestiche, 34
+#' condomini), che serve all'analisi delle forniture.
 #' @param percorso Percorso del CSV dei contenitori.
+#' @param categoria Se aggiungere `categoria_contenitore`.
 #' @noRd
-importa_contenitori <- function(percorso) {
-  leggi_tabella_origine(percorso) |>
-    dplyr::filter(!is.na(.data$codice_transponder)) |>
+importa_contenitori <- function(percorso, categoria = FALSE) {
+  contenitori <- leggi_tabella_origine(percorso) |>
+    dplyr::filter(!is.na(.data$codice_transponder))
+  # La categoria del contenitore, solo per l'analisi delle forniture: nelle
+  # letture la categoria viene dalla composizione dei nuclei.
+  codice_categoria <- contenitori[["codice_categoria"]] %||%
+    rep(NA_character_, nrow(contenitori))
+  contenitori <- contenitori |>
     dplyr::transmute(
-      codice_transponder = .data$codice_transponder,
+      codice_transponder = normalizza_codice_rfid(.data$codice_transponder),
       servizio_transponder = .data$descrizione_rifiuto,
       volume = numero_testo(.data$volume),
       frequenza = .data$frequenza,
@@ -232,6 +254,45 @@ importa_contenitori <- function(percorso) {
         .default = .data$comune_servizio
       )
     )
+  if (categoria) {
+    contenitori$categoria_contenitore <- codice_categoria
+  }
+  contenitori
+}
+
+#' Tag dei contenitori che l'azienda sa suoi, senza altri dati
+#'
+#' Contesto: `dv_cnt_tag_contenitori.csv` elenca i tag applicati ai contenitori
+#' di proprietà dell'azienda. Non ha una fornitura né una data di cessazione:
+#' dice solo che quel codice è un contenitore suo. Serve a distinguere un bidone
+#' non associato a una fornitura ma noto (`PIT`) da un codice sconosciuto (`NP`),
+#' e a riconoscere i codici letti male (`ripara_codici_rfid()`).
+#'
+#' Funzionamento: il codice è il primo valore non vuoto tra `codice_transponder`
+#' e `codice_etichetta` (`COALESCE`: in alcune righe è compilato solo uno dei
+#' due), portato al formato comune dei codici (`normalizza_codice_rfid()`).
+#' Basta uno dei due campi nel file; senza nessuno dei due è un errore.
+#'
+#' Risultato: una riga per codice, con la sola colonna `codice_transponder`.
+#' @param percorso Percorso del CSV dei tag.
+#' @noRd
+importa_tag_contenitori <- function(percorso) {
+  tag <- leggi_tabella_origine(percorso)
+  campi <- intersect(c("codice_transponder", "codice_etichetta"), names(tag))
+  if (length(campi) == 0) {
+    stop(
+      "Nel file dei tag dei contenitori manca sia codice_transponder sia codice_etichetta.",
+      call. = FALSE
+    )
+  }
+  tag |>
+    dplyr::transmute(
+      codice_transponder = normalizza_codice_rfid(
+        Reduce(dplyr::coalesce, unname(as.list(tag[campi])))
+      )
+    ) |>
+    dplyr::filter(!is.na(.data$codice_transponder)) |>
+    dplyr::distinct()
 }
 
 #' Sacchetti e fornitura del loro gruppo
@@ -239,8 +300,7 @@ importa_contenitori <- function(percorso) {
 #' Contesto: un sacchetto (codice di 24 caratteri con prefisso `00BD`) non ha un
 #' contenitore in anagrafica: ha un gruppo di sacchetti, e il gruppo ha una
 #' fornitura. Serve ad `associa_contenitore_e_fornitura()` per dire se un
-#' sacchetto è censito. I sacchetti poi vengono scartati dai dataset finali
-#' (`filtra_solo_bidoni()`).
+#' sacchetto è censito. I sacchetti restano nei dataset finali.
 #'
 #' Funzionamento: per ogni gruppo vale l'associazione con l'ultima variazione più
 #' recente (a pari data la prima della tabella); poi si uniscono i sacchetti al
@@ -549,32 +609,35 @@ data_ora_da_testo <- function(x) {
 #'
 #' Contesto: le saponette sono il metodo di lettura che l'azienda usava finora:
 #' un lettore UHF che l'operatore passa vicino a ogni bidone. Gli operatori sono
-#' ancora obbligati a usarle accanto alle antenne. Il file ha tre campi:
-#' l'istante, il codice transponder (l'RFID) e `id_trasmissione`, che raggruppa i
-#' codici letti nello stesso giro in un giorno (una trasmissione è un giro delle
-#' saponette) ma non corrisponde all'`id_giro` del calendario. Per questo non
-#' hanno un servizio atteso dal giro e non hanno il mezzo.
+#' ancora obbligati a usarle accanto alle antenne. Il file
+#' (`letture_saponette_grezze.csv`) ha quattro campi: `data_ora_lettura`
+#' (l'istante, `AAAA-MM-GG hh:mm:ss`), `data_lettura` (il giorno,
+#' `AAAA-MM-GG`), `RFID` e `matricola_saponetta`, che raggruppa i codici letti
+#' nello stesso giro in un giorno (la saponetta di un operatore, in un giorno,
+#' è un giro delle saponette) ma non corrisponde all'`id_giro` del calendario.
+#' Per questo non hanno un servizio atteso dal giro e non hanno il mezzo. Prima
+#' di ottobre 2026 il file aveva `codice_transponder` al posto di `RFID` e
+#' `id_trasmissione` al posto di `matricola_saponetta`, e un solo campo
+#' `data_lettura` con l'istante.
 #'
-#' Funzionamento: rinomina le tre colonne (i nomi nel file si passano come
-#' parametri), legge l'istante con `data_ora_da_testo()`, porta i codici al
-#' formato delle antenne (`formatta_rfid()`) e toglie le righe ripetute. Le righe
-#' con istante illeggibile si scartano, con un avviso che ne mostra qualcuna.
+#' Funzionamento: legge l'istante con `data_ora_da_testo()` e il giorno da
+#' `data_lettura` (se illeggibile lo ricava dall'istante), porta i codici al
+#' formato comune (`formatta_rfid()`) e toglie le righe ripetute. Le righe con
+#' istante illeggibile si scartano, con un avviso che ne mostra qualcuna. Un
+#' nome di colonna scritto con gli spazi (`matricola saponetta`) vale come con il
+#' trattino basso.
 #'
-#' Risultato: `data_ora_lettura`, `data_lettura`, `id_trasmissione`, `RFID`.
+#' Risultato: `data_ora_lettura`, `data_lettura`, `matricola_saponetta`, `RFID`.
+#' Le righe scartate (senza RFID, istante illeggibile, ripetute) stanno
+#' nell'attributo `scartate`, vedi `righe_scartate()`.
 #' @param percorso Percorso del CSV delle letture delle saponette.
-#' @param colonna_rfid,colonna_data_ora,colonna_trasmissione Nomi delle colonne
-#'   nel file.
-#' @return `data_ora_lettura`, `data_lettura`, `id_trasmissione`, `RFID`.
+#' @return `data_ora_lettura`, `data_lettura`, `matricola_saponetta`, `RFID`.
 #' @noRd
-importa_letture_saponette <- function(
-  percorso,
-  colonna_rfid = "codice_transponder",
-  colonna_data_ora = "data_lettura",
-  colonna_trasmissione = "id_trasmissione"
-) {
+importa_letture_saponette <- function(percorso) {
   grezzo <- leggi_tabella_origine(percorso, na = c("", "NA"))
+  names(grezzo) <- stringr::str_replace_all(names(grezzo), "\\s+", "_")
   mancanti <- setdiff(
-    c(colonna_rfid, colonna_data_ora, colonna_trasmissione),
+    c("data_ora_lettura", "data_lettura", "RFID", "matricola_saponetta"),
     names(grezzo)
   )
   if (length(mancanti) > 0) {
@@ -587,11 +650,14 @@ importa_letture_saponette <- function(
 
   saponette <- grezzo |>
     dplyr::transmute(
-      testo_data_ora = .data[[colonna_data_ora]],
+      testo_data_ora = .data$data_ora_lettura,
       data_ora_lettura = data_ora_da_testo(.data$testo_data_ora),
-      data_lettura = lubridate::as_date(.data$data_ora_lettura),
-      id_trasmissione = .data[[colonna_trasmissione]],
-      RFID = .data[[colonna_rfid]]
+      data_lettura = dplyr::coalesce(
+        lubridate::as_date(data_ora_da_testo(.data$data_lettura)),
+        lubridate::as_date(.data$data_ora_lettura)
+      ),
+      matricola_saponetta = .data$matricola_saponetta,
+      RFID = .data$RFID
     )
 
   illeggibili <- dplyr::filter(
@@ -611,9 +677,20 @@ importa_letture_saponette <- function(
     )
   }
 
-  saponette |>
+  senza_rfid <- is.na(saponette$RFID)
+  senza_istante <- !senza_rfid & is.na(saponette$data_ora_lettura)
+  saponette[!senza_rfid & !senza_istante, ] |>
     dplyr::select(-"testo_data_ora") |>
-    dplyr::filter(!is.na(.data$RFID), !is.na(.data$data_ora_lettura)) |>
     formatta_rfid() |>
-    dplyr::distinct()
+    togli_righe_ripetute() |>
+    (\(tenute) {
+      con_scartate(
+        tenute,
+        dplyr::bind_rows(
+          attr(tenute, "scartate"),
+          righe_scartate(saponette, senza_rfid, "senza_rfid"),
+          righe_scartate(saponette, senza_istante, "istante_illeggibile")
+        )
+      )
+    })()
 }

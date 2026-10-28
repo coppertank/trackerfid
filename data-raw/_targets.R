@@ -2,7 +2,9 @@
 #
 # Dai file estratti dal passo 1 (data-raw/origine/) scrive in data-raw/output/:
 # letture_antenne.csv, letture_antenne.duckdb e controllo_giri.csv per l'app;
-# letture_saponette.csv, le letture delle saponette con la stessa anagrafica.
+# letture_saponette.csv, le letture delle saponette con la stessa anagrafica;
+# letture_scartate_antenne.csv e letture_scartate_saponette.csv, le letture
+# scartate dalla pulizia, con il motivo.
 # I report non fanno parte della pipeline: si compilano a mano con
 # data-raw/compila_report.R.
 # I due dataset si leggono anche con targets::tar_load(letture_antenne) e
@@ -23,14 +25,6 @@ library(targets)
 pkgload::load_all(".", quiet = TRUE)
 tar_option_set(imports = "trackerfid")
 
-# Nomi delle colonne del file delle letture delle saponette: codice, istante e
-# trasmissione.
-colonne_saponette <- list(
-  rfid = "codice_transponder",
-  data_ora = "data_lettura",
-  trasmissione = "id_trasmissione"
-)
-
 list(
   # --- File di partenza: la pipeline ne segue il contenuto ------------------
   # Antenne: test dei mezzi, letture e calendari. I file dei giri non
@@ -40,7 +34,7 @@ list(
     file_antenne,
     file_origine()[c(
       "test_mezzi",
-      "letture",
+      "antenne_grezze",
       "calendario",
       "non_pianificati",
       "giri_aggiunti"
@@ -49,11 +43,12 @@ list(
       purrr::keep(file.exists),
     format = "file"
   ),
-  # Anagrafica, comune ai due dataset: contenitori, sacchetti, nuclei, manovre.
+  # Anagrafica, comune ai due dataset: contenitori, tag, sacchetti, nuclei, manovre.
   tar_target(
     file_anagrafica,
     unlist(file_origine()[c(
       "contenitori",
+      "tag_contenitori",
       "gruppi_sacchetti",
       "servizi_sacchetti",
       "componenti",
@@ -61,7 +56,11 @@ list(
     )]),
     format = "file"
   ),
-  tar_target(file_saponette, file_origine()$saponette, format = "file"),
+  tar_target(
+    file_saponette,
+    file_origine()$saponette_grezze,
+    format = "file"
+  ),
 
   # --- Letture per l'app: dataset, CSV, archivio .duckdb, giri da controllare
   tar_target(
@@ -89,6 +88,18 @@ list(
     format = "file"
   ),
 
+  # Le letture scartate dalla pulizia, con il motivo: servono al report degli
+  # indicatori per contare quante letture ha scartato ogni sistema.
+  tar_target(
+    csv_scartate_antenne,
+    scrivi_csv_output(
+      letture_scartate(letture_antenne),
+      "letture_scartate_antenne.csv",
+      na = ""
+    ),
+    format = "file"
+  ),
+
   # Le letture il cui comune del GPS è stato sostituito da quello della posizione.
   tar_target(
     csv_comuni_corretti,
@@ -102,17 +113,21 @@ list(
     {
       file_saponette
       file_anagrafica
-      prepara_letture_saponette(
-        file_origine(),
-        colonna_rfid = colonne_saponette$rfid,
-        colonna_data_ora = colonne_saponette$data_ora,
-        colonna_trasmissione = colonne_saponette$trasmissione
-      )
+      prepara_letture_saponette(file_origine())
     }
   ),
   tar_target(
     csv_letture_saponette,
     scrivi_csv_output(letture_saponette, "letture_saponette.csv"),
+    format = "file"
+  ),
+  tar_target(
+    csv_scartate_saponette,
+    scrivi_csv_output(
+      letture_scartate(letture_saponette),
+      "letture_scartate_saponette.csv",
+      na = ""
+    ),
     format = "file"
   )
 )

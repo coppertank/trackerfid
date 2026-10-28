@@ -120,7 +120,7 @@ letture_test <- function() {
     targa_veicolo = "AB123CD",
     matricola_veicolo = "1601",
     RFID = c("A", "A", "A", "B", "C", "C"),
-    presente_a_database = c(rep("Presente", 4), rep("Non Presente", 2)),
+    presente_a_database = c(rep("PIA", 4), rep("NP", 2)),
     servizio_transponder = c("CARTA", "SECCO", "CARTA", "VETRO", NA, NA),
     servizio_atteso = c(NA, NA, NA, NA, "SECCO", NA),
     id_utenza = c("U1", "U1", "U2", "U1", NA, NA),
@@ -155,7 +155,7 @@ letture_rfid <- function(
   date,
   lat = 41.9,
   lon = 12.5,
-  presente = "Presente",
+  presente = "PIA",
   servizio = "CARTA",
   atteso = NA_character_,
   utenza = "U1",
@@ -163,7 +163,7 @@ letture_rfid <- function(
   raccolte = 26
 ) {
   n <- length(date)
-  censito <- presente == "Presente"
+  censito <- presente == "PIA"
   dplyr::tibble(
     data_ora_lettura = as.POSIXct(paste(date, "08:00:00"), tz = "UTC"),
     targa_veicolo = "AB123CD",
@@ -318,7 +318,7 @@ scrivi_origine_prova <- function(cartella) {
     )
   )
   scrivi(
-    "letture",
+    "antenne_grezze",
     c(
       "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
       "VIA ROMA 1, LIMENA;03/08/2026 08.15.00;123;AB123CD;45,4700;11,8400;2",
@@ -342,6 +342,15 @@ scrivi_origine_prova <- function(cartella) {
       "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria",
       "0000000123,SECCO,120,QUINDICINALE,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,31",
       ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,ATTIVA,U9,VALSTAGNA,31"
+    )
+  )
+  # un tag con il solo codice_transponder, uno con la sola etichetta
+  scrivi(
+    "tag_contenitori",
+    c(
+      "codice_transponder,codice_etichetta",
+      "128,",
+      ",999"
     )
   )
   scrivi(
@@ -395,15 +404,28 @@ scrivi_origine_prova <- function(cartella) {
     )
   )
   scrivi(
-    "saponette",
+    "saponette_grezze",
     c(
-      "data_lettura,codice_transponder,id_trasmissione",
-      "2025-03-01 07:00:00,123,T1",
-      "2025-03-01 07:00:00,123,T1",
-      "2025-03-02 07:00:00,00BD00000000000000000001,T1",
-      "2025-03-03 07:00:00,,T2",
-      "2026-08-21 07:00:00,123,T3"
+      "data_ora_lettura,data_lettura,RFID,matricola_saponetta",
+      "2025-03-01 07:00:00,2025-03-01,123,T1",
+      "2025-03-01 07:00:00,2025-03-01,123,T1",
+      "2025-03-02 07:00:00,2025-03-02,00BD00000000000000000001,T1",
+      "2025-03-03 07:00:00,2025-03-03,,T2",
+      "2026-08-21 07:00:00,2026-08-21,123,T3",
+      # il codice 123 con i bit di ogni cifra invertiti: la pulizia lo ripara
+      "2026-08-22 07:00:00,2026-08-22,84C,T4",
+      # oltre 10 cifre e ne' sacchetto ne' HERA: scartato
+      "2026-08-23 07:00:00,2026-08-23,12345678901,T5",
+      # bidone HERA: resta com'e', non presente
+      "2026-08-24 07:00:00,2026-08-24,48455241aabb,T5"
     )
   )
   file
+}
+
+# CSV dei giri da controllare o analizzare, in un file temporaneo.
+scrivi_giri <- function(righe, env = parent.frame()) {
+  percorso <- withr::local_tempfile(fileext = ".csv", .local_envir = env)
+  writeLines(righe, percorso)
+  percorso
 }

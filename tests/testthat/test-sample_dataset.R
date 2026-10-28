@@ -27,7 +27,7 @@ test_that("dimensioni, periodo e mezzi", {
 
 test_that("coerenza tra stato a database, servizio, utenza, volume e raccolte", {
   d <- dati_esempio()
-  non_presente <- d$presente_a_database == "Non Presente"
+  non_presente <- d$presente_a_database == "NP"
   # l'utenza viene dalla fornitura del contenitore: la hanno i contenitori
   # censiti, non i non censiti e non i sacchetti
   expect_true(all(is.na(d$id_utenza[non_presente])))
@@ -55,7 +55,7 @@ test_that("coerenza tra stato a database, servizio, utenza, volume e raccolte", 
 test_that("volume e raccolte previste sono realistici e univoci per RFID", {
   d <- dati_esempio()
   censiti <- d[
-    d$presente_a_database == "Presente" & !rfid_sacchetto(d$RFID),
+    d$presente_a_database == "PIA" & !rfid_sacchetto(d$RFID),
   ]
   # i volumi dell'anagrafica aziendale
   expect_setequal(unique(censiti$volume_previsto), c(40, 60, 120, 1100))
@@ -119,7 +119,7 @@ test_that("distribuzioni vicine a quelle richieste", {
   ultimi <- ultime_di(d)
 
   expect_equal(
-    mean(ultimi$presente_a_database == "Presente"),
+    mean(ultimi$presente_a_database == "PIA"),
     0.85,
     tolerance = 0.02
   )
@@ -144,7 +144,7 @@ test_that("distribuzioni vicine a quelle richieste", {
   # raccolta a cadenza fissa: un contenitore tipico ha una ventina di letture l'anno
   nel_2025 <- d[
     lubridate::year(d$data_ora_lettura) == 2025 &
-      d$presente_a_database == "Presente",
+      d$presente_a_database == "PIA",
   ]
   letture <- as.integer(table(nel_2025$RFID))
   expect_gt(stats::median(letture), 15)
@@ -184,11 +184,11 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   # giro di zona hanno la coerenza ignota
   conteggi <- table(d$coerenza_comune, d$presente_a_database)
   expect_equal(
-    as.integer(conteggi[unname(stati_coerenza_comune()), "Presente"]),
+    as.integer(conteggi[unname(stati_coerenza_comune()), "PIA"]),
     c(5010L, 389L, 0L, 8L)
   )
   expect_equal(
-    as.integer(conteggi[unname(stati_coerenza_comune()), "Non Presente"]),
+    as.integer(conteggi[unname(stati_coerenza_comune()), "NP"]),
     c(450L, 0L, 605L, 13L)
   )
   # le letture fatte in un altro comune hanno la distanza dal comune
@@ -204,7 +204,7 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
     distanza_comune_dichiarato(as.data.frame(d))
   )
   expect_true(all(
-    d$coerenza_comune[rfid_sacchetto(d$RFID) & d$presente_a_database == "Presente"] ==
+    d$coerenza_comune[rfid_sacchetto(d$RFID) & d$presente_a_database == "PIA"] ==
       "Coerenza ignota"
   ))
   # la coerenza scritta nel file è quella che l'app ricalcola
@@ -221,7 +221,7 @@ test_that("ogni lettura ha il giro e il comune del mezzo che l'ha fatta", {
   # tra i contenitori non censiti del 2025 ci sono stime nette e stime incerte
   nel_2025 <- filtra_periodo(d, periodo_anno(2025))
   stime <- servizio_prevalente_non_censiti(nel_2025)
-  non_censiti <- unique(nel_2025$RFID[nel_2025$presente_a_database == "Non Presente"])
+  non_censiti <- unique(nel_2025$RFID[nel_2025$presente_a_database == "NP"])
   expect_setequal(stime$RFID, non_censiti)
   # tre dei non censiti sono sacchetti: non hanno un servizio da stimare
   expect_length(non_censiti, 40)
@@ -330,7 +330,7 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
   # secco: due lo sono in ogni lettura, il contenitore che ha cambiato
   # servizio e quello spostato in una sola
   non_coerenti <- d[d$coerenza_servizio %in% "NO", ]
-  expect_true(all(non_coerenti$presente_a_database == "Presente"))
+  expect_true(all(non_coerenti$presente_a_database == "PIA"))
   expect_true(all(non_coerenti$servizio_giro == "SECCO PAP"))
   expect_identical(
     as.integer(table(non_coerenti$RFID)[c(
@@ -431,8 +431,8 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   expect_equal(anyDuplicated(s$RFID), 0)
   ultimi <- ultime_di(s)
   expect_equal(nrow(ultimi), 12)
-  expect_equal(sum(ultimi$presente_a_database == "Presente"), 8)
-  expect_equal(sum(ultimi$presente_a_database == "Non Presente"), 4)
+  expect_equal(sum(ultimi$presente_a_database == "PIA"), 8)
+  expect_equal(sum(ultimi$presente_a_database == "NP"), 4)
   # codice di 24 caratteri con il prefisso dei sacchetti: i contenitori ne
   # hanno un altro
   expect_true(all(nchar(s$RFID) == 24 & startsWith(s$RFID, "00BD")))
@@ -442,7 +442,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   # utenza: il suo servizio atteso è il giro che lo ha letto, censito o no, e
   # il suo comune è quello in cui viene letto. La voce dei sacchetti gliela
   # dà l'app, dal codice
-  censito <- s$presente_a_database == "Presente"
+  censito <- s$presente_a_database == "PIA"
   expect_true(all(s$servizio_atteso == "SECCO"))
   expect_true(all(is.na(s$servizio_transponder)))
   expect_true(all(servizio_mostrato(s) == servizio_sacchetti()))
@@ -451,7 +451,7 @@ test_that("il dataset contiene alcuni sacchetti, censiti e non censiti", {
   # la fornitura sta nel file, che l'app non carica: si legge dal CSV
   grezzo <- utils::read.csv(percorso_dataset_esempio(), colClasses = "character")
   forniture <- grezzo$id_fornitura[rfid_sacchetto(grezzo$RFID)]
-  censiti_grezzo <- grezzo$presente_a_database[rfid_sacchetto(grezzo$RFID)] == "Presente"
+  censiti_grezzo <- grezzo$presente_a_database[rfid_sacchetto(grezzo$RFID)] == "PIA"
   expect_setequal(forniture[censiti_grezzo], sprintf("%09d", 200000000L + 1:4))
   expect_true(all(is.na(forniture[!censiti_grezzo])))
   expect_false(any(forniture[censiti_grezzo] %in% grezzo$id_fornitura[!rfid_sacchetto(grezzo$RFID)]))
@@ -523,7 +523,7 @@ test_that("l'output di esempio incluso corrisponde all'analisi del dataset", {
 
 test_that("la geografia segue la tabella dei comuni e le quote dei cantieri", {
   d <- dati_esempio()
-  non_presente <- d$presente_a_database == "Non Presente"
+  non_presente <- d$presente_a_database == "NP"
 
   # comune del database: solo per i contenitori censiti, uno per RFID. Un
   # sacchetto non lo ha nemmeno da censito

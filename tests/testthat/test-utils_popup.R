@@ -6,7 +6,7 @@ test_that("il popup riporta tutti i campi della lettura", {
     matricola = "1601",
     data_ora_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     id_utenza = "58590042",
-    presente = "Presente"
+    presente = "PIA"
   )
   expect_match(popup, "<b>RFID:</b> D250915001", fixed = TRUE)
   expect_match(popup, "<b>Servizio Atteso:</b> CARTA", fixed = TRUE)
@@ -17,7 +17,7 @@ test_that("il popup riporta tutti i campi della lettura", {
   expect_match(popup, "<b>Matricola:</b> 1601", fixed = TRUE)
   expect_match(popup, "<b>Lettura:</b> 15/09/2025 08:30:00", fixed = TRUE)
   expect_match(popup, "<b>Utenza:</b> 58590042", fixed = TRUE)
-  expect_match(popup, "<b>Censito:</b> Presente", fixed = TRUE)
+  expect_match(popup, "<b>Stato database:</b> Presente in associazione (PIA)", fixed = TRUE)
 })
 
 test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell'HTML", {
@@ -38,7 +38,7 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
   # un censito senza utenza, come un sacchetto, non è un non censito
   sacchetto <- create_popup_html(
     "00BD00000000000000000001", "SECCO", "AB123CD", "1601",
-    d$data_ora_lettura[1], NA_character_, c("Presente", "Non Presente")
+    d$data_ora_lettura[1], NA_character_, c("PIA", "NP")
   )
   expect_match(sacchetto[1], "<b>Utenza:</b> N/A", fixed = TRUE)
   expect_match(sacchetto[2], "<b>Utenza:</b> Non Censito", fixed = TRUE)
@@ -95,7 +95,7 @@ test_that("il popup è vettoriale, gestisce i valori mancanti e fa l'escape dell
     "M",
     as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     "U",
-    "Presente"
+    "PIA"
   )
   expect_no_match(pericoloso, "<script>", fixed = TRUE)
   expect_match(pericoloso, "&lt;script&gt;", fixed = TRUE)
@@ -109,7 +109,7 @@ test_that("una lettura coerente perche' vicina al confine lo dice", {
     matricola = "1601",
     data_ora_lettura = as.POSIXct("2025-09-01 08:00:00", tz = "UTC"),
     id_utenza = c("U1", NA, "U1", "U1"),
-    presente = c("Presente", "Non Presente", "Presente", "Presente"),
+    presente = c("PIA", "NP", "PIA", "PIA"),
     comune = c("LIMENA", NA, "LIMENA", "LIMENA"),
     comune_lettura = c("PADOVA", "PADOVA", "VIGODARZERE", "LIMENA"),
     comune_giro = "RUBANO",
@@ -124,7 +124,7 @@ test_that("una lettura coerente perche' vicina al confine lo dice", {
   fuori <- create_popup_html(
     rfid = "A", servizio_atteso = "SECCO", targa = "AB123CD", matricola = "1601",
     data_ora_lettura = as.POSIXct("2025-09-01 08:00:00", tz = "UTC"),
-    id_utenza = "U1", presente = "Presente", comune = "LIMENA",
+    id_utenza = "U1", presente = "PIA", comune = "LIMENA",
     comune_lettura = "PADOVA", coerenza_comune = "Fuori comune",
     distanza_comune_dichiarato = 2500
   )
@@ -300,7 +300,7 @@ test_that("il pannello di dettaglio ha un blocco per i sacchetti", {
   non_censito <- pannello(letture_rfid(
     sacchetto,
     date_2025(3),
-    presente = "Non Presente",
+    presente = "NP",
     atteso = c("SECCO PAP", "SECCO PAP", "VETRO PAP")
   ))
   expect_match(non_censito, "SACCHETTO NON CENSITO NEL DATABASE", fixed = TRUE)
@@ -312,7 +312,7 @@ test_that("il pannello di dettaglio ha un blocco per i sacchetti", {
   senza_giri <- pannello(letture_rfid(
     sacchetto,
     date_2025(2),
-    presente = "Non Presente"
+    presente = "NP"
   ))
   expect_match(senza_giri, "SACCHETTO NON CENSITO NEL DATABASE", fixed = TRUE)
   expect_no_match(senza_giri, "Giri che lo hanno letto", fixed = TRUE)
@@ -331,7 +331,7 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
     matricola = "1601",
     data_ora_lettura = as.POSIXct("2025-03-01 08:00:00", tz = "UTC"),
     id_utenza = "U1",
-    presente = "Presente",
+    presente = "PIA",
     comune = c("LIMENA", "LIMENA", "LIMENA", "LIMENA"),
     comune_giro = c("LIMENA", "CITTADELLA", "ASIAGO", "ASIAGO"),
     cantiere = "RUBANO",
@@ -355,7 +355,7 @@ test_that("popup, dettaglio e statistiche segnalano le letture fuori comune e fu
   )
   expect_no_match(popup[4], "Fuori giro", fixed = TRUE)
   # senza la coerenza del comune il popup resta quello di sempre
-  semplice <- create_popup_html("A", "CARTA", "AB123CD", "1601", Sys.time(), "U1", "Presente")
+  semplice <- create_popup_html("A", "CARTA", "AB123CD", "1601", Sys.time(), "U1", "PIA")
   expect_no_match(semplice, "Fuori", fixed = TRUE)
 
   # dettaglio: un blocco per il fuori comune, uno per il fuori giro
@@ -398,7 +398,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
     matricola = "1601",
     data_ora_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     id_utenza = "58590042",
-    presente = "Presente"
+    presente = "PIA"
   )
   expect_no_match(semplice, "Servizio Giro", fixed = TRUE)
   expect_no_match(semplice, "Servizio a Database", fixed = TRUE)
@@ -411,7 +411,7 @@ test_that("popup e dettaglio riportano il giro e i servizi che non concordano", 
     matricola = "1601",
     data_ora_lettura = as.POSIXct("2025-09-15 08:30:00", tz = "UTC"),
     id_utenza = c("58590001", "58590002", NA, "58590003"),
-    presente = c("Presente", "Presente", "Non Presente", "Presente"),
+    presente = c("PIA", "PIA", "NP", "PIA"),
     servizio_giro = c("SECCO PAP", "SECCO PAP", "SECCO <PAP>", NA),
     coerenza_servizio = c("NO", "SI", NA, NA),
     servizio_transponder = c("CARTA", "SECCO", NA, "VETRO")

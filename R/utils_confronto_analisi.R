@@ -20,13 +20,13 @@ con_data_lettura <- function(letture) {
 #'
 #' Contesto: copertura, giri in comune e produttività si calcolano sui censiti,
 #' perché solo per loro si conosce il servizio e la data di attivazione.
-#' Risultato: le letture con `presente_a_database` uguale a `Presente`.
+#' Risultato: le letture con `presente_a_database` uguale a `PIA`.
 #' @noRd
 solo_censiti <- function(letture) {
   if (!"presente_a_database" %in% names(letture)) {
     return(letture)
   }
-  dplyr::filter(letture, .data$presente_a_database %in% "Presente")
+  dplyr::filter(letture, .data$presente_a_database %in% "PIA")
 }
 
 #' Letture delle saponette degli RFID letti dalle antenne, in qualunque giro
@@ -126,20 +126,20 @@ classifica_rfid_dei_giri_saponette <- function(saponette_confronto, antenne, ant
 #' Contesto: mostra quanto ogni giro (trasmissione) del confronto iniziale è
 #' «coperto» dagli RFID delle antenne; i giri con poca copertura gonfiano il lato
 #' delle saponette.
-#' Risultato: `data_lettura`, `id_trasmissione`, `rfid`, `rfid_antenne` e
+#' Risultato: `data_lettura`, `matricola_saponetta`, `rfid`, `rfid_antenne` e
 #' `quota` (la quota letta anche dalle antenne).
 #' @inheritParams classifica_rfid_dei_giri_saponette
-#' @return `data_lettura`, `id_trasmissione`, `rfid`, `rfid_antenne`, `quota`.
+#' @return `data_lettura`, `matricola_saponetta`, `rfid`, `rfid_antenne`, `quota`.
 #' @noRd
 copertura_antenne_per_giro <- function(saponette_confronto, antenne) {
   saponette_confronto |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .data$RFID) |>
     # Una volta sola: dentro un raggruppamento sarebbe una ricerca per giro.
     dplyr::mutate(delle_antenne = .data$RFID %in% antenne$RFID) |>
     dplyr::summarise(
       rfid = dplyr::n(),
       rfid_antenne = sum(.data$delle_antenne),
-      .by = c("data_lettura", "id_trasmissione")
+      .by = c("data_lettura", "matricola_saponetta")
     ) |>
     dplyr::mutate(quota = .data$rfid_antenne / .data$rfid)
 }
@@ -342,7 +342,7 @@ copertura_contenitori <- function(
 #' Risultato: `matricola_veicolo`, `data_lettura`, `giri`, `chip_saponette`,
 #' `chip_antenne` e `chip_entrambi`.
 #' @param saponette Letture delle saponette già filtrate, con `data_lettura`,
-#'   `id_trasmissione` e `RFID`; solo censiti.
+#'   `matricola_saponetta` e `RFID`; solo censiti.
 #' @param antenne Letture con le antenne già filtrate, con `data_ora_lettura`,
 #'   `matricola_veicolo` e `RFID`; solo censiti.
 #' @param chip_minimi RFID in comune richiesti per abbinare una trasmissione.
@@ -352,7 +352,7 @@ copertura_contenitori <- function(
 giri_con_entrambi_i_sistemi <- function(saponette, antenne, chip_minimi = 3L) {
   solo_saponette <- saponette |>
     solo_censiti() |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID)
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .data$RFID)
   solo_antenne <- antenne |>
     solo_censiti() |>
     con_data_lettura() |>
@@ -366,18 +366,18 @@ giri_con_entrambi_i_sistemi <- function(saponette, antenne, chip_minimi = 3L) {
     ) |>
     dplyr::count(
       .data$data_lettura,
-      .data$id_trasmissione,
+      .data$matricola_saponetta,
       .data$matricola_veicolo,
       name = "condivisi"
     ) |>
     dplyr::filter(.data$condivisi >= chip_minimi) |>
     dplyr::arrange(dplyr::desc(.data$condivisi)) |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .keep_all = TRUE)
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .keep_all = TRUE)
 
   chip_saponette <- solo_saponette |>
     dplyr::inner_join(
-      abbinati[c("data_lettura", "id_trasmissione", "matricola_veicolo")],
-      by = c("data_lettura", "id_trasmissione")
+      abbinati[c("data_lettura", "matricola_saponetta", "matricola_veicolo")],
+      by = c("data_lettura", "matricola_saponetta")
     ) |>
     dplyr::distinct(.data$data_lettura, .data$matricola_veicolo, .data$RFID) |>
     dplyr::mutate(saponette = TRUE)
@@ -424,16 +424,16 @@ giri_con_entrambi_i_sistemi <- function(saponette, antenne, chip_minimi = 3L) {
 #' giorni osservati; calcola gli RFID medi per giro. Solo censiti.
 #' Risultato: `mese`, `sistema`, `giri`, `giorni`, `giri_per_giorno`, `rfid_per_giro`.
 #' @param saponette,antenne Letture già filtrate; le saponette con
-#'   `id_trasmissione`, le antenne con `matricola_veicolo`.
+#'   `matricola_saponetta`, le antenne con `matricola_veicolo`.
 #' @param dal,al Periodo osservato.
 #' @noRd
 produttivita_giri <- function(saponette, antenne, dal, al) {
   giri_saponette <- saponette |>
     solo_censiti() |>
-    dplyr::distinct(.data$data_lettura, .data$id_trasmissione, .data$RFID) |>
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .data$RFID) |>
     dplyr::summarise(
       rfid = dplyr::n(),
-      .by = c("data_lettura", "id_trasmissione")
+      .by = c("data_lettura", "matricola_saponetta")
     ) |>
     dplyr::mutate(sistema = "Saponette")
   giri_antenne <- antenne |>
@@ -583,7 +583,7 @@ chip_senza_saponette <- function(antenne, saponette_tutte) {
     "Censiti attivati dopo l'inizio delle saponette",
     "Non censiti"
   )
-  censiti <- unique(antenne$RFID[antenne$presente_a_database %in% "Presente"])
+  censiti <- unique(antenne$RFID[antenne$presente_a_database %in% "PIA"])
   antenne |>
     dplyr::distinct(.data$RFID, .data$data_attivazione_contenitore) |>
     dplyr::mutate(

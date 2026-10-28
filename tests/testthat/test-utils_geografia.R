@@ -400,12 +400,12 @@ test_that("la geografia di una lettura parte dal comune di lettura", {
   letture <- dplyr::tibble(
     RFID = c("A", "B", "C", "D", "E", "F"),
     presente_a_database = c(
-      "Presente",
-      "Presente",
-      "Non Presente",
-      "Non Presente",
-      "Presente",
-      "Non Presente"
+      "PIA",
+      "PIA",
+      "NP",
+      "NP",
+      "PIA",
+      "NP"
     ),
     comune_fornitura = c("Bassano del Grappa", "LIMENA", NA, NA, "MILANO", NA),
     comune_giro = c(

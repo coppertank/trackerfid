@@ -89,7 +89,7 @@ create_popup_html <- function(
   } else {
     distanza <- suppressWarnings(as.numeric(distanza_comune_dichiarato))
     di <- ifelse(
-      presente %in% "Presente",
+      presente %in% "PIA",
       "del comune a database",
       "del comune del giro"
     )
@@ -196,7 +196,7 @@ create_popup_html <- function(
     "<b>Utenza:</b> ",
     # Un censito senza utenza, come un sacchetto, non è un non censito.
     ifelse(
-      is.na(id_utenza) & !(presente %in% "Presente"),
+      is.na(id_utenza) & !(presente %in% "PIA"),
       "Non Censito",
       testo(id_utenza)
     ),
@@ -205,8 +205,8 @@ create_popup_html <- function(
     riga_lettura,
     riga_confine,
     riga_cantiere,
-    "<b>Censito:</b> ",
-    testo(presente),
+    "<b>Stato database:</b> ",
+    testo(descrizione_stato_database(presente)),
     "<br>",
     riga_fuori_comune,
     riga_fuori_giro,
@@ -605,12 +605,17 @@ crea_box_statistiche <- function(stat) {
     tags$div(class = "stat-gruppo", "Presente a Database:"),
     tags$div(
       class = "stat-riga",
-      tags$span("\u2713 Presente:"),
+      tags$span("\u2713 In associazione (PIA):"),
       tags$b(formatta_numero(stat$presente))
     ),
     tags$div(
       class = "stat-riga",
-      tags$span("\u2717 Non Presente:"),
+      tags$span("\u25d0 In tag (PIT):"),
+      tags$b(formatta_numero(stat$in_tag %||% 0))
+    ),
+    tags$div(
+      class = "stat-riga",
+      tags$span("\u2717 Non presente (NP):"),
       tags$b(formatta_numero(stat$non_presente))
     ),
     tags$div(class = "stat-gruppo", "Servizio a database, censiti:"),

@@ -71,7 +71,7 @@ mod_filtri_ui <- function(id) {
         checkboxGroupInput(
           ns("presente_filter"),
           NULL,
-          choices = stati_database(),
+          choices = etichette_stati_database(),
           selected = stati_database()
         )
       ),

@@ -18,7 +18,8 @@ test_that("il dataset di esempio viene letto e convertito nei tipi corretti", {
   expect_type(dati$latitudine, "double")
   expect_type(dati$longitudine, "double")
   expect_type(dati$RFID, "character")
-  expect_setequal(unique(dati$presente_a_database), stati_database())
+  # l'esempio non ha contenitori solo tra i tag (PIT)
+  expect_setequal(unique(dati$presente_a_database), c("PIA", "NP"))
   expect_identical(esito$avvisi, avvisi_esempio())
 
   # con tutte le colonne restano anche quelle della pipeline che l'app non
@@ -84,7 +85,7 @@ test_that("legge CSV con punto e virgola, virgola decimale e date italiane", {
   # normalizzazione dei testi e zeri iniziali conservati
   expect_identical(dati$servizio_transponder, c("CARTA", NA))
   expect_identical(dati$servizio_atteso, c("SECCO PAP", "SECCO"))
-  expect_identical(dati$presente_a_database, c("Presente", "Non Presente"))
+  expect_identical(dati$presente_a_database, c("PIA", "NP"))
   expect_identical(dati$id_utenza, c("007", NA))
 })
 
@@ -107,6 +108,40 @@ test_that("le colonne mancanti producono un errore esplicito", {
   expect_match(conditionMessage(errore), "Colonne mancanti")
   expect_match(conditionMessage(errore), "matricola_veicolo")
   expect_match(conditionMessage(errore), "longitudine")
+})
+
+test_that("presente_a_database accetta PIA, PIT e NP, e i vecchi Presente e Non Presente", {
+  percorso <- scrivi_csv(c(
+    intestazione_csv,
+    "2025-09-15 08:30:00,AB123CD,1601,R1,PIA,CARTA,58590001,41.9,12.5",
+    "2025-09-15 08:31:00,AB123CD,1601,R2,pit,SECCO,,41.9,12.5",
+    "2025-09-15 08:32:00,AB123CD,1601,R3,NP,SECCO,,41.9,12.5",
+    "2025-09-15 08:33:00,AB123CD,1601,R4,Presente,CARTA,58590001,41.9,12.5",
+    "2025-09-15 08:34:00,AB123CD,1601,R5,Non Presente,SECCO,,41.9,12.5"
+  ))
+  esito <- carica_dataset(percorso)
+  expect_identical(esito$dati$presente_a_database, c("PIA", "PIT", "NP", "PIA", "NP"))
+  expect_identical(stati_database(), c("PIA", "PIT", "NP"))
+  expect_identical(unname(etichette_stati_database()), stati_database())
+  expect_identical(
+    descrizione_stato_database(c("PIA", "PIT", "NP", "boh", NA)),
+    c(
+      "Presente in associazione (PIA)",
+      "Presente in tag (PIT)",
+      "Non presente (NP)",
+      "boh",
+      NA
+    )
+  )
+  # il messaggio d'errore elenca i valori accettati
+  errore <- expect_error(
+    carica_dataset(scrivi_csv(c(
+      intestazione_csv,
+      "2025-09-15 08:30:00,AB123CD,1601,R1,Forse,CARTA,58590001,41.9,12.5"
+    ))),
+    class = "errore_validazione"
+  )
+  expect_match(errore$messaggi, "PIA.*PIT.*NP")
 })
 
 test_that("i valori non interpretabili sono segnalati con il numero di riga", {
@@ -155,7 +190,7 @@ test_that("le incoerenze del dataset generano avvisi non bloccanti", {
   expect_equal(nrow(esito$dati), 2)
   expect_length(esito$avvisi, 3)
   expect_match(esito$avvisi[1], "Colonne facoltative assenti")
-  expect_match(esito$avvisi[2], "Non Presente")
+  expect_match(esito$avvisi[2], "non censite \\(PIT o NP\\)")
   expect_match(esito$avvisi[3], "univoca")
 })
 
@@ -207,7 +242,7 @@ test_that("i filtri per stato e servizio si combinano correttamente", {
   d <- letture_test()
 
   expect_equal(nrow(filtrate(d)), 6)
-  expect_setequal(filtrate(d, stato_db = "Presente")$RFID, c("A", "B"))
+  expect_setequal(filtrate(d, stato_db = "PIA")$RFID, c("A", "B"))
   expect_equal(nrow(filtrate(d, stato_db = character(0))), 0)
 
   # servizio, per esclusione. Per un censito vale il servizio a database di
@@ -230,13 +265,13 @@ test_that("i filtri per stato e servizio si combinano correttamente", {
   expect_equal(nrow(filtrate(d, includi_stima_incerta = FALSE)), 6)
   # lo stato a database si sceglie a parte
   expect_identical(
-    filtrate(d, stato_db = "Presente", servizi_esclusi = "VETRO")$RFID,
+    filtrate(d, stato_db = "PIA", servizi_esclusi = "VETRO")$RFID,
     c("A", "A", "A")
   )
 
   # sul dataset di esempio: la stessa regola scritta lettura per lettura
   esempio <- aggiungi_servizio_icona(dati_esempio())
-  stimata <- esempio$presente_a_database == "Non Presente" |
+  stimata <- esempio$presente_a_database == "NP" |
     rfid_sacchetto(esempio$RFID)
   expect_identical(
     maschera_di(
@@ -270,16 +305,16 @@ test_that("il servizio atteso filtra i censiti per lettura e i non censiti per s
     letture_rfid(
       "NETTO",
       date_2025(5),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = c(rep("SECCO PAP", 4), "VETRO PAP")
     ),
     letture_rfid(
       "INCERTO",
       date_2025(4),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = c("SECCO PAP", "SECCO PAP", "VETRO PAP", "CARTA/CARTONE PAP")
     ),
-    letture_rfid("MUTO", date_2025(2), presente = "Non Presente")
+    letture_rfid("MUTO", date_2025(2), presente = "NP")
   )
   tutti <- c("CENSITO", "NETTO", "INCERTO", "MUTO")
   rimasti <- function(...) unique(filtrate(d, ...)$RFID)
@@ -314,11 +349,11 @@ test_that("il servizio atteso filtra i censiti per lettura e i non censiti per s
     includi_stima_incerta = FALSE
   )))
   expect_setequal(
-    rimasti(stato_db = "Non Presente", servizi_esclusi = "SECCO PAP"),
+    rimasti(stato_db = "NP", servizi_esclusi = "SECCO PAP"),
     c("INCERTO", "MUTO")
   )
   expect_setequal(
-    rimasti(stato_db = "Presente", servizi_esclusi = "VETRO PAP"),
+    rimasti(stato_db = "PIA", servizi_esclusi = "VETRO PAP"),
     "CENSITO"
   )
 
@@ -345,7 +380,7 @@ test_that("il servizio atteso filtra i censiti per lettura e i non censiti per s
     letture_rfid(
       "X",
       c("2025-12-21", "2025-12-22"),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = "SECCO PAP"
     )
   )
@@ -358,8 +393,8 @@ test_that("i filtri sul giro e sulla coerenza dei servizi valgono per ogni stato
   d <- dplyr::bind_rows(
     letture_rfid("SECCO1", date_2025(2), servizio = "SECCO"),
     letture_rfid("CARTA1", date_2025(2), servizio = "CARTA"),
-    letture_rfid("NON1", date_2025(2), presente = "Non Presente"),
-    letture_rfid("NON2", date_2025(2), presente = "Non Presente")
+    letture_rfid("NON1", date_2025(2), presente = "NP"),
+    letture_rfid("NON2", date_2025(2), presente = "NP")
   )
   d$servizio_giro <- c(
     "SECCO PAP",
@@ -393,15 +428,15 @@ test_that("i filtri sul giro e sulla coerenza dei servizi valgono per ogni stato
   )
   # vale per censiti e non censiti: lo stato si sceglie a parte
   expect_setequal(
-    rimasti(stato_db = "Presente", giri_esclusi = "SECCO CONT.STRADALI"),
+    rimasti(stato_db = "PIA", giri_esclusi = "SECCO CONT.STRADALI"),
     c("SECCO1", "CARTA1")
   )
   expect_equal(
-    nrow(filtrate(d, stato_db = "Presente", giri_esclusi = "SECCO CONT.STRADALI")),
+    nrow(filtrate(d, stato_db = "PIA", giri_esclusi = "SECCO CONT.STRADALI")),
     3
   )
   expect_setequal(
-    rimasti(stato_db = "Non Presente", giri_esclusi = "SECCO PAP"),
+    rimasti(stato_db = "NP", giri_esclusi = "SECCO PAP"),
     "NON1"
   )
 
@@ -543,6 +578,38 @@ test_that("le statistiche contano una riga per RFID", {
   expect_equal(stat$non_coerenti, 0)
 })
 
+test_that("PIT e NP sono entrambi non censiti: stessa stima del servizio, conteggi separati", {
+  letture <- dplyr::bind_rows(
+    letture_test(),
+    dplyr::tibble(
+      data_ora_lettura = as.POSIXct("2025-09-08 09:00:00", tz = "UTC"),
+      targa_veicolo = "AB123CD",
+      matricola_veicolo = "1601",
+      RFID = "D",
+      presente_a_database = "NP",
+      servizio_atteso = "SECCO",
+      latitudine = 41.6,
+      longitudine = 12.1
+    )
+  )
+  # C e' tra i tag dell'azienda, D e' sconosciuto
+  letture$presente_a_database[letture$RFID == "C"] <- "PIT"
+
+  stat <- calcola_statistiche(ultime_di(letture))
+  expect_equal(stat$totale, 4)
+  expect_equal(c(stat$presente, stat$in_tag, stat$non_presente), c(2, 1, 1))
+  # i servizi dei non censiti si stimano per tutti e due, e si contano insieme
+  expect_identical(stat$servizio_censiti, c(CARTA = 1L, VETRO = 1L))
+  expect_identical(stat$servizio_stimato, c(SECCO = 2L))
+  expect_equal(stat$stima_incerta, 0)
+
+  # nel popup lo stato ha il suo nome
+  expect_identical(
+    descrizione_stato_database("PIT"),
+    "Presente in tag (PIT)"
+  )
+})
+
 test_that("i servizi seguono l'ordine canonico", {
   expect_identical(
     ordina_servizi(c("VETRO", "ZETA", NA, "SECCO", "ALFA", "SECCO")),
@@ -679,7 +746,7 @@ test_that("i casi speciali del dataset di esempio sono riconosciuti", {
 
 test_that("la stima del servizio atteso somma a 100", {
   letture <- dplyr::tibble(
-    presente_a_database = "Non Presente",
+    presente_a_database = "NP",
     servizio_atteso = c("SECCO", "SECCO", "CARTA", NA, "SECCO")
   )
   stima <- stima_servizio_atteso(letture)
@@ -943,7 +1010,7 @@ test_that("anni e periodi di analisi", {
 non_censito <- function(rfid, attesi) {
   dplyr::tibble(
     RFID = rfid,
-    presente_a_database = "Non Presente",
+    presente_a_database = "NP",
     servizio_transponder = NA_character_,
     servizio_atteso = attesi
   )
@@ -1005,7 +1072,7 @@ test_that("l'icona di un censito è il servizio a database della lettura", {
     non_censito("N2", c("SECCO PAP", "VETRO PAP")),
     dplyr::tibble(
       RFID = "C1",
-      presente_a_database = "Presente",
+      presente_a_database = "PIA",
       servizio_transponder = "UMIDO",
       servizio_atteso = "SECCO"
     )
@@ -1025,7 +1092,7 @@ test_that("l'icona di un censito è il servizio a database della lettura", {
   expect_true(all(is.na(esempio$servizio_icona[
     esempio$RFID == "D250920250"
   ])))
-  censiti <- esempio$presente_a_database == "Presente"
+  censiti <- esempio$presente_a_database == "PIA"
   bidoni <- censiti & !rfid_sacchetto(esempio$RFID)
   expect_identical(
     esempio$servizio_icona[bidoni],
@@ -1165,7 +1232,7 @@ test_that("un file indicato all'avvio viene letto una volta sola", {
 
 test_that("l'ultima lettura si sceglie tra quelle che superano i filtri", {
   dati <- dati_esempio()
-  filtri <- list(stato_db = "Presente", servizi_esclusi = "SECCO")
+  filtri <- list(stato_db = "PIA", servizi_esclusi = "SECCO")
   maschera <- do.call(maschera_di, c(list(dati), filtri))
   expect_identical(
     do.call(ultime_esempio, filtri)$RFID,
@@ -1272,11 +1339,11 @@ test_that("i filtri per cantiere e comune si combinano con gli altri", {
   # insieme agli altri filtri
   combinata <- maschera_di(
     dati,
-    stato_db = "Presente",
+    stato_db = "PIA",
     cantieri_esclusi = c("ASIAGO", "BASSANO"),
     comuni = "LIMENA"
   )
-  expect_identical(combinata, limena & dati$presente_a_database == "Presente")
+  expect_identical(combinata, limena & dati$presente_a_database == "PIA")
   # i comuni di un cantiere escluso non lasciano letture, gli altri sì
   expect_false(any(maschera_di(
     dati,
@@ -1383,8 +1450,8 @@ test_that("le letture senza i sacchetti sono quelle dei contenitori", {
   d <- dplyr::bind_rows(
     letture_rfid("0000ABC123", date_2025(2)),
     letture_rfid(codice_sacchetto(1), "2025-03-01"),
-    letture_rfid("0000ABC124", date_2025(1), presente = "Non Presente"),
-    letture_rfid(codice_sacchetto(2), "2025-04-01", presente = "Non Presente")
+    letture_rfid("0000ABC124", date_2025(1), presente = "NP"),
+    letture_rfid(codice_sacchetto(2), "2025-04-01", presente = "NP")
   )
   soli <- senza_sacchetti(d)
   expect_identical(soli$RFID, c("0000ABC123", "0000ABC123", "0000ABC124"))
@@ -1422,11 +1489,11 @@ test_that("un sacchetto tiene il servizio del giro, e l'icona gli dà il suo", {
   # del servizio atteso dal giro.
   percorso <- scrivi_csv(c(
     intestazione_transponder,
-    riga("2025-09-01", codice_sacchetto(1), "Presente", "", "S9"),
-    riga("2025-09-02", codice_sacchetto(2), "Non Presente", "", ""),
+    riga("2025-09-01", codice_sacchetto(1), "PIA", "", "S9"),
+    riga("2025-09-02", codice_sacchetto(2), "NP", "", ""),
     # un bidone censito senza servizio a database
-    riga("2025-09-03", "0000ABC123", "Presente", "", "U1"),
-    riga("2025-09-04", "0000ABC124", "Presente", "carta", "U2")
+    riga("2025-09-03", "0000ABC123", "PIA", "", "U1"),
+    riga("2025-09-04", "0000ABC124", "PIA", "carta", "U2")
   ))
   d <- carica_dataset(percorso)$dati
   # il servizio atteso è quello del giro, per tutti
@@ -1441,7 +1508,7 @@ test_that("un sacchetto tiene il servizio del giro, e l'icona gli dà il suo", {
   )
   expect_identical(
     d$presente_a_database,
-    c("Presente", "Non Presente", "Presente", "Presente")
+    c("PIA", "NP", "PIA", "PIA")
   )
 })
 
@@ -1453,14 +1520,14 @@ test_that("i sacchetti stanno sotto la loro tipologia, censiti o no", {
     letture_rfid(
       codice_sacchetto(2),
       date_2025(4),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = c("SECCO PAP", "SECCO PAP", "VETRO PAP", "UMIDO PAP")
     ),
     letture_rfid("0000ABC123", date_2025(3), servizio = "CARTA"),
     letture_rfid(
       "0000ABC124",
       date_2025(3),
-      presente = "Non Presente",
+      presente = "NP",
       atteso = "SECCO PAP"
     )
   )
@@ -1491,7 +1558,7 @@ test_that("i sacchetti stanno sotto la loro tipologia, censiti o no", {
     c("0000ABC123", "0000ABC124")
   )
   expect_setequal(
-    rimasti(stato_db = "Presente", servizi_esclusi = servizio_sacchetti()),
+    rimasti(stato_db = "PIA", servizi_esclusi = servizio_sacchetti()),
     "0000ABC123"
   )
   # il sacchetto censito è letto dai giri del secco, ma non è un contenitore
@@ -1521,14 +1588,14 @@ test_that("la coerenza del comune confronta il comune di lettura con quello dich
   )
   d <- data.frame(
     presente_a_database = c(
-      "Presente",
-      "Presente",
-      "Non Presente",
-      "Non Presente",
-      "Presente",
-      "Non Presente",
-      "Presente",
-      "Non Presente"
+      "PIA",
+      "PIA",
+      "NP",
+      "NP",
+      "PIA",
+      "NP",
+      "PIA",
+      "NP"
     ),
     # per un censito conta il comune del database, mai quello del giro
     comune_fornitura = c("Limena", "LIMENA", NA, NA, NA, NA, "ROSÀ", "ASIAGO"),
@@ -1594,7 +1661,7 @@ test_that("la coerenza del comune confronta il comune di lettura con quello dich
 test_that("una lettura vicina al confine è coerente, un giro di una zona non dà un confronto", {
   expect_identical(tolleranza_confine_m(), 100)
   d <- data.frame(
-    presente_a_database = c("Presente", "Presente", "Non Presente", "Non Presente", "Non Presente", "Presente", "Non Presente"),
+    presente_a_database = c("PIA", "PIA", "NP", "NP", "NP", "PIA", "NP"),
     comune_fornitura = c("LIMENA", "LIMENA", NA, NA, NA, "LIMENA", NA),
     comune_giro = c("RUBANO", "RUBANO", "CITTADELLA", "MASSICCIO DEL GRAPPA", "MASSICCIO DEL GRAPPA", "RUBANO", "CITTADELLA"),
     comune_lettura = c("PADOVA", "PADOVA", "TOMBOLO", "POVE DEL GRAPPA", NA, "VIGODARZERE", "TOMBOLO"),
@@ -1665,7 +1732,7 @@ letture_coerenza_comune <- function() {
   d <- dplyr::bind_rows(
     letture_rfid("A", "2025-03-01"),
     letture_rfid("B", "2025-03-02"),
-    letture_rfid("C", "2025-03-03", presente = "Non Presente", atteso = "SECCO PAP"),
+    letture_rfid("C", "2025-03-03", presente = "NP", atteso = "SECCO PAP"),
     letture_rfid("D", "2025-03-04")
   )
   d$coerenza_comune <- unname(stati_coerenza_comune())
@@ -1703,7 +1770,7 @@ test_that("il filtro sulla coerenza del comune tiene le voci spuntate", {
     c("A", "B", "C", "D")
   )
   expect_identical(
-    rimasti(coerenza_comune_escluse = "coerente", stato_db = "Presente"),
+    rimasti(coerenza_comune_escluse = "coerente", stato_db = "PIA"),
     c("B", "D")
   )
   # un dataset senza la colonna non viene filtrato

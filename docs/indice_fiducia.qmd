@@ -170,7 +170,7 @@ quote_giro <- nel_periodo |>
   dplyr::arrange(RFID, data_ora_lettura) |>
   assegna_cluster(parametri$eps_m, parametri$min_pts) |>
   # Il giro c'è su ogni lettura: per la stima contano quelle non censite.
-  dplyr::filter(presente_a_database == "Non Presente", !is.na(servizio_atteso)) |>
+  dplyr::filter(presente_a_database != "PIA", !is.na(servizio_atteso)) |>
   dplyr::count(RFID, cluster_id, servizio_atteso) |>
   dplyr::summarise(
     quota_atteso = max(n) / sum(n),
@@ -179,7 +179,7 @@ quote_giro <- nel_periodo |>
 dettaglio <- analisi |>
   dplyr::left_join(servizi, by = "RFID") |>
   dplyr::left_join(quote_giro, by = c("RFID", "cluster_id")) |>
-  dplyr::mutate(censito = presente_a_database == "Presente")
+  dplyr::mutate(censito = presente_a_database == "PIA")
 
 # Indice con pesi a scelta, calcolato dalla funzione del pacchetto.
 indice_con_pesi <- function(pesi_usati) {

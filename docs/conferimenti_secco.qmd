@@ -442,7 +442,7 @@ simula_conferimenti <- function(
   letture <- data.frame(
     data_ora_lettura = ora,
     RFID = b$RFID[letti$k],
-    presente_a_database = "Presente",
+    presente_a_database = "PIA",
     servizio_transponder = "SECCO",
     servizio_atteso = "SECCO",
     id_fornitura = b$id_fornitura[letti$k],
