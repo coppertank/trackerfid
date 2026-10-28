@@ -235,6 +235,8 @@ if (con_giri && !is.null(anagrafica_analisi)) {
   anagrafica_analisi <- dplyr::filter(anagrafica_analisi, .data$id_fornitura %in% lette)
 }
 economia_possibile <- !is.null(anagrafica) && (is.null(servizio) || servizio == "SECCO")
+# Diventa vero se l'analisi economica trova almeno una fornitura.
+economia_utile <- FALSE
 ```
 
 ```{r}
@@ -274,13 +276,27 @@ if (!con_saponette) {
 
 ```{r}
 #| label: selezione
+# Giorni coperti da un sistema nella selezione: se un sistema è partito dopo o si
+# è fermato prima, il confronto tra i due riguarda solo i giorni in comune.
+copertura <- function(finali, registro) {
+  giorni <- c(finali$data_lettura, registro$data_lettura)
+  giorni <- giorni[!is.na(giorni)]
+  if (length(giorni) == 0) {
+    return("nessuna")
+  }
+  paste0(
+    "dal ", data_it(min(giorni)), " al ", data_it(max(giorni)), " (",
+    intero(length(unique(giorni))), " giorni con letture)"
+  )
+}
 righe_selezione <- dplyr::tibble(
   Voce = c(
     "Periodo",
     "Letture",
     "Servizio",
     "Fascia di componenti",
-    "Sistemi con letture"
+    "Letture delle antenne",
+    "Letture delle saponette"
   ),
   Valore = c(
     paste0(data_it(dal), " - ", data_it(al), " (", intero(as.numeric(al - dal) + 1), " giorni)"),
@@ -297,13 +313,8 @@ righe_selezione <- dplyr::tibble(
       servizio
     },
     if (is.null(gruppo_scelto)) "tutte" else gruppo_scelto,
-    paste(
-      c(
-        if (con_antenne) "antenne",
-        if (con_saponette) "saponette"
-      ),
-      collapse = " e "
-    )
+    copertura(selezione$antenne, selezione$scartate_antenne),
+    copertura(selezione$saponette, selezione$scartate_saponette)
   )
 )
 knitr::kable(righe_selezione, align = "ll")
@@ -617,6 +628,7 @@ La **propensione numerica** è il numero di letture compatibili (dei due sistemi
 #| label: economia
 #| eval: !expr economia_possibile
 economia <- analisi_economica(unita, anagrafica_analisi)
+economia_utile <- nrow(economia) > 0
 riepilogo <- riepilogo_economico(economia)
 nuovo_riepilogo <- dplyr::tibble(
   Scenario = riepilogo$scenario,
@@ -632,8 +644,20 @@ nuovo_riepilogo <- dplyr::tibble(
 ```
 
 ```{r}
-#| label: economia-testo
+#| label: economia-vuota
 #| eval: !expr economia_possibile
+#| results: asis
+if (!economia_utile) {
+  cat("\n::: {.callout-note}\nNel periodo e nella selezione non ci sono forniture domestiche del secco con almeno un conferimento e una composizione del nucleo nota: l'analisi economica è vuota.\n:::\n")
+}
+if (con_giri) {
+  cat("\n::: {.callout-warning}\n**Con i giri indicati l'analisi economica è un campione.** I litri sono quelli rilevati nei soli giri della lista e le soglie della tariffa valgono per il periodo scelto (", intero(as.numeric(al - dal) + 1), " giorni): se quei giri non coprono tutto il periodo per le forniture considerate, i litri sono sottostimati e le classi (premialità, ordinaria, eccedente) non sono attendibili. Il periodo lo scegli tu con `dal` e `al` (senza, è quello dei giri); per un'analisi economica su tutte le letture compila il report senza giri.\n:::\n", sep = "")
+}
+```
+
+```{r}
+#| label: economia-testo
+#| eval: !expr economia_utile
 #| results: asis
 cat(
   "Le forniture domestiche del secco con almeno un conferimento nel periodo e una composizione del nucleo nota: **",
@@ -649,7 +673,7 @@ cat(". Condomini e non domestiche hanno altre regole di fatturazione e non entra
 
 ```{r}
 #| label: economia-riepilogo
-#| eval: !expr economia_possibile
+#| eval: !expr economia_utile
 knitr::kable(nuovo_riepilogo, align = "lrrrrrrrr")
 ```
 
@@ -657,7 +681,7 @@ Gli scenari rispondono alla domanda: che cosa sarebbe successo fatturando con le
 
 ```{r}
 #| label: grafico-economia
-#| eval: !expr economia_possibile
+#| eval: !expr economia_utile
 #| fig-height: 3.4
 conteggi_classi <- dplyr::bind_rows(
   dplyr::tibble(scenario = riepilogo$scenario, classe = "Premialità", forniture = riepilogo$premialita),
@@ -689,7 +713,7 @@ ggplot(conteggi_classi, aes(x = .data$forniture, y = .data$scenario, fill = .dat
 
 ```{r}
 #| label: economia-litri
-#| eval: !expr economia_possibile
+#| eval: !expr economia_utile
 knitr::kable(
   dplyr::tibble(
     Scenario = riepilogo$scenario,
@@ -705,7 +729,7 @@ I **litri in premialità** sono quelli conferiti dalle forniture che accedono al
 
 ```{r}
 #| label: economia-fasce
-#| eval: !expr economia_possibile
+#| eval: !expr economia_utile
 #| results: asis
 cat("\n### Quote di premio\n\n")
 premi <- forniture_per_fascia(economia, "premio")
@@ -740,7 +764,7 @@ cat("\nLa quota è sul totale delle forniture dello scenario. Le quote di premio
 
 ```{r}
 #| label: economia-gruppi
-#| eval: !expr economia_possibile
+#| eval: !expr economia_utile
 per_gruppo <- riepilogo_economico(economia, per_gruppo = TRUE)
 per_gruppo <- per_gruppo[per_gruppo$scenario == names(scenari_rilevazione())[1], ]
 knitr::kable(
@@ -763,7 +787,7 @@ Scenario di riferimento, saponette e antenne insieme. La casa vuota (limite di 2
 
 ```{r}
 #| label: economia-impatto
-#| eval: !expr "economia_possibile && con_antenne && con_saponette"
+#| eval: !expr "economia_utile && con_antenne && con_saponette"
 impatto <- impatto_dei_sistemi(economia)
 knitr::kable(
   dplyr::tibble(
@@ -779,6 +803,18 @@ knitr::kable(
     Differenza = euro(impatto$differenza_eur)
   ),
   align = "lrrrrrrrrr"
+)
+```
+
+```{r}
+#| label: avviso-copertura
+#| eval: !expr "economia_utile && con_antenne && con_saponette"
+#| results: asis
+cat(
+  "\n::: {.callout-warning}\nLe antenne vedono il **", quota(ind$efficacia_antenne),
+  "** delle letture compatibili della selezione e le saponette il **", quota(ind$efficacia_saponette),
+  "**. Lo scenario «Solo antenne» (o «Solo saponette») ha senso solo se quel sistema era attivo su tutti i mezzi e per tutto il periodo: le forniture che il sistema non vede hanno zero litri e prendono il premio massimo, quindi i «premi in più» dipendono dai mezzi o dai giorni che il sistema non copre.\n:::\n",
+  sep = ""
 )
 ```
 
@@ -844,7 +880,7 @@ cat("\n::: {.callout-note}\nCon i giri indicati le forniture senza conferimenti 
 
 ```{r}
 #| label: esporta-economia
-#| eval: !expr "economia_possibile && !vuoto(params$cartella_csv)"
+#| eval: !expr "economia_utile && !vuoto(params$cartella_csv)"
 dir.create(percorso_progetto(params$cartella_csv), recursive = TRUE, showWarnings = FALSE)
 utils::write.table(
   economia,

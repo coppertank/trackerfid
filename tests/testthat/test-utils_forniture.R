@@ -197,3 +197,75 @@ test_that("la fascia di componenti del report si sceglie con un numero o un nome
     vapply(c("0", 1:5, "6+", "potenziamento"), gruppo_da_filtro, "") %in% gruppi_forniture()
   ))
 })
+
+test_that("senza manovre o composizioni che toccano le forniture i conteggi restano vuoti", {
+  attivita <- dplyr::tibble(
+    id_fornitura = "F1",
+    inizio = as.Date("2025-01-01"),
+    fine = as.Date("2025-12-31")
+  )
+  nessuna <- componenti_medi_pesati(attivita, componenti_forniture_prova()[0, ])
+  expect_identical(nrow(nessuna), 0L)
+  altrove <- componenti_medi_pesati(attivita, dplyr::filter(componenti_forniture_prova(), id_fornitura == "F2"))
+  expect_identical(nrow(altrove), 0L)
+  expect_identical(
+    nrow(giorni_coperti(dplyr::tibble(id_fornitura = character(0), da = as.Date(character(0)), a = as.Date(character(0))))),
+    0L
+  )
+  # manovre di forniture che non sono attive: nessuna fornitura con il potenziamento
+  anagrafica <- anagrafica_forniture(
+    contenitori_forniture_prova(),
+    componenti_forniture_prova(),
+    dplyr::tibble(
+      id_fornitura = "ALTRA",
+      data_inizio_dichiarazione = as.Date("2025-01-01"),
+      data_fine_dichiarazione = as.Date(NA)
+    ),
+    "2025-01-01",
+    "2025-12-31"
+  )
+  expect_false(any(anagrafica$potenziamento))
+  # e senza nessun contenitore attivo l'anagrafica e' vuota
+  vuota <- anagrafica_forniture(
+    contenitori_forniture_prova(),
+    componenti_forniture_prova(),
+    manovre_forniture_prova(),
+    "2100-01-01",
+    "2100-12-31"
+  )
+  expect_identical(nrow(vuota), 0L)
+})
+
+test_that("senza la categoria dei contenitori vale quella della composizione dei nuclei", {
+  contenitori <- contenitori_forniture_prova()
+  contenitori$categoria_contenitore <- NA_character_
+  componenti <- componenti_forniture_prova()
+  componenti$categoria <- ifelse(componenti$id_fornitura == "F3", "34", "31")
+  anagrafica <- anagrafica_forniture(
+    contenitori,
+    componenti,
+    manovre_forniture_prova(),
+    "2025-01-01",
+    "2025-12-31"
+  )
+  tipo <- stats::setNames(anagrafica$tipo, anagrafica$id_fornitura)
+  expect_identical(tipo[["F1"]], "domestica")
+  expect_identical(tipo[["F3"]], "condominio")
+  # la categoria del contenitore, se c'e', ha la precedenza
+  contenitori$categoria_contenitore <- "32"
+  con_contenitore <- anagrafica_forniture(contenitori, componenti, manovre_forniture_prova(), "2025-01-01", "2025-12-31")
+  expect_true(all(con_contenitore$categoria == "32"))
+})
+
+test_that("manca codice_categoria nel file dei contenitori: avviso e categoria vuota", {
+  percorso <- scrivi_csv(c(
+    "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio",
+    "123,SECCO,120,Q,26,2020-01-01,,F1,ATTIVA,U1,LIMENA"
+  ))
+  expect_warning(
+    contenitori <- importa_contenitori(percorso, categoria = TRUE),
+    "manca `codice_categoria`"
+  )
+  expect_true(is.na(contenitori$categoria_contenitore))
+  expect_no_warning(importa_contenitori(percorso))
+})

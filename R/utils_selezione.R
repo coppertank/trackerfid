@@ -67,7 +67,7 @@ sql_sacchetto <- function(colonna = "RFID") {
 #' Contesto: un non censito non ha un servizio a database; icona, filtri e
 #' statistiche usano quello stimato. Ricalcolarlo a ogni filtro rallentava, quindi
 #' si calcola una volta per periodo.
-#' Funzionamento: sulle letture `Non Presente` del periodo, se la tipologia
+#' Funzionamento: sulle letture non censite (`PIT` o `NP`) del periodo, se la tipologia
 #' prevalente raggiunge `soglia` (80%) il servizio è il giro più letto di quella
 #' tipologia; altrimenti `NA` (stima incerta). Regola di
 #' `servizio_prevalente_non_censiti()`. La tabella resta finché l'archivio è

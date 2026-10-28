@@ -191,7 +191,7 @@ importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
   # nello stesso giorno, anche se letto più volte
   valide <- (lette$latitudine != 0 & lette$comune_lettura != "") %in% TRUE
   ordinate <- dplyr::arrange(lette[valide, ], .data$data_ora_lettura)
-  ripetute <- duplicated(ordinate[c("data_lettura", "RFID")])
+  ripetute <- righe_ripetute(ordinate, c("data_lettura", "RFID"))
   ordinate[!ripetute, ] |>
     dplyr::left_join(
       dplyr::select(comuni, "comune", "cantiere"),
@@ -255,6 +255,13 @@ importa_contenitori <- function(percorso, categoria = FALSE) {
       )
     )
   if (categoria) {
+    if (!"codice_categoria" %in% leggi_intestazione_origine(percorso)) {
+      warning(
+        "Nel file dei contenitori manca `codice_categoria`: la categoria delle ",
+        "forniture si ricava dalla composizione dei nuclei.",
+        call. = FALSE
+      )
+    }
     contenitori$categoria_contenitore <- codice_categoria
   }
   contenitori
@@ -293,6 +300,18 @@ importa_tag_contenitori <- function(percorso) {
     ) |>
     dplyr::filter(!is.na(.data$codice_transponder)) |>
     dplyr::distinct()
+}
+
+#' Nomi delle colonne di un CSV estratto, senza leggerne le righe
+#' @param percorso Percorso del CSV.
+#' @noRd
+leggi_intestazione_origine <- function(percorso) {
+  names(data.table::fread(
+    percorso,
+    sep = rileva_separatore(percorso),
+    nrows = 0,
+    header = TRUE
+  ))
 }
 
 #' Sacchetti e fornitura del loro gruppo

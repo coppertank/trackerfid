@@ -44,6 +44,25 @@ righe_scartate <- function(letture, scartate, motivo) {
     )
 }
 
+#' Quali righe ripetono una riga precedente? Vettore logico, come `duplicated()`
+#'
+#' Contesto: `duplicated()` su un data frame costruisce una lista per riga, e con
+#' milioni di righe esaurisce la memoria (la pipeline sui dati veri si fermava
+#' con «callr subprocesses failed»). Con `dplyr::distinct()` lo stesso risultato
+#' costa una frazione.
+#' Funzionamento: tiene la prima riga di ogni combinazione dei valori delle
+#' `colonne` e segna le altre.
+#' Risultato: un vettore logico lungo come `x`, vero per le righe ripetute.
+#' @param x Data frame.
+#' @param colonne Colonne che identificano una riga; di norma tutte.
+#' @noRd
+righe_ripetute <- function(x, colonne = names(x)) {
+  chiavi <- dplyr::as_tibble(x)[colonne]
+  chiavi$riga <- seq_len(nrow(chiavi))
+  prime <- dplyr::distinct(chiavi, dplyr::across(dplyr::all_of(colonne)), .keep_all = TRUE)
+  !chiavi$riga %in% prime$riga
+}
+
 #' Mette le righe scartate da un passo nell'attributo `scartate` di un data frame
 #'
 #' Contesto: vedi `righe_scartate()`. I verbi di dplyr portano con sé gli
@@ -66,7 +85,7 @@ con_scartate <- function(letture, nuove) {
 #' Risultato: le righe senza ripetizioni, con l'attributo `scartate`.
 #' @noRd
 togli_righe_ripetute <- function(letture) {
-  ripetute <- duplicated(dplyr::as_tibble(letture))
+  ripetute <- righe_ripetute(letture)
   con_scartate(
     letture[!ripetute, , drop = FALSE],
     righe_scartate(letture, ripetute, "doppione")
@@ -532,7 +551,7 @@ ripara_codici_rfid <- function(letture, contenitori, tag_contenitori) {
 #' Risultato: le stesse colonne, con al più una riga per RFID e giorno.
 #' @noRd
 una_lettura_al_giorno <- function(letture) {
-  ripetute <- duplicated(letture[c("data_lettura", "RFID")])
+  ripetute <- righe_ripetute(letture, c("data_lettura", "RFID"))
   con_scartate(
     letture[!ripetute, , drop = FALSE],
     righe_scartate(letture, ripetute, "doppione")

@@ -1665,3 +1665,25 @@ test_that("il controllo dei giri confronta le matricole senza zeri iniziali", {
   )
   expect_identical(nrow(da_controllare), 0L)
 })
+
+test_that("le righe ripetute sono come per duplicated(), anche con mancanti e istanti", {
+  x <- dplyr::tibble(
+    giorno = as.Date(c("2026-01-01", "2026-01-01", NA, NA, "2026-01-02", "2026-01-01")),
+    ora = as.POSIXct(c("2026-01-01 08:00:00", "2026-01-01 08:00:00", NA, NA, "2026-01-02 08:00:00", "2026-01-01 09:00:00"), tz = "UTC"),
+    RFID = c("A", "A", NA, NA, "A", "A")
+  )
+  expect_identical(righe_ripetute(x), duplicated(as.data.frame(x)))
+  expect_identical(righe_ripetute(x), c(FALSE, TRUE, FALSE, TRUE, FALSE, FALSE))
+  # solo alcune colonne: la prima riga di ogni giorno e RFID
+  expect_identical(
+    righe_ripetute(x, c("giorno", "RFID")),
+    duplicated(as.data.frame(x[c("giorno", "RFID")]))
+  )
+  expect_identical(righe_ripetute(x[0, ]), logical(0))
+  # milioni di righe in una frazione di secondo, senza una lista per riga
+  grande <- dplyr::tibble(
+    giorno = as.Date("2026-01-01") + sample(0:300, 3e5, TRUE),
+    RFID = sprintf("%010X", sample(1e6, 3e5, TRUE))
+  )
+  expect_lt(system.time(righe_ripetute(grande))[["elapsed"]], 2)
+})

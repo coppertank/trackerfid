@@ -124,17 +124,22 @@ gruppo_da_filtro <- function(componenti) {
 #'   inclusi, con `da` non dopo `a`).
 #' @noRd
 giorni_coperti <- function(intervalli) {
-  intervalli |>
-    dplyr::arrange(.data$id_fornitura, .data$da, .data$a) |>
-    dplyr::mutate(
-      fine_precedente = dplyr::lag(cummax(as.numeric(.data$a)), default = -Inf),
-      .by = "id_fornitura"
-    ) |>
-    dplyr::mutate(
-      inizio_nuovo = pmax(as.numeric(.data$da), .data$fine_precedente + 1),
-      giorni = pmax(as.numeric(.data$a) - .data$inizio_nuovo + 1, 0)
-    ) |>
-    dplyr::summarise(giorni = sum(.data$giorni), .by = "id_fornitura")
+  ordinati <- dplyr::arrange(intervalli, .data$id_fornitura, .data$da, .data$a)
+  gruppo <- indice_gruppi(ordinati$id_fornitura)
+  n_gruppi <- max(c(gruppo, 0L))
+  # Un salto per gruppo, più grande di ogni data: il massimo cumulato non passa
+  # da un gruppo al successivo.
+  salto <- gruppo * 1e6
+  fine <- as.numeric(ordinati$a) + salto
+  fine_precedente <- c(-Inf, cummax(fine)[-length(fine)])
+  inizio_gruppo <- !duplicated(gruppo)
+  fine_precedente[inizio_gruppo] <- -Inf
+  inizio_nuovo <- pmax(as.numeric(ordinati$da) + salto, fine_precedente + 1)
+  giorni <- pmax(fine - inizio_nuovo + 1, 0)
+  dplyr::tibble(
+    id_fornitura = ordinati$id_fornitura[inizio_gruppo],
+    giorni = somma_per_gruppo(giorni, gruppo, n_gruppi)
+  )
 }
 
 #' Componenti medi di ogni fornitura nel suo periodo di attività, pesati sul tempo
@@ -147,50 +152,57 @@ giorni_coperti <- function(intervalli) {
 #' di attività della fornitura. Si pesano i `nucleo_residenti` con i giorni. Una
 #' riga senza inizio non vale (come nella pipeline).
 #' Risultato: `id_fornitura`, `componenti_medi`, `giorni_con_componenti` e la
-#' `sottocategoria` dell'ultima riga del periodo.
+#' `sottocategoria` e la `categoria_nuclei` dell'ultima riga del periodo.
 #' @param attivita Data frame con `id_fornitura`, `inizio` e `fine`.
 #' @param componenti Tabella di `importa_componenti()`.
 #' @noRd
 componenti_medi_pesati <- function(attivita, componenti) {
-  componenti |>
+  componenti$categoria <- componenti[["categoria"]] %||% NA_character_
+  righe <- componenti |>
     dplyr::transmute(
       id_fornitura = as.character(.data$id_fornitura),
+      categoria = as.character(.data$categoria),
       # Istanti nel fuso della sessione, come li legge `importa_componenti()`.
-      da_riga = as.Date(.data$data_inizio_decorrenza, tz = ""),
-      a_riga = as.Date(.data$data_fine_decorrenza, tz = ""),
+      da_riga = as.numeric(as.Date(.data$data_inizio_decorrenza, tz = "")),
+      a_riga = as.numeric(as.Date(.data$data_fine_decorrenza, tz = "")),
       nucleo_residenti = .data$nucleo_residenti,
       sottocategoria = .data$sottocategoria
     ) |>
     dplyr::filter(!is.na(.data$da_riga)) |>
-    dplyr::arrange(.data$id_fornitura, .data$da_riga) |>
-    dplyr::mutate(
-      a_riga = pmin(
-        dplyr::coalesce(.data$a_riga, as.Date("2099-12-31")),
-        dplyr::lead(.data$da_riga, default = as.Date("2099-12-31")) - 1,
-        na.rm = TRUE
-      ),
-      .by = "id_fornitura"
-    ) |>
+    dplyr::arrange(.data$id_fornitura, .data$da_riga)
+  n <- nrow(righe)
+  aperta <- as.numeric(as.Date("2099-12-31"))
+  # Ogni riga vale fino al giorno prima della riga seguente della stessa fornitura.
+  stessa_fornitura <- c(righe$id_fornitura[-1] == righe$id_fornitura[-n], FALSE)
+  prossimo_inizio <- c(righe$da_riga[-1], NA)
+  righe$a_riga <- pmin(
+    dplyr::coalesce(righe$a_riga, aperta),
+    ifelse(stessa_fornitura, prossimo_inizio - 1, aperta)
+  )
+  pesate <- righe |>
     dplyr::inner_join(
-      attivita,
+      dplyr::mutate(
+        attivita,
+        inizio = as.numeric(.data$inizio),
+        fine = as.numeric(.data$fine)
+      ),
       by = "id_fornitura",
       relationship = "many-to-many"
     ) |>
     dplyr::mutate(
-      da = pmax(.data$da_riga, .data$inizio),
-      a = pmin(.data$a_riga, .data$fine),
-      giorni = pmax(as.numeric(.data$a - .data$da) + 1, 0)
+      giorni = pmax(pmin(.data$a_riga, .data$fine) - pmax(.data$da_riga, .data$inizio) + 1, 0)
     ) |>
-    dplyr::filter(.data$giorni > 0, !is.na(.data$nucleo_residenti)) |>
-    dplyr::summarise(
-      componenti_medi = stats::weighted.mean(
-        .data$nucleo_residenti,
-        .data$giorni
-      ),
-      giorni_con_componenti = sum(.data$giorni),
-      sottocategoria = dplyr::last(.data$sottocategoria),
-      .by = "id_fornitura"
-    )
+    dplyr::filter(.data$giorni > 0, !is.na(.data$nucleo_residenti))
+  gruppo <- indice_gruppi(pesate$id_fornitura)
+  n_gruppi <- max(c(gruppo, 0L))
+  giorni <- somma_per_gruppo(pesate$giorni, gruppo, n_gruppi)
+  dplyr::tibble(
+    id_fornitura = pesate$id_fornitura[!duplicated(gruppo)],
+    componenti_medi = somma_per_gruppo(pesate$nucleo_residenti * pesate$giorni, gruppo, n_gruppi) / giorni,
+    giorni_con_componenti = giorni,
+    sottocategoria = ultimo_per_gruppo(pesate$sottocategoria, gruppo, n_gruppi),
+    categoria_nuclei = ultimo_per_gruppo(pesate$categoria, gruppo, n_gruppi)
+  )
 }
 
 #' Forniture attive in un periodo, con categoria, componenti, potenziamento e contenitori
@@ -198,7 +210,8 @@ componenti_medi_pesati <- function(attivita, componenti) {
 #' Contesto: i denominatori degli indicatori (forniture, contenitori, propensione,
 #' analisi economica) e la popolazione di cui cercare le forniture senza
 #' conferimenti vengono dall'anagrafica, non dalle letture. Categoria dal file dei
-#' contenitori (`codice_categoria`), componenti dalla composizione dei nuclei,
+#' contenitori (`codice_categoria`; se il file non l'ha vale quella della
+#' composizione dei nuclei), componenti dalla composizione dei nuclei,
 #' potenziamento dalle manovre sociali del secco (scelte del proprietario).
 #'
 #' Funzionamento: tiene i contenitori con un tag attivi almeno un giorno tra `dal` e
@@ -230,27 +243,47 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al) {
         .data$data_cessazione_contenitore >= dal) %in% TRUE
     )
 
-  per_fornitura <- attivi |>
-    dplyr::arrange(.data$id_fornitura, .data$data_attivazione_contenitore) |>
-    dplyr::summarise(
-      servizio = toupper(dplyr::first(.data$servizio_transponder)),
-      id_utenza = dplyr::first(.data$id_utenza),
-      categoria = dplyr::last(.data$categoria_contenitore),
-      contenitori = dplyr::n_distinct(.data$codice_transponder),
-      volume_contenitore = valore_piu_frequente(.data$volume),
-      volume_totale = sum(
-        .data$volume[!duplicated(.data$codice_transponder)],
-        na.rm = TRUE
-      ),
-      raccolte_annue = suppressWarnings(
-        max(.data$numero_raccolte_annue, na.rm = TRUE)
-      ),
-      inizio = pmax(min(.data$data_attivazione_contenitore), dal),
-      fine = pmin(max(.data$data_cessazione_contenitore), al),
-      .by = "id_fornitura"
-    ) |>
+  # Calcoli per gruppo su vettori (`R/utils_gruppi.R`): con centinaia di
+  # migliaia di forniture un riepilogo gruppo per gruppo costa minuti.
+  attivi <- dplyr::arrange(
+    attivi,
+    .data$id_fornitura,
+    .data$data_attivazione_contenitore
+  )
+  gruppo <- indice_gruppi(attivi$id_fornitura)
+  n_gruppi <- max(c(gruppo, 0L))
+  attivazione <- estremi_per_gruppo(as.numeric(attivi$data_attivazione_contenitore), gruppo, n_gruppi)
+  cessazione <- estremi_per_gruppo(as.numeric(attivi$data_cessazione_contenitore), gruppo, n_gruppi)
+  # Il volume totale conta ogni contenitore una volta.
+  primo_del_contenitore <- !duplicated(paste(gruppo, attivi$codice_transponder))
+  # A parità di frequenza vince il volume più grande: si ordinano per volume.
+  per_volume <- order(gruppo, attivi$volume)
+  raccolte <- estremi_per_gruppo(
+    dplyr::coalesce(as.numeric(attivi$numero_raccolte_annue), -Inf),
+    gruppo,
+    n_gruppi
+  )$massimo
+  per_fornitura <- dplyr::tibble(
+    id_fornitura = attivi$id_fornitura[!duplicated(gruppo)],
+    servizio = toupper(primo_per_gruppo(attivi$servizio_transponder, gruppo, n_gruppi)),
+    id_utenza = primo_per_gruppo(attivi$id_utenza, gruppo, n_gruppi),
+    categoria = ultimo_per_gruppo(attivi$categoria_contenitore, gruppo, n_gruppi),
+    contenitori = n_distinti_per_gruppo(attivi$codice_transponder, gruppo, n_gruppi),
+    volume_contenitore = piu_frequente_per_gruppo(
+      attivi$volume[per_volume],
+      gruppo[per_volume],
+      n_gruppi
+    ),
+    volume_totale = somma_per_gruppo(
+      ifelse(primo_del_contenitore, dplyr::coalesce(attivi$volume, 0), 0),
+      gruppo,
+      n_gruppi
+    ),
+    raccolte_annue = ifelse(is.finite(raccolte), raccolte, NA_real_),
+    inizio = pmax(as.Date(attivazione$minimo, origin = "1970-01-01"), dal),
+    fine = pmin(as.Date(cessazione$massimo, origin = "1970-01-01"), al)
+  ) |>
     dplyr::mutate(
-      raccolte_annue = ifelse(is.finite(.data$raccolte_annue), .data$raccolte_annue, NA_real_),
       giorni_attivi = as.numeric(.data$fine - .data$inizio) + 1,
       fattore = .data$giorni_attivi / giorni_dell_anno(dal, al)
     )
@@ -285,6 +318,8 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al) {
     dplyr::mutate(
       giorni_potenziamento = dplyr::coalesce(.data$giorni_potenziamento, 0),
       potenziamento = .data$giorni_potenziamento >= .data$giorni_attivi / 2,
+      # Senza la categoria del contenitore vale quella della composizione dei nuclei.
+      categoria = dplyr::coalesce(.data$categoria, .data$categoria_nuclei),
       tipo = tipo_fornitura(.data$categoria, .data$sottocategoria),
       gruppo = gruppo_fornitura(
         .data$tipo,
@@ -292,18 +327,7 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al) {
         .data$potenziamento
       )
     ) |>
-    dplyr::select(-"giorni_potenziamento")
-}
-
-#' Valore più frequente di un vettore numerico; il più grande a parità
-#' @noRd
-valore_piu_frequente <- function(x) {
-  x <- x[!is.na(x)]
-  if (length(x) == 0) {
-    return(NA_real_)
-  }
-  conteggi <- table(x)
-  max(as.numeric(names(conteggi)[conteggi == max(conteggi)]))
+    dplyr::select(-"giorni_potenziamento", -"categoria_nuclei")
 }
 
 #' Anagrafica delle forniture di un periodo, dalle tabelle estratte
