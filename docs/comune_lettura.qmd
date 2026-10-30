@@ -98,8 +98,8 @@ digraph dati {
 
 # Prima di tutto: quali letture entrano
 
-- Si scartano le letture con latitudine zero e quelle senza comune dopo la virgola: per il proprietario sono dati sporchi.
-- Per ogni RFID resta *una lettura al giorno*, la prima valida in ordine di tempo (prima si tolgono le sporche, poi si guarda quale è la prima). Il controllo si fa dopo la pulizia dei codici (`formatta_rfid()`), perché due codici letti male possono diventare lo stesso RFID.
+- Le letture con latitudine zero o senza comune dopo la virgola **si tengono** (dal 30/10/2026): sono comunque bidoni letti. Restano con la posizione e il comune vuoti, e il comune si ricava dalla posizione solo dove c'è.
+- Per ogni RFID resta *una lettura al giorno*: la prima in ordine di tempo tra quelle che hanno una posizione e, se nessuna ce l'ha, la prima in ordine di tempo. Il controllo si fa dopo la pulizia dei codici (`formatta_rfid()`), perché due codici letti male possono diventare lo stesso RFID.
 - Solo i mezzi con il test delle antenne positivo, e solo dal giorno dopo il test.
 
 # Il percorso

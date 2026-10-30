@@ -150,17 +150,17 @@ importa_test_mezzi <- function(percorso) {
 #'
 #' Funzionamento: ricava il comune di lettura dal testo dopo la prima virgola di
 #' `IndirizzoLocalizzazione` («indirizzo, comune», in maiuscolo) e il cantiere
-#' dalla tabella dei comuni, per nome esatto. Scarta come dati sporchi le letture
-#' con latitudine zero o senza comune. Poi, per ogni RFID, tiene la prima lettura
-#' valida del giorno (prima i filtri, poi la deduplica, così resta la prima
-#' lettura buona). L'istante è nel fuso della sessione di R, come i turni del
-#' calendario: devono restare nello stesso fuso.
+#' dalla tabella dei comuni, per nome esatto. Una lettura con latitudine zero o
+#' senza comune **si tiene**: è comunque un bidone letto. Resta con posizione e
+#' comune mancanti (la posizione zero diventa `NA`). Per ogni RFID tiene una
+#' lettura al giorno, la prima con una posizione e, se nessuna ce l'ha, la
+#' prima in ordine di tempo; le altre sono doppioni. L'istante è nel fuso della
+#' sessione di R, come i turni del calendario: devono restare nello stesso fuso.
 #'
 #' Risultato: `data_ora_lettura`, `data_lettura`, `targa_veicolo`, `RFID`,
 #' `comune_lettura` (quello del GPS, non ancora corretto con la posizione),
-#' `NumeroLetture`, `latitudine`, `longitudine`, `cantiere`. Le letture scartate
-#' (posizione zero, senza comune, doppioni) stanno nell'attributo `scartate`,
-#' vedi `righe_scartate()`.
+#' `NumeroLetture`, `latitudine`, `longitudine`, `cantiere`. I doppioni scartati
+#' stanno nell'attributo `scartate`, vedi `righe_scartate()`.
 #' @param percorso Percorso del CSV delle letture.
 #' @param comuni Tabella dei comuni serviti con il loro cantiere.
 #' @noRd
@@ -186,21 +186,26 @@ importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
       NumeroLetture = .data$NumeroLetture,
       latitudine = numero_testo(.data$Latitudine),
       longitudine = numero_testo(.data$Longitudine)
+    ) |>
+    dplyr::mutate(
+      # Una lettura senza posizione o senza comune si tiene, con i campi vuoti.
+      senza_posizione = (.data$latitudine == 0) %in% TRUE,
+      latitudine = dplyr::if_else(.data$senza_posizione, NA_real_, .data$latitudine),
+      longitudine = dplyr::if_else(.data$senza_posizione, NA_real_, .data$longitudine),
+      comune_lettura = dplyr::na_if(.data$comune_lettura, "")
     )
-  # prima via i dati sporchi, poi la prima lettura valida di un transponder
-  # nello stesso giorno, anche se letto più volte
-  valide <- (lette$latitudine != 0 & lette$comune_lettura != "") %in% TRUE
-  ordinate <- dplyr::arrange(lette[valide, ], .data$data_ora_lettura)
+  # Una lettura al giorno per RFID: la prima con una posizione, altrimenti la
+  # prima in ordine di tempo. Poi si torna all'ordine di tempo.
+  ordinate <- dplyr::arrange(lette, .data$senza_posizione, .data$data_ora_lettura)
   ripetute <- righe_ripetute(ordinate, c("data_lettura", "RFID"))
   ordinate[!ripetute, ] |>
+    dplyr::arrange(.data$data_ora_lettura) |>
+    dplyr::select(-"senza_posizione") |>
     dplyr::left_join(
       dplyr::select(comuni, "comune", "cantiere"),
       by = c("comune_lettura" = "comune")
     ) |>
-    con_scartate(dplyr::bind_rows(
-      righe_scartate(lette, !valide, "senza_posizione_o_comune"),
-      righe_scartate(ordinate, ripetute, "doppione")
-    ))
+    con_scartate(righe_scartate(ordinate, ripetute, "doppione"))
 }
 
 #' Anagrafica dei contenitori con un codice transponder, e loro forniture

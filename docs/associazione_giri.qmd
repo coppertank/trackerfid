@@ -95,7 +95,7 @@ passi <- dplyr::tribble(
   "servizio_unico"                                                                                                                                                                          ,
   "Tutti i non pianificati del mezzo hanno lo stesso servizio?"                                                                                                                             ,
   "quel servizio, nel comune più vicino"                                                                                                                                                    ,
-  "Il servizio è certo (`distinct()` sul servizio), anche se i comuni sono diversi. Il giro è quello del comune più vicino alla lettura."                                                   ,
+  "Il servizio è certo (`distinct()` sul servizio), anche se i comuni sono diversi. Il giro è quello del comune più vicino alla lettura (una lettura senza posizione lo ha solo se c'è un unico giro candidato)."                                                   ,
 
   "tratto"                                                                                                                                                                                  ,
   "Le letture di seguito (stesso tratto) hanno già un giro?"                                                                                                                                ,
@@ -536,7 +536,7 @@ digraph servizio {
 )
 ```
 
-Il servizio (CARTA) è lo stesso nei due giri, quindi è certo; il giro è N1, il comune più vicino. Una lettura fuori da tutti i comuni dei giri resta «fuori giro»: il servizio è giusto, il comune no.
+Il servizio (CARTA) è lo stesso nei due giri, quindi è certo; il giro è N1, il comune più vicino. Una lettura fuori da tutti i comuni dei giri resta «fuori giro»: il servizio è giusto, il comune no. Una lettura senza posizione non ha un comune più vicino: prende il giro solo se è l'unico candidato, altrimenti lo riceve dalle letture vicine dello stesso tratto, o resta senza giro.
 
 # Un mezzo senza giri: il servizio dai censiti del tratto
 

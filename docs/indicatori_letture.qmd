@@ -320,7 +320,7 @@ righe_selezione <- dplyr::tibble(
 knitr::kable(righe_selezione, align = "ll")
 ```
 
-Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Una lettura è **compatibile** se ha una fornitura associata (`presente_a_database` uguale a `PIA`); tutte le altre sono **scartate**, perché non si potranno mai fatturare: sia i codici che la pulizia ha scartato, sia i codici validi che il database conosce solo tra i tag (`PIT`) o per niente (`NP`).
+Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Sono **compatibili** le letture che la pulizia tiene, anche se il database non le conosce: sono potenzialmente bidoni dell'azienda. Quelle **associate** sono le compatibili con una fornitura (`presente_a_database` uguale a `PIA`); le **non associate** sono le altre, cioè i contenitori presenti solo tra i tag (`PIT`) o per niente nel database (`NP`). Sono **scartate** solo le letture che la pulizia toglie: i codici nulli (soli zeri) e i codici lunghi che non sono bidoni (più di 10 caratteri e due o più cifre diverse da zero nei primi 14, né sacchetti né HERA). Le letture senza posizione si tengono, e anche i doppioni dello stesso giorno non sono letture distinte.
 
 ```{r}
 #| label: tabella-giri
@@ -377,11 +377,17 @@ Le forniture sono quelle con almeno un contenitore dotato di tag attivo nel peri
 ```{r}
 #| label: letture
 righe_letture <- dplyr::tibble(
-  Voce = c("Letture totali", "Compatibili (con fornitura)", "Scartate"),
-  `Solo saponette` = c(ind$letture_solo_saponette, ind$compatibili_solo_saponette, ind$scartate_solo_saponette),
-  `In comune` = c(ind$letture_in_comune, ind$compatibili_in_comune, ind$scartate_in_comune),
-  `Solo antenne` = c(ind$letture_solo_antenne, ind$compatibili_solo_antenne, ind$scartate_solo_antenne),
-  Totale = c(ind$letture_totali, ind$compatibili_totali, ind$scartate_totali)
+  Voce = c(
+    "Letture totali",
+    "Compatibili (tenute dalla pulizia)",
+    "  di cui associate (PIA)",
+    "  di cui non associate (PIT e NP)",
+    "Scartate"
+  ),
+  `Solo saponette` = c(ind$letture_solo_saponette, ind$compatibili_solo_saponette, ind$associate_solo_saponette, ind$non_associate_solo_saponette, ind$scartate_solo_saponette),
+  `In comune` = c(ind$letture_in_comune, ind$compatibili_in_comune, ind$associate_in_comune, ind$non_associate_in_comune, ind$scartate_in_comune),
+  `Solo antenne` = c(ind$letture_solo_antenne, ind$compatibili_solo_antenne, ind$associate_solo_antenne, ind$non_associate_solo_antenne, ind$scartate_solo_antenne),
+  Totale = c(ind$letture_totali, ind$compatibili_totali, ind$associate_totali, ind$non_associate_totali, ind$scartate_totali)
 )
 knitr::kable(
   dplyr::mutate(righe_letture, dplyr::across(-"Voce", intero)),
@@ -399,14 +405,14 @@ dati_grafico <- dplyr::bind_rows(
     letture = c(ind$letture_solo_saponette, ind$letture_in_comune, ind$letture_solo_antenne)
   ),
   dplyr::tibble(
-    voce = "Compatibili (PIA)",
+    voce = "Associate (PIA)",
     classe = names(colori_classi),
-    letture = c(ind$compatibili_solo_saponette, ind$compatibili_in_comune, ind$compatibili_solo_antenne)
+    letture = c(ind$associate_solo_saponette, ind$associate_in_comune, ind$associate_solo_antenne)
   )
 ) |>
   dplyr::mutate(
     classe = factor(.data$classe, names(colori_classi)),
-    voce = factor(.data$voce, c("Letture totali", "Compatibili (PIA)"))
+    voce = factor(.data$voce, c("Letture totali", "Associate (PIA)"))
   )
 ggplot(dati_grafico, aes(x = .data$letture, y = .data$classe, fill = .data$classe)) +
   geom_col(width = 0.55) +
@@ -500,6 +506,9 @@ kpi <- dplyr::tibble(
     "Scarto delle saponette",
     "Scarto delle antenne",
     "Scarto totale",
+    "Associazione delle saponette",
+    "Associazione delle antenne",
+    "Associazione in comune",
     "Efficacia delle saponette",
     "Efficacia delle antenne",
     "Efficacia in comune"
@@ -508,6 +517,9 @@ kpi <- dplyr::tibble(
     ind$indice_scarto_saponette,
     ind$indice_scarto_antenne,
     ind$indice_scarto_totale,
+    ind$associazione_saponette,
+    ind$associazione_antenne,
+    ind$associazione_in_comune,
     ind$efficacia_saponette,
     ind$efficacia_antenne,
     ind$efficacia_in_comune
@@ -516,6 +528,9 @@ kpi <- dplyr::tibble(
     "(scartate solo saponette + scartate in comune) / letture totali",
     "(scartate solo antenne + scartate in comune) / letture totali",
     "scartate totali / letture totali",
+    "(associate solo saponette + in comune) / compatibili totali",
+    "(associate solo antenne + in comune) / compatibili totali",
+    "associate in comune / compatibili totali",
     "(compatibili solo saponette + in comune) / compatibili totali",
     "(compatibili solo antenne + in comune) / compatibili totali",
     "compatibili in comune / compatibili totali"
@@ -530,7 +545,7 @@ knitr::kable(
 )
 ```
 
-L'**indice di scarto** dice quanto è inefficiente il filtro dei codici non utili per un sistema: la quota delle letture totali che quel sistema porta e che non diventeranno mai una fornitura. L'**indice di efficacia** dice quanta parte delle letture compatibili (quelle fatturabili) vede un sistema; l'efficacia in comune è la parte vista da tutti e due. Le efficacie di saponette e antenne non si sommano a 1: la parte in comune conta in tutte e due.
+L'**indice di scarto** dice quanto è inefficiente il filtro dei codici non utili per un sistema: la quota delle letture totali che quel sistema porta e che non diventeranno mai una fornitura. L'**indice di associazione** dice quanta parte delle letture compatibili è associata a una fornitura (`PIA`) e vista da un sistema; quella in comune è vista da tutti e due. L'**indice di efficacia** dice quanta parte delle letture compatibili vede un sistema, a prescindere dal database; l'efficacia in comune è la parte vista da tutti e due. Gli indici di saponette e antenne non si sommano a 1: la parte in comune conta in tutte e due.
 
 ```{r}
 #| label: grafico-kpi
@@ -559,7 +574,7 @@ ggplot(dati_efficacia, aes(x = .data$efficacia, y = .data$sistema, fill = .data$
   )) +
   labs(
     title = "Efficacia: quante letture compatibili vede ogni sistema",
-    subtitle = "Sulle letture compatibili (con fornitura) dei due sistemi insieme, ognuna una volta",
+    subtitle = "Sulle letture compatibili (tenute dalla pulizia) dei due sistemi insieme, ognuna una volta",
     x = NULL,
     y = NULL
   ) +
@@ -582,12 +597,15 @@ tabella_giri_ind <- dplyr::tibble(
   `In comune` = intero(per_giro$letture_in_comune),
   `Solo antenne` = intero(per_giro$letture_solo_antenne),
   Compatibili = intero(per_giro$compatibili_totali),
+  Associate = intero(per_giro$associate_totali),
   `Scarto sap.` = quota(per_giro$indice_scarto_saponette),
   `Scarto ant.` = quota(per_giro$indice_scarto_antenne),
+  `Assoc. sap.` = quota(per_giro$associazione_saponette),
+  `Assoc. ant.` = quota(per_giro$associazione_antenne),
   `Efficacia sap.` = quota(per_giro$efficacia_saponette),
   `Efficacia ant.` = quota(per_giro$efficacia_antenne)
 )
-print(knitr::kable(tabella_giri_ind, align = "lllrrrrrrrr"))
+print(knitr::kable(tabella_giri_ind, align = "lllrrrrrrrrrr"))
 if (!vuoto(params$cartella_csv)) {
   dir.create(percorso_progetto(params$cartella_csv), recursive = TRUE, showWarnings = FALSE)
   utils::write.table(
@@ -620,7 +638,7 @@ knitr::kable(
 )
 ```
 
-La **propensione numerica** è il numero di letture compatibili (dei due sistemi insieme) diviso i contenitori delle forniture domestiche del gruppo. Le **raccolte attese** sono le raccolte annue previste × i giorni di attività / i giorni dell'anno × i contenitori: la propensione «letture / attese» dice a che frazione delle raccolte previste corrispondono i conferimenti rilevati. La **propensione volumetrica** è il volume letto (letture × volume del contenitore) diviso la capacità (volume dei contenitori × raccolte attese). Un valore sotto 100% non vuol dire che mancano conferimenti: un contenitore può non essere esposto a ogni raccolta, e le letture mancanti di un sistema abbassano i valori.
+La **propensione numerica** è il numero di letture associate, `PIA` (dei due sistemi insieme), diviso i contenitori delle forniture domestiche del gruppo. Le **raccolte attese** sono le raccolte annue previste × i giorni di attività / i giorni dell'anno × i contenitori: la propensione «letture / attese» dice a che frazione delle raccolte previste corrispondono i conferimenti rilevati. La **propensione volumetrica** è il volume letto (letture × volume del contenitore) diviso la capacità (volume dei contenitori × raccolte attese). Un valore sotto 100% non vuol dire che mancano conferimenti: un contenitore può non essere esposto a ogni raccolta, e le letture mancanti di un sistema abbassano i valori.
 
 # Analisi economica del secco
 
@@ -811,8 +829,8 @@ knitr::kable(
 #| eval: !expr "economia_utile && con_antenne && con_saponette"
 #| results: asis
 cat(
-  "\n::: {.callout-warning}\nLe antenne vedono il **", quota(ind$efficacia_antenne),
-  "** delle letture compatibili della selezione e le saponette il **", quota(ind$efficacia_saponette),
+  "\n::: {.callout-warning}\nLe antenne vedono il **", quota(rapporto(ind$associate_solo_antenne + ind$associate_in_comune, ind$associate_totali)),
+  "** delle letture associate della selezione e le saponette il **", quota(rapporto(ind$associate_solo_saponette + ind$associate_in_comune, ind$associate_totali)),
   "**. Lo scenario «Solo antenne» (o «Solo saponette») ha senso solo se quel sistema era attivo su tutti i mezzi e per tutto il periodo: le forniture che il sistema non vede hanno zero litri e prendono il premio massimo, quindi i «premi in più» dipendono dai mezzi o dai giorni che il sistema non copre.\n:::\n",
   sep = ""
 )
@@ -829,7 +847,7 @@ Il confronto più vicino al costo reale di un sistema. Per ogni fornitura si con
 secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
 senza <- forniture_senza_conferimenti(unita, secco)
 cat(
-  "\nForniture del secco con almeno una raccolta attesa nel periodo e **nessuna lettura compatibile**, da nessuno dei due sistemi: **",
+  "\nForniture del secco con almeno una raccolta attesa nel periodo e **nessuna lettura associata**, da nessuno dei due sistemi: **",
   intero(nrow(senza)), "** su ", intero(nrow(secco)),
   " (", quota(rapporto(nrow(senza), nrow(secco))), ").\n\n",
   sep = ""
@@ -903,7 +921,7 @@ cat(".\n:::\n")
 - **Tariffe.** Per ogni fascia di componenti la tabella dell'azienda dà i litri annui inclusi nella tariffa, il volume minimo addebitato e il volume massimo per accedere alla premialità. Oltre i litri inclusi si paga l'eccedenza (10 € ogni 120 litri per un carrellato); fino al volume massimo per la premialità si riceve un premio di 5 € a cui se ne aggiungono 5 per ogni 120 litri in meno, fino al volume minimo. Le tariffe stanno in `tariffe_secco()` e `tariffe_contenitori()` (`R/utils_tariffe.R`); si usano le attuali anche per gli anni passati.
 - **Contenitori diversi.** I volumi si sommano in litri; eccedenza e premio si calcolano al litro, con la tariffa del contenitore più frequente della fornitura (un volume che la tabella non ha usa quella del carrellato da 120 litri). Su un anno intero il risultato è quello dei conferimenti interi.
 - **Periodo.** Litri inclusi, volume minimo e massimo per la premialità si moltiplicano per i giorni di attività della fornitura nel periodo diviso i giorni dell'anno (366 solo per un periodo dentro un anno bisestile); il premio di un conferimento si riduce allo stesso modo, così premio ed eccedenza sono la quota del periodo dell'importo annuo.
-- **Un conferimento è una lettura compatibile.** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
+- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
 - **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento vale il limite di 6.240 litri.
 - **Anagrafica.** Forniture e contenitori vengono dalle tabelle estratte (`dv_cnt_associazione_contenitori`, `dv_associazione_componenti`, `dv_potenziamento_secco`), non dalle letture. Un contenitore senza tag non compare.
 - **Con i giri.** Vedi sopra: la finestra oraria di un giro è, in ordine, quella indicata nel file, quella delle letture delle antenne del giro allargata di `margine_minuti` minuti, o la giornata intera. Le forniture sono quelle lette nei giri, i litri sono quelli di quelle letture e le soglie annue valgono per il periodo scelto: va letto come un campione, non come l'anno di quelle forniture.

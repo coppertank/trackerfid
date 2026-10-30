@@ -2,7 +2,7 @@
 # `docs/indicatori_letture.qmd`. Parte dalle letture (`unita_di_lettura()`) e dalle
 # forniture del periodo (`anagrafica_forniture()`). L'app non usa queste funzioni.
 #
-# Un conferimento è una lettura compatibile (`PIA`): il bidone è stato svuotato quel
+# Un conferimento è una lettura associata (`PIA`): il bidone è stato svuotato quel
 # giorno, e vale il volume del suo contenitore. Ha senso confrontare i tre scenari
 # di rilevazione: le letture di entrambi i sistemi insieme, solo delle saponette e
 # solo delle antenne.
@@ -63,7 +63,7 @@ conferimenti_per_fornitura <- function(unita, anagrafica, sistemi, servizio = NU
 #'
 #' Funzionamento: per gruppo di forniture (casa vuota, potenziamento, 1 ... 6 o
 #' più componenti, più le domestiche in totale) conta i contenitori `C` dell'anagrafica e le
-#' letture compatibili `L` dei due sistemi insieme di quelle forniture.
+#' letture associate (`PIA`) `L` dei due sistemi insieme di quelle forniture.
 #' - `propensione_numerica` = `L / C`;
 #' - `raccolte_attese` = raccolte annue previste × `fattore` × contenitori, e
 #'   `propensione_sulle_attese` = `L` / raccolte attese;
@@ -123,7 +123,7 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
 #' tag rotto o non letto, il contenitore non esposto o lo smaltimento in un altro
 #' modo. Il report le segnala e non le premia.
 #' Funzionamento: tiene le forniture con tag dell'anagrafica che, nel periodo,
-#' non hanno nessuna lettura compatibile dei due sistemi insieme e per cui le raccolte
+#' non hanno nessuna lettura associata dei due sistemi insieme e per cui le raccolte
 #' attese (raccolte annue × `fattore`) sono almeno una.
 #' Risultato: l'anagrafica di quelle forniture con `raccolte_attese`.
 #' @param unita Risultato di `unita_di_lettura()`.

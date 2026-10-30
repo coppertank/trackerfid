@@ -414,8 +414,9 @@ scrivi_origine_prova <- function(cartella) {
       "2026-08-21 07:00:00,2026-08-21,123,T3",
       # il codice 123 con i bit di ogni cifra invertiti: la pulizia lo ripara
       "2026-08-22 07:00:00,2026-08-22,84C,T4",
-      # oltre 10 cifre e ne' sacchetto ne' HERA: scartato
-      "2026-08-23 07:00:00,2026-08-23,12345678901,T5",
+      # oltre 10 cifre, due o piu' diverse da zero nei primi 14 e ne' sacchetto
+      # ne' HERA: scartato
+      "2026-08-23 07:00:00,2026-08-23,123456789012,T5",
       # bidone HERA: resta com'e', non presente
       "2026-08-24 07:00:00,2026-08-24,48455241aabb,T5"
     )

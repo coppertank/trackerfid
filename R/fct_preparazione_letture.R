@@ -16,9 +16,8 @@
 #'
 #' Funzionamento: tiene di `letture`, per le righe indicate, istante, giorno,
 #' targa, matricola del mezzo o della saponetta e RFID, nelle colonne che ci
-#' sono, e aggiunge il `motivo`. I motivi sono `senza_posizione_o_comune` e
-#' `doppione` (antenne), `senza_rfid`, `istante_illeggibile` (saponette),
-#' `codice_non_compatibile` e `codice_nullo`.
+#' sono, e aggiunge il `motivo`. I motivi sono `doppione`, `senza_rfid`,
+#' `istante_illeggibile` (saponette), `codice_non_compatibile` e `codice_nullo`.
 #'
 #' Risultato: un tibble con una riga per ogni riga scartata.
 #' @param letture Letture da cui si scarta.
@@ -296,11 +295,12 @@ prefissi_codici_speciali <- function() {
 #'
 #' Funzionamento: mette in maiuscolo; corregge un carattere letto male tra i
 #' primi 14, che dovrebbero essere zeri (bit flip); toglie gli zeri iniziali e
-#' riempie a sinistra fino a 10 caratteri. Fanno eccezione i sacchetti (prefisso
-#' `00BD`), che restano come sono, e i codici HERA (prefisso `48455241`, anche
-#' dopo gli zeri iniziali), che restano senza riempimento. Un altro codice che
-#' dopo gli zeri iniziali supera i 10 caratteri non si riempie: non è compatibile
-#' (`filtra_codici_compatibili()`).
+#' riempie a sinistra fino a 10 caratteri; se ne restano più di 10 fino a 24, il
+#' formato dei codici lunghi (14 zeri e 10 cifre). Fanno eccezione i sacchetti
+#' (prefisso `00BD`), che restano come sono, e i codici HERA (prefisso
+#' `48455241`, anche dopo gli zeri iniziali), che restano senza riempimento. Un
+#' codice lungo che non è né l'uno né l'altro si scarta se nei primi 14 caratteri
+#' ha due o più cifre diverse da zero (`filtra_codici_compatibili()`).
 #'
 #' Risultato: un vettore di codici, con i mancanti che restano mancanti.
 #' @param codice Vettore di codici.
@@ -325,7 +325,7 @@ normalizza_codice_rfid <- function(codice) {
     startsWith(senza_zeri, prefissi_codici_speciali()[["hera"]]) ~ senza_zeri,
     stringr::str_length(senza_zeri) <= 10 ~
       stringr::str_pad(senza_zeri, width = 10, side = "left", pad = "0"),
-    .default = senza_zeri
+    .default = stringr::str_pad(senza_zeri, width = 24, side = "left", pad = "0")
   )
 }
 
@@ -340,28 +340,34 @@ formatta_rfid <- function(df) {
   dplyr::mutate(df, RFID = normalizza_codice_rfid(.data$RFID))
 }
 
-#' Il codice è compatibile? Sacchetto, HERA o al più 10 caratteri
+#' Il codice è compatibile? Sacchetto, HERA, al più 10 caratteri o lungo con zeri davanti
 #'
-#' Contesto: regola di compatibilità dei codici (24/10/2026, proprietario): si
-#' tengono i codici che iniziano per `00BD` (sacchetti) o `48455241` (bidoni
-#' HERA), qualunque sia la lunghezza; si scarta ogni altro codice con più di 10
-#' cifre. Si applica ai codici già normalizzati (`normalizza_codice_rfid()`).
+#' Contesto: regola di compatibilità dei codici (29/10/2026, proprietario). Un
+#' codice che dopo la normalizzazione ha più di 10 caratteri è nel formato lungo
+#' (24 caratteri: 14 zeri e 10 cifre): se nei primi 14 caratteri ha due o più
+#' cifre diverse da zero non è un bidone dell'azienda, ma un tag di altra origine.
+#' Con una sola cifra diversa da zero resta (un carattere letto male si
+#' correggerebbe già in `normalizza_codice_rfid()`). I sacchetti (`00BD`) e i
+#' bidoni HERA (`48455241`) si tengono di qualunque lunghezza.
 #' Risultato: un vettore logico; un codice mancante è compatibile (non è una
 #' questione di formato).
 #' @param codice Vettore di codici normalizzati.
 #' @noRd
 codice_compatibile <- function(codice) {
+  diversi_da_zero <- stringr::str_count(stringr::str_sub(codice, 1, 14), "[^0]")
   is.na(codice) |
     startsWith(codice, prefissi_codici_speciali()[["sacchetto"]]) |
     startsWith(codice, prefissi_codici_speciali()[["hera"]]) |
-    stringr::str_length(codice) <= 10
+    stringr::str_length(codice) <= 10 |
+    diversi_da_zero <= 1
 }
 
 #' Scarta le letture con un codice non compatibile
 #'
-#' Contesto: un codice di più di 10 cifre che non è un sacchetto né un bidone
-#' HERA non è un bidone dell'azienda: di solito è un codice letto male o un tag
-#' di altra origine. Va scartato prima di ogni associazione.
+#' Contesto: un codice lungo con due o più cifre diverse da zero nei primi 14
+#' caratteri, che non è un sacchetto né un bidone HERA, non è un bidone
+#' dell'azienda: di solito è un tag di altra origine. Va scartato prima di ogni
+#' associazione (vedi `codice_compatibile()`).
 #' Funzionamento: tiene le letture con `codice_compatibile()`; un messaggio dice
 #' quante ne scarta.
 #' Risultato: le letture con un codice compatibile.
@@ -371,7 +377,7 @@ filtra_codici_compatibili <- function(letture) {
   compatibili <- codice_compatibile(letture$RFID)
   if (any(!compatibili)) {
     message(
-      "Letture scartate per codice RFID non compatibile (pi\u00f9 di 10 cifre, n\u00e9 sacchetto n\u00e9 HERA): ",
+      "Letture scartate per codice RFID non compatibile (pi\u00f9 di 10 caratteri e due o pi\u00f9 cifre diverse da zero nei primi 14, n\u00e9 sacchetto n\u00e9 HERA): ",
       formatta_numero(sum(!compatibili)),
       "."
     )
@@ -934,7 +940,8 @@ allunga_fine <- function(giri, letture) {
 #'    solo servizio;
 #' 3. pianificato nel cui orario cade la lettura, in un altro comune;
 #' 4. se tutti i non pianificati del mezzo hanno lo stesso servizio, quel servizio
-#'    è certo: il giro è quello del comune più vicino;
+#'    è certo: il giro è quello del comune più vicino (una lettura senza
+#'    posizione lo ha solo se c'è un unico candidato);
 #' 5. il giro più frequente tra le letture già associate dello stesso tratto
 #'    continuo (`assegna_tratti()`);
 #' 6. non pianificato del comune più vicino, entro `soglia_comune_vicino_m()`;
@@ -1090,7 +1097,14 @@ scegli_giro <- function(letture, calendario) {
       "servizio_unico",
       .data$servizi_np == 1,
       ordine = .data$distanza_m,
-      prima = \(rimaste) con_distanza(dplyr::filter(rimaste, .data$servizi_np == 1))
+      # Senza posizione la distanza manca: il giro si sceglie solo se è l'unico
+      # candidato, altrimenti si inventerebbe un comune.
+      prima = \(rimaste) {
+        rimaste |>
+          dplyr::filter(.data$servizi_np == 1) |>
+          con_distanza() |>
+          dplyr::filter(!is.na(.data$distanza_m) | dplyr::n() == 1, .by = "lettura")
+      }
     ) |>
     nel_tratto() |>
     scegli(
@@ -1783,17 +1797,18 @@ controllo_giri <- function(
 
 # --- La pipeline di preparazione --------------------------------------------------
 
-#' Toglie i codici che iniziano con dieci zeri
+#' Toglie le letture con un codice nullo: fatto di soli zeri, o mancante
 #'
-#' Contesto: un codice fatto di soli zeri (o quasi) non è un contenitore: di
-#' solito è una lettura a vuoto. I sacchetti (`00BD...`) invece si tengono nei
-#' dataset finali, antenne e saponette (scelta del proprietario, 28/10/2026;
-#' prima si toglievano).
+#' Contesto: un codice di soli zeri non è un contenitore: di solito è una
+#' lettura a vuoto. I sacchetti (`00BD...`) invece si tengono nei dataset
+#' finali, antenne e saponette (scelta del proprietario, 28/10/2026; prima si
+#' toglievano). Fino al 29/10/2026 si toglievano anche i codici che iniziano con
+#' dieci zeri senza essere nulli.
 #' Risultato: le letture senza i codici nulli.
 #' @noRd
 scarta_codici_nulli <- function(letture) {
   senza_rfid <- is.na(letture$RFID)
-  nulli <- startsWith(letture$RFID, "0000000000") %in% TRUE
+  nulli <- stringr::str_detect(letture$RFID, "^0+$") %in% TRUE
   con_scartate(
     letture[!senza_rfid & !nulli, , drop = FALSE],
     dplyr::bind_rows(

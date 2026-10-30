@@ -56,30 +56,49 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
       "cantiere"
     )
   )
-  # fuori la posizione zero e la lettura senza comune
-  expect_equal(nrow(letture), 9)
+  # la posizione zero e la lettura senza comune si tengono: sono bidoni letti
+  expect_equal(nrow(letture), 11)
   # il comune è il pezzo dopo la prima virgola, in maiuscolo; il cantiere
   # viene dalla tabella, per nome esatto. La frazione e VENEZIA restano come
   # sono: il comune dalla posizione lo trova `correggi_comune_lettura()`
   expect_setequal(
     letture$comune_lettura,
-    c("LIMENA", "TAGGI DI PROVA", "VENEZIA")
+    c("LIMENA", "TAGGI DI PROVA", "VENEZIA", NA)
   )
   expect_true(all(
-    letture$cantiere[letture$comune_lettura == "LIMENA"] == "RUBANO"
+    letture$cantiere[letture$comune_lettura %in% "LIMENA"] == "RUBANO"
   ))
-  expect_true(all(is.na(letture$cantiere[letture$comune_lettura != "LIMENA"])))
-  # un RFID letto più volte nello stesso giorno: resta la prima lettura valida
+  expect_true(all(is.na(letture$cantiere[!letture$comune_lettura %in% "LIMENA"])))
+  # senza posizione: coordinate vuote (la posizione zero non e' una posizione)
+  senza_posizione <- letture[letture$RFID == "124", ]
+  expect_true(is.na(senza_posizione$latitudine) && is.na(senza_posizione$longitudine))
+  expect_identical(senza_posizione$comune_lettura, "LIMENA")
+  expect_true(is.na(letture$comune_lettura[letture$RFID == "125"]))
+  # un RFID letto più volte nello stesso giorno: resta la prima lettura con una
+  # posizione; senza posizione resta la prima in ordine di tempo
   doppie <- importa_letture_antenne(scrivi_csv(c(
     "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
     "VIA ROMA 1, LIMENA;03/08/2026 10.00.00;123;AB123CD;45,4700;11,8400;1",
     "VIA ROMA 1, LIMENA;03/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1",
-    # più presto, ma sporche: non contano
+    # più presto, ma senza posizione: perde contro una con la posizione
     "VIA ROMA 1, LIMENA;03/08/2026 07.00.00;123;AB123CD;0;0;1",
-    "SENZA COMUNE;03/08/2026 07.30.00;123;AB123CD;45,4700;11,8400;1",
-    "VIA ROMA 1, LIMENA;04/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1"
+    "VIA ROMA 1, LIMENA;04/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1",
+    # un RFID letto solo senza posizione resta, con le coordinate vuote
+    "VIA ROMA 1, LIMENA;05/08/2026 09.00.00;124;AB123CD;0;0;1",
+    "VIA ROMA 1, LIMENA;05/08/2026 07.00.00;124;AB123CD;0;0;1"
   )))
-  expect_identical(format(doppie$data_ora_lettura, "%d %H"), c("03 08", "04 08"))
+  expect_identical(
+    format(doppie$data_ora_lettura, "%d %H"),
+    c("03 08", "04 08", "05 07")
+  )
+  expect_identical(doppie$RFID, c("123", "123", "124"))
+  expect_equal(doppie$latitudine, c(45.47, 45.47, NA))
+  # i doppioni scartati stanno nel registro, con la posizione zero tra loro
+  expect_identical(
+    format(attr(doppie, "scartate")$data_ora_lettura, "%d %H"),
+    c("03 10", "03 07", "05 09")
+  )
+  expect_true(all(attr(doppie, "scartate")$motivo == "doppione"))
   # le letture escono in ordine di istante
   expect_false(is.unsorted(letture$data_ora_lettura))
   prima <- letture[letture$RFID == "123", ][1, ]
@@ -175,7 +194,7 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
       "00BD00000000000000000001",
       "0000000123",
       "000000084C",
-      "12345678901",
+      "000000000000123456789012",
       "48455241AABB"
     )
   )
@@ -266,13 +285,13 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   )
   expect_match(
     messaggi,
-    "per 1 letture.*TAGGI DI PROVA \u2192 LIMENA \\(1\\)",
+    "per 2 letture.*TAGGI DI PROVA \u2192 LIMENA \\(1\\)",
     all = FALSE
   )
   # quante letture ha associato ogni passo
   expect_match(
     messaggi,
-    "^Giro associato alle letture: 5 giro pianificato, nell'orario e nel comune",
+    "^Giro associato alle letture: 7 giro pianificato, nell'orario e nel comune",
     all = FALSE
   )
   expect_length(avvisi, 2)
@@ -289,24 +308,29 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     colonne_nucleo_manovra()
   )
   expect_equal(ncol(letture), 35)
-  # censito tre volte, tre non censiti una; il sacchetto resta, con la
-  # fornitura del suo gruppo
+  # censito tre volte, quattro non censiti una (due senza posizione o comune); il
+  # sacchetto resta, con la fornitura del suo gruppo
   expect_identical(
     sort(unique(letture$RFID)),
-    c("0000000123", "0000000128", "0000000129", "0000000999", "00BD00000000000000000001")
+    c(
+      "0000000123",
+      "0000000124",
+      "0000000125",
+      "0000000128",
+      "0000000129",
+      "0000000999",
+      "00BD00000000000000000001"
+    )
   )
-  # le letture scartate dalla pulizia stanno nel registro: posizione zero e
-  # senza comune; quelle del mezzo non collaudato e prima del collaudo non
-  # contano
+  # la lettura senza posizione resta, con le coordinate vuote e senza distanza
+  senza_posizione <- letture[letture$RFID == "0000000124", ]
+  expect_true(is.na(senza_posizione$latitudine))
+  expect_true(is.na(senza_posizione$distanza_comune_dichiarato))
+  # il registro delle scartate non ha niente: nessun doppione, e le letture del
+  # mezzo non collaudato e prima del collaudo non contano
   scartate_antenne <- letture_scartate(letture)
-  expect_identical(
-    sort(scartate_antenne$motivo),
-    c("senza_posizione_o_comune", "senza_posizione_o_comune")
-  )
-  # il codice è già nel formato comune, per confrontarlo con quello delle saponette
-  expect_identical(sort(scartate_antenne$RFID), c("0000000124", "0000000125"))
-  expect_true(all(scartate_antenne$matricola_veicolo == "1601"))
-  expect_true(all(c("data_ora_lettura", "data_lettura", "RFID") %in% names(scartate_antenne)))
+  expect_identical(nrow(scartate_antenne), 0L)
+  expect_true(all(c("data_ora_lettura", "data_lettura", "RFID", "motivo") %in% names(scartate_antenne)))
   sacchetto <- letture[letture$RFID == "00BD00000000000000000001", ]
   expect_identical(sacchetto$presente_a_database, "PIA")
   expect_identical(sacchetto$id_fornitura, "S1")
@@ -346,9 +370,9 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   expect_true(all(censite$coerenza_comune == "Coerente"))
   expect_identical(
     scarta_codici_nulli(data.frame(
-      RFID = c("0000000000123", "00BD1", "12")
+      RFID = c("0000000000", "0", "0000000000123", "00BD1", "12", NA)
     ))$RFID,
-    c("00BD1", "12")
+    c("0000000000123", "00BD1", "12")
   )
 
   # CSV e archivio .duckdb, scritti come nella pipeline: l'app li carica
@@ -365,9 +389,10 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   )
   # le letture con il comune del GPS sostituito: la frazione
   corretti <- comuni_corretti(letture)
-  expect_identical(corretti$RFID, "0000000128")
-  expect_identical(corretti$comune_gps, "TAGGI DI PROVA")
-  expect_identical(corretti$comune_posizione, "LIMENA")
+  # la frazione, e la lettura che non aveva il comune ma ha una posizione
+  expect_identical(corretti$RFID, c("0000000125", "0000000128"))
+  expect_identical(corretti$comune_gps, c(NA, "TAGGI DI PROVA"))
+  expect_identical(corretti$comune_posizione, c("LIMENA", "LIMENA"))
   # senza l'attributo i giri da controllare sono una tabella vuota
   expect_equal(nrow(giri_da_controllare(data.frame(data_lettura = as.Date(character(0))))), 0)
   # i giri da controllare: il giro ancora NO e quello confermato senza
@@ -384,7 +409,10 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   )
   caricato <- carica_archivio(percorsi[2])
   withr::defer(chiudi_archivio(caricato$archivio))
-  expect_identical(caricato$archivio$n, nrow(letture))
+  # l'app scarta le righe senza coordinate (con un avviso): una lettura senza
+  # posizione non si disegna sulla mappa
+  expect_identical(caricato$archivio$n, sum(!is.na(letture$latitudine)))
+  expect_true(any(grepl("righe scartate", caricato$avvisi)))
   # il CSV ha tutte le colonne della pipeline; l'archivio .duckdb le sole
   # colonne dell'app
   dal_csv <- carica_dataset(percorsi[1], colonne = "tutte")$dati
@@ -394,12 +422,13 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   expect_true(all(
     names(letture) %in% c(names(dal_csv), "volume", "numero_raccolte_annue")
   ))
-  expect_identical(dal_csv$potenziamento_secco, letture$potenziamento_secco)
+  con_posizione <- letture[!is.na(letture$latitudine), ]
+  expect_identical(dal_csv$potenziamento_secco, con_posizione$potenziamento_secco)
   expect_identical(
     dal_csv$nucleo_residenti,
-    as.integer(letture$nucleo_residenti)
+    as.integer(con_posizione$nucleo_residenti)
   )
-  expect_identical(dal_csv$id_fornitura, letture$id_fornitura)
+  expect_identical(dal_csv$id_fornitura, con_posizione$id_fornitura)
 
   # le letture delle saponette: la stessa anagrafica, sacchetti compresi, con le
   # colonne in comune con quelle dell'app e la trasmissione
@@ -426,7 +455,7 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   )
   expect_identical(
     scartate_saponette$RFID[scartate_saponette$motivo == "codice_non_compatibile"],
-    "12345678901"
+    "000000000000123456789012"
   )
   expect_true(all(
     setdiff(names(saponette), "matricola_saponetta") %in% names(letture)

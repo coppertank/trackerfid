@@ -83,32 +83,57 @@ test_that("lo stato di una lettura e' il migliore dei due sistemi", {
   expect_identical(as.character(unita$sistema), "Entrambe")
 })
 
-test_that("gli indicatori contano compatibili (PIA) e scartate (tutto il resto)", {
+test_that("gli indicatori distinguono compatibili, associate (PIA), non associate e scartate", {
   indicatori <- indicatori_letture(unita_prova())
   expect_identical(indicatori$letture_solo_saponette, 2)
   expect_identical(indicatori$letture_solo_antenne, 3)
   expect_identical(indicatori$letture_in_comune, 2)
   expect_identical(indicatori$letture_totali, 7)
-  expect_identical(indicatori$compatibili_solo_saponette, 1)
-  expect_identical(indicatori$compatibili_solo_antenne, 1)
+  # compatibili: quelle che la pulizia tiene, anche se il database non le conosce
+  expect_identical(indicatori$compatibili_solo_saponette, 2)
+  expect_identical(indicatori$compatibili_solo_antenne, 3)
   expect_identical(indicatori$compatibili_in_comune, 1)
-  expect_identical(indicatori$compatibili_totali, 3)
-  expect_identical(indicatori$scartate_solo_saponette, 1)
-  expect_identical(indicatori$scartate_solo_antenne, 2)
+  expect_identical(indicatori$compatibili_totali, 6)
+  # associate: le compatibili con una fornitura
+  expect_identical(indicatori$associate_solo_saponette, 1)
+  expect_identical(indicatori$associate_solo_antenne, 1)
+  expect_identical(indicatori$associate_in_comune, 1)
+  expect_identical(indicatori$associate_totali, 3)
+  # non associate: PIT e NP
+  expect_identical(indicatori$non_associate_solo_saponette, 1)
+  expect_identical(indicatori$non_associate_solo_antenne, 2)
+  expect_identical(indicatori$non_associate_in_comune, 0)
+  expect_identical(indicatori$non_associate_totali, 3)
+  # scartate: solo quello che la pulizia toglie
+  expect_identical(indicatori$scartate_solo_saponette, 0)
+  expect_identical(indicatori$scartate_solo_antenne, 0)
   expect_identical(indicatori$scartate_in_comune, 1)
-  expect_identical(indicatori$scartate_totali, 4)
+  expect_identical(indicatori$scartate_totali, 1)
   # indice di scarto: (sole del sistema + in comune) / letture totali
-  expect_equal(indicatori$indice_scarto_saponette, 2 / 7)
-  expect_equal(indicatori$indice_scarto_antenne, 3 / 7)
-  expect_equal(indicatori$indice_scarto_totale, 4 / 7)
-  # indice di efficacia: sulle sole compatibili
-  expect_equal(indicatori$efficacia_in_comune, 1 / 3)
-  expect_equal(indicatori$efficacia_saponette, 2 / 3)
-  expect_equal(indicatori$efficacia_antenne, 2 / 3)
-  # le letture totali sono la somma dei tre insiemi disgiunti
+  expect_equal(indicatori$indice_scarto_saponette, 1 / 7)
+  expect_equal(indicatori$indice_scarto_antenne, 1 / 7)
+  expect_equal(indicatori$indice_scarto_totale, 1 / 7)
+  # indice di associazione: associate (del sistema + in comune) / compatibili totali
+  expect_equal(indicatori$associazione_in_comune, 1 / 6)
+  expect_equal(indicatori$associazione_saponette, 2 / 6)
+  expect_equal(indicatori$associazione_antenne, 2 / 6)
+  # indice di efficacia: compatibili (del sistema + in comune) / compatibili totali
+  expect_equal(indicatori$efficacia_in_comune, 1 / 6)
+  expect_equal(indicatori$efficacia_saponette, 3 / 6)
+  expect_equal(indicatori$efficacia_antenne, 4 / 6)
+  # le letture totali sono la somma dei tre insiemi disgiunti, e le compatibili
+  # sono associate piu' non associate
   expect_identical(
     indicatori$letture_totali,
     indicatori$letture_solo_saponette + indicatori$letture_solo_antenne + indicatori$letture_in_comune
+  )
+  expect_identical(
+    indicatori$compatibili_totali,
+    indicatori$associate_totali + indicatori$non_associate_totali
+  )
+  expect_identical(
+    indicatori$letture_totali,
+    indicatori$compatibili_totali + indicatori$scartate_totali
   )
 })
 

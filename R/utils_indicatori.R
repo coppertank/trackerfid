@@ -6,10 +6,14 @@
 # Una «lettura» qui è la coppia RFID e giorno di un sistema: lo stesso codice letto
 # da un'antenna e da una saponetta nello stesso giorno è una lettura sola (non
 # si svuota due volte un bidone). L'incontro si fa sui codici già normalizzati e
-# riparati dalla pulizia della pipeline. Una lettura è «compatibile» se ha una
-# fornitura (`presente_a_database` uguale a `PIA`); tutte le altre sono scartate,
-# anche i codici che il database conosce solo tra i tag (`PIT`) o per niente
-# (`NP`), perché non si potranno mai fatturare.
+# riparati dalla pulizia della pipeline. Le letture «compatibili» sono quelle
+# che la pulizia tiene, anche se il database non le conosce (`PIA`, `PIT` o
+# `NP`): sono potenzialmente bidoni dell'azienda. Quelle «associate» sono le
+# compatibili con una fornitura (`PIA`); «non associate» le altre. Sono
+# «scartate» solo le letture che la pulizia toglie (codici nulli e codici lunghi
+# che non sono bidoni); i doppioni dello stesso giorno non sono letture distinte.
+# (Il 29/10/2026 le compatibili erano le sole `PIA`: il proprietario ha cambiato
+# la regola il 30/10.)
 
 #' Motivi di scarto che contano come lettura scartata
 #'
@@ -19,7 +23,7 @@
 #' Risultato: i motivi delle letture che il report conta come scartate.
 #' @noRd
 motivi_di_scarto <- function() {
-  c("senza_posizione_o_comune", "codice_non_compatibile", "codice_nullo")
+  c("codice_non_compatibile", "codice_nullo")
 }
 
 #' Colonne che il report usa dei file delle letture
@@ -414,33 +418,40 @@ rapporto <- function(numeratore, denominatore) {
 #' Indicatori sulle letture dei due sistemi
 #'
 #' Contesto: gli indicatori base e i KPI del documento del proprietario. Le
-#' letture compatibili sono quelle con una fornitura (`PIA`); le scartate sono tutte
-#' le altre. Tre insiemi disgiunti: solo saponette, solo antenne, entrambe.
+#' letture sono divise in tre insiemi disgiunti: solo saponette, solo antenne e in
+#' comune. **Compatibili** sono quelle che la pulizia tiene (`PIA`, `PIT`, `NP`:
+#' potenziali bidoni dell'azienda), **associate** le compatibili con una fornitura
+#' (`PIA`), **non associate** le altre compatibili; **scartate** quelle che la
+#' pulizia toglie.
 #'
 #' Funzionamento: conta le letture di `unita_di_lettura()` per sistema e stato.
-#' - totali, compatibili e scartate: `letture_*`, `compatibili_*`, `scartate_*`,
+#' - `letture_*`, `compatibili_*`, `associate_*`, `non_associate_*` e `scartate_*`,
 #'   ognuna per solo saponette, solo antenne, in comune e in totale;
 #' - indice di scarto (quanto filtra via un sistema): `(scartate solo del
 #'   sistema + scartate in comune) / letture totali`, per le saponette, le antenne e
 #'   in totale;
-#' - indice di efficacia (quanta parte delle letture compatibili vede un
-#'   sistema): `(compatibili solo del sistema + in comune) / compatibili totali`;
-#'   l'`efficacia_in_comune` è la quota vista da tutti e due.
+#' - indice di associazione (quanta parte delle compatibili è associata e vista
+#'   da un sistema): `(associate solo del sistema + associate in comune) /
+#'   compatibili totali`; `associazione_in_comune` è la parte vista da tutti e due;
+#' - indice di efficacia (quanta parte delle compatibili vede un sistema):
+#'   `(compatibili solo del sistema + in comune) / compatibili totali`;
+#'   `efficacia_in_comune` è la quota vista da tutti e due.
 #' Un indice con il denominatore a zero è `NA`.
 #'
 #' Risultato: un tibble di una riga.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @noRd
 indicatori_letture <- function(unita) {
-  conta <- function(sistema, solo_compatibili = FALSE) {
+  conta <- function(sistema, stati = NULL) {
     sum(
       unita$sistema == sistema &
-        (!solo_compatibili | unita$stato %in% "PIA")
+        (is.null(stati) | unita$stato %in% stati)
     )
   }
   sistemi <- sistemi_lettura()
   letture <- vapply(sistemi, conta, numeric(1))
-  compatibili <- vapply(sistemi, conta, numeric(1), solo_compatibili = TRUE)
+  compatibili <- vapply(sistemi, conta, numeric(1), stati = c("PIA", "PIT", "NP"))
+  associate <- vapply(sistemi, conta, numeric(1), stati = "PIA")
   scartate <- letture - compatibili
   totali <- sum(letture)
   compatibili_totali <- sum(compatibili)
@@ -453,6 +464,14 @@ indicatori_letture <- function(unita) {
     compatibili_solo_antenne = compatibili[[2]],
     compatibili_in_comune = compatibili[[3]],
     compatibili_totali = compatibili_totali,
+    associate_solo_saponette = associate[[1]],
+    associate_solo_antenne = associate[[2]],
+    associate_in_comune = associate[[3]],
+    associate_totali = sum(associate),
+    non_associate_solo_saponette = compatibili[[1]] - associate[[1]],
+    non_associate_solo_antenne = compatibili[[2]] - associate[[2]],
+    non_associate_in_comune = compatibili[[3]] - associate[[3]],
+    non_associate_totali = compatibili_totali - sum(associate),
     scartate_solo_saponette = scartate[[1]],
     scartate_solo_antenne = scartate[[2]],
     scartate_in_comune = scartate[[3]],
@@ -460,6 +479,9 @@ indicatori_letture <- function(unita) {
     indice_scarto_saponette = rapporto(scartate[[1]] + scartate[[3]], totali),
     indice_scarto_antenne = rapporto(scartate[[2]] + scartate[[3]], totali),
     indice_scarto_totale = rapporto(sum(scartate), totali),
+    associazione_in_comune = rapporto(associate[[3]], compatibili_totali),
+    associazione_saponette = rapporto(associate[[1]] + associate[[3]], compatibili_totali),
+    associazione_antenne = rapporto(associate[[2]] + associate[[3]], compatibili_totali),
     efficacia_in_comune = rapporto(compatibili[[3]], compatibili_totali),
     efficacia_saponette = rapporto(compatibili[[1]] + compatibili[[3]], compatibili_totali),
     efficacia_antenne = rapporto(compatibili[[2]] + compatibili[[3]], compatibili_totali)
@@ -471,7 +493,7 @@ indicatori_letture <- function(unita) {
 #' Contesto: dice da che cosa dipende lo scarto di un sistema. `PIA` è il bidone
 #' che si può fatturare; `PIT` è un contenitore dell'azienda senza fornitura; `NP` è
 #' un codice valido che il database non conosce; `Scartata` è un codice
-#' scartato dalla pulizia (posizione zero, troppo lungo, nullo).
+#' scartato dalla pulizia (codice nullo o lungo e non di un bidone).
 #' Funzionamento: ogni sistema comprende le letture sue e quelle in comune.
 #' Risultato: per sistema e stato, il numero di letture e la quota sul sistema.
 #' @param unita Risultato di `unita_di_lettura()`.

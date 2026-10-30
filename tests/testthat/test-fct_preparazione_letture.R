@@ -174,7 +174,7 @@ test_that("restano solo le letture dei mezzi collaudati, dopo il collaudo", {
   )
 })
 
-test_that("i codici RFID sono portati a 10 caratteri; sacchetti e HERA restano come sono", {
+test_that("i codici RFID sono portati a 10 o 24 caratteri; sacchetti e HERA restano come sono", {
   formato <- function(codici) formatta_rfid(dplyr::tibble(RFID = codici))$RFID
 
   # maiuscolo e riempimento a 10
@@ -182,8 +182,8 @@ test_that("i codici RFID sono portati a 10 caratteri; sacchetti e HERA restano c
   expect_identical(formato("0000000001"), "0000000001")
   # gli zeri in eccesso spariscono prima del riempimento
   expect_identical(formato("000000000000000000000042"), "0000000042")
-  # oltre 10 caratteri significativi: nessun riempimento (non è compatibile)
-  expect_identical(formato("12345678901"), "12345678901")
+  # oltre 10 caratteri significativi: riempimento a 24
+  expect_identical(formato("12345678901"), "000000000000012345678901")
   expect_identical(
     formato("E28011700000020F1A2B3C4D"),
     "E28011700000020F1A2B3C4D"
@@ -205,31 +205,43 @@ test_that("i codici RFID sono portati a 10 caratteri; sacchetti e HERA restano c
   expect_identical(formato(NA_character_), NA_character_)
   expect_identical(
     formato(c("abc123", "12345678901")),
-    c("0000ABC123", "12345678901")
+    c("0000ABC123", "000000000000012345678901")
   )
 })
 
-test_that("si scartano i codici con piu' di 10 cifre che non sono sacchetti ne' HERA", {
+test_that("si scartano i codici lunghi con due cifre diverse da zero nei primi 14 caratteri", {
+  # codici gia' normalizzati
   codici <- c(
-    "0000ABC123",
-    "12345678901",
-    "00BD00000000000000000001",
-    "48455241AABBCCDD11",
-    "E28011700000020F1A2B3C4D",
+    "0000ABC123", # 10 caratteri
+    "000000000000012345678901", # 11 cifre: una sola diversa da zero nei primi 14
+    "000000000000123456789012", # 12 cifre: due diverse da zero nei primi 14
+    "00BD00000000000000000001", # sacchetto
+    "48455241AABBCCDD11", # HERA
+    "E28011700000020F1A2B3C4D", # tag di altra origine
     NA
   )
   expect_identical(
     codice_compatibile(codici),
-    c(TRUE, FALSE, TRUE, TRUE, FALSE, TRUE)
+    c(TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, TRUE)
   )
+  # al limite: una sola cifra diversa da zero resta, due no; conta il carattere
+  # tra i primi 14, non dopo
+  expect_true(codice_compatibile("100000000000000000000000"))
+  expect_false(codice_compatibile("110000000000000000000000"))
+  expect_true(codice_compatibile("000000000000000000AB1234"))
+  # un codice che il formato comune porta a 24 caratteri segue la stessa regola
+  formato <- function(x) formatta_rfid(dplyr::tibble(RFID = x))$RFID
+  expect_true(codice_compatibile(formato("12345678901")))
+  expect_false(codice_compatibile(formato("123456789012")))
+  expect_true(codice_compatibile(formato("00000000000000ABCDEF1234")))
   letture <- dplyr::tibble(RFID = codici, n = seq_along(codici))
   expect_message(
     tenute <- filtra_codici_compatibili(letture),
     "Letture scartate per codice RFID non compatibile.*: 2\\."
   )
-  expect_identical(tenute$n, c(1L, 3L, 4L, 6L))
+  expect_identical(tenute$n, c(1L, 2L, 4L, 5L, 7L))
   # senza codici da scartare non dice niente
-  expect_no_message(filtra_codici_compatibili(letture[c(1, 3), ]))
+  expect_no_message(filtra_codici_compatibili(letture[c(1, 4), ]))
 })
 
 test_that("la trasposizione inverte i quattro bit di ogni cifra esadecimale", {
@@ -993,6 +1005,49 @@ test_that("i giri non pianificati: servizio unico, tratto, comune vicino e tolle
   expect_identical(passo("tratto"), 1L)
   expect_identical(passo("comune_vicino"), 1L)
   expect_identical(associazione[["senza giro"]], 1L)
+})
+
+test_that("una lettura senza posizione ne' comune non rompe l'associazione al giro", {
+  pianificato <- dplyr::tibble(
+    data_giro = as.Date("2026-03-02"), ora_inizio = "06:00", ora_fine = "12:00",
+    matricola_mezzo = "501", id_giro = "P1", eseguito = "SI",
+    descrizione_servizio = "SECCO PAP", comune_giro = "ROSÀ"
+  )
+  non_pianificati <- dplyr::tibble(
+    data_giro = as.Date("2026-03-02"), matricola_mezzo = "501", id_giro = c("N1", "N2"),
+    descrizione_servizio = "CARTA CONT.STRADALI", comune_giro = c("NOVE", "MAROSTICA")
+  )
+  calendario <- unisci_calendari(pianificato, non_pianificati)
+  letture <- letture_associate(
+    paste("2026-03-02", c("08:00:00", "15:00:00", "15:10:00", "15:20:00", "20:00:00")),
+    matricola = "501"
+  )
+  # la prima, nell'orario del pianificato, senza posizione e senza comune; due
+  # fuori orario senza posizione, una senza comune; la quarta ha la posizione
+  # (a Bassano, il comune piu' vicino e' Nove); l'ultima e' sola e senza posizione
+  letture$latitudine[c(1, 2, 3, 5)] <- NA_real_
+  letture$longitudine[c(1, 2, 3, 5)] <- NA_real_
+  letture$comune_lettura[c(1, 2, 5)] <- NA_character_
+  letture$latitudine[4] <- 45.72942
+  letture$longitudine[4] <- 11.70269
+  letture$comune_lettura[4] <- "BASSANO DEL GRAPPA"
+  risultato <- associa_giro_e_servizio_atteso(letture, calendario)
+  expect_equal(nrow(risultato), 5)
+  # nell'orario vale il pianificato, anche senza posizione
+  expect_identical(risultato$id_giro[1], "P1")
+  # la quarta ha il giro del comune piu' vicino; le due senza posizione dello
+  # stesso tratto prendono il suo (non ne inventano uno)
+  expect_identical(risultato$id_giro[2:4], c("N1", "N1", "N1"))
+  expect_identical(
+    unname(attr(risultato, "associazione")[[passi_associazione()[["tratto"]]]]),
+    2L
+  )
+  # sola e senza posizione, con due giri candidati in comuni diversi: il servizio
+  # e' certo, ma il giro (il comune) no, e la lettura resta senza giro
+  expect_true(is.na(risultato$id_giro[5]))
+  # la coerenza del comune e la distanza mancano, senza errori
+  expect_true(all(risultato$coerenza_comune %in% stati_coerenza_comune()))
+  expect_true(all(is.na(risultato$distanza_comune_dichiarato[c(1, 2, 3, 5)])))
 })
 
 test_that("un pianificato fuori orario vale entro la tolleranza di un'ora, non oltre", {
