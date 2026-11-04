@@ -59,7 +59,9 @@ knitr:
 #   giri                CSV dei giri da analizzare: data_giro, matricola_veicolo,
 #                       servizio_giro, matricola_saponetta e, facoltative,
 #                       ora_inizio, ora_fine (HH:MM). Vuoto: tutte le letture
-#   servizio            servizio da analizzare (SECCO, CARTA...); vale senza giri
+#   servizio            servizio da analizzare (SECCO, CARTA...); vale senza giri.
+#                       Vuoto: le letture sono tutte; le forniture, la propensione
+#                       e l'economia sono quelle del SECCO (servizio predefinito)
 #   componenti          fascia di componenti per forniture, propensione ed
 #                       economia: 0 (casa vuota), 1-5, 6+ o potenziamento
 #   margine_minuti      minuti aggiunti ai due lati della finestra ricavata dalle
@@ -147,6 +149,10 @@ con_giri <- !vuoto(params$giri)
 giri <- if (con_giri) giri_di_analisi(percorso_progetto(params$giri))
 # Con i giri il servizio è quello di ogni giro: il parametro non serve.
 servizio <- if (vuoto(params$servizio) || con_giri) NULL else toupper(trimws(params$servizio))
+# Le forniture sono quelle di un servizio: se non se ne sceglie uno, il secco,
+# l'unico rifiuto fatturato (scelta del proprietario, 4/11/2026). Le letture invece
+# restano tutte, per gli indici di associazione e di scarto.
+servizio_forniture <- if (is.null(servizio)) "SECCO" else servizio
 gruppo_scelto <- gruppo_da_filtro(params$componenti)
 
 date_base <- if (con_giri) {
@@ -210,7 +216,10 @@ unita <- unita_di_lettura(
   selezione$scartate_antenne,
   selezione$scartate_saponette
 )
-ind <- indicatori_letture(unita)
+# Doppioni e righe senza RFID o senza istante: scartate, ma senza una chiave per
+# incontrare i due sistemi (si contano per riga, nel loro sistema).
+extra <- righe_extra(selezione$scartate_antenne, selezione$scartate_saponette)
+ind <- indicatori_letture(unita, extra)
 
 # --- Le forniture del periodo, dalle tabelle estratte ---------------------------
 file <- file_origine(percorso_progetto(params$cartella_origine))
@@ -222,9 +231,7 @@ anagrafica <- if (anagrafica_presente) {
 # perché le altre non si sanno attribuire.
 anagrafica_scelta <- anagrafica
 if (!is.null(anagrafica_scelta)) {
-  if (!is.null(servizio)) {
-    anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$servizio %in% servizio)
-  }
+  anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$servizio %in% servizio_forniture)
   if (!is.null(gruppo_scelto)) {
     anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$gruppo == gruppo_scelto)
   }
@@ -234,7 +241,7 @@ anagrafica_analisi <- anagrafica_scelta
 if (con_giri && !is.null(anagrafica_analisi)) {
   anagrafica_analisi <- dplyr::filter(anagrafica_analisi, .data$id_fornitura %in% lette)
 }
-economia_possibile <- !is.null(anagrafica) && (is.null(servizio) || servizio == "SECCO")
+economia_possibile <- !is.null(anagrafica) && servizio_forniture == "SECCO"
 # Diventa vero se l'analisi economica trova almeno una fornitura.
 economia_utile <- FALSE
 ```
@@ -293,7 +300,8 @@ righe_selezione <- dplyr::tibble(
   Voce = c(
     "Periodo",
     "Letture",
-    "Servizio",
+    "Servizio delle letture",
+    "Servizio delle forniture",
     "Fascia di componenti",
     "Letture delle antenne",
     "Letture delle saponette"
@@ -312,6 +320,11 @@ righe_selezione <- dplyr::tibble(
     } else {
       servizio
     },
+    if (is.null(servizio)) {
+      "SECCO (predefinito)"
+    } else {
+      servizio
+    },
     if (is.null(gruppo_scelto)) "tutte" else gruppo_scelto,
     copertura(selezione$antenne, selezione$scartate_antenne),
     copertura(selezione$saponette, selezione$scartate_saponette)
@@ -320,7 +333,7 @@ righe_selezione <- dplyr::tibble(
 knitr::kable(righe_selezione, align = "ll")
 ```
 
-Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Sono **compatibili** le letture che la pulizia tiene, anche se il database non le conosce: sono potenzialmente bidoni dell'azienda. Quelle **associate** sono le compatibili con una fornitura (`presente_a_database` uguale a `PIA`); le **non associate** sono le altre, cioè i contenitori presenti solo tra i tag (`PIT`) o per niente nel database (`NP`). Sono **scartate** solo le letture che la pulizia toglie: i codici nulli (soli zeri) e i codici lunghi che non sono bidoni (più di 10 caratteri e due o più cifre diverse da zero nei primi 14, né sacchetti né HERA). Le letture senza posizione si tengono, e anche i doppioni dello stesso giorno non sono letture distinte.
+Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Sono **compatibili** le letture che la pulizia tiene, anche se il database non le conosce: sono potenzialmente bidoni dell'azienda. Quelle **associate** sono le compatibili con una fornitura (`presente_a_database` uguale a `PIA`); le **non associate** sono le altre, cioè i contenitori presenti solo tra i tag (`PIT`) o per niente nel database (`NP`). Sono **scartate** le righe che la pulizia toglie: i codici nulli (soli zeri), i codici lunghi che non sono bidoni (più di 10 caratteri e due o più cifre diverse da zero nei primi 14, né sacchetti né HERA), i doppioni (lo stesso bidone letto più volte nello stesso giorno dallo stesso sistema: resta la prima lettura) e le righe senza RFID o con l'istante illeggibile. Le letture senza posizione si tengono.
 
 ```{r}
 #| label: tabella-giri
@@ -370,7 +383,7 @@ if (nrow(nd) > 0) {
 }
 ```
 
-Le forniture sono quelle con almeno un contenitore dotato di tag attivo nel periodo. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio.
+Le forniture sono quelle con almeno un contenitore dotato di tag attivo nel periodo, di un solo servizio: quello scelto con il parametro `servizio` e, se non se ne sceglie uno, il **secco**. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio.
 
 # Le letture
 
@@ -439,7 +452,7 @@ ggplot(dati_grafico, aes(x = .data$letture, y = .data$classe, fill = .data$class
 
 ```{r}
 #| label: composizione
-composizione <- composizione_letture(unita) |>
+composizione <- composizione_letture(unita, extra) |>
   dplyr::mutate(stato = factor(as.character(.data$stato), names(colori_stati)))
 knitr::kable(
   composizione |>
@@ -471,7 +484,7 @@ ggplot(
   scale_fill_manual(values = colori_stati) +
   labs(
     title = "Da che cosa dipende lo scarto",
-    subtitle = "PIA: con fornitura · PIT: contenitore dell'azienda senza fornitura · NP: codice valido non presente · Scartata: scartata dalla pulizia",
+    subtitle = "PIA: con fornitura · PIT: contenitore dell'azienda senza fornitura · NP: codice valido non presente · Scartata: tolta dalla pulizia",
     x = NULL,
     y = NULL
   ) +
@@ -479,17 +492,27 @@ ggplot(
 ```
 
 ```{r}
-#| label: non-conteggiate
+#| label: scartate-per-motivo
 #| results: asis
-non_conteggiate <- righe_non_conteggiate(selezione$scartate_antenne, selezione$scartate_saponette)
-if (nrow(non_conteggiate) > 0) {
-  cat("\nRighe del registro che non sono letture distinte (non entrano nei conteggi): ")
-  cat(paste0(
-    non_conteggiate$sistema, ", ", gsub("_", " ", non_conteggiate$motivo), ": ",
-    intero(non_conteggiate$righe),
-    collapse = "; "
+per_motivo <- scartate_per_motivo(selezione$scartate_antenne, selezione$scartate_saponette)
+if (nrow(per_motivo) > 0) {
+  cat("\nLe letture scartate di ogni sistema, per motivo:\n\n")
+  nomi_motivi <- c(
+    codice_nullo = "codice nullo (soli zeri)",
+    codice_non_compatibile = "codice lungo che non è un bidone",
+    doppione = "doppione (già letto lo stesso giorno)",
+    senza_rfid = "riga senza RFID",
+    istante_illeggibile = "istante illeggibile"
+  )
+  print(knitr::kable(
+    dplyr::tibble(
+      Sistema = per_motivo$sistema,
+      Motivo = unname(nomi_motivi[per_motivo$motivo]),
+      Letture = intero(per_motivo$letture)
+    ),
+    align = "llr"
   ))
-  cat(". Un doppione è la stessa lettura già contata; una riga senza RFID o con l'istante illeggibile non ha una chiave per riconoscerla.\n")
+  cat("\nI codici nulli e quelli lunghi sono letture (RFID e giorno): lo stesso codice letto dai due sistemi nello stesso giorno conta una volta. I doppioni e le righe senza RFID o senza istante sono righe in più di un solo sistema e si contano per riga.\n")
 }
 if (!scarto_calcolabile) {
   cat("\n::: {.callout-note}\nCon un servizio scelto le letture scartate dalla pulizia non entrano: non hanno un servizio. Gli indici di scarto non sono calcolabili e le letture sono le sole che hanno un servizio.\n:::\n")
@@ -621,7 +644,7 @@ if (!vuoto(params$cartella_csv)) {
 ```{r}
 #| label: propensione
 #| eval: !expr "!is.null(anagrafica_analisi)"
-propensione <- propensione_conferimento(unita, anagrafica_analisi, servizio)
+propensione <- propensione_conferimento(unita, anagrafica_analisi, servizio_forniture)
 propensione <- propensione[propensione$forniture > 0, ]
 knitr::kable(
   dplyr::tibble(
@@ -842,24 +865,41 @@ Il confronto più vicino al costo reale di un sistema. Per ogni fornitura si con
 
 ```{r}
 #| label: senza-conferimenti
-#| eval: !expr "!is.null(anagrafica_scelta) && !con_giri && (is.null(servizio) || servizio == 'SECCO')"
+#| eval: !expr "!is.null(anagrafica_scelta) && !con_giri && servizio_forniture == 'SECCO'"
 #| results: asis
 secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
 senza <- forniture_senza_conferimenti(unita, secco)
 cat(
-  "\nForniture del secco con almeno una raccolta attesa nel periodo e **nessuna lettura associata**, da nessuno dei due sistemi: **",
+  "\nForniture del secco (domestiche, condomini e non domestiche) con almeno una raccolta attesa nel periodo e **nessuna lettura associata**, da nessuno dei due sistemi: **",
   intero(nrow(senza)), "** su ", intero(nrow(secco)),
   " (", quota(rapporto(nrow(senza), nrow(secco))), ").\n\n",
   sep = ""
 )
+escluse <- attr(senza, "escluse")
+if (sum(escluse) > 0) {
+  cat(
+    "::: {.callout-warning}\n",
+    "Tra le forniture del secco senza letture associate, **", intero(sum(escluse)), "** non sono nell'elenco, perché non si può dire che ci si aspettasse una raccolta: ",
+    intero(escluse[["raccolte_non_note"]]), " non hanno le raccolte annue previste nei dati, ",
+    intero(escluse[["meno_di_una_attesa"]]), " sono state attive così poco che nel periodo se ne aspettava meno di una.\n:::\n\n",
+    sep = ""
+  )
+}
 if (nrow(senza) > 0) {
+  # Una riga per gruppo (le colonne hanno la lunghezza dei gruppi, non delle forniture).
+  per_gruppo_senza <- senza |>
+    dplyr::summarise(
+      forniture = dplyr::n(),
+      contenitori = sum(.data$contenitori),
+      .by = "gruppo"
+    ) |>
+    dplyr::arrange(.data$gruppo)
   print(knitr::kable(
     dplyr::tibble(
-      Gruppo = senza$gruppo,
-      Forniture = intero(table(senza$gruppo)[as.character(unique(senza$gruppo))]),
-      Contenitori = intero(vapply(unique(senza$gruppo), \(g) sum(senza$contenitori[senza$gruppo == g]), numeric(1)))
-    ) |>
-      dplyr::distinct(),
+      Gruppo = per_gruppo_senza$gruppo,
+      Forniture = intero(per_gruppo_senza$forniture),
+      Contenitori = intero(per_gruppo_senza$contenitori)
+    ),
     align = "lrr"
   ))
   elenco <- senza |>
@@ -912,7 +952,7 @@ utils::write.table(
 #| eval: !expr "!economia_possibile"
 #| results: asis
 cat("\n::: {.callout-note}\nL'analisi economica vale solo per il secco, l'unico rifiuto fatturato, e richiede i file delle forniture")
-if (!is.null(servizio) && servizio != "SECCO") cat(": con il servizio ", servizio, " non si fa", sep = "")
+if (servizio_forniture != "SECCO") cat(": con il servizio ", servizio_forniture, " non si fa", sep = "")
 cat(".\n:::\n")
 ```
 

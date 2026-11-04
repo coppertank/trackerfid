@@ -10,20 +10,49 @@
 # che la pulizia tiene, anche se il database non le conosce (`PIA`, `PIT` o
 # `NP`): sono potenzialmente bidoni dell'azienda. Quelle «associate» sono le
 # compatibili con una fornitura (`PIA`); «non associate» le altre. Sono
-# «scartate» solo le letture che la pulizia toglie (codici nulli e codici lunghi
-# che non sono bidoni); i doppioni dello stesso giorno non sono letture distinte.
-# (Il 29/10/2026 le compatibili erano le sole `PIA`: il proprietario ha cambiato
-# la regola il 30/10.)
+# «scartate» tutte le righe che la pulizia toglie: codici nulli, codici lunghi che
+# non sono bidoni, doppioni dello stesso giorno, righe senza RFID o con l'istante
+# illeggibile. I primi due hanno una chiave (RFID e giorno) e si incontrano tra i
+# due sistemi come le letture tenute; gli altri sono righe in più di un solo
+# sistema e si contano per riga (`righe_extra()`).
+# (Il 29/10/2026 le compatibili erano le sole `PIA`, e i doppioni non contavano
+# tra le scartate; il proprietario ha precisato la regola il 30/10 e il 4/11.)
 
-#' Motivi di scarto che contano come lettura scartata
+#' Motivi di scarto di una lettura con la sua chiave (RFID e giorno)
 #'
-#' Contesto: il registro della pipeline (`righe_scartate()`) ha anche righe che
-#' non sono letture distinte: un doppione è la stessa lettura già contata, e
-#' una riga senza RFID o senza istante leggibile non ha una chiave.
-#' Risultato: i motivi delle letture che il report conta come scartate.
+#' Contesto: il registro della pipeline (`righe_scartate()`) ha righe di due tipi.
+#' Un codice nullo o non compatibile è una lettura scartata con la sua chiave, e lo
+#' stesso codice letto dai due sistemi nello stesso giorno è una lettura sola.
+#' Risultato: i motivi con chiave; gli altri sono `motivi_senza_chiave()`.
 #' @noRd
 motivi_di_scarto <- function() {
   c("codice_non_compatibile", "codice_nullo")
+}
+
+#' Motivi di scarto di una riga che non è una lettura distinta
+#'
+#' Contesto: un doppione è una riga in più dello stesso bidone nello stesso giorno
+#' (la lettura è già tenuta); una riga senza RFID o con l'istante illeggibile non
+#' ha una chiave. Sono scartate, ma si contano per riga, per sistema.
+#' Risultato: i motivi.
+#' @noRd
+motivi_senza_chiave <- function() {
+  c("doppione", "senza_rfid", "istante_illeggibile")
+}
+
+#' Righe scartate senza chiave di ogni sistema
+#'
+#' Contesto: vedi `motivi_senza_chiave()`. Si sommano alle letture e alle scartate
+#' del loro sistema (non si incontrano con l'altro sistema).
+#' Risultato: un vettore con nome, `saponette` e `antenne`.
+#' @param scartate_antenne,scartate_saponette Registro delle scartate.
+#' @noRd
+righe_extra <- function(scartate_antenne, scartate_saponette) {
+  conta <- function(registro) sum(registro$motivo %in% motivi_senza_chiave())
+  c(
+    saponette = conta(scartate_saponette),
+    antenne = conta(scartate_antenne)
+  )
 }
 
 #' Colonne che il report usa dei file delle letture
@@ -293,6 +322,10 @@ seleziona_per_giri <- function(letture, giri, margine_minuti = 30) {
     ) |>
     dplyr::rename(riga_giro = "riga_lista")
   finestre <- finestre_dei_giri(giri, antenne_giri, margine_minuti)
+  # Un numero per ogni riga del registro: una riga che cade in due finestre non si
+  # conta due volte nel totale.
+  letture$scartate_antenne <- dplyr::mutate(letture$scartate_antenne, riga_registro = dplyr::row_number())
+  letture$scartate_saponette <- dplyr::mutate(letture$scartate_saponette, riga_registro = dplyr::row_number())
   list(
     antenne = antenne_giri,
     saponette = righe_nelle_finestre(letture$saponette, finestre, "matricola_saponetta"),
@@ -335,7 +368,12 @@ letture_di_un_sistema <- function(finali, scartate) {
     dplyr::transmute(
       .data$RFID,
       .data$data_lettura,
-      stato = as.character(.data$presente_a_database),
+      # I valori di prima del 28/10/2026 valgono come `PIA` e `NP`.
+      stato = dplyr::case_when(
+        .data$presente_a_database %in% "Presente" ~ "PIA",
+        .data$presente_a_database %in% "Non Presente" ~ "NP",
+        .default = as.character(.data$presente_a_database)
+      ),
       .data$id_fornitura,
       .data$volume,
       .data$servizio_transponder
@@ -425,6 +463,8 @@ rapporto <- function(numeratore, denominatore) {
 #' pulizia toglie.
 #'
 #' Funzionamento: conta le letture di `unita_di_lettura()` per sistema e stato.
+#' Le righe scartate senza chiave (`righe_extra()`: doppioni, righe senza RFID o
+#' senza istante) si sommano alle letture e alle scartate del loro sistema.
 #' - `letture_*`, `compatibili_*`, `associate_*`, `non_associate_*` e `scartate_*`,
 #'   ognuna per solo saponette, solo antenne, in comune e in totale;
 #' - indice di scarto (quanto filtra via un sistema): `(scartate solo del
@@ -440,8 +480,9 @@ rapporto <- function(numeratore, denominatore) {
 #'
 #' Risultato: un tibble di una riga.
 #' @param unita Risultato di `unita_di_lettura()`.
+#' @param extra Risultato di `righe_extra()`; senza, nessuna.
 #' @noRd
-indicatori_letture <- function(unita) {
+indicatori_letture <- function(unita, extra = c(saponette = 0, antenne = 0)) {
   conta <- function(sistema, stati = NULL) {
     sum(
       unita$sistema == sistema &
@@ -449,8 +490,9 @@ indicatori_letture <- function(unita) {
     )
   }
   sistemi <- sistemi_lettura()
-  letture <- vapply(sistemi, conta, numeric(1))
   compatibili <- vapply(sistemi, conta, numeric(1), stati = c("PIA", "PIT", "NP"))
+  letture <- vapply(sistemi, conta, numeric(1)) +
+    c(extra[["saponette"]], extra[["antenne"]], 0)
   associate <- vapply(sistemi, conta, numeric(1), stati = "PIA")
   scartate <- letture - compatibili
   totali <- sum(letture)
@@ -493,12 +535,15 @@ indicatori_letture <- function(unita) {
 #' Contesto: dice da che cosa dipende lo scarto di un sistema. `PIA` è il bidone
 #' che si può fatturare; `PIT` è un contenitore dell'azienda senza fornitura; `NP` è
 #' un codice valido che il database non conosce; `Scartata` è un codice
-#' scartato dalla pulizia (codice nullo o lungo e non di un bidone).
-#' Funzionamento: ogni sistema comprende le letture sue e quelle in comune.
+#' scartato dalla pulizia (codice nullo o lungo e non di un bidone, doppione,
+#' riga senza RFID o senza istante).
+#' Funzionamento: ogni sistema comprende le letture sue e quelle in comune; le
+#' righe scartate senza chiave di `righe_extra()` sono `Scartata` del loro sistema.
 #' Risultato: per sistema e stato, il numero di letture e la quota sul sistema.
 #' @param unita Risultato di `unita_di_lettura()`.
+#' @param extra Risultato di `righe_extra()`; senza, nessuna.
 #' @noRd
-composizione_letture <- function(unita) {
+composizione_letture <- function(unita, extra = c(saponette = 0, antenne = 0)) {
   sistemi <- list(
     Saponette = c("Solo saponette", "Entrambe"),
     Antenne = c("Solo antenne", "Entrambe")
@@ -508,6 +553,8 @@ composizione_letture <- function(unita) {
       dplyr::filter(.data$sistema %in% insieme) |>
       dplyr::count(.data$stato, name = "letture", .drop = FALSE) |>
       dplyr::mutate(
+        letture = .data$letture +
+          ifelse(.data$stato == "Scartata", extra[[tolower(nome)]], 0),
         sistema = nome,
         quota = rapporto(.data$letture, sum(.data$letture))
       )
@@ -516,25 +563,33 @@ composizione_letture <- function(unita) {
     dplyr::select("sistema", "stato", "letture", "quota")
 }
 
-#' Righe del registro che non sono letture distinte, per motivo e sistema
+#' Le letture scartate di ogni sistema, per motivo
 #'
-#' Contesto: i doppioni (stessa lettura già contata), le righe senza RFID e quelle con
-#' un istante illeggibile non hanno una chiave: il report le mostra a parte.
-#' Risultato: per sistema e motivo, il numero di righe.
+#' Contesto: dice da che cosa dipende lo scarto di un sistema. Ogni motivo è un
+#' passo della pulizia dei codici (`motivi_di_scarto()` e `motivi_senza_chiave()`).
+#' Funzionamento: per i codici nulli e non compatibili conta le letture (RFID e
+#' giorno), come gli indicatori; per i doppioni e le righe senza RFID o senza
+#' istante conta le righe.
+#' Risultato: per sistema e motivo, il numero di letture o di righe.
 #' @param scartate_antenne,scartate_saponette Registro delle scartate.
 #' @noRd
-righe_non_conteggiate <- function(scartate_antenne, scartate_saponette) {
+scartate_per_motivo <- function(scartate_antenne, scartate_saponette) {
   conta <- function(registro, sistema) {
-    registro |>
-      dplyr::filter(!.data$motivo %in% motivi_di_scarto()) |>
-      dplyr::count(.data$motivo, name = "righe") |>
+    con_chiave <- registro |>
+      dplyr::filter(.data$motivo %in% motivi_di_scarto()) |>
+      dplyr::distinct(.data$RFID, .data$data_lettura, .data$motivo) |>
+      dplyr::count(.data$motivo, name = "letture")
+    senza_chiave <- registro |>
+      dplyr::filter(.data$motivo %in% motivi_senza_chiave()) |>
+      dplyr::count(.data$motivo, name = "letture")
+    dplyr::bind_rows(con_chiave, senza_chiave) |>
       dplyr::mutate(sistema = sistema)
   }
   dplyr::bind_rows(
-    conta(scartate_antenne, "Antenne"),
-    conta(scartate_saponette, "Saponette")
+    conta(scartate_saponette, "Saponette"),
+    conta(scartate_antenne, "Antenne")
   ) |>
-    dplyr::select("sistema", "motivo", "righe")
+    dplyr::select("sistema", "motivo", "letture")
 }
 
 #' Indicatori di ogni giro e del totale
@@ -550,13 +605,19 @@ righe_non_conteggiate <- function(scartate_antenne, scartate_saponette) {
 #' @noRd
 indicatori_per_giro <- function(selezione) {
   per_giro <- function(riga) {
+    scartate_antenne <- dplyr::filter(selezione$scartate_antenne, .data$riga_giro == riga)
+    scartate_saponette <- dplyr::filter(selezione$scartate_saponette, .data$riga_giro == riga)
     unita_di_lettura(
       dplyr::filter(selezione$antenne, .data$riga_giro == riga),
       dplyr::filter(selezione$saponette, .data$riga_giro == riga),
-      dplyr::filter(selezione$scartate_antenne, .data$riga_giro == riga),
-      dplyr::filter(selezione$scartate_saponette, .data$riga_giro == riga)
+      scartate_antenne,
+      scartate_saponette
     ) |>
-      indicatori_letture()
+      indicatori_letture(righe_extra(scartate_antenne, scartate_saponette))
+  }
+  # Nel totale una riga del registro che sta in più finestre conta una volta.
+  una_per_riga <- function(registro) {
+    dplyr::distinct(registro, .data$riga_registro, .keep_all = TRUE)
   }
   finestre <- selezione$finestre
   giri <- finestre |>
@@ -568,7 +629,10 @@ indicatori_per_giro <- function(selezione) {
     selezione$scartate_antenne,
     selezione$scartate_saponette
   ) |>
-    indicatori_letture() |>
+    indicatori_letture(righe_extra(
+      una_per_riga(selezione$scartate_antenne),
+      una_per_riga(selezione$scartate_saponette)
+    )) |>
     dplyr::mutate(giro = "Totale")
   dplyr::bind_rows(giri, totale)
 }

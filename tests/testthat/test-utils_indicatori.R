@@ -163,26 +163,96 @@ test_that("la composizione dice come si dividono le letture di ogni sistema", {
     composizione$letture[composizione$sistema == sistema & composizione$stato == stato]
   }
   # le saponette: R1 e R5 PIA, R6 NP, R7 scartata
-  expect_identical(conta("Saponette", "PIA"), 2L)
-  expect_identical(conta("Saponette", "PIT"), 0L)
-  expect_identical(conta("Saponette", "NP"), 1L)
-  expect_identical(conta("Saponette", "Scartata"), 1L)
-  expect_identical(conta("Antenne", "PIT"), 1L)
+  expect_equal(conta("Saponette", "PIA"), 2)
+  expect_equal(conta("Saponette", "PIT"), 0)
+  expect_equal(conta("Saponette", "NP"), 1)
+  expect_equal(conta("Saponette", "Scartata"), 1)
+  expect_equal(conta("Antenne", "PIT"), 1)
   expect_equal(
     sum(composizione$quota[composizione$sistema == "Antenne"]),
     1
   )
 })
 
-test_that("le righe senza chiave si contano a parte", {
+test_that("doppioni e righe senza chiave sono scartate, contate per riga nel loro sistema", {
   g <- "2026-10-20 07:00:00"
-  nonconteggiate <- righe_non_conteggiate(
-    dplyr::bind_rows(scartata("R7", g, "codice_nullo"), scartata("R8", g, "doppione")),
+  scartate_antenne <- dplyr::bind_rows(
+    scartata("R7", g, "codice_nullo"),
+    scartata("R8", g, "doppione"),
+    scartata("R1", g, "doppione")
+  )
+  scartate_saponette <- dplyr::bind_rows(
+    scartata(NA, g, "senza_rfid"),
+    scartata("R1", g, "doppione"),
+    scartata("R2", g, "doppione"),
+    scartata("R3", g, "istante_illeggibile")
+  )
+  extra <- righe_extra(scartate_antenne, scartate_saponette)
+  expect_identical(extra, c(saponette = 4L, antenne = 2L))
+
+  # unita_prova() ha gia' due scartate con chiave in comune (R7); le righe in
+  # piu' si sommano alle letture e alle scartate del loro sistema, e non cambiano
+  # le compatibili
+  senza <- indicatori_letture(unita_prova())
+  con <- indicatori_letture(unita_prova(), extra)
+  expect_identical(con$letture_solo_saponette, senza$letture_solo_saponette + 4)
+  expect_identical(con$letture_solo_antenne, senza$letture_solo_antenne + 2)
+  expect_identical(con$letture_in_comune, senza$letture_in_comune)
+  expect_identical(con$scartate_solo_saponette, senza$scartate_solo_saponette + 4)
+  expect_identical(con$scartate_solo_antenne, senza$scartate_solo_antenne + 2)
+  expect_identical(con$scartate_in_comune, senza$scartate_in_comune)
+  expect_identical(con$compatibili_totali, senza$compatibili_totali)
+  expect_identical(con$associate_totali, senza$associate_totali)
+  expect_identical(con$letture_totali, senza$letture_totali + 6)
+  expect_identical(con$letture_totali, con$compatibili_totali + con$scartate_totali)
+  expect_equal(con$indice_scarto_saponette, (con$scartate_solo_saponette + con$scartate_in_comune) / con$letture_totali)
+  expect_equal(con$indice_scarto_totale, con$scartate_totali / con$letture_totali)
+  # la composizione somma sempre a uno
+  composizione <- composizione_letture(unita_prova(), extra)
+  # le saponette: R1, R5, R6 e R7 (in comune, scartata) piu' 4 righe senza chiave
+  expect_equal(sum(composizione$letture[composizione$sistema == "Saponette"]), 4 + 4)
+  for (sistema in c("Saponette", "Antenne")) {
+    expect_equal(sum(composizione$quota[composizione$sistema == sistema]), 1)
+  }
+  expect_equal(
+    composizione$letture[composizione$sistema == "Saponette" & composizione$stato == "Scartata"],
+    1 + 4
+  )
+})
+
+test_that("le scartate per motivo contano le letture con chiave e le righe senza", {
+  g <- "2026-10-20 07:00:00"
+  per_motivo <- scartate_per_motivo(
+    dplyr::bind_rows(
+      scartata("R7", g, "codice_nullo"),
+      scartata("R7", "2026-10-20 08:00:00", "codice_nullo"),
+      scartata("R8", g, "doppione"),
+      scartata("R9", g, "codice_non_compatibile")
+    ),
     dplyr::bind_rows(scartata(NA, g, "senza_rfid"), scartata("R1", g, "doppione"), scartata("R2", g, "doppione"))
   )
-  expect_identical(nonconteggiate$sistema, c("Antenne", "Saponette", "Saponette"))
-  expect_identical(nonconteggiate$righe, c(1L, 2L, 1L))
-  expect_identical(nonconteggiate$motivo, c("doppione", "doppione", "senza_rfid"))
+  conteggio <- function(sistema, motivo) per_motivo$letture[per_motivo$sistema == sistema & per_motivo$motivo == motivo]
+  # lo stesso codice nullo letto due volte nello stesso giorno e' una lettura sola
+  expect_identical(conteggio("Antenne", "codice_nullo"), 1L)
+  expect_identical(conteggio("Antenne", "doppione"), 1L)
+  expect_identical(conteggio("Antenne", "codice_non_compatibile"), 1L)
+  expect_identical(conteggio("Saponette", "doppione"), 2L)
+  expect_identical(conteggio("Saponette", "senza_rfid"), 1L)
+  expect_identical(nrow(scartate_per_motivo(scartata(character(0), character(0), character(0)), scartata(character(0), character(0), character(0)))), 0L)
+})
+
+test_that("i valori di prima del 28/10/2026 valgono come PIA e NP", {
+  g <- "2026-10-20 07:00:00"
+  unita <- unita_di_lettura(
+    lettura("R1", g, "Presente", "F1", 120, "SECCO"),
+    lettura("R2", g, "Non Presente"),
+    scartata(character(0), character(0), character(0)),
+    scartata(character(0), character(0), character(0))
+  )
+  expect_identical(as.character(unita$stato[unita$RFID == "R1"]), "PIA")
+  expect_identical(as.character(unita$stato[unita$RFID == "R2"]), "NP")
+  # e non finiscono tra le scartate
+  expect_identical(indicatori_letture(unita)$scartate_totali, 0)
 })
 
 test_that("le letture si leggono dai CSV della pipeline con i tipi giusti", {
@@ -347,4 +417,36 @@ test_that("piu' giri valgono insieme e una lettura in due giri conta una volta n
   )
   expect_identical(totale$letture_totali, as.numeric(nrow(unita)))
   expect_lt(totale$letture_totali, sum(indicatori$letture_totali[indicatori$giro != "Totale"]))
+})
+
+test_that("un doppione che cade in due finestre conta una volta nel totale dei giri", {
+  letture <- letture_giri_prova()
+  letture$scartate_saponette <- dplyr::bind_rows(
+    letture$scartate_saponette,
+    # le 07:40 stanno in tutte e due le finestre; le 06:10 solo nella prima
+    scartata("R1", "2026-10-20 07:40:00", "doppione", saponetta = "S1"),
+    scartata("R2", "2026-10-20 06:10:00", "doppione", saponetta = "S1"),
+    scartata(NA, "2026-10-20 07:45:00", "senza_rfid", saponetta = "S1")
+  )
+  giri <- giri_analisi_prova(c(
+    "2026-10-20,101,SECCO PaP,S1,06:00,08:00",
+    "2026-10-20,101,SECCO PaP,S1,07:30,09:30"
+  ))
+  selezione <- seleziona_per_giri(letture, giri)
+  indicatori <- indicatori_per_giro(selezione)
+  extra_saponette <- function(giro) {
+    riga <- indicatori[indicatori$giro == giro, ]
+    riga$scartate_solo_saponette
+  }
+  # nei due giri: la prima finestra ha due doppioni e la riga senza RFID, la
+  # seconda il doppione delle 07:40 e la riga senza RFID
+  # (R7 e' una scartata con chiave, anche dell'altro sistema)
+  senza_extra <- indicatori_per_giro(seleziona_per_giri(letture_giri_prova(), giri))
+  differenza <- function(giro) extra_saponette(giro) - senza_extra$scartate_solo_saponette[senza_extra$giro == giro]
+  expect_equal(differenza("1"), 3)
+  expect_equal(differenza("2"), 2)
+  # nel totale le righe che stanno in due finestre contano una volta: 3, non 5
+  expect_equal(differenza("Totale"), 3)
+  totale <- indicatori[indicatori$giro == "Totale", ]
+  expect_identical(totale$letture_totali, totale$compatibili_totali + totale$scartate_totali)
 })

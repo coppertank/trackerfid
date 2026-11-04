@@ -32,7 +32,8 @@ tabelle <- c(
   "dv_cnt_gruppi_sacchetti",
   "dv_cnt_gruppi_sacchetti_servizi",
   "dv_associazione_componenti",
-  "dv_potenziamento_secco"
+  "dv_potenziamento_secco",
+  "letture_saponette_grezze",
 )
 
 

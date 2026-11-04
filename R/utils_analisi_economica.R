@@ -122,21 +122,29 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
 #' Contesto: una fornitura senza letture non è una fornitura virtuosa: può avere il
 #' tag rotto o non letto, il contenitore non esposto o lo smaltimento in un altro
 #' modo. Il report le segnala e non le premia.
-#' Funzionamento: tiene le forniture con tag dell'anagrafica che, nel periodo,
-#' non hanno nessuna lettura associata dei due sistemi insieme e per cui le raccolte
-#' attese (raccolte annue × `fattore`) sono almeno una.
-#' Risultato: l'anagrafica di quelle forniture con `raccolte_attese`.
+#' Funzionamento: tiene le forniture con tag dell'anagrafica (di qualunque gruppo:
+#' domestiche, condomini, non domestiche) che, nel periodo, non hanno nessuna
+#' lettura associata dei due sistemi insieme e per cui le raccolte attese
+#' (raccolte annue × `fattore`) sono almeno una. Le forniture senza lettura che
+#' restano fuori non spariscono in silenzio: se ne contano i due motivi
+#' nell'attributo `escluse`.
+#' Risultato: l'anagrafica di quelle forniture con `raccolte_attese`. L'attributo
+#' `escluse` è un vettore con `raccolte_non_note` (le raccolte annue mancano nei
+#' dati) e `meno_di_una_attesa` (nel periodo se ne aspetta meno di una).
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @noRd
 forniture_senza_conferimenti <- function(unita, anagrafica) {
   lette <- unique(unita$id_fornitura[unita$stato %in% "PIA"])
-  anagrafica |>
+  senza_letture <- anagrafica |>
     dplyr::mutate(raccolte_attese = .data$raccolte_annue * .data$fattore) |>
-    dplyr::filter(
-      !.data$id_fornitura %in% lette,
-      (.data$raccolte_attese >= 1) %in% TRUE
-    )
+    dplyr::filter(!.data$id_fornitura %in% lette)
+  risultato <- dplyr::filter(senza_letture, (.data$raccolte_attese >= 1) %in% TRUE)
+  attr(risultato, "escluse") <- c(
+    raccolte_non_note = sum(is.na(senza_letture$raccolte_attese)),
+    meno_di_una_attesa = sum(senza_letture$raccolte_attese < 1, na.rm = TRUE)
+  )
+  risultato
 }
 
 #' Premio, eccedenza e classe delle forniture domestiche del secco, per scenario

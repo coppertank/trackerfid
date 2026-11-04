@@ -106,6 +106,23 @@ test_that("le forniture senza conferimenti sono quelle da cui ci si aspettava al
   expect_true("F1" %in% forniture_senza_conferimenti(solo_pit, anagrafica_economia_prova())$id_fornitura)
 })
 
+test_that("le forniture senza letture che restano fuori dall'elenco si contano per motivo", {
+  # F4 e' attiva cinque giorni: ci si aspetta meno di una raccolta
+  senza <- forniture_senza_conferimenti(unita_economia_prova(), anagrafica_economia_prova())
+  expect_equal(attr(senza, "escluse"), c(raccolte_non_note = 0, meno_di_una_attesa = 1))
+  # se le raccolte annue di F3 mancano nei dati, F3 non e' nell'elenco ma si conta
+  anagrafica <- anagrafica_economia_prova()
+  anagrafica$raccolte_annue[anagrafica$id_fornitura == "F3"] <- NA
+  senza <- forniture_senza_conferimenti(unita_economia_prova(), anagrafica)
+  expect_setequal(senza$id_fornitura, c("F5", "F7"))
+  expect_equal(attr(senza, "escluse"), c(raccolte_non_note = 1, meno_di_una_attesa = 1))
+  # le forniture lette non sono escluse: non c'e' niente da segnalare
+  tutte_lette <- dplyr::filter(anagrafica_economia_prova(), id_fornitura %in% c("F1", "F2"))
+  vuota <- forniture_senza_conferimenti(unita_economia_prova(), tutte_lette)
+  expect_identical(nrow(vuota), 0L)
+  expect_equal(attr(vuota, "escluse"), c(raccolte_non_note = 0, meno_di_una_attesa = 0))
+})
+
 test_that("l'analisi economica classifica le forniture domestiche del secco in ogni scenario", {
   economia <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
   expect_identical(
