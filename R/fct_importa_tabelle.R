@@ -152,15 +152,15 @@ importa_test_mezzi <- function(percorso) {
 #' `IndirizzoLocalizzazione` («indirizzo, comune», in maiuscolo) e il cantiere
 #' dalla tabella dei comuni, per nome esatto. Una lettura con latitudine zero o
 #' senza comune **si tiene**: è comunque un bidone letto. Resta con posizione e
-#' comune mancanti (la posizione zero diventa `NA`). Per ogni RFID tiene una
-#' lettura al giorno, la prima con una posizione e, se nessuna ce l'ha, la
-#' prima in ordine di tempo; le altre sono doppioni. L'istante è nel fuso della
-#' sessione di R, come i turni del calendario: devono restare nello stesso fuso.
+#' comune mancanti (la posizione zero diventa `NA`). Non pulisce i codici e non
+#' toglie i doppioni: lo fa `pulisci_codici_rfid()`, uguale per le saponette.
+#' L'istante è nel fuso della sessione di R, come i turni del calendario:
+#' devono restare nello stesso fuso.
 #'
 #' Risultato: `data_ora_lettura`, `data_lettura`, `targa_veicolo`, `RFID`,
 #' `comune_lettura` (quello del GPS, non ancora corretto con la posizione),
-#' `NumeroLetture`, `latitudine`, `longitudine`, `cantiere`. I doppioni scartati
-#' stanno nell'attributo `scartate`, vedi `righe_scartate()`.
+#' `NumeroLetture`, `latitudine`, `longitudine`, `cantiere`, in ordine di tempo.
+#' L'`RFID` è quello grezzo del file.
 #' @param percorso Percorso del CSV delle letture.
 #' @param comuni Tabella dei comuni serviti con il loro cantiere.
 #' @noRd
@@ -194,18 +194,13 @@ importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
       longitudine = dplyr::if_else(.data$senza_posizione, NA_real_, .data$longitudine),
       comune_lettura = dplyr::na_if(.data$comune_lettura, "")
     )
-  # Una lettura al giorno per RFID: la prima con una posizione, altrimenti la
-  # prima in ordine di tempo. Poi si torna all'ordine di tempo.
-  ordinate <- dplyr::arrange(lette, .data$senza_posizione, .data$data_ora_lettura)
-  ripetute <- righe_ripetute(ordinate, c("data_lettura", "RFID"))
-  ordinate[!ripetute, ] |>
-    dplyr::arrange(.data$data_ora_lettura) |>
+  lette |>
     dplyr::select(-"senza_posizione") |>
+    dplyr::arrange(.data$data_ora_lettura) |>
     dplyr::left_join(
       dplyr::select(comuni, "comune", "cantiere"),
       by = c("comune_lettura" = "comune")
-    ) |>
-    con_scartate(righe_scartate(ordinate, ripetute, "doppione"))
+    )
 }
 
 #' Anagrafica dei contenitori con un codice transponder, e loro forniture
@@ -645,14 +640,14 @@ data_ora_da_testo <- function(x) {
 #' `data_lettura` con l'istante.
 #'
 #' Funzionamento: legge l'istante con `data_ora_da_testo()` e il giorno da
-#' `data_lettura` (se illeggibile lo ricava dall'istante), porta i codici al
-#' formato comune (`formatta_rfid()`) e toglie le righe ripetute. Le righe con
-#' istante illeggibile si scartano, con un avviso che ne mostra qualcuna. Un
-#' nome di colonna scritto con gli spazi (`matricola saponetta`) vale come con il
-#' trattino basso.
+#' `data_lettura` (se illeggibile lo ricava dall'istante). Le righe con istante
+#' illeggibile si scartano, con un avviso che ne mostra qualcuna. Non pulisce i
+#' codici e non toglie i doppioni: lo fa `pulisci_codici_rfid()`, uguale per le
+#' antenne. Un nome di colonna scritto con gli spazi (`matricola saponetta`) vale
+#' come con il trattino basso.
 #'
 #' Risultato: `data_ora_lettura`, `data_lettura`, `matricola_saponetta`, `RFID`.
-#' Le righe scartate (senza RFID, istante illeggibile, ripetute) stanno
+#' L'`RFID` è quello grezzo del file. Le righe con istante illeggibile stanno
 #' nell'attributo `scartate`, vedi `righe_scartate()`.
 #' @param percorso Percorso del CSV delle letture delle saponette.
 #' @return `data_ora_lettura`, `data_lettura`, `matricola_saponetta`, `RFID`.
@@ -701,20 +696,9 @@ importa_letture_saponette <- function(percorso) {
     )
   }
 
-  senza_rfid <- is.na(saponette$RFID)
-  senza_istante <- !senza_rfid & is.na(saponette$data_ora_lettura)
-  saponette[!senza_rfid & !senza_istante, ] |>
+  # I codici mancanti e il formato dei codici li tratta `pulisci_codici_rfid()`.
+  senza_istante <- is.na(saponette$data_ora_lettura)
+  saponette[!senza_istante, ] |>
     dplyr::select(-"testo_data_ora") |>
-    formatta_rfid() |>
-    togli_righe_ripetute() |>
-    (\(tenute) {
-      con_scartate(
-        tenute,
-        dplyr::bind_rows(
-          attr(tenute, "scartate"),
-          righe_scartate(saponette, senza_rfid, "senza_rfid"),
-          righe_scartate(saponette, senza_istante, "istante_illeggibile")
-        )
-      )
-    })()
+    con_scartate(righe_scartate(saponette, senza_istante, "istante_illeggibile"))
 }

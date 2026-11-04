@@ -409,6 +409,8 @@ scrivi_origine_prova <- function(cartella) {
       "data_ora_lettura,data_lettura,RFID,matricola_saponetta",
       "2025-03-01 07:00:00,2025-03-01,123,T1",
       "2025-03-01 07:00:00,2025-03-01,123,T1",
+      # lo stesso bidone, lo stesso giorno, un'altra ora e un'altra saponetta
+      "2025-03-01 09:00:00,2025-03-01,00123,T9",
       "2025-03-02 07:00:00,2025-03-02,00BD00000000000000000001,T1",
       "2025-03-03 07:00:00,2025-03-03,,T2",
       "2026-08-21 07:00:00,2026-08-21,123,T3",

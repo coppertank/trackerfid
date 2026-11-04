@@ -1694,6 +1694,84 @@ test_that("due codici che diventano lo stesso RFID contano una lettura al giorno
   expect_identical(una$RFID, rep("ABCDEF1234", 2))
 })
 
+test_that("una lettura al giorno: la prima in ordine di tempo, o la prima con una posizione", {
+  # saponette: nessuna posizione, restano le sole letture piu' vecchie del giorno,
+  # anche se arrivano in disordine e da saponette diverse
+  saponette <- dplyr::tibble(
+    data_ora_lettura = ora(c("2026-03-02 10:00:00", "2026-03-02 08:00:00", "2026-03-03 09:00:00", "2026-03-02 09:00:00")),
+    data_lettura = as.Date(c("2026-03-02", "2026-03-02", "2026-03-03", "2026-03-02")),
+    RFID = c("0000000001", "0000000001", "0000000001", "0000000002"),
+    matricola_saponetta = c("S2", "S1", "S1", "S1")
+  )
+  una <- una_lettura_al_giorno(saponette)
+  expect_identical(format(una$data_ora_lettura, "%d %H"), c("02 08", "02 09", "03 09"))
+  expect_identical(una$matricola_saponetta, c("S1", "S1", "S1"))
+  scartate <- attr(una, "scartate")
+  expect_identical(scartate$motivo, "doppione")
+  expect_identical(scartate$matricola_saponetta, "S2")
+  # antenne: una lettura con la posizione batte una piu' vecchia senza
+  antenne <- dplyr::tibble(
+    data_ora_lettura = ora(c("2026-03-02 07:00:00", "2026-03-02 09:00:00", "2026-03-02 08:00:00", "2026-03-02 06:00:00")),
+    data_lettura = as.Date("2026-03-02"),
+    RFID = c("0000000001", "0000000001", "0000000001", "0000000002"),
+    latitudine = c(NA, 45.5, 45.6, NA)
+  )
+  una <- una_lettura_al_giorno(antenne)
+  expect_identical(format(una$data_ora_lettura, "%H"), c("06", "08"))
+  expect_identical(una$latitudine, c(NA, 45.6))
+  expect_identical(nrow(attr(una, "scartate")), 2L)
+  # senza doppioni il registro e' vuoto
+  expect_identical(nrow(attr(una_lettura_al_giorno(antenne[c(1, 4), ]), "scartate")), 0L)
+})
+
+test_that("la pulizia dei codici e' la stessa per antenne e saponette, nell'ordine voluto", {
+  contenitori <- dplyr::tibble(
+    codice_transponder = c("0012345678", "00AB12CD34"),
+    data_attivazione_contenitore = as.Date("2025-01-01"),
+    data_cessazione_contenitore = as.Date("2099-12-31"),
+    id_fornitura = c("F1", "F2")
+  )
+  tag <- dplyr::tibble(codice_transponder = "0012F3A4B5")
+  giorno <- "2026-03-02"
+  letture <- dplyr::tibble(
+    data_ora_lettura = ora(paste(giorno, c(
+      "08:00:00", "08:10:00", "08:20:00", "08:30:00", "08:40:00", "08:50:00", "09:00:00", "09:10:00"
+    ))),
+    data_lettura = as.Date(giorno),
+    RFID = c(
+      "12345678", # senza zeri davanti: si normalizza e viene riconosciuto
+      trasponi_codice("00AB12CD34"), # letto male: si ripara
+      "000000000000", # nullo
+      "123456789012", # lungo, con due cifre diverse da zero nei primi 14: scartato
+      NA, # senza codice
+      "0000000042", # sconosciuto: resta com'e' (normalizzato)
+      "0012345678", # lo stesso del primo, piu' tardi: doppione
+      "00BD00000000000000000001" # sacchetto: resta
+    )
+  )
+  pulite <- pulisci_codici_rfid(letture, contenitori, tag)
+  expect_identical(
+    pulite$RFID,
+    c("0012345678", "00AB12CD34", "0000000042", "00BD00000000000000000001")
+  )
+  scartate <- attr(pulite, "scartate")
+  expect_setequal(
+    scartate$motivo,
+    c("codice_nullo", "codice_non_compatibile", "senza_rfid", "doppione")
+  )
+  # il doppione e' la lettura piu' tardi, nel formato comune
+  doppione <- scartate[scartate$motivo == "doppione", ]
+  expect_identical(doppione$RFID, "0012345678")
+  expect_identical(format(doppione$data_ora_lettura, "%H"), "09")
+  # i codici scartati prima della riparazione non entrano nei suoi conteggi
+  messaggi <- testthat::capture_messages(pulisci_codici_rfid(letture, contenitori, tag))
+  expect_match(messaggi, "riparati.*1 trasposizione", all = FALSE)
+  # la stessa funzione per le due; senza letture non si rompe
+  vuote <- pulisci_codici_rfid(letture[0, ], contenitori, tag)
+  expect_identical(nrow(vuote), 0L)
+  expect_identical(nrow(attr(vuote, "scartate")), 0L)
+})
+
 test_that("il controllo dei giri confronta le matricole senza zeri iniziali", {
   calendario <- dplyr::tibble(
     data_giro = as.Date("2026-03-02"),

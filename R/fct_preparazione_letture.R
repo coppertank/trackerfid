@@ -16,8 +16,8 @@
 #'
 #' Funzionamento: tiene di `letture`, per le righe indicate, istante, giorno,
 #' targa, matricola del mezzo o della saponetta e RFID, nelle colonne che ci
-#' sono, e aggiunge il `motivo`. I motivi sono `doppione`, `senza_rfid`,
-#' `istante_illeggibile` (saponette), `codice_non_compatibile` e `codice_nullo`.
+#' sono, e aggiunge il `motivo`. I motivi sono `istante_illeggibile` (saponette),
+#' `senza_rfid`, `codice_nullo`, `codice_non_compatibile` e `doppione`.
 #'
 #' Risultato: un tibble con una riga per ogni riga scartata.
 #' @param letture Letture da cui si scarta.
@@ -77,20 +77,6 @@ con_scartate <- function(letture, nuove) {
   letture
 }
 
-#' Toglie le righe identiche, ricordando quelle tolte come `doppione`
-#'
-#' Contesto: dopo la normalizzazione o la riparazione dei codici due righe
-#' diverse possono diventare uguali; contano una volta.
-#' Risultato: le righe senza ripetizioni, con l'attributo `scartate`.
-#' @noRd
-togli_righe_ripetute <- function(letture) {
-  ripetute <- righe_ripetute(letture)
-  con_scartate(
-    letture[!ripetute, , drop = FALSE],
-    righe_scartate(letture, ripetute, "doppione")
-  )
-}
-
 #' Tiene le letture dei mezzi con il test delle antenne positivo, dal giorno dopo il collaudo
 #'
 #' Contesto: le antenne vengono installate e collaudate un mezzo alla volta
@@ -109,14 +95,10 @@ togli_righe_ripetute <- function(letture) {
 #' @noRd
 filtra_letture_dopo_il_collaudo <- function(df_letture, df_test_mezzi) {
   test_positivi <- dplyr::filter(df_test_mezzi, .data$esito == "POSITIVO")
-  dopo_il_collaudo <- function(letture) {
-    letture |>
-      dplyr::inner_join(test_positivi, by = "targa_veicolo") |>
-      dplyr::filter(.data$data_lettura > .data$data_test)
-  }
 
-  valide <- df_letture |>
-    dopo_il_collaudo() |>
+  df_letture |>
+    dplyr::inner_join(test_positivi, by = "targa_veicolo") |>
+    dplyr::filter(.data$data_lettura > .data$data_test) |>
     dplyr::select(
       "data_ora_lettura",
       "data_lettura",
@@ -129,23 +111,6 @@ filtra_letture_dopo_il_collaudo <- function(df_letture, df_test_mezzi) {
       "latitudine",
       "longitudine"
     )
-  # Le scartate dell'importazione seguono la stessa sorte: quelle di un mezzo
-  # non collaudato non contano.
-  scartate <- attr(df_letture, "scartate")
-  if (is.null(scartate)) {
-    return(valide)
-  }
-  con_scartate(
-    valide,
-    dopo_il_collaudo(scartate)[c(
-      "data_ora_lettura",
-      "data_lettura",
-      "targa_veicolo",
-      "matricola_veicolo",
-      "RFID",
-      "motivo"
-    )]
-  )
 }
 
 #' Comune di lettura: quello del GPS se coincide con la fornitura, altrimenti quello della posizione
@@ -544,24 +509,84 @@ ripara_codici_rfid <- function(letture, contenitori, tag_contenitori) {
     dplyr::select(-"RFID_riparato", -"passo")
 }
 
-#' Una lettura al giorno per RFID: la prima
+#' Una lettura al giorno per RFID: si scartano i doppioni
 #'
 #' Contesto: un bidone può essere letto più volte nello stesso giorno (da mezzi
-#' diversi o dallo stesso mezzo in momenti diversi). Per l'analisi basta sapere
-#' che è stato letto, e la prima lettura del giorno è quella che conta.
+#' diversi o dallo stesso mezzo in momenti diversi). Un bidone svuotato una volta
+#' è una lettura sola. Vale allo stesso modo per le antenne e per le saponette
+#' (regola del proprietario, 4/11/2026).
 #'
-#' Funzionamento: tiene la prima lettura di ogni coppia giorno-RFID.
-#' Va applicata dopo `formatta_rfid()`, perché due codici scritti diversi
-#' possono diventare lo stesso RFID. Presuppone le letture in ordine di tempo.
+#' Funzionamento: di ogni coppia giorno e RFID tiene una lettura: la prima in
+#' ordine di tempo e, se le letture hanno una posizione (le antenne), la prima
+#' **che ne ha una**; le altre sono doppioni e finiscono nel registro. Va
+#' applicata dopo la normalizzazione e la riparazione dei codici, perché due
+#' codici scritti diversi possono diventare lo stesso RFID.
 #'
-#' Risultato: le stesse colonne, con al più una riga per RFID e giorno.
+#' Risultato: le letture in ordine di tempo, con al più una riga per RFID e
+#' giorno, e l'attributo `scartate` con i doppioni.
+#' @param letture Letture con `data_lettura`, `data_ora_lettura` e `RFID`; con
+#'   `latitudine` si preferisce una lettura che ha la posizione.
 #' @noRd
 una_lettura_al_giorno <- function(letture) {
-  ripetute <- righe_ripetute(letture, c("data_lettura", "RFID"))
+  senza_posizione <- if ("latitudine" %in% names(letture)) {
+    is.na(letture$latitudine)
+  } else {
+    rep(FALSE, nrow(letture))
+  }
+  ordinate <- letture[order(senza_posizione, letture$data_ora_lettura), , drop = FALSE]
+  ripetute <- righe_ripetute(ordinate, c("data_lettura", "RFID"))
+  tenute <- ordinate[!ripetute, , drop = FALSE]
   con_scartate(
-    letture[!ripetute, , drop = FALSE],
-    righe_scartate(letture, ripetute, "doppione")
+    tenute[order(tenute$data_ora_lettura), , drop = FALSE],
+    righe_scartate(ordinate, ripetute, "doppione")
   )
+}
+
+#' Pulizia dei codici RFID, uguale per antenne e saponette
+#'
+#' Contesto: i due sistemi leggono gli stessi chip e la pulizia deve essere la
+#' stessa, altrimenti il confronto tra i due (`docs/indicatori_letture.qmd`)
+#' misurerebbe la pulizia e non i sistemi. Regola del proprietario (4/11/2026):
+#' dal dato grezzo si passa direttamente alla normalizzazione dei codici, poi si
+#' scartano quelli che non servono, poi si controlla e si ripara con le tabelle del
+#' database; e infine si tolgono i doppioni.
+#'
+#' Funzionamento, nell'ordine:
+#' 1. normalizzazione del codice (`formatta_rfid()`);
+#' 2. scarto dei codici mancanti o nulli (`scarta_codici_nulli()`) e dei codici
+#'    lunghi che non sono bidoni (`filtra_codici_compatibili()`);
+#' 3. controllo e riparazione con l'associazione dei contenitori e i tag
+#'    (`ripara_codici_rfid()`): un codice che il database non riconosce con
+#'    nessuno dei tre passi resta quello normalizzato;
+#' 4. una sola lettura per RFID e giorno (`una_lettura_al_giorno()`).
+#' Le letture scartate da ogni passo sono nell'attributo `scartate`.
+#'
+#' Risultato: le letture con il codice pulito, in ordine di tempo, e l'attributo
+#' `scartate` (vedi `righe_scartate()`).
+#' @param letture Letture con `RFID`, `data_lettura` e `data_ora_lettura`.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param tag Tabella di `importa_tag_contenitori()`.
+#' @noRd
+pulisci_codici_rfid <- function(letture, contenitori, tag) {
+  registro <- list()
+  # I passi lasciano le righe scartate nell'attributo; si raccolgono e si tolgono
+  # (la prima volta quelle dell'importazione, se ci sono).
+  tieni <- function(x) {
+    registro[[length(registro) + 1L]] <<- attr(x, "scartate")
+    attr(x, "scartate") <- NULL
+    x
+  }
+  pulite <- letture |>
+    tieni() |>
+    formatta_rfid() |>
+    scarta_codici_nulli() |>
+    tieni() |>
+    filtra_codici_compatibili() |>
+    tieni() |>
+    ripara_codici_rfid(contenitori, tag) |>
+    una_lettura_al_giorno() |>
+    tieni()
+  con_scartate(pulite, dplyr::bind_rows(registro))
 }
 
 #' Associa a ogni lettura il contenitore attivo nel suo giorno e la sua fornitura
@@ -1827,17 +1852,17 @@ scarta_codici_nulli <- function(letture) {
 #' Funzionamento, nell'ordine:
 #' 1. `importa_letture_antenne()` e i test dei mezzi; teniamo i mezzi collaudati
 #'    dal giorno dopo il collaudo (`filtra_letture_dopo_il_collaudo()`);
-#' 2. RFID in formato comune (`formatta_rfid()`), via i codici non compatibili
-#'    (`filtra_codici_compatibili()`), codici letti male riparati
-#'    (`ripara_codici_rfid()`) e una lettura al giorno per RFID;
+#' 2. pulizia dei codici, uguale per le saponette (`pulisci_codici_rfid()`):
+#'    normalizzazione, via i codici nulli e quelli che non sono bidoni, codici
+#'    riparati con associazione e tag, una lettura al giorno per RFID;
 #' 3. contenitore, fornitura e `presente_a_database`
 #'    (`associa_contenitore_e_fornitura()`);
 #' 4. comune di lettura corretto con la posizione (`correggi_comune_lettura()`);
 #' 5. calendario completo: pianificati, giri aggiunti a mano
 #'    (`aggiungi_giri_a_mano()`) e non pianificati;
 #' 6. giro, servizio atteso e coerenze (`associa_giro_e_servizio_atteso()`);
-#' 7. giri da controllare (`controllo_giri()`), nucleo e potenziamento, e via i
-#'    codici nulli (`scarta_codici_nulli()`); i sacchetti restano.
+#' 7. giri da controllare (`controllo_giri()`), nucleo e potenziamento. I
+#'    sacchetti restano.
 #' Messaggi e avvisi dicono quante letture ha associato ogni passo e che cosa
 #' controllare.
 #'
@@ -1871,22 +1896,14 @@ prepara_letture_antenne <- function(file = file_origine()) {
   # il comune della fornitura.
   contenitori <- importa_contenitori(file$contenitori)
   tag <- importa_tag_contenitori(file$tag_contenitori)
-  # Le righe scartate da ogni passo, raccolte nel registro.
-  registro <- list()
-  tieni <- function(letture) {
-    registro[[length(registro) + 1L]] <<- attr(letture, "scartate")
-    attr(letture, "scartate") <- NULL
-    letture
-  }
-  con_comune <- importa_letture_antenne(file$antenne_grezze) |>
+  # Pulizia dei codici, uguale per le saponette: normalizzazione, scarti,
+  # riparazione, un solo codice per giorno. Le letture scartate restano
+  # nell'attributo `scartate`.
+  pulite <- importa_letture_antenne(file$antenne_grezze) |>
     filtra_letture_dopo_il_collaudo(test_mezzi) |>
-    tieni() |>
-    formatta_rfid() |>
-    filtra_codici_compatibili() |>
-    tieni() |>
-    ripara_codici_rfid(contenitori, tag) |>
-    una_lettura_al_giorno() |>
-    tieni() |>
+    pulisci_codici_rfid(contenitori, tag)
+  scartate <- attr(pulite, "scartate")
+  con_comune <- pulite |>
     associa_contenitore_e_fornitura(
       contenitori,
       importa_sacchetti(file$gruppi_sacchetti, file$servizi_sacchetti),
@@ -1912,12 +1929,10 @@ prepara_letture_antenne <- function(file = file_origine()) {
   con_giro |>
     associa_componenti(importa_componenti(file$componenti)) |>
     associa_potenziamento(importa_manovre(file$manovre)) |>
-    scarta_codici_nulli() |>
-    tieni() |>
     structure(
       controllo_giri = da_controllare,
       comuni_corretti = attr(con_comune, "comuni_corretti"),
-      scartate = dplyr::bind_rows(registro)
+      scartate = scartate
     )
 }
 
@@ -2001,13 +2016,13 @@ colonne_letture_saponette <- function() {
 #' `docs/controllo_giri_saponette.qmd`); l'app non lo carica.
 #'
 #' Funzionamento: legge il file (`importa_letture_saponette()`) e applica la
-#' stessa pulizia dei codici delle antenne: via i codici non compatibili
-#' (`filtra_codici_compatibili()`) e codici letti male riparati
-#' (`ripara_codici_rfid()`). Poi le stesse associazioni: contenitore e fornitura
-#' (con `presente_a_database` `PIA`, `PIT` o `NP`), nucleo e potenziamento. Non ha
-#' il giro: `matricola_saponetta` non corrisponde all'`id_giro` del calendario,
-#' quindi niente servizio atteso. Via i sacchetti e i codici con dieci zeri,
-#' come per le antenne.
+#' stessa pulizia dei codici delle antenne (`pulisci_codici_rfid()`): normalizza,
+#' scarta i codici nulli e quelli che non sono bidoni, ripara con associazione e
+#' tag, tiene una lettura per RFID e giorno. Poi le stesse associazioni:
+#' contenitore e fornitura (con `presente_a_database` `PIA`, `PIT` o `NP`), nucleo
+#' e potenziamento. Non ha il giro: `matricola_saponetta` non corrisponde
+#' all'`id_giro` del calendario, quindi niente servizio atteso. I sacchetti
+#' restano, come per le antenne.
 #'
 #' Risultato: le colonne di `colonne_letture_saponette()`, con l'attributo
 #' `scartate` (vedi `righe_scartate()`).
@@ -2017,20 +2032,10 @@ colonne_letture_saponette <- function() {
 prepara_letture_saponette <- function(file = file_origine()) {
   contenitori <- importa_contenitori(file$contenitori)
   tag <- importa_tag_contenitori(file$tag_contenitori)
-  registro <- list()
-  tieni <- function(letture) {
-    registro[[length(registro) + 1L]] <<- attr(letture, "scartate")
-    attr(letture, "scartate") <- NULL
-    letture
-  }
-  importa_letture_saponette(file$saponette_grezze) |>
-    tieni() |>
-    filtra_codici_compatibili() |>
-    tieni() |>
-    ripara_codici_rfid(contenitori, tag) |>
-    # due codici diversi possono diventare lo stesso dopo la riparazione
-    togli_righe_ripetute() |>
-    tieni() |>
+  pulite <- importa_letture_saponette(file$saponette_grezze) |>
+    pulisci_codici_rfid(contenitori, tag)
+  scartate <- attr(pulite, "scartate")
+  pulite |>
     associa_contenitore_e_fornitura(
       contenitori,
       importa_sacchetti(file$gruppi_sacchetti, file$servizi_sacchetti),
@@ -2038,10 +2043,8 @@ prepara_letture_saponette <- function(file = file_origine()) {
     ) |>
     associa_componenti(importa_componenti(file$componenti)) |>
     associa_potenziamento(importa_manovre(file$manovre)) |>
-    scarta_codici_nulli() |>
-    tieni() |>
     dplyr::select(dplyr::all_of(colonne_letture_saponette())) |>
-    structure(scartate = dplyr::bind_rows(registro))
+    structure(scartate = scartate)
 }
 
 #' Separatore di un CSV: `";"` se nell'intestazione supera le virgole, altrimenti `","`

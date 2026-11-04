@@ -74,31 +74,17 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   expect_true(is.na(senza_posizione$latitudine) && is.na(senza_posizione$longitudine))
   expect_identical(senza_posizione$comune_lettura, "LIMENA")
   expect_true(is.na(letture$comune_lettura[letture$RFID == "125"]))
-  # un RFID letto più volte nello stesso giorno: resta la prima lettura con una
-  # posizione; senza posizione resta la prima in ordine di tempo
-  doppie <- importa_letture_antenne(scrivi_csv(c(
+  # l'importazione non toglie i doppioni: lo fa la pulizia dei codici, uguale
+  # per le saponette. Le letture escono in ordine di istante, con il codice grezzo
+  piu_volte <- importa_letture_antenne(scrivi_csv(c(
     "IndirizzoLocalizzazione;DataeOraPrimaLettura;RFID(EPC);Targa;Latitudine;Longitudine;NumeroLetture",
-    "VIA ROMA 1, LIMENA;03/08/2026 10.00.00;123;AB123CD;45,4700;11,8400;1",
-    "VIA ROMA 1, LIMENA;03/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1",
-    # più presto, ma senza posizione: perde contro una con la posizione
-    "VIA ROMA 1, LIMENA;03/08/2026 07.00.00;123;AB123CD;0;0;1",
-    "VIA ROMA 1, LIMENA;04/08/2026 08.00.00;123;AB123CD;45,4700;11,8400;1",
-    # un RFID letto solo senza posizione resta, con le coordinate vuote
-    "VIA ROMA 1, LIMENA;05/08/2026 09.00.00;124;AB123CD;0;0;1",
-    "VIA ROMA 1, LIMENA;05/08/2026 07.00.00;124;AB123CD;0;0;1"
+    "VIA ROMA 1, LIMENA;03/08/2026 10.00.00;abc123;AB123CD;45,4700;11,8400;1",
+    "VIA ROMA 1, LIMENA;03/08/2026 07.00.00;abc123;AB123CD;0;0;1"
   )))
-  expect_identical(
-    format(doppie$data_ora_lettura, "%d %H"),
-    c("03 08", "04 08", "05 07")
-  )
-  expect_identical(doppie$RFID, c("123", "123", "124"))
-  expect_equal(doppie$latitudine, c(45.47, 45.47, NA))
-  # i doppioni scartati stanno nel registro, con la posizione zero tra loro
-  expect_identical(
-    format(attr(doppie, "scartate")$data_ora_lettura, "%d %H"),
-    c("03 10", "03 07", "05 09")
-  )
-  expect_true(all(attr(doppie, "scartate")$motivo == "doppione"))
+  expect_identical(format(piu_volte$data_ora_lettura, "%H"), c("07", "10"))
+  expect_identical(piu_volte$RFID, c("abc123", "abc123"))
+  expect_equal(piu_volte$latitudine, c(NA, 45.47))
+  expect_null(attr(piu_volte, "scartate"))
   # le letture escono in ordine di istante
   expect_false(is.unsorted(letture$data_ora_lettura))
   prima <- letture[letture$RFID == "123", ][1, ]
@@ -180,33 +166,39 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   expect_identical(manovre$data_fine_dichiarazione, as.Date("2099-12-31"))
 
   saponette <- importa_letture_saponette(file$saponette_grezze)
-  # la riga ripetuta conta una volta, quella senza codice resta fuori; i
-  # sacchetti restano, come per le letture con le antenne
+  # l'importazione tiene tutte le righe con un istante leggibile, anche quella
+  # ripetuta e quella senza codice, con il codice grezzo: normalizzazione, scarti
+  # e doppioni li tratta la pulizia dei codici, uguale per le antenne
   expect_named(
     saponette,
     c("data_ora_lettura", "data_lettura", "matricola_saponetta", "RFID")
   )
-  # l'importazione normalizza i codici ma non li ripara e non li scarta
   expect_identical(
     saponette$RFID,
     c(
-      "0000000123",
+      "123",
+      "123",
+      "00123",
       "00BD00000000000000000001",
-      "0000000123",
-      "000000084C",
-      "000000000000123456789012",
-      "48455241AABB"
+      NA,
+      "123",
+      "84C",
+      "123456789012",
+      "48455241aabb"
     )
   )
   expect_identical(
     saponette$matricola_saponetta,
-    c("T1", "T1", "T3", "T4", "T5", "T5")
+    c("T1", "T1", "T9", "T1", "T2", "T3", "T4", "T5", "T5")
   )
   expect_identical(
     saponette$data_lettura,
     as.Date(c(
       "2025-03-01",
+      "2025-03-01",
+      "2025-03-01",
       "2025-03-02",
+      "2025-03-03",
       "2026-08-21",
       "2026-08-22",
       "2026-08-23",
@@ -234,7 +226,7 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
     ))),
     "1 letture delle saponette hanno un istante illeggibile.*ieri"
   )
-  expect_identical(italiane$RFID, "0000000123")
+  expect_identical(italiane$RFID, "123")
   expect_identical(italiane$data_lettura, as.Date("2025-03-01"))
   # il nome della colonna scritto con lo spazio vale come con il trattino basso
   con_spazio <- importa_letture_saponette(scrivi_csv(c(
@@ -441,8 +433,13 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     }
   )
   expect_named(saponette, colonne_letture_saponette())
-  # il registro: una riga ripetuta, una senza RFID, un codice oltre 10 cifre
+  # il registro: i doppioni (la riga ripetuta e lo stesso bidone letto da un'altra
+  # saponetta alle 9), una riga senza RFID, un codice oltre 10 cifre
   scartate_saponette <- letture_scartate(saponette)
+  expect_identical(
+    sort(scartate_saponette$matricola_saponetta[scartate_saponette$motivo == "doppione"]),
+    c("T1", "T9")
+  )
   expect_setequal(
     scartate_saponette$motivo,
     c("doppione", "senza_rfid", "codice_non_compatibile")
