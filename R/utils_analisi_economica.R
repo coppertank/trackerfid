@@ -9,16 +9,66 @@
 
 #' Gli scenari di rilevazione: quali letture contano
 #'
-#' Contesto: per giudicare un sistema si guarda che cosa succederebbe fatturando
-#' con quel solo sistema. «Saponette e antenne» è il riferimento: unisce le
-#' letture dei due sistemi, ognuna una volta.
+#' Contesto: l'analisi economica fotografa la situazione reale, con le letture
+#' che ci sono nel periodo. Le antenne sono in funzione solo da agosto 2026 e su una
+#' parte dei mezzi, le saponette dal 2025: un confronto a sistema singolo ha senso
+#' soltanto se entrambi i sistemi hanno letture. Con un solo sistema simulare
+#' l'altro darebbe zero litri a tutte le forniture, quindi il premio massimo a
+#' tutte: un'informazione senza senso.
+#'
+#' Funzionamento:
+#' - con tutti e due i sistemi: «Saponette e antenne» (il riferimento, sempre il
+#'   primo: unisce le letture dei due sistemi, ognuna una volta), poi «Solo
+#'   saponette» e «Solo antenne» per il confronto;
+#' - con le sole saponette: un solo scenario, «Rilevazione reale (Saponette)»;
+#' - con le sole antenne: un solo scenario, «Rilevazione reale (Antenne)»;
+#' - con nessuno dei due: nessuno scenario.
+#' Con un sistema solo lo scenario prende tutte le letture disponibili, perché
+#' l'altro sistema non c'è.
+#'
 #' Risultato: una lista con nome di insiemi di `sistemi_lettura()`.
+#' @param con_antenne,con_saponette Se il sistema ha letture nel periodo.
 #' @noRd
-scenari_rilevazione <- function() {
-  list(
-    "Saponette e antenne" = c("Solo saponette", "Solo antenne", "Entrambe"),
-    "Solo saponette" = c("Solo saponette", "Entrambe"),
-    "Solo antenne" = c("Solo antenne", "Entrambe")
+scenari_rilevazione <- function(con_antenne = TRUE, con_saponette = TRUE) {
+  if (con_antenne && con_saponette) {
+    list(
+      "Saponette e antenne" = c("Solo saponette", "Solo antenne", "Entrambe"),
+      "Solo saponette" = c("Solo saponette", "Entrambe"),
+      "Solo antenne" = c("Solo antenne", "Entrambe")
+    )
+  } else if (con_saponette) {
+    list("Rilevazione reale (Saponette)" = sistemi_lettura())
+  } else if (con_antenne) {
+    list("Rilevazione reale (Antenne)" = sistemi_lettura())
+  } else {
+    list()
+  }
+}
+
+#' Quali sistemi hanno conferimenti del secco nelle letture
+#'
+#' Contesto: per scegliere gli scenari conta che un sistema abbia davvero
+#' letture associate (`PIA`) del secco nel periodo, non solo che compaia nei file:
+#' un'antenna che nel periodo ha letto solo altri rifiuti non dice niente sui
+#' conferimenti del secco.
+#' Funzionamento: guarda le letture `PIA` che contano per il secco (colonna
+#' `secco` di `unita_di_lettura()`; senza la colonna, `servizio_transponder`
+#' uguale a `SECCO`) viste da ogni sistema (una lettura «Entrambe» le conta tutte e
+#' due).
+#' Risultato: un vettore logico con nome, `antenne` e `saponette`.
+#' @param unita Risultato di `unita_di_lettura()`.
+#' @noRd
+sistemi_con_conferimenti <- function(unita) {
+  associate <- unita |>
+    dplyr::filter(.data$stato %in% "PIA", .data$sistema %in% sistemi_lettura())
+  associate <- if ("secco" %in% names(associate)) {
+    dplyr::filter(associate, .data$secco %in% TRUE)
+  } else {
+    dplyr::filter(associate, toupper(.data$servizio_transponder) %in% "SECCO")
+  }
+  c(
+    antenne = any(associate$sistema %in% c("Solo antenne", "Entrambe")),
+    saponette = any(associate$sistema %in% c("Solo saponette", "Entrambe"))
   )
 }
 
@@ -26,7 +76,9 @@ scenari_rilevazione <- function() {
 #'
 #' Contesto: tappa di `analisi_economica()` e di `propensione_conferimento()`.
 #' Funzionamento: tiene le letture `PIA` dei sistemi dello scenario, del servizio
-#' indicato, e le somma per fornitura. I litri di una lettura sono il volume del suo
+#' indicato, e le somma per fornitura. Per il secco vale la regola delle saponette
+#' e delle antenne (colonna `secco` di `unita_di_lettura()`); per un altro servizio
+#' conta `servizio_transponder`. I litri di una lettura sono il volume del suo
 #' contenitore; se manca, quello più frequente nella fornitura.
 #' Risultato: `id_fornitura`, `conferimenti` e `litri`.
 #' @param unita Risultato di `unita_di_lettura()`.
@@ -38,10 +90,14 @@ conferimenti_per_fornitura <- function(unita, anagrafica, sistemi, servizio = NU
   letture <- unita |>
     dplyr::filter(.data$stato %in% "PIA", .data$sistema %in% sistemi)
   if (!is.null(servizio)) {
-    letture <- dplyr::filter(
-      letture,
-      toupper(.data$servizio_transponder) %in% toupper(servizio)
-    )
+    letture <- if (identical(toupper(servizio), "SECCO") && "secco" %in% names(letture)) {
+      dplyr::filter(letture, .data$secco %in% TRUE)
+    } else {
+      dplyr::filter(
+        letture,
+        toupper(.data$servizio_transponder) %in% toupper(servizio)
+      )
+    }
   }
   letture |>
     dplyr::inner_join(
@@ -152,28 +208,42 @@ forniture_senza_conferimenti <- function(unita, anagrafica) {
 #' Contesto: l'analisi economica del report. Applica `economia_forniture()` ai litri
 #' conferiti in ognuno degli scenari di rilevazione (`scenari_rilevazione()`).
 #'
-#' Funzionamento: la popolazione sono le forniture domestiche del secco
-#' dell'anagrafica (condomini e non domestiche hanno regole di fatturazione
-#' diverse), con i componenti noti, che hanno almeno un conferimento nello scenario
-#' di riferimento. Una fornitura senza letture non si classifica: sarebbe un premio
-#' dato per mancanza di dati (`forniture_senza_conferimenti()` la segnala; con i giri
-#' le altre non si sanno nemmeno attribuire). Negli altri scenari una fornitura che il
-#' riferimento ha letto e lo scenario no ha zero litri: è il premio che darebbe
-#' quel solo sistema, e `rilevata` è falso.
+#' Funzionamento: gli scenari sono quelli validi per i sistemi che hanno letture
+#' (`scenari_rilevazione()`): con un solo sistema c'è un solo scenario, la
+#' situazione reale; solo con tutti e due si aggiungono i due a sistema singolo.
+#' Il primo scenario è sempre il riferimento. La popolazione sono le forniture
+#' domestiche del secco dell'anagrafica (condomini e non domestiche hanno regole di
+#' fatturazione diverse), con i componenti noti, che hanno almeno un conferimento
+#' nello scenario di riferimento. Una fornitura senza letture non si classifica:
+#' sarebbe un premio dato per mancanza di dati (`forniture_senza_conferimenti()` la
+#' segnala; con i giri le altre non si sanno nemmeno attribuire). Negli scenari a
+#' sistema singolo una fornitura che il riferimento ha letto e lo scenario no ha zero
+#' litri: è il premio che darebbe quel solo sistema, e `rilevata` è falso.
 #'
 #' Risultato: per fornitura e scenario, `conferimenti`, `litri`, `rilevata` e le
-#' colonne di `economia_forniture()`.
+#' colonne di `economia_forniture()` (comprese le proiezioni annue). Senza
+#' scenari, un tibble senza righe.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
+#' @param con_antenne,con_saponette Quali sistemi hanno letture nel periodo
+#'   (`scenari_rilevazione()`).
 #' @noRd
-analisi_economica <- function(unita, anagrafica) {
+analisi_economica <- function(
+  unita,
+  anagrafica,
+  con_antenne = TRUE,
+  con_saponette = TRUE
+) {
   popolazione <- anagrafica |>
     dplyr::filter(
       .data$tipo == "domestica",
       .data$servizio %in% "SECCO",
       !is.na(.data$componenti_medi)
     )
-  scenari <- scenari_rilevazione()
+  scenari <- scenari_rilevazione(con_antenne, con_saponette)
+  if (length(scenari) == 0) {
+    return(dplyr::tibble())
+  }
   letti <- conferimenti_per_fornitura(unita, popolazione, scenari[[1]], "SECCO")
   popolazione <- dplyr::semi_join(popolazione, letti, by = "id_fornitura")
   purrr::imap(scenari, function(sistemi, nome) {
@@ -205,7 +275,10 @@ analisi_economica <- function(unita, anagrafica) {
 #'
 #' Risultato: un tibble con `forniture`, `premialita`, `ordinarie`, `eccedenti`, le
 #' quote corrispondenti, `litri`, `litri_in_premialita`, `litri_sotto_massimo`,
-#' `litri_eccedenti`, `premi_eur`, `eccedenze_eur` e `importo_eur`.
+#' `litri_eccedenti`, `premi_eur`, `eccedenze_eur` e `importo_eur`, più la
+#' proiezione annua (`litri_proiettati`, `premi_proiettati_eur`,
+#' `eccedenze_proiettate_eur`, `importo_proiettato_eur`: ogni fornitura riportata
+#' a un anno intero con l'andamento del periodo, come in `economia_forniture()`).
 #' @param economia Risultato di `analisi_economica()`.
 #' @param per_gruppo Se dividere anche per gruppo di forniture.
 #' @noRd
@@ -224,6 +297,10 @@ riepilogo_economico <- function(economia, per_gruppo = FALSE) {
       premi_eur = sum(.data$premio_eur, na.rm = TRUE),
       eccedenze_eur = sum(.data$eccedenza_eur, na.rm = TRUE),
       importo_eur = sum(.data$importo_eur, na.rm = TRUE),
+      litri_proiettati = sum(.data$litri_proiettati, na.rm = TRUE),
+      premi_proiettati_eur = sum(.data$premio_proiettato_eur, na.rm = TRUE),
+      eccedenze_proiettate_eur = sum(.data$eccedenza_proiettata_eur, na.rm = TRUE),
+      importo_proiettato_eur = sum(.data$importo_proiettato_eur, na.rm = TRUE),
       .by = dplyr::all_of(chiavi)
     ) |>
     dplyr::mutate(
@@ -268,28 +345,32 @@ forniture_per_fascia <- function(economia, su = c("eccedenza", "premio"), limiti
 #'
 #' Contesto: il confronto più vicino al costo reale tra saponette e antenne. Per
 #' ogni fornitura si confronta la classe (premialità, ordinaria, eccedente) e
-#' l'importo di uno scenario con quelli di «Saponette e antenne».
+#' l'importo di uno scenario con quelli del riferimento (il primo scenario,
+#' «Saponette e antenne»).
 #'
-#' Funzionamento: per ognuno dei due scenari a sistema singolo conta le forniture che
+#' Funzionamento: il riferimento è il primo livello di `scenario` (`scenario_riferimento()`).
+#' Per ognuno degli altri scenari, a sistema singolo, conta le forniture che
 #' lo scenario ha letto, quelle con la stessa classe e quelle con una classe diversa,
 #' i premi dati che il riferimento non darebbe (premialità solo nello scenario, di
 #' solito per letture mancanti) e quelli mancati, e la differenza di importo.
 #' L'importo è l'eccedenza meno il premio: una differenza positiva è più da pagare
 #' del riferimento.
 #'
-#' Risultato: un tibble con una riga per scenario.
+#' Risultato: un tibble con una riga per scenario diverso dal riferimento (senza
+#' righe se lo scenario è uno solo, cioè se c'è un solo sistema).
 #' @param economia Risultato di `analisi_economica()`.
 #' @noRd
 impatto_dei_sistemi <- function(economia) {
+  nome_riferimento <- scenario_riferimento(economia)
   riferimento <- economia |>
-    dplyr::filter(.data$scenario == names(scenari_rilevazione())[1]) |>
+    dplyr::filter(.data$scenario == nome_riferimento) |>
     dplyr::select(
       "id_fornitura",
       classe_riferimento = "classe",
       importo_riferimento = "importo_eur"
     )
   economia |>
-    dplyr::filter(.data$scenario != names(scenari_rilevazione())[1]) |>
+    dplyr::filter(.data$scenario != nome_riferimento) |>
     dplyr::inner_join(riferimento, by = "id_fornitura") |>
     dplyr::summarise(
       forniture = dplyr::n(),
@@ -309,4 +390,45 @@ impatto_dei_sistemi <- function(economia) {
       differenza_eur = .data$importo_scenario_eur - .data$importo_riferimento_eur,
       .by = "scenario"
     )
+}
+
+#' Nome dello scenario di riferimento di un'analisi economica
+#'
+#' Contesto: il riferimento è sempre il primo scenario (`scenari_rilevazione()`),
+#' ma il suo nome dipende dai sistemi presenti («Saponette e antenne», oppure
+#' «Rilevazione reale (Saponette)» con le sole saponette).
+#' Risultato: il testo del primo livello di `scenario`; `NA` senza scenari.
+#' @param economia Risultato di `analisi_economica()`.
+#' @noRd
+scenario_riferimento <- function(economia) {
+  if (is.null(economia$scenario)) {
+    return(NA_character_)
+  }
+  levels(economia$scenario)[1]
+}
+
+#' Forniture per fascia in colonne per scenario, o semplici se lo scenario è uno
+#'
+#' Contesto: le tabelle delle quote di premio e delle fasce di eccedenza. Con più
+#' scenari ogni scenario ha le sue colonne; con uno solo i prefissi sarebbero
+#' ridondanti e la tabella mostra solo la distribuzione delle forniture reali.
+#' Funzionamento: con più scenari `tidyr::pivot_wider()` con colonne
+#' «scenario: forniture» e «scenario: quota»; con uno, tiene `intervallo`,
+#' `forniture` e `quota`.
+#' Risultato: un tibble con `intervallo` e le colonne dei conteggi.
+#' @param fasce Risultato di `forniture_per_fascia()`, con `quota` eventualmente
+#'   già in testo.
+#' @noRd
+fasce_per_scenario <- function(fasce) {
+  scenari <- unique(as.character(fasce$scenario))
+  base <- dplyr::select(fasce, "scenario", "intervallo", "forniture", "quota")
+  if (length(scenari) <= 1) {
+    return(dplyr::select(base, "intervallo", "forniture", "quota"))
+  }
+  tidyr::pivot_wider(
+    base,
+    names_from = "scenario",
+    values_from = c("forniture", "quota"),
+    names_glue = "{scenario}: {.value}"
+  )
 }

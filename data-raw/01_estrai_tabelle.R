@@ -3,7 +3,7 @@
 # Scrive un CSV per tabella in data-raw/origine/. Quei file sono la copia
 # grezza dei dati: non vanno modificati a mano e non entrano nel repository.
 # Eseguire dalla radice del progetto. Servono i pacchetti odbc e DBI e la
-# sorgente dati ODBC "DenodoODBC2" configurata sul computer.
+# sorgente dati ODBC "DB_letture" configurata sul computer.
 #
 # Dopo l'estrazione, la pipeline di preparazione, targets::tar_make(),
 # riconosce i file cambiati e rifà quello che serve: vedi data-raw/_targets.R.
@@ -16,47 +16,31 @@ library(odbc)
 library(DBI)
 library(tidyverse)
 
-
 con <- dbConnect(
   odbc::odbc(),
-  dsn = "DenodoODBC2"
+  dsn = "DB_letture"
 )
-
 
 tabelle <- c(
   "iv_estrazione_giri_servizi_rifiuti_filtered",
   "iv_estrazione_giri_servizi_non_pianificati_filtered",
   "dv_cnt_associazione_contenitori",
-  "dv_cnt_letture",
   "dv_cnt_tag_contenitori",
   "dv_cnt_gruppi_sacchetti",
   "dv_cnt_gruppi_sacchetti_servizi",
-  "dv_associazione_componenti",
+  # "dv_associazione_componenti",
   "dv_potenziamento_secco",
-  "letture_saponette_grezze",
+  "letture_saponette_grezze"
 )
 
-
-# Le letture delle saponette si salvano con un nome diverso da quello della
-# tabella: letture_saponette_grezze.csv, come in file_origine().
-nome_file <- c(dv_cnt_letture = "letture_saponette_grezze")
-
 for (target_label in tabelle) {
-  # Applica il filtro se la tabella è "dv_cnt_letture", altrimenti query standard
-  if (target_label == "dv_cnt_letture") {
-    query_sql <- sprintf(
-      'SELECT * FROM "%s" WHERE data_lettura > \'2025-01-01\'',
-      target_label
-    )
-  } else {
-    query_sql <- sprintf('SELECT * FROM "%s"', target_label)
-  }
+  query_sql <- sprintf('SELECT * FROM "%s"', target_label)
 
   df_temp <- dbGetQuery(con, query_sql)
 
   output_path <- paste0(
     "data-raw/origine/",
-    dplyr::coalesce(unname(nome_file[target_label]), target_label),
+    target_label,
     ".csv"
   )
 
@@ -69,6 +53,5 @@ for (target_label in tabelle) {
   assign(target_label, df_temp, envir = .GlobalEnv)
   rm(df_temp)
 }
-
 
 dbDisconnect(con)

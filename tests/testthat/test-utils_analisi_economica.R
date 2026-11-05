@@ -56,11 +56,145 @@ unita_economia_prova <- function() {
   )
 }
 
+quota_testo <- function(x) ifelse(is.na(x), "", sprintf("%.0f%%", 100 * x))
+
 test_that("gli scenari sono l'unione dei sistemi e ciascuno da solo", {
   scenari <- scenari_rilevazione()
   expect_identical(names(scenari), c("Saponette e antenne", "Solo saponette", "Solo antenne"))
   expect_setequal(scenari[[2]], c("Solo saponette", "Entrambe"))
   expect_setequal(scenari[[3]], c("Solo antenne", "Entrambe"))
+})
+
+test_that("gli scenari dipendono dai sistemi che hanno letture", {
+  # senza argomenti: tutti e due, con il riferimento per primo
+  expect_identical(scenari_rilevazione(), scenari_rilevazione(TRUE, TRUE))
+  # con le sole saponette c'e' un solo scenario: l'antenna non si simula
+  saponette <- scenari_rilevazione(con_antenne = FALSE, con_saponette = TRUE)
+  expect_identical(names(saponette), "Rilevazione reale (Saponette)")
+  expect_setequal(saponette[[1]], sistemi_lettura())
+  antenne <- scenari_rilevazione(con_antenne = TRUE, con_saponette = FALSE)
+  expect_identical(names(antenne), "Rilevazione reale (Antenne)")
+  expect_length(scenari_rilevazione(FALSE, FALSE), 0)
+})
+
+test_that("un sistema ha conferimenti se ha letture associate del secco", {
+  unita <- unita_economia_prova()
+  expect_equal(sistemi_con_conferimenti(unita), c(antenne = TRUE, saponette = TRUE))
+  solo_saponette <- dplyr::filter(unita, sistema == "Solo saponette")
+  expect_equal(sistemi_con_conferimenti(solo_saponette), c(antenne = FALSE, saponette = TRUE))
+  # letture non associate (PIT): niente conferimenti
+  solo_pit <- dplyr::filter(unita, stato == "PIT")
+  expect_equal(sistemi_con_conferimenti(solo_pit), c(antenne = FALSE, saponette = FALSE))
+  # un'antenna che ha letto solo altri rifiuti non dice niente sul secco
+  carta <- dplyr::filter(unita, sistema == "Solo antenne") |>
+    dplyr::mutate(servizio_transponder = "CARTA")
+  expect_equal(sistemi_con_conferimenti(carta), c(antenne = FALSE, saponette = FALSE))
+  # con la colonna `secco` vale quella: l'antenna in un giro del secco conta
+  carta$secco <- TRUE
+  expect_equal(sistemi_con_conferimenti(carta), c(antenne = TRUE, saponette = FALSE))
+})
+
+test_that("per il secco le saponette contano tutte e le antenne per transponder o servizio atteso", {
+  unita <- dplyr::tibble(
+    RFID = c("a", "b", "c", "d"),
+    data_lettura = as.Date("2026-10-01") + 0:3,
+    sistema = factor(c("Solo saponette", "Solo antenne", "Solo antenne", "Solo antenne"), sistemi_lettura()),
+    stato = factor("PIA", stati_lettura()),
+    id_fornitura = "F1",
+    volume = 120,
+    servizio_transponder = c(NA, "SECCO", "CARTA", "CARTA"),
+    # a: saponetta; b: transponder del secco; c: altro rifiuto; d: giro del secco
+    secco = c(TRUE, TRUE, FALSE, TRUE)
+  )
+  anagrafica <- dplyr::filter(anagrafica_economia_prova(), id_fornitura == "F1")
+  conferimenti <- conferimenti_per_fornitura(unita, anagrafica, sistemi_lettura(), "SECCO")
+  expect_identical(conferimenti$conferimenti, 3L)
+  # senza la colonna `secco` conta il solo transponder (comportamento di prima)
+  senza_colonna <- dplyr::select(unita, -"secco")
+  expect_identical(
+    conferimenti_per_fornitura(senza_colonna, anagrafica, sistemi_lettura(), "SECCO")$conferimenti,
+    1L
+  )
+})
+
+test_that("con un solo sistema l'analisi economica ha un solo scenario, quello reale", {
+  anagrafica <- anagrafica_economia_prova()
+  unita <- dplyr::mutate(
+    unita_economia_prova(),
+    sistema = factor("Solo saponette", sistemi_lettura())
+  )
+  economia <- analisi_economica(unita, anagrafica, con_antenne = FALSE, con_saponette = TRUE)
+  expect_identical(levels(economia$scenario), "Rilevazione reale (Saponette)")
+  expect_identical(scenario_riferimento(economia), "Rilevazione reale (Saponette)")
+  expect_false("Solo antenne" %in% economia$scenario)
+  # la stessa fotografia dello scenario di riferimento con tutti e due i sistemi
+  completa <- analisi_economica(unita_economia_prova(), anagrafica)
+  unione <- completa[completa$scenario == "Saponette e antenne", ]
+  expect_setequal(economia$id_fornitura, unione$id_fornitura)
+  expect_equal(economia$litri[order(economia$id_fornitura)], unione$litri[order(unione$id_fornitura)])
+  # una riga di riepilogo e nessun confronto tra sistemi
+  expect_identical(nrow(riepilogo_economico(economia)), 1L)
+  expect_identical(nrow(impatto_dei_sistemi(economia)), 0L)
+  # con le sole antenne: lo scenario si chiama diversamente
+  antenne <- dplyr::mutate(unita_economia_prova(), sistema = factor("Solo antenne", sistemi_lettura()))
+  solo_antenne <- analisi_economica(antenne, anagrafica, con_antenne = TRUE, con_saponette = FALSE)
+  expect_identical(levels(solo_antenne$scenario), "Rilevazione reale (Antenne)")
+  # senza sistemi non c'e' niente da analizzare
+  expect_identical(nrow(analisi_economica(unita_economia_prova(), anagrafica, FALSE, FALSE)), 0L)
+})
+
+test_that("il riferimento dell'impatto e' il primo scenario, qualunque nome abbia", {
+  economia <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
+  expect_identical(scenario_riferimento(economia), "Saponette e antenne")
+  expect_identical(
+    as.character(impatto_dei_sistemi(economia)$scenario),
+    c("Solo saponette", "Solo antenne")
+  )
+})
+
+test_that("la proiezione annua riporta litri ed euro a un anno intero", {
+  anagrafica <- anagrafica_economia_prova()
+  # F1 e' attiva mezzo anno nel periodo: i suoi litri valgono il doppio in un anno
+  anagrafica$fattore[anagrafica$id_fornitura == "F1"] <- 0.5
+  economia <- analisi_economica(unita_economia_prova(), anagrafica)
+  f1 <- economia[economia$scenario == "Saponette e antenne" & economia$id_fornitura == "F1", ]
+  expect_equal(f1$litri_proiettati, f1$litri / 0.5)
+  expect_equal(f1$importo_proiettato_eur, f1$importo_eur / 0.5)
+  # la classe non cambia: litri e soglie si scalano allo stesso modo
+  annuale <- economia_forniture(dplyr::tibble(
+    litri = f1$litri_proiettati,
+    componenti_medi = f1$componenti_medi,
+    potenziamento = FALSE,
+    fattore = 1
+  ))
+  expect_identical(as.character(annuale$classe), as.character(f1$classe))
+  expect_equal(annuale$importo_eur, f1$importo_proiettato_eur)
+  # il riepilogo somma le proiezioni delle forniture
+  riepilogo <- riepilogo_economico(economia)
+  unione <- riepilogo[riepilogo$scenario == "Saponette e antenne", ]
+  tutte <- economia[economia$scenario == "Saponette e antenne", ]
+  expect_equal(unione$litri_proiettati, sum(tutte$litri_proiettati))
+  expect_equal(unione$importo_proiettato_eur, sum(tutte$importo_proiettato_eur))
+  expect_gt(unione$litri_proiettati, unione$litri)
+})
+
+test_that("le fasce si dividono per scenario solo se gli scenari sono piu' di uno", {
+  due <- forniture_per_fascia(
+    analisi_economica(unita_economia_prova(), anagrafica_economia_prova()),
+    "eccedenza"
+  ) |>
+    dplyr::mutate(quota = quota_testo(.data$quota))
+  larga <- fasce_per_scenario(due)
+  expect_true("Saponette e antenne: forniture" %in% names(larga))
+  expect_true("Solo antenne: quota" %in% names(larga))
+  uno <- forniture_per_fascia(
+    analisi_economica(unita_economia_prova(), anagrafica_economia_prova(), con_antenne = FALSE),
+    "eccedenza"
+  ) |>
+    dplyr::mutate(quota = quota_testo(.data$quota))
+  semplice <- fasce_per_scenario(uno)
+  expect_named(semplice, c("intervallo", "forniture", "quota"))
+  expect_identical(nrow(semplice), nlevels(uno$intervallo))
 })
 
 test_that("i conferimenti sono le letture compatibili e i litri il volume dei contenitori", {

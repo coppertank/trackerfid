@@ -117,6 +117,45 @@ filtra_letture <- function(
   letture
 }
 
+#' Letture di un servizio, con le regole del secco per saponette e antenne
+#'
+#' Contesto: i due sistemi non si usano allo stesso modo. Gli operatori leggono
+#' con le saponette quasi solo durante i giri del secco residuo; i mezzi con
+#' l'antenna invece fanno altri rifiuti nel corso della settimana. Per l'analisi del
+#' secco (regole del proprietario del 5/11/2026) le saponette non si filtrano per
+#' servizio, altrimenti i bidoni compatibili ma non associati (`PIT` e `NP`), che
+#' non hanno un servizio a database, sparirebbero.
+#'
+#' Funzionamento:
+#' - antenne: tiene le letture con `servizio_transponder` **oppure** `servizio_atteso`
+#'   uguale al servizio (`filtra_letture()`);
+#' - saponette, servizio `SECCO` (anche tra più servizi): tiene tutte le letture;
+#' - saponette, altro servizio: tiene quelle con `servizio_transponder` uguale
+#'   (le saponette non hanno il servizio atteso);
+#' - servizio vuoto: non filtra.
+#'
+#' Risultato: le stesse letture, meno quelle escluse.
+#' @param letture Letture di un sistema, con `servizio_transponder` e, per le
+#'   antenne, `servizio_atteso`.
+#' @param sistema `"antenne"` o `"saponette"`.
+#' @param servizio Servizio o servizi da tenere; vuoto non filtra.
+#' @noRd
+filtra_letture_per_servizio <- function(
+  letture,
+  sistema = c("antenne", "saponette"),
+  servizio = NULL
+) {
+  sistema <- match.arg(sistema)
+  voci <- valori_filtro(servizio)
+  if (is.null(voci)) {
+    return(letture)
+  }
+  if (sistema == "saponette" && "SECCO" %in% toupper(voci)) {
+    return(letture)
+  }
+  filtra_letture(letture, servizio = voci)
+}
+
 #' Letture delle saponette dei giri in cui le antenne hanno letto almeno un RFID
 #'
 #' Contesto: le saponette non hanno il mezzo né il giro del calendario, ma

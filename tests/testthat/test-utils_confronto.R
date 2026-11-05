@@ -158,3 +158,26 @@ test_that("il confronto usa le letture delle antenne già filtrate", {
   expect_identical(secco$RFID, c("A", "B"))
   expect_identical(secco$origine, c("Entrambe", "Saponette"))
 })
+
+test_that("per il secco le saponette non si filtrano, le antenne per transponder o servizio atteso", {
+  antenne <- antenne_filtri()
+  saponette <- dplyr::tibble(
+    RFID = c("S1", "S2", "S3"),
+    # S1 e S2 non hanno un servizio a database (PIT e NP), S3 e' della carta
+    servizio_transponder = c(NA, NA, "CARTA")
+  )
+  expect_identical(
+    filtra_letture_per_servizio(antenne, "antenne", "SECCO")$RFID,
+    c("A", "B", "E")
+  )
+  # le saponette restano tutte, anche le non associate e quelle con altro servizio
+  expect_identical(filtra_letture_per_servizio(saponette, "saponette", "SECCO"), saponette)
+  expect_identical(filtra_letture_per_servizio(saponette, "saponette", "secco"), saponette)
+  # tra piu' servizi che comprendono il secco, le saponette restano tutte
+  expect_identical(filtra_letture_per_servizio(saponette, "saponette", c("CARTA", "SECCO")), saponette)
+  # per un altro servizio contano il transponder, perche' le saponette non hanno il servizio atteso
+  expect_identical(filtra_letture_per_servizio(saponette, "saponette", "CARTA")$RFID, "S3")
+  # servizio vuoto: non filtra, per nessuno dei due
+  expect_identical(filtra_letture_per_servizio(antenne, "antenne", ""), antenne)
+  expect_identical(filtra_letture_per_servizio(saponette, "saponette", NULL), saponette)
+})

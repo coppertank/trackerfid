@@ -136,3 +136,67 @@ test_that("le fasce di eccedenza e le quote di premio hanno etichette leggibili"
     c("fino a 60 lt", "da 60 a 120 lt", "oltre 120 lt")
   )
 })
+
+test_that("la proiezione annua divide litri ed euro per la parte di anno", {
+  # un semestre: i litri e gli euro del periodo valgono il doppio in un anno
+  periodo <- economia_forniture(dplyr::tibble(
+    litri = c(240, 361),
+    componenti_medi = 1,
+    potenziamento = FALSE,
+    fattore = 0.5
+  ))
+  expect_equal(periodo$litri_proiettati, c(480, 722))
+  expect_equal(periodo$importo_proiettato_eur, periodo$importo_eur * 2)
+  expect_equal(periodo$premio_proiettato_eur, periodo$premio_eur * 2)
+  expect_equal(periodo$eccedenza_proiettata_eur, periodo$eccedenza_eur * 2)
+  # la proiezione di un semestre coincide con i litri annui valutati con le soglie annue
+  annuo <- economia_forniture(dplyr::tibble(
+    litri = periodo$litri_proiettati,
+    componenti_medi = 1,
+    potenziamento = FALSE,
+    fattore = 1
+  ))
+  expect_identical(as.character(annuo$classe), as.character(periodo$classe))
+  expect_equal(annuo$importo_eur, periodo$importo_proiettato_eur)
+  # un anno intero: la proiezione e' il dato
+  intero <- economia_forniture(dplyr::tibble(
+    litri = 360,
+    componenti_medi = 1,
+    potenziamento = FALSE,
+    fattore = 1
+  ))
+  expect_equal(intero$litri_proiettati, 360)
+  expect_equal(intero$importo_proiettato_eur, intero$importo_eur)
+  # senza giorni di attivita' non si proietta
+  vuota <- economia_forniture(dplyr::tibble(
+    litri = 100,
+    componenti_medi = 1,
+    potenziamento = FALSE,
+    fattore = c(0)
+  ))
+  expect_true(is.na(vuota$litri_proiettati))
+})
+
+test_that("le soglie del periodo scalano quelle annue per giorni del periodo e dell'anno", {
+  semestre <- soglie_del_periodo("2026-01-01", "2026-06-30")
+  fattore <- 181 / 365
+  expect_equal(attr(semestre, "fattore"), fattore)
+  uno <- semestre[semestre$fascia == "1", ]
+  expect_equal(uno$litri_inclusi, 720)
+  expect_equal(uno$litri_inclusi_periodo, 720 * fattore)
+  expect_equal(uno$litri_minimi_periodo, 240 * fattore)
+  expect_equal(uno$litri_premialita_periodo, 480 * fattore)
+  # la casa vuota e il potenziamento non hanno minimo ne' massimo per la premialita'
+  expect_true(is.na(semestre$litri_minimi_periodo[1]))
+  potenziamento <- semestre[semestre$fascia == "Potenziamento", ]
+  expect_equal(potenziamento$litri_inclusi_periodo, 6240 * fattore)
+  # un anno intero: le soglie sono quelle annue; un anno bisestile ha 366 giorni
+  anno <- soglie_del_periodo("2026-01-01", "2026-12-31")
+  expect_equal(attr(anno, "fattore"), 1)
+  expect_equal(anno$litri_inclusi_periodo, anno$litri_inclusi)
+  bisestile <- soglie_del_periodo("2028-01-01", "2028-12-31")
+  expect_equal(attr(bisestile, "fattore"), 1)
+  # un periodo piu' lungo di un anno non supera le soglie annue
+  due_anni <- soglie_del_periodo("2025-01-01", "2026-12-31")
+  expect_equal(attr(due_anni, "fattore"), 1)
+})
