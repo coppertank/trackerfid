@@ -231,8 +231,12 @@ componenti_medi_pesati <- function(attivita, componenti) {
 #' @param componenti Tabella di `importa_componenti()`.
 #' @param manovre Tabella di `importa_manovre()`.
 #' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori da considerare (per esempio `SECCO`),
+#'   o `NULL` per tutti. Si filtra sui singoli contenitori, prima di contare: una
+#'   fornitura che avesse contenitori di servizi diversi conterebbe solo quelli del
+#'   servizio scelto.
 #' @noRd
-anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al) {
+anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, servizio = NULL) {
   dal <- as.Date(dal)
   al <- as.Date(al)
   attivi <- contenitori |>
@@ -242,6 +246,12 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al) {
       (.data$data_attivazione_contenitore <= al &
         .data$data_cessazione_contenitore >= dal) %in% TRUE
     )
+  if (!is.null(servizio)) {
+    attivi <- dplyr::filter(
+      attivi,
+      toupper(trimws(.data$servizio_transponder)) %in% toupper(trimws(servizio))
+    )
+  }
 
   # Calcoli per gruppo su vettori (`R/utils_gruppi.R`): con centinaia di
   # migliaia di forniture un riepilogo gruppo per gruppo costa minuti.
@@ -337,14 +347,16 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al) {
 #' Risultato: la tabella di `anagrafica_forniture()`.
 #' @param file Percorsi di `file_origine()`.
 #' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori da considerare, o `NULL` per tutti.
 #' @noRd
-leggi_anagrafica_forniture <- function(file = file_origine(), dal, al) {
+leggi_anagrafica_forniture <- function(file = file_origine(), dal, al, servizio = NULL) {
   anagrafica_forniture(
     importa_contenitori(file$contenitori, categoria = TRUE),
     importa_componenti(file$componenti),
     importa_manovre(file$manovre),
     dal,
-    al
+    al,
+    servizio
   )
 }
 

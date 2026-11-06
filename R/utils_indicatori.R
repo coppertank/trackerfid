@@ -360,13 +360,10 @@ sistemi_lettura <- function() c("Solo saponette", "Solo antenne", "Entrambe")
 #' quelle del registro con un motivo di scarto (`motivi_di_scarto()`, stato
 #' `Scartata`); ne tiene una per RFID e giorno, la migliore. Le righe senza RFID o
 #' senza giorno non hanno una chiave e non contano.
-#' Risultato: `RFID`, `data_lettura`, `stato` (un fattore), i dati della
-#' fornitura per le letture `PIA` e i servizi (`servizio_transponder`,
-#' `servizio_atteso`).
+#' Risultato: `RFID`, `data_lettura`, `stato` (un fattore) e i dati della
+#' fornitura per le letture `PIA`.
 #' @noRd
 letture_di_un_sistema <- function(finali, scartate) {
-  # Le saponette non hanno il servizio atteso (è del giro del calendario).
-  finali$servizio_atteso <- finali[["servizio_atteso"]] %||% NA_character_
   tenute <- finali |>
     dplyr::transmute(
       .data$RFID,
@@ -379,8 +376,7 @@ letture_di_un_sistema <- function(finali, scartate) {
       ),
       .data$id_fornitura,
       .data$volume,
-      .data$servizio_transponder,
-      .data$servizio_atteso
+      .data$servizio_transponder
     )
   perse <- scartate |>
     dplyr::filter(.data$motivo %in% motivi_di_scarto()) |>
@@ -403,16 +399,8 @@ letture_di_un_sistema <- function(finali, scartate) {
 #' dati della fornitura vengono dal sistema che li ha.
 #'
 #' Risultato: una riga per lettura con `RFID`, `data_lettura`, `sistema`,
-#' `stato`, `id_fornitura`, `volume`, `servizio_transponder` e `secco`.
-#'
-#' `secco` dice se la lettura conta per l'analisi del secco, con le regole del
-#' proprietario del 5/11/2026: **tutte** le letture delle saponette (anche le
-#' compatibili non associate, `PIT` e `NP`) sono del secco, perché gli operatori le
-#' usano quasi solo nei giri del secco residuo (le letture di bidoni con un altro
-#' servizio a database si tolgono prima, `solo_bidoni_del_secco()`); una lettura delle antenne lo è se
-#' `servizio_transponder` **oppure** `servizio_atteso` è `SECCO` (i mezzi con
-#' l'antenna fanno anche altri rifiuti). Una lettura vista da tutti e due i sistemi
-#' conta se lo è per uno dei due.
+#' `stato`, `id_fornitura`, `volume` e `servizio_transponder`. Il filtro sul secco
+#' si fa prima, sulle letture di ogni sistema (`letture_del_secco()`).
 #' @param antenne,saponette Letture dei file finali dei due sistemi.
 #' @param scartate_antenne,scartate_saponette Registro delle scartate.
 #' @noRd
@@ -447,10 +435,7 @@ unita_di_lettura <- function(antenne, saponette, scartate_antenne, scartate_sapo
       servizio_transponder = dplyr::coalesce(
         .data$servizio_transponder_a,
         .data$servizio_transponder_s
-      ),
-      secco = !is.na(.data$stato_s) |
-        toupper(.data$servizio_transponder_a) %in% "SECCO" |
-        toupper(.data$servizio_atteso_a) %in% "SECCO"
+      )
     ) |>
     dplyr::select(
       "RFID",
@@ -459,8 +444,7 @@ unita_di_lettura <- function(antenne, saponette, scartate_antenne, scartate_sapo
       "stato",
       "id_fornitura",
       "volume",
-      "servizio_transponder",
-      "secco"
+      "servizio_transponder"
     )
 }
 

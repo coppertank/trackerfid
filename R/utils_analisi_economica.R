@@ -51,9 +51,8 @@ scenari_rilevazione <- function(con_antenne = TRUE, con_saponette = TRUE) {
 #' letture associate (`PIA`) del secco nel periodo, non solo che compaia nei file:
 #' un'antenna che nel periodo ha letto solo altri rifiuti non dice niente sui
 #' conferimenti del secco.
-#' Funzionamento: guarda le letture `PIA` che contano per il secco (colonna
-#' `secco` di `unita_di_lettura()`; senza la colonna, `servizio_transponder`
-#' uguale a `SECCO`) viste da ogni sistema (una lettura «Entrambe» le conta tutte e
+#' Funzionamento: guarda le letture `PIA` di bidoni con `servizio_transponder`
+#' uguale a `SECCO`, viste da ogni sistema (una lettura «Entrambe» le conta tutte e
 #' due).
 #' Risultato: un vettore logico con nome, `antenne` e `saponette`.
 #' @param unita Risultato di `unita_di_lettura()`.
@@ -61,11 +60,7 @@ scenari_rilevazione <- function(con_antenne = TRUE, con_saponette = TRUE) {
 sistemi_con_conferimenti <- function(unita) {
   associate <- unita |>
     dplyr::filter(.data$stato %in% "PIA", .data$sistema %in% sistemi_lettura())
-  associate <- if ("secco" %in% names(associate)) {
-    dplyr::filter(associate, .data$secco %in% TRUE)
-  } else {
-    dplyr::filter(associate, toupper(.data$servizio_transponder) %in% "SECCO")
-  }
+  associate <- dplyr::filter(associate, toupper(.data$servizio_transponder) %in% "SECCO")
   c(
     antenne = any(associate$sistema %in% c("Solo antenne", "Entrambe")),
     saponette = any(associate$sistema %in% c("Solo saponette", "Entrambe"))
@@ -76,10 +71,9 @@ sistemi_con_conferimenti <- function(unita) {
 #'
 #' Contesto: tappa di `analisi_economica()` e di `propensione_conferimento()`.
 #' Funzionamento: tiene le letture `PIA` dei sistemi dello scenario, del servizio
-#' indicato, e le somma per fornitura. Per il secco vale la regola delle saponette
-#' e delle antenne (colonna `secco` di `unita_di_lettura()`); per un altro servizio
-#' conta `servizio_transponder`. I litri di una lettura sono il volume del suo
-#' contenitore; se manca, quello più frequente nella fornitura.
+#' indicato (`servizio_transponder`), e le somma per fornitura. I litri di una
+#' lettura sono il volume del suo contenitore; se manca, quello più frequente nella
+#' fornitura.
 #' Risultato: `id_fornitura`, `conferimenti` e `litri`.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
@@ -90,14 +84,10 @@ conferimenti_per_fornitura <- function(unita, anagrafica, sistemi, servizio = NU
   letture <- unita |>
     dplyr::filter(.data$stato %in% "PIA", .data$sistema %in% sistemi)
   if (!is.null(servizio)) {
-    letture <- if (identical(toupper(servizio), "SECCO") && "secco" %in% names(letture)) {
-      dplyr::filter(letture, .data$secco %in% TRUE)
-    } else {
-      dplyr::filter(
-        letture,
-        toupper(.data$servizio_transponder) %in% toupper(servizio)
-      )
-    }
+    letture <- dplyr::filter(
+      letture,
+      toupper(.data$servizio_transponder) %in% toupper(servizio)
+    )
   }
   letture |>
     dplyr::inner_join(

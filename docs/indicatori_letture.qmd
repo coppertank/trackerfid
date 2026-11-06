@@ -14,7 +14,7 @@ params:
   scartate_saponette: "data-raw/output/letture_scartate_saponette.csv"
   cartella_origine: "data-raw/origine"
   giri: ""
-  servizio: ""
+  servizio: "SECCO"
   componenti: ""
   margine_minuti: 30
   cartella_csv: ""
@@ -52,19 +52,15 @@ knitr:
 # Parametri (i percorsi relativi partono dalla radice del progetto; un parametro
 # vuoto non filtra):
 #   dal, al             primo e ultimo giorno del periodo (AAAA-MM-GG); vuoti:
-#                       tutte le letture disponibili (o i giorni dei giri)
+#                       tutte le letture del secco disponibili (o i giorni dei giri)
 #   letture_antenne, letture_saponette    CSV delle letture finali della pipeline
 #   scartate_antenne, scartate_saponette  CSV del registro delle letture scartate
 #   cartella_origine    cartella dei file estratti: contenitori, componenti, manovre
 #   giri                CSV dei giri da analizzare: data_giro, matricola_veicolo,
 #                       servizio_giro, matricola_saponetta e, facoltative,
 #                       ora_inizio, ora_fine (HH:MM). Vuoto: tutte le letture
-#   servizio            servizio da analizzare (SECCO, CARTA...); vale senza giri.
-#                       Vuoto: le letture sono tutte; le forniture, la propensione
-#                       e l'economia sono quelle del SECCO (servizio predefinito).
-#                       Per il secco le saponette contano tutte (anche le non
-#                       associate) e le antenne solo con transponder o servizio
-#                       atteso SECCO (filtra_letture_per_servizio())
+#   servizio            il report vale solo per il SECCO, l'unico rifiuto fatturato:
+#                       vuoto o SECCO; un altro servizio ferma la compilazione
 #   componenti          fascia di componenti per forniture, propensione ed
 #                       economia: 0 (casa vuota), 1-5, 6+ o potenziamento
 #   margine_minuti      minuti aggiunti ai due lati della finestra ricavata dalle
@@ -150,12 +146,16 @@ scartate_saponette <- leggi_letture_indicatori(percorso_progetto(params$scartate
 
 con_giri <- !vuoto(params$giri)
 giri <- if (con_giri) giri_di_analisi(percorso_progetto(params$giri))
-# Con i giri il servizio è quello di ogni giro: il parametro non serve.
-servizio <- if (vuoto(params$servizio) || con_giri) NULL else toupper(trimws(params$servizio))
-# Le forniture sono quelle di un servizio: se non se ne sceglie uno, il secco,
-# l'unico rifiuto fatturato (scelta del proprietario, 4/11/2026). Le letture invece
-# restano tutte, per gli indici di associazione e di scarto.
-servizio_forniture <- if (is.null(servizio)) "SECCO" else servizio
+# Il report guarda solo il secco, l'unico rifiuto che l'azienda fattura (scelta del
+# proprietario, 6/11/2026): letture, forniture, propensione ed economia.
+if (!vuoto(params$servizio) && toupper(trimws(params$servizio)) != "SECCO") {
+  stop(
+    "Il report vale solo per il secco: `servizio` può essere vuoto o `SECCO`.",
+    call. = FALSE
+  )
+}
+servizio <- "SECCO"
+servizio_forniture <- servizio
 gruppo_scelto <- gruppo_da_filtro(params$componenti)
 
 date_base <- if (con_giri) {
@@ -184,36 +184,32 @@ letture <- list(
   scartate_antenne = nel_periodo(scartate_antenne, dal, al),
   scartate_saponette = nel_periodo(scartate_saponette, dal, al)
 )
-# Le saponette si usano quasi solo nei giri del secco, ma l'associazione contiene
-# i bidoni di tutti i servizi: una lettura di saponetta su un bidone con un altro
-# servizio a database (carta, plastica...) non si considera (scelta del proprietario,
-# 6/11/2026). I bidoni senza servizio a database (PIT, NP, sacchetti) restano.
-saponette_secco <- solo_bidoni_del_secco(letture$saponette)
-saponette_altro_servizio <- nrow(letture$saponette) - nrow(saponette_secco)
-letture$saponette <- saponette_secco
+# Solo le letture del secco (letture_del_secco()): un bidone associato con un altro
+# servizio (carta, plastica...) non conta mai; le saponette sono tutte del secco,
+# le antenne se il bidone è del secco o, senza servizio a database (PIT, NP,
+# sacchetti), se il giro è del secco (servizio atteso).
+righe_prima <- c(antenne = nrow(letture$antenne), saponette = nrow(letture$saponette))
+letture$antenne <- letture_del_secco(letture$antenne, "antenne")
+letture$saponette <- letture_del_secco(letture$saponette, "saponette")
+escluse_altro_servizio <- righe_prima - c(antenne = nrow(letture$antenne), saponette = nrow(letture$saponette))
 
-# --- La selezione: i giri indicati, oppure tutte le letture --------------------
+# --- La selezione: i giri indicati, oppure tutte le letture del secco ----------
 if (con_giri) {
   selezione <- seleziona_per_giri(letture, giri, params$margine_minuti)
 } else {
   selezione <- letture
-  if (!is.null(servizio)) {
-    # Per il secco le saponette restano tutte (gli operatori le usano nei giri del
-    # secco), le antenne si tengono con transponder o servizio atteso uguali.
-    selezione$antenne <- filtra_letture_per_servizio(selezione$antenne, "antenne", servizio)
-    selezione$saponette <- filtra_letture_per_servizio(selezione$saponette, "saponette", servizio)
-    # Le letture scartate non hanno un servizio: con un servizio scelto lo scarto
-    # non si può calcolare.
-    selezione$scartate_antenne <- selezione$scartate_antenne[0, ]
-    selezione$scartate_saponette <- selezione$scartate_saponette[0, ]
-  }
+  # Le letture scartate dalla pulizia non hanno un servizio: senza i giri, che le
+  # legano a una finestra, non si può dire quali siano del secco, e non entrano.
+  selezione$scartate_antenne <- selezione$scartate_antenne[0, ]
+  selezione$scartate_saponette <- selezione$scartate_saponette[0, ]
 }
-scarto_calcolabile <- is.null(servizio)
+# Gli indici di scarto si calcolano solo con i giri indicati.
+scarto_calcolabile <- con_giri
 if (nrow(selezione$antenne) + nrow(selezione$saponette) == 0) {
   stop(
     "Nessuna lettura nella selezione (periodo ",
     data_it(dal), " - ", data_it(al),
-    if (!is.null(servizio)) paste0(", servizio ", servizio),
+    ", solo secco",
     if (con_giri) ", giri indicati",
     ").",
     call. = FALSE
@@ -237,7 +233,8 @@ ind <- indicatori_letture(unita, extra)
 file <- file_origine(percorso_progetto(params$cartella_origine))
 anagrafica_presente <- all(file.exists(unlist(file[c("contenitori", "componenti", "manovre")])))
 anagrafica <- if (anagrafica_presente) {
-  leggi_anagrafica_forniture(file, dal, al)
+  # Solo i contenitori del secco: un contenitore di altro servizio non si conta.
+  leggi_anagrafica_forniture(file, dal, al, servizio_forniture)
 }
 # Servizio e fascia scelti; con i giri solo le forniture lette in quei giri,
 # perché le altre non si sanno attribuire.
@@ -292,7 +289,8 @@ registri_assenti <- c(
   if (nrow(antenne) > 0 && !file.exists(percorso_progetto(params$scartate_antenne))) "delle antenne",
   if (nrow(saponette) > 0 && !file.exists(percorso_progetto(params$scartate_saponette))) "delle saponette"
 )
-if (length(registri_assenti) > 0) {
+# Il registro delle scartate serve solo con i giri indicati (senza, le scartate non entrano).
+if (con_giri && length(registri_assenti) > 0) {
   cat(
     "::: {.callout-warning}\nIl registro delle letture scartate ",
     paste(registri_assenti, collapse = " e "),
@@ -301,10 +299,10 @@ if (length(registri_assenti) > 0) {
   )
 }
 if (!con_antenne) {
-  cat("::: {.callout-note}\nNella selezione non ci sono letture delle antenne: l'analisi riguarda le sole saponette e gli indici di confronto non si possono calcolare.\n:::\n\n")
+  cat("::: {.callout-note}\nNella selezione non ci sono letture del secco delle antenne: l'analisi riguarda le sole saponette e gli indici di confronto non si possono calcolare.\n:::\n\n")
 }
 if (!con_saponette) {
-  cat("::: {.callout-note}\nNella selezione non ci sono letture delle saponette: l'analisi riguarda le sole antenne e gli indici di confronto non si possono calcolare.\n:::\n\n")
+  cat("::: {.callout-note}\nNella selezione non ci sono letture del secco delle saponette: l'analisi riguarda le sole antenne e gli indici di confronto non si possono calcolare.\n:::\n\n")
 }
 ```
 
@@ -329,42 +327,38 @@ righe_selezione <- dplyr::tibble(
   Voce = c(
     "Periodo",
     "Letture",
-    "Servizio delle letture",
-    "Servizio delle forniture",
+    "Servizio",
     "Fascia di componenti",
     "Letture delle antenne",
     "Letture delle saponette",
-    "Letture delle saponette escluse (bidoni di altri servizi)"
+    "Letture escluse perché non del secco (antenne)",
+    "Letture escluse perché non del secco (saponette)"
   ),
   Valore = c(
     paste0(data_it(dal), " - ", data_it(al), " (", intero(as.numeric(al - dal) + 1), " giorni)"),
     if (con_giri) {
       paste0(intero(nrow(giri)), " giri indicati; antenne e saponette nella stessa finestra oraria")
     } else {
-      "tutte le letture disponibili"
+      "tutte le letture del secco disponibili"
     },
-    if (con_giri) {
-      "quello di ogni giro"
-    } else if (is.null(servizio)) {
-      "tutti"
-    } else {
-      servizio
-    },
-    if (is.null(servizio)) {
-      "SECCO (predefinito)"
-    } else {
-      servizio
-    },
+    "SECCO (l'unico rifiuto fatturato)",
     if (is.null(gruppo_scelto)) "tutte" else gruppo_scelto,
     copertura(selezione$antenne, selezione$scartate_antenne),
     copertura(selezione$saponette, selezione$scartate_saponette),
-    intero(saponette_altro_servizio)
+    intero(escluse_altro_servizio[["antenne"]]),
+    intero(escluse_altro_servizio[["saponette"]])
   )
 )
 knitr::kable(righe_selezione, align = "ll")
 ```
 
-Il report fotografa i conferimenti reali con le letture disponibili nel periodo, che siano delle sole saponette, di entrambi i sistemi o, in futuro, delle sole antenne. Il confronto tra antenne e saponette è accessorio: compare solo se tutti e due i sistemi hanno letture. Per il **secco** le saponette contano tutte, comprese le compatibili non associate (`PIT` e `NP`), perché gli operatori le usano quasi solo nei giri del secco residuo, con una sola eccezione: le letture di bidoni il cui servizio a database (`servizio_transponder`) non è il secco, per esempio carta o plastica, si escludono (l'associazione dei contenitori li contiene tutti, ma le saponette non dovrebbero leggerli; la tabella qui sopra dice quante sono); le antenne contano se `servizio_transponder` **oppure** `servizio_atteso` è `SECCO`, perché i mezzi con l'antenna fanno anche altri rifiuti.
+Il report guarda **solo il secco**, l'unico rifiuto che l'azienda fattura, e fotografa i conferimenti reali con le letture del secco disponibili nel periodo, che siano delle sole saponette, di entrambi i sistemi o, in futuro, delle sole antenne. Il confronto tra antenne e saponette è accessorio: compare solo se tutti e due i sistemi hanno letture. Le letture del secco sono scelte così:
+
+- un bidone che nell'associazione dei contenitori ha un servizio diverso dal secco (carta, plastica, vetro...) non conta mai, per nessuno dei due sistemi: le tabelle riguardano i bidoni del secco;
+- **saponette**: tutte le altre letture sono del secco, anche i bidoni compatibili non associati (`PIT` e `NP`) e i sacchetti, perché gli operatori usano le saponette quasi solo nei giri del secco residuo;
+- **antenne**: restano le letture con `servizio_transponder` `SECCO` e quelle senza servizio a database (`PIT`, `NP`, sacchetti) lette in un giro del secco (`servizio_atteso` `SECCO`), perché i mezzi con l'antenna fanno anche altri rifiuti.
+
+La tabella qui sopra dice quante letture sono state escluse perché non del secco.
 
 Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Sono **compatibili** le letture che la pulizia tiene, anche se il database non le conosce: sono potenzialmente bidoni dell'azienda. Quelle **associate** sono le compatibili con una fornitura (`presente_a_database` uguale a `PIA`); le **non associate** sono le altre, cioè i contenitori presenti solo tra i tag (`PIT`) o per niente nel database (`NP`). Sono **scartate** le righe che la pulizia toglie: i codici nulli (soli zeri), i codici lunghi che non sono bidoni (più di 10 caratteri e due o più cifre diverse da zero nei primi 14, né sacchetti né HERA), i doppioni (lo stesso bidone letto più volte nello stesso giorno dallo stesso sistema: resta la prima lettura) e le righe senza RFID o con l'istante illeggibile. Le letture senza posizione si tengono.
 
@@ -416,7 +410,7 @@ if (nrow(nd) > 0) {
 }
 ```
 
-Le forniture sono quelle con almeno un contenitore dotato di tag attivo nel periodo, di un solo servizio: quello scelto con il parametro `servizio` e, se non se ne sceglie uno, il **secco**. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio.
+Le forniture sono quelle del **secco** con almeno un contenitore associato attivo nel periodo nell'associazione dei contenitori (`dv_cnt_associazione_contenitori`); si contano solo i contenitori il cui servizio in associazione è `SECCO`, anche se una fornitura ne avesse di altri servizi. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio.
 
 # Le letture
 
@@ -548,7 +542,7 @@ if (nrow(per_motivo) > 0) {
   cat("\nI codici nulli e quelli lunghi sono letture (RFID e giorno): lo stesso codice letto dai due sistemi nello stesso giorno conta una volta. I doppioni e le righe senza RFID o senza istante sono righe in più di un solo sistema e si contano per riga.\n")
 }
 if (!scarto_calcolabile) {
-  cat("\n::: {.callout-note}\nCon un servizio scelto le letture scartate dalla pulizia non entrano: non hanno un servizio. Gli indici di scarto non sono calcolabili e le letture sono le sole che hanno un servizio.\n:::\n")
+  cat("\n::: {.callout-note}\nIl report guarda solo il secco e le letture scartate dalla pulizia non hanno un servizio: senza i giri indicati non si può dire quali siano del secco, quindi non entrano e gli indici di scarto non sono calcolabili. Le letture sono le sole del secco che la pulizia ha tenuto.\n:::\n")
 }
 ```
 
@@ -803,9 +797,9 @@ knitr::kable(nuovo_riepilogo, align = "lrrrrrrrr")
 #| eval: !expr economia_utile
 #| results: asis
 if (un_solo_scenario) {
-  cat("Un solo scenario: **", riferimento, "** è la fotografia reale delle forniture, con tutte le letture disponibili nel periodo. Non ci sono scenari alternativi perché l'altro sistema non ha conferimenti del secco nel periodo: simularlo darebbe zero litri a ogni fornitura, cioè il premio massimo a tutte. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n", sep = "")
+  cat("Un solo scenario: **", riferimento, "** è la fotografia reale delle forniture, con tutte le letture del secco disponibili nel periodo. Non ci sono scenari alternativi perché l'altro sistema non ha conferimenti del secco nel periodo: simularlo darebbe zero litri a ogni fornitura, cioè il premio massimo a tutte. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n", sep = "")
 } else {
-  cat("Gli scenari rispondono alla domanda: che cosa sarebbe successo fatturando con le letture di un solo sistema? **Saponette e antenne** (tutte le letture disponibili) unisce i due, ogni lettura una volta, ed è il riferimento. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n")
+  cat("Gli scenari rispondono alla domanda: che cosa sarebbe successo fatturando con le letture di un solo sistema? **Saponette e antenne** (tutte le letture del secco disponibili) unisce i due, ogni lettura una volta, ed è il riferimento. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n")
 }
 ```
 
@@ -1179,9 +1173,7 @@ utils::write.table(
 #| label: avviso-economia
 #| eval: !expr "!economia_possibile"
 #| results: asis
-cat("\n::: {.callout-note}\nL'analisi economica vale solo per il secco, l'unico rifiuto fatturato, e richiede i file delle forniture")
-if (servizio_forniture != "SECCO") cat(": con il servizio ", servizio_forniture, " non si fa", sep = "")
-cat(".\n:::\n")
+cat("\n::: {.callout-note}\nL'analisi economica richiede i file delle forniture (contenitori, componenti, manovre) nella cartella indicata da `cartella_origine`.\n:::\n")
 ```
 
 # Come sono fatti i conti
@@ -1191,7 +1183,7 @@ cat(".\n:::\n")
 - **Periodo.** Litri inclusi, volume minimo e massimo per la premialità si moltiplicano per i giorni di attività della fornitura nel periodo diviso i giorni dell'anno (366 solo per un periodo dentro un anno bisestile); il premio di un conferimento si riduce allo stesso modo, così premio ed eccedenza sono la quota del periodo dell'importo annuo. Con un periodo più corto di un anno litri e classi si leggono rispetto a queste soglie parziali (`soglie_del_periodo()`).
 - **Proiezione annua.** `litri proiettati = litri rilevati / fattore`, con il fattore della fornitura (giorni di attività / giorni dell'anno); premio, eccedenza e importo si riportano allo stesso modo (`economia_forniture()`). La classe non cambia: la proiezione dice quanto varrebbe l'anno intero se il ritmo del periodo continuasse. È lineare: niente stagionalità.
 - **Scenari.** Con tutti e due i sistemi: «Saponette e antenne» (il riferimento, ogni lettura una volta), «Solo saponette» e «Solo antenne». Con un solo sistema, un solo scenario («Rilevazione reale (Saponette)» o «(Antenne)»): l'altro non si simula, perché darebbe zero litri a tutte le forniture, cioè il premio massimo a tutte. Un sistema conta se ha letture associate del secco nel periodo (`sistemi_con_conferimenti()`, `scenari_rilevazione()`).
-- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Per il secco le saponette contano tutte e le antenne solo con transponder o servizio atteso `SECCO` (colonna `secco` di `unita_di_lettura()`). Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
+- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Le letture sono quelle del secco (`letture_del_secco()`): bidoni di altri servizi esclusi, saponette tutte, antenne con transponder `SECCO` o, senza servizio a database, con servizio atteso `SECCO`. Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
 - **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento vale il limite di 6.240 litri.
 - **Anagrafica.** Forniture e contenitori vengono dalle tabelle estratte (`dv_cnt_associazione_contenitori`, `dv_associazione_componenti`, `dv_potenziamento_secco`), non dalle letture. Un contenitore senza tag non compare.
 - **Con i giri.** Vedi sopra: la finestra oraria di un giro è, in ordine, quella indicata nel file, quella delle letture delle antenne del giro allargata di `margine_minuti` minuti, o la giornata intera. Le forniture sono quelle lette nei giri, i litri sono quelli di quelle letture e le soglie annue valgono per il periodo scelto: va letto come un campione, non come l'anno di quelle forniture.

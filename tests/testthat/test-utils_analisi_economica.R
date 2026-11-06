@@ -89,32 +89,6 @@ test_that("un sistema ha conferimenti se ha letture associate del secco", {
   carta <- dplyr::filter(unita, sistema == "Solo antenne") |>
     dplyr::mutate(servizio_transponder = "CARTA")
   expect_equal(sistemi_con_conferimenti(carta), c(antenne = FALSE, saponette = FALSE))
-  # con la colonna `secco` vale quella: l'antenna in un giro del secco conta
-  carta$secco <- TRUE
-  expect_equal(sistemi_con_conferimenti(carta), c(antenne = TRUE, saponette = FALSE))
-})
-
-test_that("per il secco le saponette contano tutte e le antenne per transponder o servizio atteso", {
-  unita <- dplyr::tibble(
-    RFID = c("a", "b", "c", "d"),
-    data_lettura = as.Date("2026-10-01") + 0:3,
-    sistema = factor(c("Solo saponette", "Solo antenne", "Solo antenne", "Solo antenne"), sistemi_lettura()),
-    stato = factor("PIA", stati_lettura()),
-    id_fornitura = "F1",
-    volume = 120,
-    servizio_transponder = c(NA, "SECCO", "CARTA", "CARTA"),
-    # a: saponetta; b: transponder del secco; c: altro rifiuto; d: giro del secco
-    secco = c(TRUE, TRUE, FALSE, TRUE)
-  )
-  anagrafica <- dplyr::filter(anagrafica_economia_prova(), id_fornitura == "F1")
-  conferimenti <- conferimenti_per_fornitura(unita, anagrafica, sistemi_lettura(), "SECCO")
-  expect_identical(conferimenti$conferimenti, 3L)
-  # senza la colonna `secco` conta il solo transponder (comportamento di prima)
-  senza_colonna <- dplyr::select(unita, -"secco")
-  expect_identical(
-    conferimenti_per_fornitura(senza_colonna, anagrafica, sistemi_lettura(), "SECCO")$conferimenti,
-    1L
-  )
 })
 
 test_that("con un solo sistema l'analisi economica ha un solo scenario, quello reale", {

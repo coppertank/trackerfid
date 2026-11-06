@@ -269,3 +269,37 @@ test_that("manca codice_categoria nel file dei contenitori: avviso e categoria v
   expect_true(is.na(contenitori$categoria_contenitore))
   expect_no_warning(importa_contenitori(percorso))
 })
+
+test_that("con un servizio si contano solo i contenitori di quel servizio, anche dentro la stessa fornitura", {
+  contenitori <- dplyr::bind_rows(
+    contenitori_forniture_prova(),
+    # una fornitura del secco con anche un contenitore della carta, e viceversa
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "M1", id_fornitura = "FM", servizio_transponder = "SECCO", volume = 120),
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "M2", id_fornitura = "FM", servizio_transponder = " carta ", volume = 240)
+  )
+  tutti <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  secco <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31",
+    servizio = "secco"
+  )
+  # senza servizio la fornitura mista conta tutti e due i contenitori, con il servizio solo quello del secco
+  expect_identical(tutti$contenitori[tutti$id_fornitura == "FM"], 2L)
+  expect_identical(secco$contenitori[secco$id_fornitura == "FM"], 1L)
+  expect_identical(secco$volume_totale[secco$id_fornitura == "FM"], 120)
+  # le forniture della carta non ci sono; le altre del secco restano come prima
+  expect_false("F8" %in% secco$id_fornitura)
+  expect_true(all(secco$servizio == "SECCO"))
+  gli_stessi <- setdiff(secco$id_fornitura, "FM")
+  expect_identical(
+    secco$contenitori[match(gli_stessi, secco$id_fornitura)],
+    tutti$contenitori[match(gli_stessi, tutti$id_fornitura)]
+  )
+  # i conteggi del report vengono dalla stessa tabella
+  expect_identical(
+    conta_forniture(secco)$contenitori[conta_forniture(secco)$gruppo == "Tutte le forniture"],
+    sum(secco$contenitori)
+  )
+})
+
