@@ -184,6 +184,13 @@ letture <- list(
   scartate_antenne = nel_periodo(scartate_antenne, dal, al),
   scartate_saponette = nel_periodo(scartate_saponette, dal, al)
 )
+# Le saponette si usano quasi solo nei giri del secco, ma l'associazione contiene
+# i bidoni di tutti i servizi: una lettura di saponetta su un bidone con un altro
+# servizio a database (carta, plastica...) non si considera (scelta del proprietario,
+# 6/11/2026). I bidoni senza servizio a database (PIT, NP, sacchetti) restano.
+saponette_secco <- solo_bidoni_del_secco(letture$saponette)
+saponette_altro_servizio <- nrow(letture$saponette) - nrow(saponette_secco)
+letture$saponette <- saponette_secco
 
 # --- La selezione: i giri indicati, oppure tutte le letture --------------------
 if (con_giri) {
@@ -326,7 +333,8 @@ righe_selezione <- dplyr::tibble(
     "Servizio delle forniture",
     "Fascia di componenti",
     "Letture delle antenne",
-    "Letture delle saponette"
+    "Letture delle saponette",
+    "Letture delle saponette escluse (bidoni di altri servizi)"
   ),
   Valore = c(
     paste0(data_it(dal), " - ", data_it(al), " (", intero(as.numeric(al - dal) + 1), " giorni)"),
@@ -349,13 +357,14 @@ righe_selezione <- dplyr::tibble(
     },
     if (is.null(gruppo_scelto)) "tutte" else gruppo_scelto,
     copertura(selezione$antenne, selezione$scartate_antenne),
-    copertura(selezione$saponette, selezione$scartate_saponette)
+    copertura(selezione$saponette, selezione$scartate_saponette),
+    intero(saponette_altro_servizio)
   )
 )
 knitr::kable(righe_selezione, align = "ll")
 ```
 
-Il report fotografa i conferimenti reali con le letture disponibili nel periodo, che siano delle sole saponette, di entrambi i sistemi o, in futuro, delle sole antenne. Il confronto tra antenne e saponette è accessorio: compare solo se tutti e due i sistemi hanno letture. Per il **secco** le saponette contano tutte, comprese le compatibili non associate (`PIT` e `NP`), perché gli operatori le usano quasi solo nei giri del secco residuo; le antenne contano se `servizio_transponder` **oppure** `servizio_atteso` è `SECCO`, perché i mezzi con l'antenna fanno anche altri rifiuti.
+Il report fotografa i conferimenti reali con le letture disponibili nel periodo, che siano delle sole saponette, di entrambi i sistemi o, in futuro, delle sole antenne. Il confronto tra antenne e saponette è accessorio: compare solo se tutti e due i sistemi hanno letture. Per il **secco** le saponette contano tutte, comprese le compatibili non associate (`PIT` e `NP`), perché gli operatori le usano quasi solo nei giri del secco residuo, con una sola eccezione: le letture di bidoni il cui servizio a database (`servizio_transponder`) non è il secco, per esempio carta o plastica, si escludono (l'associazione dei contenitori li contiene tutti, ma le saponette non dovrebbero leggerli; la tabella qui sopra dice quante sono); le antenne contano se `servizio_transponder` **oppure** `servizio_atteso` è `SECCO`, perché i mezzi con l'antenna fanno anche altri rifiuti.
 
 Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Sono **compatibili** le letture che la pulizia tiene, anche se il database non le conosce: sono potenzialmente bidoni dell'azienda. Quelle **associate** sono le compatibili con una fornitura (`presente_a_database` uguale a `PIA`); le **non associate** sono le altre, cioè i contenitori presenti solo tra i tag (`PIT`) o per niente nel database (`NP`). Sono **scartate** le righe che la pulizia toglie: i codici nulli (soli zeri), i codici lunghi che non sono bidoni (più di 10 caratteri e due o più cifre diverse da zero nei primi 14, né sacchetti né HERA), i doppioni (lo stesso bidone letto più volte nello stesso giorno dallo stesso sistema: resta la prima lettura) e le righe senza RFID o con l'istante illeggibile. Le letture senza posizione si tengono.
 

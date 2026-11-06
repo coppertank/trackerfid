@@ -408,7 +408,8 @@ letture_di_un_sistema <- function(finali, scartate) {
 #' `secco` dice se la lettura conta per l'analisi del secco, con le regole del
 #' proprietario del 5/11/2026: **tutte** le letture delle saponette (anche le
 #' compatibili non associate, `PIT` e `NP`) sono del secco, perché gli operatori le
-#' usano quasi solo nei giri del secco residuo; una lettura delle antenne lo è se
+#' usano quasi solo nei giri del secco residuo (le letture di bidoni con un altro
+#' servizio a database si tolgono prima, `solo_bidoni_del_secco()`); una lettura delle antenne lo è se
 #' `servizio_transponder` **oppure** `servizio_atteso` è `SECCO` (i mezzi con
 #' l'antenna fanno anche altri rifiuti). Una lettura vista da tutti e due i sistemi
 #' conta se lo è per uno dei due.

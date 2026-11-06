@@ -129,7 +129,8 @@ filtra_letture <- function(
 #' Funzionamento:
 #' - antenne: tiene le letture con `servizio_transponder` **oppure** `servizio_atteso`
 #'   uguale al servizio (`filtra_letture()`);
-#' - saponette, servizio `SECCO` (anche tra più servizi): tiene tutte le letture;
+#' - saponette, servizio `SECCO` (anche tra più servizi): tiene tutte le letture
+#'   (quelle di bidoni di altri servizi sono già tolte da `solo_bidoni_del_secco()`);
 #' - saponette, altro servizio: tiene quelle con `servizio_transponder` uguale
 #'   (le saponette non hanno il servizio atteso);
 #' - servizio vuoto: non filtra.
@@ -154,6 +155,28 @@ filtra_letture_per_servizio <- function(
     return(letture)
   }
   filtra_letture(letture, servizio = voci)
+}
+
+#' Letture delle saponette dei soli bidoni del secco (o senza servizio a database)
+#'
+#' Contesto: gli operatori usano le saponette quasi solo nei giri del secco, ma
+#' l'associazione dei contenitori contiene i bidoni di tutti i servizi (carta,
+#' plastica, vetro...). Una lettura di saponetta che cade su un bidone con un altro
+#' servizio a database non è un conferimento del secco: nelle statistiche delle
+#' saponette non va considerata (scelta del proprietario, 6/11/2026).
+#'
+#' Funzionamento: tiene le letture con `servizio_transponder` uguale a `SECCO`
+#' (maiuscole e spazi ininfluenti) e quelle senza servizio a database: i bidoni
+#' compatibili non associati (`PIT` e `NP`) e i sacchetti non ne hanno uno e restano,
+#' perché sono potenziali bidoni del secco. Toglie le letture di bidoni con un
+#' servizio diverso da `SECCO`.
+#'
+#' Risultato: le stesse letture, meno quelle dei bidoni di altri servizi.
+#' @param saponette Letture delle saponette con `servizio_transponder`.
+#' @noRd
+solo_bidoni_del_secco <- function(saponette) {
+  servizio <- toupper(trimws(as.character(saponette$servizio_transponder)))
+  dplyr::filter(saponette, is.na(servizio) | !nzchar(servizio) | servizio == "SECCO")
 }
 
 #' Letture delle saponette dei giri in cui le antenne hanno letto almeno un RFID
