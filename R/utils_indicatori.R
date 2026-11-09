@@ -67,6 +67,7 @@ colonne_letture_indicatori <- function() {
     "id_utenza",
     "volume",
     "servizio_transponder",
+    "contenitore_gratuito",
     "servizio_atteso",
     "servizio_giro",
     "matricola_veicolo",
@@ -361,9 +362,11 @@ sistemi_lettura <- function() c("Solo saponette", "Solo antenne", "Entrambe")
 #' `Scartata`); ne tiene una per RFID e giorno, la migliore. Le righe senza RFID o
 #' senza giorno non hanno una chiave e non contano.
 #' Risultato: `RFID`, `data_lettura`, `stato` (un fattore) e i dati della
-#' fornitura per le letture `PIA`.
+#' fornitura per le letture `PIA` (compreso `contenitore_gratuito`).
 #' @noRd
 letture_di_un_sistema <- function(finali, scartate) {
+  # File vecchi senza il campo: nessun contenitore gratuito noto.
+  finali$contenitore_gratuito <- finali[["contenitore_gratuito"]] %||% NA_character_
   tenute <- finali |>
     dplyr::transmute(
       .data$RFID,
@@ -376,7 +379,8 @@ letture_di_un_sistema <- function(finali, scartate) {
       ),
       .data$id_fornitura,
       .data$volume,
-      .data$servizio_transponder
+      .data$servizio_transponder,
+      .data$contenitore_gratuito
     )
   perse <- scartate |>
     dplyr::filter(.data$motivo %in% motivi_di_scarto()) |>
@@ -399,7 +403,9 @@ letture_di_un_sistema <- function(finali, scartate) {
 #' dati della fornitura vengono dal sistema che li ha.
 #'
 #' Risultato: una riga per lettura con `RFID`, `data_lettura`, `sistema`,
-#' `stato`, `id_fornitura`, `volume` e `servizio_transponder`. Il filtro sul secco
+#' `stato`, `id_fornitura`, `volume`, `servizio_transponder` e
+#' `contenitore_gratuito` (`S` se il bidone è gratuito: i suoi conferimenti non si
+#' fatturano). Il filtro sul secco
 #' si fa prima, sulle letture di ogni sistema (`letture_associate_del_secco()`), solo per le sezioni sul secco del report.
 #' @param antenne,saponette Letture dei file finali dei due sistemi.
 #' @param scartate_antenne,scartate_saponette Registro delle scartate.
@@ -435,6 +441,10 @@ unita_di_lettura <- function(antenne, saponette, scartate_antenne, scartate_sapo
       servizio_transponder = dplyr::coalesce(
         .data$servizio_transponder_a,
         .data$servizio_transponder_s
+      ),
+      contenitore_gratuito = dplyr::coalesce(
+        .data$contenitore_gratuito_a,
+        .data$contenitore_gratuito_s
       )
     ) |>
     dplyr::select(
@@ -444,7 +454,8 @@ unita_di_lettura <- function(antenne, saponette, scartate_antenne, scartate_sapo
       "stato",
       "id_fornitura",
       "volume",
-      "servizio_transponder"
+      "servizio_transponder",
+      "contenitore_gratuito"
     )
 }
 

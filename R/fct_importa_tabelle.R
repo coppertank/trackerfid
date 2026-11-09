@@ -219,7 +219,7 @@ importa_letture_antenne <- function(percorso, comuni = comuni_cantieri()) {
 #' soppresso nel 2019 e oggi parte di `VALBRENTA`, in `VALBRENTA`.
 #'
 #' Risultato: una riga per contenitore e periodo di attività, con le colonne di
-#' `colonne_contenitore()` più `codice_transponder`. Con `categoria = TRUE` anche
+#' `colonne_contenitore()` più `codice_transponder` e `contenitore_gratuito`. Con `categoria = TRUE` anche
 #' `categoria_contenitore`, il `codice_categoria` del file (31 e 32 domestiche, 34
 #' condomini), che serve all'analisi delle forniture.
 #' @param percorso Percorso del CSV dei contenitori.
@@ -232,6 +232,17 @@ importa_contenitori <- function(percorso, categoria = FALSE) {
   # letture la categoria viene dalla composizione dei nuclei.
   codice_categoria <- contenitori[["codice_categoria"]] %||%
     rep(NA_character_, nrow(contenitori))
+  # `contenitore_gratuito`: `S` se con il cliente c'è un accordo che permette di
+  # conferire senza limiti con quel bidone (i suoi svuotamenti non si fatturano),
+  # `N` altrimenti. Un valore vuoto o diverso vale `N`: il bidone si fattura.
+  if (!"contenitore_gratuito" %in% names(contenitori)) {
+    warning(
+      "Nel file dei contenitori manca `contenitore_gratuito`: tutti i ",
+      "contenitori valgono non gratuiti (`N`).",
+      call. = FALSE
+    )
+    contenitori$contenitore_gratuito <- NA_character_
+  }
   contenitori <- contenitori |>
     dplyr::transmute(
       codice_transponder = normalizza_codice_rfid(.data$codice_transponder),
@@ -244,6 +255,11 @@ importa_contenitori <- function(percorso, categoria = FALSE) {
       ),
       data_cessazione_contenitore = data_o_aperta(
         .data$data_cessazione_contenitore
+      ),
+      contenitore_gratuito = dplyr::if_else(
+        stringr::str_to_upper(stringr::str_trim(.data$contenitore_gratuito)) %in% "S",
+        "S",
+        "N"
       ),
       id_fornitura = .data$id_servizio,
       stato_fornitura = .data$stato_servizio,

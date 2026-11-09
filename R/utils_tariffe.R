@@ -10,7 +10,7 @@
 #   (per un carrellato) che si aggiungono quanto meno si conferisce;
 # - casa vuota non ha né minimo né premio; il potenziamento del secco non ha
 #   premio e non paga eccedenza (litri infiniti: il beneficio è già pagato).
-# I litri conferiti nel periodo si riportano a un anno (litri / giorni di attività
+# I litri conferiti nel periodo si riportano a un anno (litri / giorni del periodo
 # × giorni dell'anno) e si confrontano con le soglie annue (8/11/2026).
 
 #' Tariffa annua del secco per fascia di componenti
@@ -99,8 +99,10 @@ fascia_componenti <- function(medi) {
 #' 1. **annualizzazione** (scelta del proprietario, 8/11/2026): le soglie della
 #'    tabella sono annue e restano costanti; i litri del periodo si riportano a un
 #'    anno intero, `litri_annui = litri / fattore`, dove `fattore` è la parte di
-#'    anno in cui la fornitura è attiva nel periodo (giorni di attività / giorni
-#'    dell'anno). Tutto il resto si calcola su `litri_annui` con le soglie annue
+#'    anno che occupa il periodo (giorni da `dal` a `al` / giorni dell'anno): non
+#'    guarda quando la fornitura è stata attivata, così una fornitura attivata a
+#'    fine periodo non gonfia la stima (scelta del proprietario, 10/11/2026;
+#'    `anagrafica_forniture()` lo calcola uguale per tutte). Tutto il resto si calcola su `litri_annui` con le soglie annue
 #'    intere. È una stima lineare: con l'andamento del periodo, senza
 #'    stagionalità. Con `annualizza = FALSE` (giri indicati: litri di pochi giorni)
 #'    si lascia `litri` com'è e si scalano le soglie e il premio di un
@@ -127,7 +129,7 @@ fascia_componenti <- function(medi) {
 #' `potenziamento` o `tariffa per fascia`), `litri_limite`, `litri_minimi`,
 #' `litri_premialita`, `litri_addebitati`, `classe`, `litri_eccedenti`,
 #' `litri_sotto_massimo` (rispetto al massimo per la premialità), `eccedenza_eur`,
-#' `premio_eur` e `importo_eur`. Senza giorni di attività (`fattore` non positivo
+#' `premio_eur` e `importo_eur`. Senza fattore (non positivo
 #' o mancante) l'annualizzazione e la classe mancano.
 #' @param forniture Data frame con `litri` (conferiti nel periodo),
 #'   `componenti_medi`, `potenziamento` (logico), `fattore` e, facoltativa,
@@ -215,8 +217,8 @@ economia_forniture <- function(forniture, annualizza = TRUE) {
 #' Riporta un valore del periodo a un anno intero
 #'
 #' Contesto: annualizzazione dei litri (`economia_forniture()`).
-#' Funzionamento: divide per `fattore`, la parte di anno in cui la fornitura è
-#' attiva nel periodo (giorni di attività / giorni dell'anno).
+#' Funzionamento: divide per `fattore`, la parte di anno che occupa il periodo
+#' (giorni da `dal` a `al` / giorni dell'anno).
 #' Risultato: il valore annuo; `NA` dove `fattore` non è positivo o manca.
 #' @param x Valore del periodo (un vettore).
 #' @param fattore Parte di anno, dello stesso vettore o di lunghezza 1.

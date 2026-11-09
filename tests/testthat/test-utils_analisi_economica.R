@@ -376,3 +376,27 @@ test_that("per ogni gruppo si sceglie la fornitura con piu' eccedenza, non il po
   expect_identical(nrow(fornitura_con_piu_eccedenza(dplyr::mutate(economia, eccedenza_eur = 0))), 0L)
 })
 
+test_that("i contenitori gratuiti non entrano nell'analisi economica", {
+  anagrafica <- anagrafica_economia_prova()
+  # F1: un bidone a pagamento e uno gratuito; F2: tutti gratuiti; le altre forniture non hanno gratuiti
+  anagrafica$contenitori_non_gratuiti <- c(1L, 0L, rep(1L, nrow(anagrafica) - 2L))
+  anagrafica$volume_contenitore_non_gratuito <- anagrafica$volume_contenitore
+  unita <- unita_economia_prova()
+  # F1 ha due letture del suo bidone gratuito e F2 sono tutte di bidoni gratuiti
+  unita$contenitore_gratuito <- ifelse(unita$id_fornitura == "F2", "S", "N")
+  unita$contenitore_gratuito[which(unita$id_fornitura == "F1" & unita$RFID == "F1_1")[1]] <- "S"
+  economia <- analisi_economica(unita, anagrafica)
+  unione <- economia[economia$scenario == "Saponette e antenne", ]
+  # F2 ha solo bidoni gratuiti: esce dall'analisi
+  expect_false("F2" %in% economia$id_fornitura)
+  # F1: la lettura del bidone gratuito non conta (3 letture, una gratuita)
+  f1 <- unione[unione$id_fornitura == "F1", ]
+  expect_equal(f1$litri, 2 * 120)
+  # senza il campo l'analisi e' quella di prima
+  senza_campo <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
+  expect_true("F2" %in% senza_campo$id_fornitura)
+  # la propensione, invece, conta tutte le letture
+  propensione <- propensione_conferimento(unita, dplyr::filter(anagrafica, servizio == "SECCO"), "SECCO")
+  expect_identical(propensione$letture[propensione$gruppo == "Domestiche (totale)"], 5L + 9L + 3L)
+})
+

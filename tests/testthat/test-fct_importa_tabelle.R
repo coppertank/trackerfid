@@ -107,10 +107,13 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
   # i nomi dei comuni si correggono
   corretto <- importa_contenitori(scrivi_csv(c(
     readLines(file$contenitori)[1],
-    "1,SECCO,120,Q,26,2020-01-01,2024-12-31,F9,CESSATA,U9,VALSTAGNA,31",
-    "2,SECCO,120,Q,26,2020-01-01,,F8,ATTIVA,U8,LUSINA CONCO,31"
+    "1,SECCO,120,Q,26,2020-01-01,2024-12-31,F9,CESSATA,U9,VALSTAGNA,31,s",
+    "2,SECCO,120,Q,26,2020-01-01,,F8,ATTIVA,U8,LUSINA CONCO,31,"
   )))
   expect_identical(corretto$comune_fornitura, c("VALBRENTA", "LUSIANA CONCO"))
+  # contenitore gratuito: `S` (anche minuscolo); vuoto o altro vale `N`
+  expect_identical(corretto$contenitore_gratuito, c("S", "N"))
+  expect_identical(contenitori$contenitore_gratuito, "N")
   expect_identical(
     corretto$data_cessazione_contenitore[1],
     as.Date("2024-12-31")
@@ -296,10 +299,12 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     "^1 giri confermati di mezzi con l'antenna non hanno nessuna lettura"
   )
   expect_identical(
-    names(letture)[29:35],
+    names(letture)[30:36],
     colonne_nucleo_manovra()
   )
-  expect_equal(ncol(letture), 35)
+  expect_equal(ncol(letture), 36)
+  # il campo del contenitore resta nelle letture (vuoto per il sacchetto)
+  expect_identical(names(letture)[16], "contenitore_gratuito")
   # censito tre volte, quattro non censiti una (due senza posizione o comune); il
   # sacchetto resta, con la fornitura del suo gruppo
   expect_identical(
@@ -597,3 +602,38 @@ test_that("i giri aggiunti a mano entrano nel calendario pianificato della prepa
   # le altre letture restano al loro giro
   expect_true(all(letture$servizio_giro[letture$RFID == "0000000123"] == "SECCO PAP"))
 })
+
+test_that("senza il campo contenitore_gratuito i contenitori valgono non gratuiti, con un avviso", {
+  percorso <- scrivi_csv(c(
+    "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria",
+    "123,SECCO,120,Q,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,31"
+  ))
+  expect_warning(
+    contenitori <- importa_contenitori(percorso),
+    "manca `contenitore_gratuito`"
+  )
+  expect_identical(contenitori$contenitore_gratuito, "N")
+})
+
+test_that("il campo contenitore_gratuito arriva alle letture, vuoto senza contenitore", {
+  contenitori <- dplyr::tibble(
+    codice_transponder = "0000000123",
+    servizio_transponder = "SECCO",
+    volume = 120,
+    data_attivazione_contenitore = as.Date("2020-01-01"),
+    data_cessazione_contenitore = as.Date("2099-12-31"),
+    id_fornitura = "F1",
+    contenitore_gratuito = "S"
+  )
+  letture <- dplyr::tibble(
+    RFID = c("0000000123", "0000000999"),
+    data_lettura = as.Date("2026-08-03")
+  )
+  sacchetti <- dplyr::tibble(codice_uhf = character(), id_fornitura = character())
+  associate <- associa_contenitore_e_fornitura(letture, contenitori, sacchetti)
+  expect_identical(associate$contenitore_gratuito, c("S", NA))
+  # un'anagrafica senza il campo lascia la colonna vuota
+  vecchia <- associa_contenitore_e_fornitura(letture, dplyr::select(contenitori, -"contenitore_gratuito"), sacchetti)
+  expect_true(all(is.na(vecchia$contenitore_gratuito)))
+})
+

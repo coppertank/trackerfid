@@ -216,17 +216,26 @@ componenti_medi_pesati <- function(attivita, componenti) {
 #'
 #' Funzionamento: tiene i contenitori con un tag attivi almeno un giorno tra `dal` e
 #' `al`. L'attività di una fornitura va dalla prima attivazione all'ultima
-#' cessazione dei suoi contenitori, tagliata sul periodo; `fattore` è la parte di
-#' anno che copre (`giorni_dell_anno()`). I componenti sono la media pesata sul
-#' tempo (`componenti_medi_pesati()`); il potenziamento vale se una manovra (non
-#' annullata) è in vigore per almeno metà dei giorni di attività. Un contenitore
-#' senza tag non compare: non si potrebbe mai leggere.
+#' cessazione dei suoi contenitori, tagliata sul periodo (`giorni_attivi`).
+#' **`fattore` non dipende dall'attività**: è la parte di anno che il periodo
+#' occupa, giorni da `dal` a `al` / giorni dell'anno (`giorni_dell_anno()`), uguale
+#' per tutte le forniture (scelta del proprietario, 10/11/2026: una fornitura
+#' attivata a fine anno non deve gonfiare l'annualizzazione). I componenti sono la
+#' media pesata sul tempo (`componenti_medi_pesati()`); il potenziamento vale se una
+#' manovra (non annullata) è in vigore per almeno metà dei giorni di attività. La
+#' statistica parte dai **contenitori**: un contenitore senza tag o con un codice
+#' nullo (soli zeri) non compare, e una fornitura senza nessun contenitore
+#' (per esempio chi conferisce nelle isole ecologiche) non entra nell'anagrafica.
+#' Per ogni fornitura si contano i contenitori gratuiti (`contenitore_gratuito`
+#' `S`: conferimenti illimitati, non fatturati) e quelli non gratuiti.
 #'
 #' Risultato: una riga per fornitura con `id_fornitura`, `servizio`, `id_utenza`,
 #' `categoria`, `sottocategoria`, `tipo`, `contenitori`, `volume_contenitore` (il
 #' più frequente), `volume_totale`, `conferimenti_massimi_annui` (somma dei massimi annui dei
 #' contenitori), `litri_massimi_annui`, `inizio`, `fine`,
-#' `giorni_attivi`, `fattore`, `componenti_medi`, `giorni_con_componenti`,
+#' `contenitori_gratuiti`, `contenitori_non_gratuiti`, `volume_contenitore_non_gratuito`
+#' (il volume più frequente tra i contenitori non gratuiti, vuoto se sono tutti
+#' gratuiti), `giorni_attivi`, `fattore`, `componenti_medi`, `giorni_con_componenti`,
 #' `potenziamento` e `gruppo`.
 #' @param contenitori Tabella di `importa_contenitori(categoria = TRUE)`.
 #' @param componenti Tabella di `importa_componenti()`.
@@ -247,6 +256,12 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
       (.data$data_attivazione_contenitore <= al &
         .data$data_cessazione_contenitore >= dal) %in% TRUE
     )
+  # Un codice mancante o nullo (soli zeri) non è un bidone.
+  attivi <- dplyr::filter(
+    attivi,
+    !is.na(.data$codice_transponder),
+    !grepl("^0*$", .data$codice_transponder)
+  )
   if (!is.null(servizio)) {
     attivi <- dplyr::filter(
       attivi,
@@ -269,6 +284,9 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
   primo_del_contenitore <- !duplicated(paste(gruppo, attivi$codice_transponder))
   # A parità di frequenza vince il volume più grande: si ordinano per volume.
   per_volume <- order(gruppo, attivi$volume)
+  # Contenitori gratuiti: `S` nel campo `contenitore_gratuito` (assente = `N`).
+  gratuito <- (attivi[["contenitore_gratuito"]] %||% rep("N", nrow(attivi))) %in% "S"
+  gratuiti <- somma_per_gruppo(as.numeric(primo_del_contenitore & gratuito), gruppo, n_gruppi)
   # `numero_raccolte_annue` è il massimo di conferimenti che un bidone può fare in
   # un anno (26 per una raccolta ogni due settimane, 52 per una a settimana), non
   # quanti ne farà: per la fornitura si sommano i massimi dei suoi contenitori,
@@ -297,14 +315,22 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
       gruppo,
       n_gruppi
     ),
+    contenitori_gratuiti = as.integer(gratuiti),
+    volume_contenitore_non_gratuito = piu_frequente_per_gruppo(
+      ifelse(gratuito, NA_real_, as.numeric(attivi$volume))[per_volume],
+      gruppo[per_volume],
+      n_gruppi
+    ),
     conferimenti_massimi_annui = ifelse(con_massimo, massimo_annuo, NA_real_),
     litri_massimi_annui = ifelse(con_massimo, litri_massimi, NA_real_),
     inizio = pmax(as.Date(attivazione$minimo, origin = "1970-01-01"), dal),
     fine = pmin(as.Date(cessazione$massimo, origin = "1970-01-01"), al)
   ) |>
     dplyr::mutate(
+      contenitori_non_gratuiti = .data$contenitori - .data$contenitori_gratuiti,
       giorni_attivi = as.numeric(.data$fine - .data$inizio) + 1,
-      fattore = .data$giorni_attivi / giorni_dell_anno(dal, al)
+      # Il periodo, non l'attività della fornitura: vedi la documentazione.
+      fattore = (as.numeric(al - dal) + 1) / giorni_dell_anno(dal, al)
     )
 
   attivita <- dplyr::select(per_fornitura, "id_fornitura", "inizio", "fine")
@@ -356,9 +382,11 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
 #' con più eccedenza) si cercano nell'associazione dei contenitori.
 #' Funzionamento: tiene i contenitori delle forniture indicate, attivi almeno un
 #' giorno nel periodo e del servizio scelto (maiuscole e spazi ininfluenti); per
-#' ogni fornitura elenca i codici distinti con il volume tra parentesi.
-#' Risultato: `id_fornitura` e `bidoni`, per esempio `0000012345 (120 L)`; i
-#' contenitori di una stessa fornitura sono separati da una virgola.
+#' ogni fornitura elenca i codici distinti con il volume tra parentesi e, per un
+#' contenitore gratuito, la parola «gratuito».
+#' Risultato: `id_fornitura` e `bidoni`, per esempio `0000012345 (120 L)` o
+#' `0000012345 (120 L, gratuito)`; i contenitori di una stessa fornitura sono
+#' separati da una virgola.
 #' @param contenitori Tabella di `importa_contenitori()`.
 #' @param id_forniture Forniture da cercare.
 #' @param dal,al Primo e ultimo giorno del periodo.
@@ -380,12 +408,19 @@ bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio 
       toupper(trimws(.data$servizio_transponder)) %in% toupper(trimws(servizio))
     )
   }
+  attivi$contenitore_gratuito <- attivi[["contenitore_gratuito"]] %||% rep("N", nrow(attivi))
   attivi |>
     dplyr::distinct(.data$id_fornitura, .data$codice_transponder, .keep_all = TRUE) |>
     dplyr::mutate(
+      volume_testo = ifelse(is.na(.data$volume), "", paste0(formatta_numero(.data$volume), " L")),
+      gratuito = .data$contenitore_gratuito %in% "S",
+      dettaglio = paste0(
+        .data$volume_testo,
+        ifelse(.data$gratuito, paste0(ifelse(nzchar(.data$volume_testo), ", ", ""), "gratuito"), "")
+      ),
       bidone = paste0(
         .data$codice_transponder,
-        ifelse(is.na(.data$volume), "", paste0(" (", formatta_numero(.data$volume), " L)"))
+        ifelse(nzchar(.data$dettaglio), paste0(" (", .data$dettaglio, ")"), "")
       )
     ) |>
     dplyr::summarise(bidoni = paste(.data$bidone, collapse = ", "), .by = "id_fornitura")
@@ -454,10 +489,13 @@ leggi_anagrafica_forniture_per_servizio <- function(file = file_origine(), dal, 
 #' contenitori di quel servizio; i loro contenitori e volumi). In coda le righe
 #' «Domestiche (totale)» e «Tutte le forniture». `volume_totale` è la somma dei
 #' volumi dei contenitori, `volume_medio` il volume totale diviso i contenitori.
+#' `contenitori_gratuiti` sono quelli con `contenitore_gratuito` `S` (conferimenti
+#' illimitati, non fatturati), `contenitori_non_gratuiti` gli altri.
 #' I gruppi senza forniture non compaiono.
 #'
-#' Risultato: `gruppo`, `servizio`, `forniture`, `contenitori`, `volume_totale`
-#' e `volume_medio`.
+#' Risultato: `gruppo`, `servizio`, `forniture`, `contenitori`,
+#' `contenitori_gratuiti`, `contenitori_non_gratuiti`, `volume_totale` e
+#' `volume_medio`.
 #' @param anagrafica Tabella di `anagrafica_forniture_per_servizio()`.
 #' @noRd
 conta_forniture_per_servizio <- function(anagrafica) {
@@ -468,6 +506,8 @@ conta_forniture_per_servizio <- function(anagrafica) {
       servizio = servizio,
       forniture = dplyr::n_distinct(x$id_fornitura),
       contenitori = sum(x$contenitori),
+      contenitori_gratuiti = sum(x$contenitori_gratuiti),
+      contenitori_non_gratuiti = sum(x$contenitori_non_gratuiti),
       volume_totale = sum(x$volume_totale),
       volume_medio = ifelse(sum(x$contenitori) > 0, sum(x$volume_totale) / sum(x$contenitori), NA_real_)
     )

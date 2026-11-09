@@ -603,7 +603,9 @@ pulisci_codici_rfid <- function(letture, contenitori, tag) {
 #' nel giorno della lettura (tra attivazione e cessazione); se non c'è cerca il
 #' codice tra i sacchetti. I campi del contenitore diventano le colonne
 #' `servizio_transponder`, `volume`, `frequenza`, `numero_raccolte_annue`,
-#' `id_fornitura`, `stato_fornitura`, `id_utenza`, `comune_fornitura`. Il
+#' `contenitore_gratuito` (`S` o `N`: con `S` il cliente può conferire senza
+#' limiti con quel bidone e i suoi svuotamenti non si fatturano; vuoto senza
+#' contenitore), `id_fornitura`, `stato_fornitura`, `id_utenza`, `comune_fornitura`. Il
 #' contenitore (o il gruppo di sacchetti) dà `PIA`; altrimenti il codice tra i
 #' tag dà `PIT`; altrimenti `NP`. L'associazione ha sempre la precedenza sui tag.
 #'
@@ -627,6 +629,9 @@ associa_contenitore_e_fornitura <- function(
   )
   tag <- df_tag_contenitori$codice_transponder
   contenitori <- dplyr::mutate(df_associazione_contenitori, in_associazione = TRUE)
+  # Un'anagrafica senza il campo (file vecchi) lascia la colonna vuota.
+  contenitori$contenitore_gratuito <- contenitori[["contenitore_gratuito"]] %||%
+    rep(NA_character_, nrow(contenitori))
 
   df_letture |>
     dplyr::left_join(
@@ -1344,6 +1349,10 @@ associa_giro_e_servizio_atteso <- function(
       )
     )
 
+  # Un'anagrafica senza il campo (file vecchi) lascia la colonna vuota.
+  letture$contenitore_gratuito <- letture[["contenitore_gratuito"]] %||%
+    rep(NA_character_, nrow(letture))
+
   senza_giri <- letture$senza_giri %in% TRUE
   if (any(senza_giri)) {
     message(sprintf(
@@ -1396,6 +1405,7 @@ associa_giro_e_servizio_atteso <- function(
       "volume",
       "frequenza",
       "numero_raccolte_annue",
+      "contenitore_gratuito",
       "comune_fornitura",
       "comune_giro",
       "comune_lettura",
@@ -1866,11 +1876,11 @@ scarta_codici_nulli <- function(letture) {
 #' Messaggi e avvisi dicono quante letture ha associato ogni passo e che cosa
 #' controllare.
 #'
-#' Risultato: le 35 colonne del CSV, con gli attributi `controllo_giri`,
+#' Risultato: le 36 colonne del CSV, con gli attributi `controllo_giri`,
 #' `comuni_corretti` e `scartate` (le letture scartate dalla pulizia, vedi
 #' `righe_scartate()`); i file li scrivono i target della pipeline.
 #' @param file Percorsi di `file_origine()`.
-#' @return Le 35 colonne del CSV delle letture delle antenne, con gli attributi
+#' @return Le 36 colonne del CSV delle letture delle antenne, con gli attributi
 #'   `controllo_giri` e `comuni_corretti`.
 #' @noRd
 prepara_letture_antenne <- function(file = file_origine()) {
@@ -1998,6 +2008,7 @@ colonne_letture_saponette <- function() {
     "volume",
     "frequenza",
     "numero_raccolte_annue",
+    "contenitore_gratuito",
     "comune_fornitura",
     "data_attivazione_contenitore",
     "data_cessazione_contenitore",

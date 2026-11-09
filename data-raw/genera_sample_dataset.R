@@ -1,5 +1,5 @@
 # Genera inst/extdata/sample_rfid_dataset.csv: letture simulate con le
-# antenne, ottobre 2024 - dicembre 2025, con le 35 colonne e i formati della
+# antenne, ottobre 2024 - dicembre 2025, con le 36 colonne e i formati della
 # pipeline dei dati reali. Ogni contenitore è letto a cadenza fissa dal giro
 # del suo servizio, nei comuni veri del territorio, dentro il confine; ci
 # sono esempi per tutti gli indicatori dei cluster e alcuni sacchetti. Seme
@@ -1354,6 +1354,9 @@ finale <- data.frame(
   volume = letture$volume_previsto,
   frequenza = letture$frequenza,
   numero_raccolte_annue = letture$numero_raccolte_annue_previste,
+  # Nell'esempio nessun contenitore e' gratuito (`S`): `N` per i bidoni censiti,
+  # vuoto dove non c'e' un contenitore (non presenti e sacchetti).
+  contenitore_gratuito = ifelse(is.na(letture$numero_raccolte_annue_previste), NA_character_, "N"),
   comune_fornitura = letture$comune_fornitura,
   comune_giro = letture$comune_giro,
   comune_lettura = letture$comune_lettura,
@@ -1602,8 +1605,8 @@ stopifnot(
   # nucleo e categoria: solo per le forniture dei contenitori; il nucleo solo
   # per quelle domestiche; il potenziamento per ogni fornitura, vero solo per
   # domestiche
-  ncol(finale) == 35,
-  identical(names(finale)[29:35], colonne_nucleo_manovra()),
+  ncol(finale) == 36,
+  identical(names(finale)[30:36], colonne_nucleo_manovra()),
   all(is.na(finale$tipo_categoria[non_presente | sacchetto])),
   any(is.na(finale$tipo_categoria) & !non_presente & !sacchetto),
   all(is.na(finale$sottocategoria) == is.na(finale$tipo_categoria)),

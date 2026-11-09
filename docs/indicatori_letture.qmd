@@ -376,10 +376,12 @@ knitr::kable(
     Servizio = conteggi$servizio,
     Forniture = intero(conteggi$forniture),
     Contenitori = intero(conteggi$contenitori),
+    `di cui gratuiti` = intero(conteggi$contenitori_gratuiti),
+    `di cui non gratuiti` = intero(conteggi$contenitori_non_gratuiti),
     `Volume totale (L)` = intero(conteggi$volume_totale),
     `Volume medio per contenitore (L)` = num(conteggi$volume_medio, 1)
   ),
-  align = "llrrrr"
+  align = "llrrrrrr"
 )
 ```
 
@@ -397,7 +399,7 @@ if (nrow(nd) > 0) {
 }
 ```
 
-La tabella usa **tutti i servizi** dell'associazione dei contenitori (`dv_cnt_associazione_contenitori`): le forniture con almeno un contenitore associato attivo nel periodo. Per ogni gruppo la riga «Tutti i servizi» dice quante forniture ci sono (una fornitura conta una volta) e i contenitori e i volumi di tutti i servizi sommati; le righe sotto dividono i **bidoni assegnati alle forniture del gruppo per servizio** (secco, carta, plastica e metalli...), con le forniture che hanno almeno un bidone di quel servizio, il **volume totale** dei contenitori e il **volume medio** (volume totale diviso i contenitori). Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio. Le componenti e il potenziamento dipendono dalla fornitura, non dal servizio del bidone.
+La tabella usa **tutti i servizi** dell'associazione dei contenitori (`dv_cnt_associazione_contenitori`): le forniture con almeno un contenitore associato attivo nel periodo. Per ogni gruppo la riga «Tutti i servizi» dice quante forniture ci sono (una fornitura conta una volta) e i contenitori e i volumi di tutti i servizi sommati; le righe sotto dividono i **bidoni assegnati alle forniture del gruppo per servizio** (secco, carta, plastica e metalli...), con le forniture che hanno almeno un bidone di quel servizio, i contenitori **gratuiti** e **non gratuiti**, il **volume totale** dei contenitori e il **volume medio** (volume totale diviso i contenitori). Un contenitore è gratuito (`contenitore_gratuito` `S` nell'associazione dei contenitori) quando c'è un accordo con il cliente che gli permette di conferire senza limiti con quel bidone, senza fatturazione; quelli non gratuiti (`N`) concorrono alla fatturazione. Un codice di soli zeri non è un bidone e non compare: la statistica parte dai contenitori, non dalle forniture. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo (i giorni di attività servono solo qui e al potenziamento, non al fattore), arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio. Le componenti e il potenziamento dipendono dalla fornitura, non dal servizio del bidone.
 
 # Le letture
 
@@ -696,7 +698,7 @@ Le righe sono i gruppi di forniture **domestiche del secco**; «Domestiche (tota
 - **Letture per fornitura.** *A cosa serve:* come sopra, ma per utenza, che è l'unità a cui si applica la tariffa. *Come è calcolato:* letture ÷ forniture. *Interpretazione:* uguale alle letture per contenitore se ogni fornitura ha un solo bidone, più alta se ne ha di più. *Quando è utile:* per ragionare su quante volte conferisce un'utenza.
 - **Volume per fornitura (L).** *A cosa serve:* dice quanti litri ha conferito in media una fornitura. *Come è calcolato:* litri conferiti ÷ forniture. *Interpretazione:* si confronta con i litri inclusi nella tariffa della fascia (annui, quindi ridotti al periodo): vicino o sopra vuol dire che il gruppo è al limite. *Quando è utile:* per vedere se il gruppo rischia l'eccedenza o può avere il premio.
 - **Volume per contenitore (L).** *A cosa serve:* dice quanti litri ha dato in media un bidone. *Come è calcolato:* litri conferiti ÷ contenitori. *Interpretazione:* dipende anche dalla taglia del bidone: a parità di svuotamenti un 120 litri dà più litri di un 40. *Quando è utile:* per distinguere chi conferisce spesso da chi conferisce tanto.
-- **Conferimenti massimi.** *A cosa serve:* è il tetto degli svuotamenti possibili nel periodo. *Come è calcolato:* per ogni bidone il massimo annuo (`numero_raccolte_annue`: 26 se la raccolta è quindicinale, 52 se settimanale) × la parte d'anno in cui la fornitura è attiva, sommato su tutti i bidoni. *Interpretazione:* non è il numero di conferimenti che ci si aspetta: molti clienti conferiscono meno, ed è normale. *Quando è utile:* come denominatore dei due indici seguenti.
+- **Conferimenti massimi.** *A cosa serve:* è il tetto degli svuotamenti possibili nel periodo. *Come è calcolato:* per ogni bidone il massimo annuo (`numero_raccolte_annue`: 26 se la raccolta è quindicinale, 52 se settimanale) × la parte d'anno che occupa il periodo (giorni da «dal» a «al» / giorni dell'anno, uguale per tutte le forniture), sommato su tutti i bidoni. *Interpretazione:* non è il numero di conferimenti che ci si aspetta: molti clienti conferiscono meno, ed è normale. *Quando è utile:* come denominatore dei due indici seguenti.
 - **Letture / massimo.** *A cosa serve:* dice che frazione dei conferimenti possibili è stata fatta. *Come è calcolato:* letture ÷ conferimenti massimi, sulle sole forniture con massimo noto. *Interpretazione:* sotto 100% è la regola; più è basso, meno il gruppo usa il servizio (o più letture sono state perse dai sistemi); oltre 100% sarebbe anomalo, perché si sono contati più svuotamenti di quelli possibili (bidoni sbagliati o massimo errato nei dati). *Quando è utile:* per misurare l'uso del servizio e per scoprire dati incoerenti.
 - **Propensione volumetrica.** *A cosa serve:* come «Letture / massimo», ma contando i litri invece degli svuotamenti. *Come è calcolato:* litri conferiti ÷ litri massimi (volume di ogni bidone × suo massimo annuo × parte d'anno, sommati). *Interpretazione:* se i bidoni hanno taglie diverse si distacca da «Letture / massimo», perché un 240 litri pesa più di un 40. *Quando è utile:* per capire quanta della capacità di raccolta è stata usata.
 
@@ -741,6 +743,19 @@ if (economia_utile) {
 if (!economia_utile) {
   cat("\n::: {.callout-note}\nNel periodo e nella selezione non ci sono forniture domestiche del secco con almeno un conferimento e una composizione del nucleo nota: l'analisi economica è vuota.\n:::\n")
 }
+# Contenitori gratuiti: conferimenti illimitati, non fatturati; fuori dall'analisi.
+domestiche_secco <- anagrafica_analisi[anagrafica_analisi$tipo %in% "domestica", ]
+n_gratuiti <- sum(domestiche_secco$contenitori_gratuiti)
+n_solo_gratuiti <- sum(domestiche_secco$contenitori_non_gratuiti == 0)
+if (n_gratuiti > 0) {
+  cat(
+    "\n::: {.callout-note}\n**Contenitori gratuiti esclusi.** Tra le forniture domestiche del secco ci sono **", intero(n_gratuiti),
+    "** contenitori gratuiti (`contenitore_gratuito` `S`): c'è un accordo con il cliente che permette di conferire senza limiti con quel bidone, senza fatturazione. I loro conferimenti non entrano nell'analisi economica",
+    if (n_solo_gratuiti > 0) paste0(", e le **", intero(n_solo_gratuiti), "** forniture che hanno solo contenitori gratuiti non sono analizzate") else "",
+    ".\n:::\n",
+    sep = ""
+  )
+}
 if (!economia_con_antenne && economia_con_saponette) {
   if (al < inizio_antenne) {
     cat("\n::: {.callout-note}\nNel periodo selezionato le antenne sui mezzi non erano ancora in funzione (installate ad agosto 2026). L'analisi economica fotografa la situazione reale sulla base dei conferimenti registrati dalle sole saponette. Non vengono mostrati scenari ipotetici con tecnologie prive di dati.\n:::\n")
@@ -767,7 +782,7 @@ cat(
   sep = ""
 )
 if (!is.null(gruppo_scelto)) cat(" (fascia ", gruppo_scelto, ")", sep = "")
-cat(". Condomini e non domestiche hanno altre regole di fatturazione e non entrano. Le tariffe sono quelle attuali, anche per gli anni passati; soglie e conferimenti attesi sono riportati al periodo (giorni di attività / giorni dell'anno).\n\n")
+cat(". Condomini e non domestiche hanno altre regole di fatturazione e non entrano. Le tariffe sono quelle attuali, anche per gli anni passati; soglie e conferimenti massimi sono riportati al periodo (giorni da «dal» a «al» / giorni dell'anno).\n\n")
 sistemi_attivi <- if (economia_due_sistemi) {
   "dalle saponette e dalle antenne"
 } else if (economia_con_saponette) {
@@ -777,7 +792,7 @@ sistemi_attivi <- if (economia_due_sistemi) {
 }
 cat("I conferimenti sono quelli **effettivamente registrati** nel periodo ", sistemi_attivi, ": ogni lettura associata (`PIA`) è uno svuotamento e vale il volume del suo contenitore.\n\n", sep = "")
 if (annualizza) {
-  cat("**Annualizzazione.** Le soglie della tariffa sono annue e restano costanti. I litri del periodo si riportano a un anno intero: `litri annualizzati = litri rilevati / fattore`, dove il fattore è la parte di anno in cui la fornitura è attiva nel periodo (giorni di attività / giorni dell'anno). Classe, litri eccedenti, premi ed eccedenze in euro sono calcolati sui litri annualizzati, quindi sono valori **annui**. È una stima lineare con l'andamento del periodo: non conosce la stagionalità né i giorni che restano. ", sep = "")
+  cat("**Annualizzazione.** Le soglie della tariffa sono annue e restano costanti. I litri del periodo si riportano a un anno intero: `litri annualizzati = litri rilevati / fattore`, dove il fattore è la parte di anno che occupa il periodo (giorni da «dal» a «al» / giorni dell'anno), uguale per tutte le forniture: non guarda quando la fornitura è stata attivata, così una fornitura attivata a fine periodo non gonfia la stima. Classe, litri eccedenti, premi ed eccedenze in euro sono calcolati sui litri annualizzati, quindi sono valori **annui**. È una stima lineare con l'andamento del periodo: non conosce la stagionalità né i giorni che restano. ", sep = "")
   if (periodo_ridotto) {
     cat("Il periodo è di ", intero(giorni_periodo), " giorni, il ", quota(fattore_periodo), " di un anno: i litri annualizzati sono più del doppio di quelli rilevati se il periodo è sotto i sei mesi, e la stima è tanto più instabile quanto più il periodo è breve.\n\n", sep = "")
   } else {
@@ -1040,7 +1055,7 @@ if (nrow(piu) == 0) {
   print(knitr::kable(tabella_piu, align = "lllrrrrr"))
   cat(
     "\nPer ogni fascia di componenti è la fornitura con l'eccedenza più alta nello scenario ", riferimento,
-    ". I **bidoni del secco** sono i contenitori della fornitura con servizio `SECCO` attivi nel periodo, con il volume tra parentesi. L'**eccedenza stimata** è quanto pagherebbe la fornitura oltre i litri inclusi nella tariffa: litri eccedenti × euro per litro del suo contenitore (per un carrellato da 120 litri 10 euro ogni 120 litri)",
+    ". I **bidoni del secco** sono i contenitori della fornitura con servizio `SECCO` attivi nel periodo, con il volume tra parentesi (e «gratuito» per quelli gratuiti, che non si fatturano). L'**eccedenza stimata** è quanto pagherebbe la fornitura oltre i litri inclusi nella tariffa: litri eccedenti × euro per litro del suo contenitore (per un carrellato da 120 litri 10 euro ogni 120 litri)",
     if (annualizza) ", sui litri annualizzati, quindi è una cifra annua con l'andamento del periodo (stima lineare, senza stagionalità)" else ", sui litri del periodo (con i giri indicati non si annualizza)",
     ". Il potenziamento non compare perché non paga eccedenza; le fasce senza forniture in eccedenza non hanno riga.\n\n",
     sep = ""
@@ -1104,7 +1119,7 @@ cat("Il confronto più vicino al costo reale di un sistema. Per ogni fornitura s
 secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
 senza <- forniture_senza_conferimenti(unita_secco, secco)
 cat(
-  "\nForniture del secco (domestiche, condomini e non domestiche) che nel periodo potevano conferire almeno una volta (massimo annuo dei contenitori × parte di anno di attività) e hanno **nessuna lettura associata**, da nessuno dei due sistemi: **",
+  "\nForniture del secco (domestiche, condomini e non domestiche) che nel periodo potevano conferire almeno una volta (massimo annuo dei contenitori × parte di anno del periodo) e hanno **nessuna lettura associata**, da nessuno dei due sistemi: **",
   intero(nrow(senza)), "** su ", intero(nrow(secco)),
   " (", quota(rapporto(nrow(senza), nrow(secco))), ").\n\n",
   sep = ""
@@ -1192,7 +1207,7 @@ cat("\n::: {.callout-note}\nL'analisi economica richiede i file delle forniture 
 
 - **Tariffe.** Per ogni fascia di componenti la tabella dell'azienda dà i litri annui inclusi nella tariffa, il volume minimo addebitato e il volume massimo per accedere alla premialità. Oltre i litri inclusi si paga l'eccedenza (10 € ogni 120 litri per un carrellato); fino al volume massimo per la premialità si riceve un premio di 5 € a cui se ne aggiungono 5 per ogni 120 litri in meno, fino al volume minimo. Le tariffe stanno in `tariffe_secco()` e `tariffe_contenitori()` (`R/utils_tariffe.R`); si usano le attuali anche per gli anni passati.
 - **Contenitori diversi.** I volumi si sommano in litri; eccedenza e premio si calcolano al litro, con la tariffa del contenitore più frequente della fornitura (un volume che la tabella non ha usa quella del carrellato da 120 litri). Su un anno intero il risultato è quello dei conferimenti interi.
-- **Annualizzazione.** Le soglie sono annue e costanti. `litri annualizzati = litri rilevati / fattore`, con il fattore della fornitura (giorni di attività nel periodo / giorni dell'anno, 366 solo dentro un anno bisestile); classe, premio ed eccedenza si calcolano sui litri annualizzati e sono valori annui (`economia_forniture()`). Scalare le soglie al periodo darebbe la stessa classe: la scelta è del proprietario (8/11/2026). È lineare: niente stagionalità. Con i giri indicati non si annualizza (pochi giorni): si scalano le soglie.
+- **Annualizzazione.** Le soglie sono annue e costanti. `litri annualizzati = litri rilevati / fattore`, con il fattore del periodo (giorni da «dal» a «al» / giorni dell'anno, 366 solo dentro un anno bisestile; non dipende da quando la fornitura è stata attivata); classe, premio ed eccedenza si calcolano sui litri annualizzati e sono valori annui (`economia_forniture()`). Scalare le soglie al periodo darebbe la stessa classe: la scelta è del proprietario (8/11/2026). È lineare: niente stagionalità. Con i giri indicati non si annualizza (pochi giorni): si scalano le soglie.
 - **Scenari.** Con tutti e due i sistemi: «Saponette e antenne» (il riferimento, ogni lettura una volta), «Solo saponette» e «Solo antenne». Con un solo sistema, un solo scenario («Rilevazione reale (Saponette)» o «(Antenne)»): l'altro non si simula, perché darebbe zero litri a tutte le forniture, cioè il premio massimo a tutte. Un sistema conta se ha letture associate del secco nel periodo (`sistemi_con_conferimenti()`, `scenari_rilevazione()`).
 - **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Dalla propensione in poi le letture sono quelle associate del secco (`letture_associate_del_secco()`): saponette con transponder `SECCO`, antenne con transponder `SECCO` o letta in un giro del secco (`servizio_atteso` `SECCO`). Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
 - **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento non ci sono né premio né eccedenza, qualunque sia il volume.

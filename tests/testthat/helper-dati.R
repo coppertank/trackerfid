@@ -339,9 +339,9 @@ scrivi_origine_prova <- function(cartella) {
   scrivi(
     "contenitori",
     c(
-      "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria",
-      "0000000123,SECCO,120,QUINDICINALE,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,31",
-      ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,ATTIVA,U9,VALSTAGNA,31"
+      "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,codice_categoria,contenitore_gratuito",
+      "0000000123,SECCO,120,QUINDICINALE,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,31,N",
+      ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,ATTIVA,U9,VALSTAGNA,31,N"
     )
   )
   # un tag con il solo codice_transponder, uno con la sola etichetta

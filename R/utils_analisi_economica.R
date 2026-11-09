@@ -71,18 +71,30 @@ sistemi_con_conferimenti <- function(unita) {
 #'
 #' Contesto: tappa di `analisi_economica()` e di `propensione_conferimento()`.
 #' Funzionamento: tiene le letture `PIA` dei sistemi dello scenario, del servizio
-#' indicato (`servizio_transponder`), e le somma per fornitura. I litri di una
-#' lettura sono il volume del suo contenitore; se manca, quello più frequente nella
-#' fornitura.
+#' indicato (`servizio_transponder`), e le somma per fornitura. Con
+#' `escludi_gratuiti` toglie le letture dei contenitori gratuiti
+#' (`contenitore_gratuito` `S`: conferimenti illimitati, non fatturati). I litri di
+#' una lettura sono il volume del suo contenitore; se manca, quello più frequente
+#' nella fornitura.
 #' Risultato: `id_fornitura`, `conferimenti` e `litri`.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @param sistemi Sistemi dello scenario.
 #' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @param escludi_gratuiti Se togliere le letture dei contenitori gratuiti.
 #' @noRd
-conferimenti_per_fornitura <- function(unita, anagrafica, sistemi, servizio = NULL) {
+conferimenti_per_fornitura <- function(
+  unita,
+  anagrafica,
+  sistemi,
+  servizio = NULL,
+  escludi_gratuiti = FALSE
+) {
   letture <- unita |>
     dplyr::filter(.data$stato %in% "PIA", .data$sistema %in% sistemi)
+  if (escludi_gratuiti && "contenitore_gratuito" %in% names(letture)) {
+    letture <- dplyr::filter(letture, !.data$contenitore_gratuito %in% "S")
+  }
   if (!is.null(servizio)) {
     letture <- dplyr::filter(
       letture,
@@ -119,7 +131,7 @@ conferimenti_per_fornitura <- function(unita, anagrafica, sistemi, servizio = NU
 #' - `letture_per_fornitura` = `L` / forniture; `litri_per_fornitura` = litri
 #'   letti / forniture; `litri_per_contenitore` = litri letti / contenitori;
 #' - `conferimenti_massimi` = somma, sui contenitori, del massimo annuo di ognuno ×
-#'   `fattore` (la parte di anno di attività), e `propensione_sul_massimo` =
+#'   `fattore` (la parte di anno che occupa il periodo), e `propensione_sul_massimo` =
 #'   `L` / conferimenti massimi;
 #' - `propensione_volumetrica` = litri letti / `litri_massimi`, dove i litri massimi
 #'   sono la somma, sui contenitori, di volume × massimo annuo × `fattore`.
@@ -217,6 +229,11 @@ forniture_senza_conferimenti <- function(unita, anagrafica) {
 #' Contesto: l'analisi economica del report. Applica `economia_forniture()` ai litri
 #' conferiti in ognuno degli scenari di rilevazione (`scenari_rilevazione()`).
 #'
+#' Esclusione dei contenitori gratuiti: i bidoni con `contenitore_gratuito` `S`
+#' hanno un accordo che permette di conferire senza limiti senza fatturazione, quindi
+#' i loro conferimenti non contano e una fornitura con soli bidoni gratuiti non entra
+#' nell'analisi.
+#'
 #' Funzionamento: gli scenari sono quelli validi per i sistemi che hanno letture
 #' (`scenari_rilevazione()`): con un solo sistema c'è un solo scenario, la
 #' situazione reale; solo con tutti e due si aggiungono i due a sistema singolo.
@@ -252,14 +269,27 @@ analisi_economica <- function(
       .data$servizio %in% "SECCO",
       !is.na(.data$componenti_medi)
     )
+  # I contenitori gratuiti (`contenitore_gratuito` `S`) non si fatturano: una
+  # fornitura che ha solo quelli esce dall'analisi, e delle altre contano solo i
+  # contenitori a pagamento (il volume della tariffa è il loro).
+  if ("contenitori_non_gratuiti" %in% names(popolazione)) {
+    popolazione <- popolazione |>
+      dplyr::filter(.data$contenitori_non_gratuiti > 0) |>
+      dplyr::mutate(
+        volume_contenitore = dplyr::coalesce(
+          .data$volume_contenitore_non_gratuito,
+          .data$volume_contenitore
+        )
+      )
+  }
   scenari <- scenari_rilevazione(con_antenne, con_saponette)
   if (length(scenari) == 0) {
     return(dplyr::tibble())
   }
-  letti <- conferimenti_per_fornitura(unita, popolazione, scenari[[1]], "SECCO")
+  letti <- conferimenti_per_fornitura(unita, popolazione, scenari[[1]], "SECCO", TRUE)
   popolazione <- dplyr::semi_join(popolazione, letti, by = "id_fornitura")
   purrr::imap(scenari, function(sistemi, nome) {
-    conferimenti <- conferimenti_per_fornitura(unita, popolazione, sistemi, "SECCO")
+    conferimenti <- conferimenti_per_fornitura(unita, popolazione, sistemi, "SECCO", TRUE)
     popolazione |>
       dplyr::left_join(conferimenti, by = "id_fornitura") |>
       dplyr::mutate(

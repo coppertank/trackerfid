@@ -108,7 +108,8 @@ test_that("l'anagrafica tiene le forniture attive nel periodo, con i loro conten
   expect_identical(f2$servizio, "SECCO")
   # attiva dal 1 gennaio al 30 giugno
   expect_identical(f2$giorni_attivi, 181)
-  expect_equal(f2$fattore, 181 / 365)
+  # il fattore e' quello del periodo, non dell'attivita' (F2 e' attiva solo sei mesi)
+  expect_equal(f2$fattore, 1)
   # due contenitori da 26 conferimenti massimi l'anno: il massimo della fornitura e' la somma
   expect_identical(f2$conferimenti_massimi_annui, 52)
   expect_identical(f2$litri_massimi_annui, 26 * 120 + 26 * 40)
@@ -261,8 +262,8 @@ test_that("senza la categoria dei contenitori vale quella della composizione dei
 
 test_that("manca codice_categoria nel file dei contenitori: avviso e categoria vuota", {
   percorso <- scrivi_csv(c(
-    "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio",
-    "123,SECCO,120,Q,26,2020-01-01,,F1,ATTIVA,U1,LIMENA"
+    "codice_transponder,descrizione_rifiuto,volume,frequenza,numero_raccolte_annue,data_attivazione_contenitore,data_cessazione_contenitore,id_servizio,stato_servizio,id_utenza,comune_servizio,contenitore_gratuito",
+    "123,SECCO,120,Q,26,2020-01-01,,F1,ATTIVA,U1,LIMENA,N"
   ))
   expect_warning(
     contenitori <- importa_contenitori(percorso, categoria = TRUE),
@@ -370,6 +371,9 @@ test_that("forniture, contenitori e volumi si contano per gruppo e per servizio"
   expect_identical(riga("Tutti i servizi")$contenitori, sum(per_servizio$contenitori))
   expect_equal(riga("Tutti i servizi")$volume_totale, sum(per_servizio$volume_totale))
   expect_equal(riga("Tutti i servizi")$volume_medio, sum(per_servizio$volume_totale) / sum(per_servizio$contenitori))
+  # senza il campo nessun contenitore e' gratuito
+  expect_identical(riga("Tutti i servizi")$contenitori_gratuiti, 0L)
+  expect_identical(riga("Tutti i servizi")$contenitori_non_gratuiti, riga("Tutti i servizi")$contenitori)
   expect_identical(riga("CARTA")$contenitori, 2L)
   expect_equal(riga("CARTA")$volume_totale, 120 + 240)
   expect_equal(riga("CARTA")$volume_medio, 180)
@@ -404,5 +408,103 @@ test_that("i bidoni di una fornitura si elencano per servizio e periodo", {
   # senza servizio c'e' anche la carta
   tutti <- bidoni_delle_forniture(contenitori, "F1", "2025-01-01", "2025-12-31", servizio = NULL)
   expect_identical(tutti$bidoni, "A1 (120 L), M2 (120 L)")
+})
+
+test_that("il fattore dipende solo dal periodo, non da quando la fornitura e' stata attivata", {
+  contenitori <- dplyr::bind_rows(
+    contenitori_forniture_prova(),
+    # attivata a fine anno
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "N1", id_fornitura = "FN", data_attivazione_contenitore = as.Date("2025-12-20"))
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  expect_equal(anagrafica$fattore, rep(1, nrow(anagrafica)))
+  # i giorni di attivita' restano, ma non entrano nel fattore
+  expect_equal(anagrafica$giorni_attivi[anagrafica$id_fornitura == "FN"], 12)
+  semestre <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-06-30"
+  )
+  expect_equal(semestre$fattore, rep(181 / 365, nrow(semestre)))
+  # un periodo di due anni vale due anni (litri annualizzati = media annua)
+  due_anni <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2024-01-01", "2025-12-31"
+  )
+  expect_equal(unique(due_anni$fattore), 731 / 365)
+})
+
+test_that("i contenitori gratuiti si contano a parte, e un codice nullo non e' un bidone", {
+  contenitore <- function(codice, fornitura, gratuito, volume = 120) {
+    dplyr::tibble(
+      codice_transponder = codice,
+      servizio_transponder = "SECCO",
+      volume = volume,
+      numero_raccolte_annue = 26,
+      contenitore_gratuito = gratuito,
+      data_attivazione_contenitore = as.Date("2020-01-01"),
+      data_cessazione_contenitore = as.Date("2099-12-31"),
+      id_fornitura = fornitura,
+      id_utenza = paste0("U", fornitura),
+      categoria_contenitore = "31"
+    )
+  }
+  contenitori <- dplyr::bind_rows(
+    # un bidone a pagamento (120 L) e uno gratuito (240 L)
+    contenitore("B1", "G1", "N"),
+    contenitore("B2", "G1", "S", volume = 240),
+    # tutti gratuiti
+    contenitore("B3", "G2", "S", volume = 60),
+    # nessun gratuito
+    contenitore("B4", "G3", "N", volume = 40),
+    # un codice di soli zeri: la fornitura non ha un bidone
+    contenitore("0000000000", "G4", "N")
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  riga <- function(f) anagrafica[anagrafica$id_fornitura == f, ]
+  expect_identical(riga("G1")$contenitori, 2L)
+  expect_identical(riga("G1")$contenitori_gratuiti, 1L)
+  expect_identical(riga("G1")$contenitori_non_gratuiti, 1L)
+  # il volume del contenitore a pagamento, non quello del gratuito
+  expect_identical(riga("G1")$volume_contenitore_non_gratuito, 120)
+  expect_identical(riga("G2")$contenitori_non_gratuiti, 0L)
+  expect_true(is.na(riga("G2")$volume_contenitore_non_gratuito))
+  expect_identical(riga("G3")$contenitori_gratuiti, 0L)
+  expect_false("G4" %in% anagrafica$id_fornitura)
+  # senza il campo (file vecchi) nessun contenitore e' gratuito
+  senza_campo <- anagrafica_forniture(
+    dplyr::select(contenitori, -"contenitore_gratuito"),
+    componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  expect_equal(sum(senza_campo$contenitori_gratuiti), 0)
+})
+
+test_that("la tabella per servizio conta i contenitori gratuiti e non gratuiti", {
+  contenitore <- function(codice, fornitura, gratuito) {
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = codice, id_fornitura = fornitura, contenitore_gratuito = gratuito)
+  }
+  contenitori <- dplyr::bind_rows(
+    contenitore("B1", "G1", "N"),
+    contenitore("B2", "G1", "S"),
+    contenitore("B3", "G2", "S")
+  )
+  per_servizio <- anagrafica_forniture_per_servizio(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  tutte <- conta_forniture_per_servizio(per_servizio)
+  tutte <- tutte[tutte$gruppo == "Tutte le forniture" & tutte$servizio == "Tutti i servizi", ]
+  expect_identical(tutte$contenitori, 3L)
+  expect_identical(tutte$contenitori_gratuiti, 2L)
+  expect_identical(tutte$contenitori_non_gratuiti, 1L)
+})
+
+test_that("un bidone gratuito si riconosce nell'elenco dei bidoni di una fornitura", {
+  contenitori <- dplyr::bind_rows(
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "B1", id_fornitura = "G1", contenitore_gratuito = "N"),
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "B2", id_fornitura = "G1", contenitore_gratuito = "S", volume = 240)
+  )
+  bidoni <- bidoni_delle_forniture(contenitori, "G1", "2025-01-01", "2025-12-31")
+  expect_identical(bidoni$bidoni, "B1 (120 L), B2 (240 L, gratuito)")
 })
 

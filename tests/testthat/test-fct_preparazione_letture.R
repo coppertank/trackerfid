@@ -90,6 +90,7 @@ colonne_passo_3 <- c(
   "volume",
   "frequenza",
   "numero_raccolte_annue",
+  "contenitore_gratuito",
   "comune_fornitura",
   "comune_giro",
   "comune_lettura",

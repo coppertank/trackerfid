@@ -297,6 +297,7 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "volume",
       "frequenza",
       "numero_raccolte_annue",
+      "contenitore_gratuito",
       "comune_fornitura",
       "comune_giro",
       "comune_lettura",
