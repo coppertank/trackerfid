@@ -117,44 +117,37 @@ filtra_letture <- function(
   letture
 }
 
-#' Letture del secco di un sistema, con le regole del proprietario
+#' Letture associate del secco di un sistema
 #'
-#' Contesto: il report degli indicatori guarda solo il secco, l'unico rifiuto che
-#' l'azienda fattura (scelta del proprietario, 6/11/2026). I due sistemi non si
-#' usano allo stesso modo: gli operatori leggono con le saponette quasi solo nei
-#' giri del secco; i mezzi con l'antenna fanno anche altri rifiuti. L'associazione
-#' dei contenitori contiene i bidoni di tutti i servizi (carta, plastica, vetro...).
+#' Contesto: dalla propensione al conferimento in poi il report guarda solo il
+#' secco, l'unico rifiuto che l'azienda fattura (scelta del proprietario,
+#' 10/11/2026). I due sistemi non si usano allo stesso modo: gli operatori leggono
+#' con le saponette quasi solo i bidoni del secco, mentre i mezzi con l'antenna
+#' fanno anche altri rifiuti; contare anche gli altri servizi falserebbe le
+#' statistiche.
 #'
-#' Funzionamento:
-#' - un bidone associato con un servizio a database diverso da `SECCO`
-#'   (`servizio_transponder` non vuoto) non conta mai, per nessuno dei due sistemi:
-#'   l'analisi è sui bidoni del secco;
-#' - saponette: tutte le altre letture sono del secco, anche i bidoni compatibili
-#'   non associati (`PIT` e `NP`) e i sacchetti, che non hanno un servizio a database;
-#' - antenne: restano le letture con `servizio_transponder` `SECCO` e quelle senza
-#'   servizio a database (`PIT`, `NP`, sacchetti) con `servizio_atteso` `SECCO`, cioè
-#'   lette in un giro del secco.
-#' Maiuscole e spazi sono ininfluenti. Le letture scartate dalla pulizia non
-#' hanno un servizio e non passano di qui.
+#' Funzionamento: tiene le letture associate (`presente_a_database` `PIA`, anche
+#' il vecchio `Presente`) e, tra queste:
+#' - saponette: quelle con `servizio_transponder` `SECCO`;
+#' - antenne: quelle con `servizio_transponder` **oppure** `servizio_atteso`
+#'   `SECCO` (il servizio atteso è quello del giro in cui l'antenna ha letto).
+#' Maiuscole e spazi sono ininfluenti. Le letture non associate e le scartate non
+#' passano di qui: non sono conferimenti.
 #'
-#' Risultato: le stesse letture, meno quelle che non sono del secco.
-#' @param letture Letture di un sistema, con `servizio_transponder` e, per le
-#'   antenne, `servizio_atteso`.
+#' Risultato: le stesse letture, solo quelle associate del secco.
+#' @param letture Letture di un sistema, con `presente_a_database`,
+#'   `servizio_transponder` e, per le antenne, `servizio_atteso`.
 #' @param sistema `"antenne"` o `"saponette"`.
 #' @noRd
-letture_del_secco <- function(letture, sistema = c("antenne", "saponette")) {
+letture_associate_del_secco <- function(letture, sistema = c("antenne", "saponette")) {
   sistema <- match.arg(sistema)
   pulisci <- function(x) toupper(trimws(as.character(x)))
-  transponder <- pulisci(letture$servizio_transponder)
-  senza_servizio <- is.na(transponder) | !nzchar(transponder)
-  del_secco <- transponder %in% "SECCO"
-  tenute <- if (sistema == "saponette") {
-    del_secco | senza_servizio
-  } else {
-    atteso <- pulisci(letture[["servizio_atteso"]] %||% NA_character_)
-    del_secco | (senza_servizio & atteso %in% "SECCO")
+  associate <- pulisci(letture$presente_a_database) %in% c("PIA", "PRESENTE")
+  secco <- pulisci(letture$servizio_transponder) %in% "SECCO"
+  if (sistema == "antenne") {
+    secco <- secco | pulisci(letture[["servizio_atteso"]] %||% NA_character_) %in% "SECCO"
   }
-  letture[tenute, ]
+  letture[associate & secco, ]
 }
 
 #' Letture delle saponette dei giri in cui le antenne hanno letto almeno un RFID

@@ -86,33 +86,56 @@ test_that("casa vuota e potenziamento non hanno minimo né premio", {
     fattore = 1
   ))
   expect_identical(potenziata$regime, rep("potenziamento", 3))
-  expect_identical(as.character(potenziata$classe), c("Ordinaria", "Ordinaria", "Eccedente"))
+  # il potenziamento non ha premio e non paga eccedenza, nemmeno oltre i 6240 litri
+  expect_identical(as.character(potenziata$classe), rep("Ordinaria", 3))
   expect_equal(potenziata$premio_eur, c(0, 0, 0))
   expect_equal(potenziata$litri_limite, rep(6240, 3))
-  expect_equal(potenziata$eccedenza_eur[3], 10)
+  expect_equal(potenziata$eccedenza_eur, c(0, 0, 0))
+  expect_equal(potenziata$litri_eccedenti, c(0, 0, 0))
+  expect_equal(potenziata$importo_eur, c(0, 0, 0))
 })
 
-test_that("in un periodo corto le soglie e il premio si riducono in proporzione", {
-  # un semestre: la metà dei litri, e il premio di un conferimento si dimezza
+test_that("in un periodo corto i litri si riportano a un anno e si confrontano con le soglie annue", {
+  # un semestre: 240 litri in mezzo anno sono 480 litri all'anno
   semestre <- economia_forniture(dplyr::tibble(
     litri = c(240, 180, 120, 361),
     componenti_medi = 1,
     potenziamento = FALSE,
     fattore = 0.5
   ))
-  expect_equal(semestre$litri_limite, rep(360, 4))
-  expect_equal(semestre$litri_premialita, rep(240, 4))
-  expect_equal(semestre$litri_minimi, rep(120, 4))
-  # a metà anno 240 litri valgono come 480 in un anno: premio di 5 euro, per metà periodo
-  expect_equal(semestre$premio_eur[1:3], c(2.5, 5, 7.5))
+  expect_equal(semestre$litri, c(240, 180, 120, 361))
+  expect_equal(semestre$litri_annui, c(480, 360, 240, 722))
+  # le soglie restano quelle annue
+  expect_equal(semestre$litri_limite, rep(720, 4))
+  expect_equal(semestre$litri_premialita, rep(480, 4))
+  expect_equal(semestre$litri_minimi, rep(240, 4))
+  # 480, 360 e 240 litri annui: premio di 5, 10 e 15 euro (annui, come negli esempi della tariffa)
+  expect_equal(semestre$premio_eur[1:3], c(5, 10, 15))
   expect_identical(as.character(semestre$classe[4]), "Eccedente")
-  expect_equal(semestre$eccedenza_eur[4], 1 * 10 / 120)
-  # senza giorni di attività la classe manca
+  expect_equal(semestre$eccedenza_eur[4], 2 * 10 / 120)
+  # la classe e' quella che si avrebbe scalando le soglie al periodo
+  scalate <- economia_forniture(
+    dplyr::tibble(litri = c(240, 180, 120, 361), componenti_medi = 1, potenziamento = FALSE, fattore = 0.5),
+    annualizza = FALSE
+  )
+  expect_identical(as.character(scalate$classe), as.character(semestre$classe))
+  expect_equal(scalate$litri_limite, rep(360, 4))
+  expect_equal(scalate$premio_eur[1:3], c(2.5, 5, 7.5))
+  expect_equal(scalate$importo_eur, semestre$importo_eur * 0.5)
+  # un anno intero: nessuna differenza
+  intero <- economia_forniture(dplyr::tibble(
+    litri = 360, componenti_medi = 1, potenziamento = FALSE, fattore = 1
+  ))
+  expect_equal(intero$litri_annui, 360)
+  expect_equal(intero$premio_eur, 10)
+  # senza giorni di attivita' la classe e i litri annui mancano
+  vuota <- economia_forniture(dplyr::tibble(
+    litri = 100, componenti_medi = 1, potenziamento = FALSE, fattore = c(0)
+  ))
+  expect_true(is.na(vuota$litri_annui))
+  expect_true(is.na(vuota$classe))
   expect_true(is.na(economia_forniture(dplyr::tibble(
-    litri = 100,
-    componenti_medi = 1,
-    potenziamento = FALSE,
-    fattore = NA_real_
+    litri = 100, componenti_medi = 1, potenziamento = FALSE, fattore = NA_real_
   ))$classe))
 })
 
@@ -135,68 +158,4 @@ test_that("le fasce di eccedenza e le quote di premio hanno etichette leggibili"
     levels(fasce_eccedenza(1, limiti = c(60, 120))),
     c("fino a 60 lt", "da 60 a 120 lt", "oltre 120 lt")
   )
-})
-
-test_that("la proiezione annua divide litri ed euro per la parte di anno", {
-  # un semestre: i litri e gli euro del periodo valgono il doppio in un anno
-  periodo <- economia_forniture(dplyr::tibble(
-    litri = c(240, 361),
-    componenti_medi = 1,
-    potenziamento = FALSE,
-    fattore = 0.5
-  ))
-  expect_equal(periodo$litri_proiettati, c(480, 722))
-  expect_equal(periodo$importo_proiettato_eur, periodo$importo_eur * 2)
-  expect_equal(periodo$premio_proiettato_eur, periodo$premio_eur * 2)
-  expect_equal(periodo$eccedenza_proiettata_eur, periodo$eccedenza_eur * 2)
-  # la proiezione di un semestre coincide con i litri annui valutati con le soglie annue
-  annuo <- economia_forniture(dplyr::tibble(
-    litri = periodo$litri_proiettati,
-    componenti_medi = 1,
-    potenziamento = FALSE,
-    fattore = 1
-  ))
-  expect_identical(as.character(annuo$classe), as.character(periodo$classe))
-  expect_equal(annuo$importo_eur, periodo$importo_proiettato_eur)
-  # un anno intero: la proiezione e' il dato
-  intero <- economia_forniture(dplyr::tibble(
-    litri = 360,
-    componenti_medi = 1,
-    potenziamento = FALSE,
-    fattore = 1
-  ))
-  expect_equal(intero$litri_proiettati, 360)
-  expect_equal(intero$importo_proiettato_eur, intero$importo_eur)
-  # senza giorni di attivita' non si proietta
-  vuota <- economia_forniture(dplyr::tibble(
-    litri = 100,
-    componenti_medi = 1,
-    potenziamento = FALSE,
-    fattore = c(0)
-  ))
-  expect_true(is.na(vuota$litri_proiettati))
-})
-
-test_that("le soglie del periodo scalano quelle annue per giorni del periodo e dell'anno", {
-  semestre <- soglie_del_periodo("2026-01-01", "2026-06-30")
-  fattore <- 181 / 365
-  expect_equal(attr(semestre, "fattore"), fattore)
-  uno <- semestre[semestre$fascia == "1", ]
-  expect_equal(uno$litri_inclusi, 720)
-  expect_equal(uno$litri_inclusi_periodo, 720 * fattore)
-  expect_equal(uno$litri_minimi_periodo, 240 * fattore)
-  expect_equal(uno$litri_premialita_periodo, 480 * fattore)
-  # la casa vuota e il potenziamento non hanno minimo ne' massimo per la premialita'
-  expect_true(is.na(semestre$litri_minimi_periodo[1]))
-  potenziamento <- semestre[semestre$fascia == "Potenziamento", ]
-  expect_equal(potenziamento$litri_inclusi_periodo, 6240 * fattore)
-  # un anno intero: le soglie sono quelle annue; un anno bisestile ha 366 giorni
-  anno <- soglie_del_periodo("2026-01-01", "2026-12-31")
-  expect_equal(attr(anno, "fattore"), 1)
-  expect_equal(anno$litri_inclusi_periodo, anno$litri_inclusi)
-  bisestile <- soglie_del_periodo("2028-01-01", "2028-12-31")
-  expect_equal(attr(bisestile, "fattore"), 1)
-  # un periodo piu' lungo di un anno non supera le soglie annue
-  due_anni <- soglie_del_periodo("2025-01-01", "2026-12-31")
-  expect_equal(attr(due_anni, "fattore"), 1)
 })

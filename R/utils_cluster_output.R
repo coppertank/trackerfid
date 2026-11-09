@@ -185,7 +185,8 @@ comune_cluster <- function(dati, cluster, n_cluster) {
 #' piena da 10; compattezza, 1 fino a 50 m e 0 da 500 m in scala
 #' logaritmica; stabilità del servizio (censiti: 1 se mai cambiato, 0,5
 #' altrimenti; non censiti: quota del servizio atteso prevalente, da 0 al 50%
-#' a 1 all'80%); accordo tra raccolte presunte e previste (0,5 se ignote);
+#' a 1 all'80%); raccolte presunte entro il massimo annuo del bidone, le previste
+#' (1 se non lo superano, il rapporto se lo superano, 0,5 se ignote);
 #' quota delle letture dell'RFID nel cluster.
 #' @noRd
 indice_fiducia <- function(
@@ -215,11 +216,13 @@ indice_fiducia <- function(
         (soglie$prevalenza_atteso - 0.5)
     )
   )
-  rapporto <- presunte / previste
+  # `previste` è il massimo di conferimenti annui del bidone (26 con una raccolta
+  # ogni due settimane): conferire meno è normale e non si penalizza; si penalizza
+  # chi supera il massimo, in proporzione (26 previste e 52 presunte danno 0,5).
   p_raccolte <- ifelse(
     is.na(previste) | previste <= 0,
     0.5,
-    ifelse(presunte <= 0, 0, pmin(rapporto, 1 / rapporto))
+    ifelse(presunte <= previste, 1, previste / presunte)
   )
   p_unicita <- cluster_letture / globale_letture
 

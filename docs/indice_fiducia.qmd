@@ -134,7 +134,7 @@ verifiche <- data.frame(
     "Le letture cadono tutte nello stesso punto?",
     "Il contenitore è a database?",
     "Il servizio è sempre lo stesso?",
-    "Le raccolte osservate corrispondono a quelle previste?",
+    "Le raccolte osservate stanno entro il massimo del bidone?",
     "Il contenitore è stato letto in un solo luogo?"
   ),
   regola = c(
@@ -150,7 +150,7 @@ verifiche <- data.frame(
       "Censito: 1 se il servizio non è mai cambiato, 0,5 se è cambiato. Non censito: 0 se il giro prevalente copre fino al 50%% delle letture, 1 dall'%s%%, proporzionale in mezzo",
       100 * soglie$prevalenza_atteso
     ),
-    "Il valore minore diviso per il maggiore, tra raccolte presunte e previste. 0,5 se le previste non sono note",
+    "1 se le raccolte presunte non superano il massimo annuo del bidone (le previste), altrimenti previste diviso presunte. 0,5 se le previste non sono note",
     "Quota delle letture del contenitore che cadono in questo cluster"
   ),
   stringsAsFactors = FALSE
@@ -478,7 +478,7 @@ ggplot(barre) +
   tema_grafico
 ```
 
-Il contenitore regolare perde `{r} num(1 - esempi["regolare", "indice"])` perché ha `{r} dati_esempio("regolare")$numero_raccolte_annue_presunte` raccolte presunte contro `{r} dati_esempio("regolare")$numero_raccolte_annue_previste` previste. Il non censito perde tutto il censimento e quasi tutta la stabilità del servizio, perché i giri che lo leggono sono misti. La lettura isolata conserva compattezza e censimento, ma è `{r} conta(dati_esempio("isolata")$cluster_numero_letture, "sola lettura", "letture")` sulle `{r} dati_esempio("isolata")$globale_numero_letture` del suo contenitore.
+Il contenitore regolare perde `{r} num(1 - esempi["regolare", "indice"])`; ha `{r} dati_esempio("regolare")$numero_raccolte_annue_presunte` raccolte presunte contro `{r} dati_esempio("regolare")$numero_raccolte_annue_previste` previste, che sono il massimo annuo del bidone: la verifica sulle raccolte penalizza solo chi lo supera, non chi conferisce meno. Il non censito perde tutto il censimento e quasi tutta la stabilità del servizio, perché i giri che lo leggono sono misti. La lettura isolata conserva compattezza e censimento, ma è `{r} conta(dati_esempio("isolata")$cluster_numero_letture, "sola lettura", "letture")` sulle `{r} dati_esempio("isolata")$globale_numero_letture` del suo contenitore.
 
 ## Perché è semplice da capire
 
@@ -724,7 +724,7 @@ rango_pesi_uguali <- stats::cor(
 - **Ordina dentro la stessa categoria.** Per il bidone spostato di circa `{r} round(km_spostamento)` km, il luogo con `{r} conta(debole$cluster_numero_letture, "lettura", "letture")` vale `{r} num(debole$cluster_indice_fiducia)` e quello con `{r} conta(solido$cluster_numero_letture, "lettura", "letture")` vale `{r} num(solido$cluster_indice_fiducia)`. L'indice dice quale delle due posizioni è solida.
 - **Regge al variare dei pesi.** In `{r} formatta_numero(prove)` prove ogni peso è stato cambiato a caso, tra la metà e una volta e mezza il suo valore. L'ordine dei cluster è rimasto quasi identico: correlazione di rango `{r} num(stats::median(rango), 3)` in mediana, mai sotto `{r} num(floor(min(rango) * 100) / 100)`. Con sei pesi uguali è `{r} num(rango_pesi_uguali)`.
 - **Nessuna verifica decide da sola.** Il peso massimo è `{r} num(max(pesi))`. Un solo dato sbagliato non affossa un cluster e un solo dato buono non lo salva.
-- **Ogni verifica premia in una sola direzione.** Un cluster più compatto, con il servizio più stabile o più vicino alle raccolte previste ha sempre un indice uguale o più alto. Non ci sono inversioni da spiegare.
+- **Ogni verifica premia in una sola direzione.** Un cluster più compatto, con il servizio più stabile o con raccolte presunte entro il massimo previsto ha sempre un indice uguale o più alto. Non ci sono inversioni da spiegare.
 - **Si appoggia a ciò che i mezzi misurano.** Letture, compattezza e unicità valgono il `{r} round(100 * sum(pesi[c("letture", "compattezza", "unicita")]))`% dell'indice e vengono dai lettori e dal GPS. Il resto dipende dall'anagrafica.
 - **Indica cosa fare.** La verifica con il punteggio più basso suggerisce l'azione: censire il contenitore, controllare la posizione, rivedere il calendario di raccolta.
 

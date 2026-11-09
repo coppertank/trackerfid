@@ -14,7 +14,6 @@ params:
   scartate_saponette: "data-raw/output/letture_scartate_saponette.csv"
   cartella_origine: "data-raw/origine"
   giri: ""
-  servizio: "SECCO"
   componenti: ""
   margine_minuti: 30
   cartella_csv: ""
@@ -59,8 +58,6 @@ knitr:
 #   giri                CSV dei giri da analizzare: data_giro, matricola_veicolo,
 #                       servizio_giro, matricola_saponetta e, facoltative,
 #                       ora_inizio, ora_fine (HH:MM). Vuoto: tutte le letture
-#   servizio            il report vale solo per il SECCO, l'unico rifiuto fatturato:
-#                       vuoto o SECCO; un altro servizio ferma la compilazione
 #   componenti          fascia di componenti per forniture, propensione ed
 #                       economia: 0 (casa vuota), 1-5, 6+ o potenziamento
 #   margine_minuti      minuti aggiunti ai due lati della finestra ricavata dalle
@@ -146,16 +143,10 @@ scartate_saponette <- leggi_letture_indicatori(percorso_progetto(params$scartate
 
 con_giri <- !vuoto(params$giri)
 giri <- if (con_giri) giri_di_analisi(percorso_progetto(params$giri))
-# Il report guarda solo il secco, l'unico rifiuto che l'azienda fattura (scelta del
-# proprietario, 6/11/2026): letture, forniture, propensione ed economia.
-if (!vuoto(params$servizio) && toupper(trimws(params$servizio)) != "SECCO") {
-  stop(
-    "Il report vale solo per il secco: `servizio` può essere vuoto o `SECCO`.",
-    call. = FALSE
-  )
-}
-servizio <- "SECCO"
-servizio_forniture <- servizio
+# Le forniture di propensione ed economia sono quelle del secco, l'unico rifiuto che
+# l'azienda fattura (scelta del proprietario). Gli indici di confronto delle letture
+# usano invece tutte le letture disponibili.
+servizio_forniture <- "SECCO"
 gruppo_scelto <- gruppo_da_filtro(params$componenti)
 
 date_base <- if (con_giri) {
@@ -184,32 +175,19 @@ letture <- list(
   scartate_antenne = nel_periodo(scartate_antenne, dal, al),
   scartate_saponette = nel_periodo(scartate_saponette, dal, al)
 )
-# Solo le letture del secco (letture_del_secco()): un bidone associato con un altro
-# servizio (carta, plastica...) non conta mai; le saponette sono tutte del secco,
-# le antenne se il bidone è del secco o, senza servizio a database (PIT, NP,
-# sacchetti), se il giro è del secco (servizio atteso).
-righe_prima <- c(antenne = nrow(letture$antenne), saponette = nrow(letture$saponette))
-letture$antenne <- letture_del_secco(letture$antenne, "antenne")
-letture$saponette <- letture_del_secco(letture$saponette, "saponette")
-escluse_altro_servizio <- righe_prima - c(antenne = nrow(letture$antenne), saponette = nrow(letture$saponette))
 
-# --- La selezione: i giri indicati, oppure tutte le letture del secco ----------
+# --- La selezione: i giri indicati, oppure tutte le letture ---------------------
+# Gli indici di confronto usano tutte le letture disponibili, di saponette e
+# antenne, di ogni servizio, scartate comprese.
 if (con_giri) {
   selezione <- seleziona_per_giri(letture, giri, params$margine_minuti)
 } else {
   selezione <- letture
-  # Le letture scartate dalla pulizia non hanno un servizio: senza i giri, che le
-  # legano a una finestra, non si può dire quali siano del secco, e non entrano.
-  selezione$scartate_antenne <- selezione$scartate_antenne[0, ]
-  selezione$scartate_saponette <- selezione$scartate_saponette[0, ]
 }
-# Gli indici di scarto si calcolano solo con i giri indicati.
-scarto_calcolabile <- con_giri
 if (nrow(selezione$antenne) + nrow(selezione$saponette) == 0) {
   stop(
     "Nessuna lettura nella selezione (periodo ",
     data_it(dal), " - ", data_it(al),
-    ", solo secco",
     if (con_giri) ", giri indicati",
     ").",
     call. = FALSE
@@ -232,42 +210,57 @@ ind <- indicatori_letture(unita, extra)
 # --- Le forniture del periodo, dalle tabelle estratte ---------------------------
 file <- file_origine(percorso_progetto(params$cartella_origine))
 anagrafica_presente <- all(file.exists(unlist(file[c("contenitori", "componenti", "manovre")])))
-anagrafica <- if (anagrafica_presente) {
-  # Solo i contenitori del secco: un contenitore di altro servizio non si conta.
-  leggi_anagrafica_forniture(file, dal, al, servizio_forniture)
+# Tutti i servizi dell'associazione dei contenitori, per la prima tabella; il secco
+# (solo i suoi contenitori) per propensione ed economia.
+anagrafica_servizi <- if (anagrafica_presente) {
+  leggi_anagrafica_forniture_per_servizio(file, dal, al)
 }
-# Servizio e fascia scelti; con i giri solo le forniture lette in quei giri,
-# perché le altre non si sanno attribuire.
+anagrafica <- if (!is.null(anagrafica_servizi)) {
+  anagrafica_servizi[anagrafica_servizi$servizio %in% servizio_forniture, ]
+}
+# Fascia scelta
+anagrafica_servizi_scelta <- anagrafica_servizi
 anagrafica_scelta <- anagrafica
-if (!is.null(anagrafica_scelta)) {
-  anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$servizio %in% servizio_forniture)
-  if (!is.null(gruppo_scelto)) {
-    anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$gruppo == gruppo_scelto)
-  }
+if (!is.null(gruppo_scelto) && !is.null(anagrafica)) {
+  anagrafica_servizi_scelta <- dplyr::filter(anagrafica_servizi_scelta, .data$gruppo == gruppo_scelto)
+  anagrafica_scelta <- dplyr::filter(anagrafica_scelta, .data$gruppo == gruppo_scelto)
 }
-lette <- unique(unita$id_fornitura[unita$stato %in% "PIA"])
+# Dalla propensione in poi solo il secco (letture_associate_del_secco()): le
+# letture associate (PIA) con transponder del secco; per le antenne anche quelle
+# lette in un giro del secco. Con anche gli altri servizi le statistiche
+# sarebbero sballate: le saponette leggono quasi solo i bidoni del secco.
+unita_secco <- unita_di_lettura(
+  letture_associate_del_secco(selezione$antenne, "antenne"),
+  letture_associate_del_secco(selezione$saponette, "saponette"),
+  selezione$scartate_antenne[0, ],
+  selezione$scartate_saponette[0, ]
+)
+ind_secco <- indicatori_letture(unita_secco)
+lette <- unique(unita_secco$id_fornitura[unita_secco$stato %in% "PIA"])
 anagrafica_analisi <- anagrafica_scelta
 if (con_giri && !is.null(anagrafica_analisi)) {
   anagrafica_analisi <- dplyr::filter(anagrafica_analisi, .data$id_fornitura %in% lette)
 }
-economia_possibile <- !is.null(anagrafica) && servizio_forniture == "SECCO"
+economia_possibile <- !is.null(anagrafica)
 # L'analisi economica fotografa le letture che ci sono: un sistema senza conferimenti
 # del secco nel periodo non si simula (darebbe zero litri a tutte le forniture, cioè
 # il premio massimo a tutte). Gli scenari a sistema singolo e il confronto
 # compaiono solo se tutti e due i sistemi hanno letture associate del secco.
-sistemi_secco <- sistemi_con_conferimenti(unita)
+sistemi_secco <- sistemi_con_conferimenti(unita_secco)
 economia_con_antenne <- con_antenne && sistemi_secco[["antenne"]]
 economia_con_saponette <- con_saponette && sistemi_secco[["saponette"]]
 economia_due_sistemi <- economia_con_antenne && economia_con_saponette
 # Le antenne sono in funzione dal 5 agosto 2026, su una parte dei mezzi.
 inizio_antenne <- as.Date("2026-08-05")
 # Con un periodo più corto di un anno le soglie si riducono in proporzione e si
-# può proiettare l'anno intero.
+# i litri si annualizzano.
 giorni_periodo <- as.numeric(al - dal) + 1
 fattore_periodo <- min(giorni_periodo / giorni_dell_anno(dal, al), 1)
 periodo_ridotto <- giorni_periodo < giorni_dell_anno(dal, al)
-# Con i giri indicati i litri sono quelli di pochi giorni: proiettarli a un anno non ha senso.
-proiezione_possibile <- periodo_ridotto && !con_giri
+# I litri si annualizzano (litri / fattore) e si confrontano con le soglie annue;
+# con i giri indicati i litri sono quelli di pochi giorni e annualizzarli non ha
+# senso: lì si scalano le soglie al periodo (campione).
+annualizza <- !con_giri
 # Diventa vero se l'analisi economica trova almeno una fornitura.
 economia_utile <- FALSE
 ```
@@ -289,8 +282,7 @@ registri_assenti <- c(
   if (nrow(antenne) > 0 && !file.exists(percorso_progetto(params$scartate_antenne))) "delle antenne",
   if (nrow(saponette) > 0 && !file.exists(percorso_progetto(params$scartate_saponette))) "delle saponette"
 )
-# Il registro delle scartate serve solo con i giri indicati (senza, le scartate non entrano).
-if (con_giri && length(registri_assenti) > 0) {
+if (length(registri_assenti) > 0) {
   cat(
     "::: {.callout-warning}\nIl registro delle letture scartate ",
     paste(registri_assenti, collapse = " e "),
@@ -330,35 +322,25 @@ righe_selezione <- dplyr::tibble(
     "Servizio",
     "Fascia di componenti",
     "Letture delle antenne",
-    "Letture delle saponette",
-    "Letture escluse perché non del secco (antenne)",
-    "Letture escluse perché non del secco (saponette)"
+    "Letture delle saponette"
   ),
   Valore = c(
     paste0(data_it(dal), " - ", data_it(al), " (", intero(as.numeric(al - dal) + 1), " giorni)"),
     if (con_giri) {
       paste0(intero(nrow(giri)), " giri indicati; antenne e saponette nella stessa finestra oraria")
     } else {
-      "tutte le letture del secco disponibili"
+      "tutte le letture disponibili"
     },
-    "SECCO (l'unico rifiuto fatturato)",
+    "tutti i servizi (dalla propensione al conferimento in poi, solo il secco)",
     if (is.null(gruppo_scelto)) "tutte" else gruppo_scelto,
     copertura(selezione$antenne, selezione$scartate_antenne),
-    copertura(selezione$saponette, selezione$scartate_saponette),
-    intero(escluse_altro_servizio[["antenne"]]),
-    intero(escluse_altro_servizio[["saponette"]])
+    copertura(selezione$saponette, selezione$scartate_saponette)
   )
 )
 knitr::kable(righe_selezione, align = "ll")
 ```
 
-Il report guarda **solo il secco**, l'unico rifiuto che l'azienda fattura, e fotografa i conferimenti reali con le letture del secco disponibili nel periodo, che siano delle sole saponette, di entrambi i sistemi o, in futuro, delle sole antenne. Il confronto tra antenne e saponette è accessorio: compare solo se tutti e due i sistemi hanno letture. Le letture del secco sono scelte così:
-
-- un bidone che nell'associazione dei contenitori ha un servizio diverso dal secco (carta, plastica, vetro...) non conta mai, per nessuno dei due sistemi: le tabelle riguardano i bidoni del secco;
-- **saponette**: tutte le altre letture sono del secco, anche i bidoni compatibili non associati (`PIT` e `NP`) e i sacchetti, perché gli operatori usano le saponette quasi solo nei giri del secco residuo;
-- **antenne**: restano le letture con `servizio_transponder` `SECCO` e quelle senza servizio a database (`PIT`, `NP`, sacchetti) lette in un giro del secco (`servizio_atteso` `SECCO`), perché i mezzi con l'antenna fanno anche altri rifiuti.
-
-La tabella qui sopra dice quante letture sono state escluse perché non del secco.
+Il report ha due parti. Le sezioni sulle letture e sugli **indici di confronto** usano tutte le letture disponibili, di saponette e antenne e di ogni servizio, scartate comprese. Dalla **propensione al conferimento** in poi l'analisi riguarda solo il **secco**, l'unico rifiuto che l'azienda fattura. Il confronto tra antenne e saponette compare solo se tutti e due i sistemi hanno letture.
 
 Una **lettura** è un codice RFID letto in un giorno da un sistema. Lo stesso codice letto da un'antenna e da una saponetta nello stesso giorno è **una lettura sola** (il bidone è stato svuotato una volta): si confrontano i codici dopo la normalizzazione, la riparazione e la pulizia della pipeline. Sono **compatibili** le letture che la pulizia tiene, anche se il database non le conosce: sono potenzialmente bidoni dell'azienda. Quelle **associate** sono le compatibili con una fornitura (`presente_a_database` uguale a `PIA`); le **non associate** sono le altre, cioè i contenitori presenti solo tra i tag (`PIT`) o per niente nel database (`NP`). Sono **scartate** le righe che la pulizia toglie: i codici nulli (soli zeri), i codici lunghi che non sono bidoni (più di 10 caratteri e due o più cifre diverse da zero nei primi 14, né sacchetti né HERA), i doppioni (lo stesso bidone letto più volte nello stesso giorno dallo stesso sistema: resta la prima lettura) e le righe senza RFID o con l'istante illeggibile. Le letture senza posizione si tengono.
 
@@ -384,23 +366,28 @@ knitr::kable(
 
 ```{r}
 #| label: forniture
-#| eval: !expr "!is.null(anagrafica)"
-conteggi <- conta_forniture(anagrafica_scelta)
+#| eval: !expr "!is.null(anagrafica_servizi) && nrow(anagrafica_servizi) > 0"
+conteggi <- conta_forniture_per_servizio(anagrafica_servizi_scelta)
+# Il nome del gruppo si scrive solo sulla prima riga del suo blocco.
+primo_del_gruppo <- !duplicated(conteggi$gruppo)
 knitr::kable(
   dplyr::tibble(
-    Gruppo = conteggi$gruppo,
+    Gruppo = ifelse(primo_del_gruppo, conteggi$gruppo, ""),
+    Servizio = conteggi$servizio,
     Forniture = intero(conteggi$forniture),
-    Contenitori = intero(conteggi$contenitori)
+    Contenitori = intero(conteggi$contenitori),
+    `Volume totale (L)` = intero(conteggi$volume_totale),
+    `Volume medio per contenitore (L)` = num(conteggi$volume_medio, 1)
   ),
-  align = "lrr"
+  align = "llrrrr"
 )
 ```
 
 ```{r}
 #| label: non-domestiche
-#| eval: !expr "!is.null(anagrafica)"
+#| eval: !expr "!is.null(anagrafica_servizi) && nrow(anagrafica_servizi) > 0"
 #| results: asis
-nd <- conta_non_domestiche(anagrafica_scelta)
+nd <- conta_non_domestiche(dplyr::distinct(anagrafica_servizi_scelta, .data$id_fornitura, .keep_all = TRUE))
 if (nrow(nd) > 0) {
   cat("\nForniture non domestiche per categoria:\n\n")
   print(knitr::kable(
@@ -410,7 +397,7 @@ if (nrow(nd) > 0) {
 }
 ```
 
-Le forniture sono quelle del **secco** con almeno un contenitore associato attivo nel periodo nell'associazione dei contenitori (`dv_cnt_associazione_contenitori`); si contano solo i contenitori il cui servizio in associazione è `SECCO`, anche se una fornitura ne avesse di altri servizi. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio.
+La tabella usa **tutti i servizi** dell'associazione dei contenitori (`dv_cnt_associazione_contenitori`): le forniture con almeno un contenitore associato attivo nel periodo. Per ogni gruppo la riga «Tutti i servizi» dice quante forniture ci sono (una fornitura conta una volta) e i contenitori e i volumi di tutti i servizi sommati; le righe sotto dividono i **bidoni assegnati alle forniture del gruppo per servizio** (secco, carta, plastica e metalli...), con le forniture che hanno almeno un bidone di quel servizio, il **volume totale** dei contenitori e il **volume medio** (volume totale diviso i contenitori). Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo, arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio. Le componenti e il potenziamento dipendono dalla fornitura, non dal servizio del bidone.
 
 # Le letture
 
@@ -541,9 +528,6 @@ if (nrow(per_motivo) > 0) {
   ))
   cat("\nI codici nulli e quelli lunghi sono letture (RFID e giorno): lo stesso codice letto dai due sistemi nello stesso giorno conta una volta. I doppioni e le righe senza RFID o senza istante sono righe in più di un solo sistema e si contano per riga.\n")
 }
-if (!scarto_calcolabile) {
-  cat("\n::: {.callout-note}\nIl report guarda solo il secco e le letture scartate dalla pulizia non hanno un servizio: senza i giri indicati non si può dire quali siano del secco, quindi non entrano e gli indici di scarto non sono calcolabili. Le letture sono le sole del secco che la pulizia ha tenuto.\n:::\n")
-}
 ```
 
 ```{r}
@@ -591,9 +575,6 @@ kpi <- dplyr::tibble(
     "compatibili in comune / compatibili totali"
   )
 )
-if (!scarto_calcolabile) {
-  kpi$Valore[1:3] <- NA_real_
-}
 knitr::kable(
   dplyr::mutate(kpi, Valore = quota(.data$Valore)),
   align = "lrl"
@@ -678,10 +659,14 @@ if (!vuoto(params$cartella_csv)) {
 
 # Propensione al conferimento
 
+::: {.callout-note}
+**Da qui l'analisi riguarda solo il secco.** Le tabelle che seguono (propensione, analisi economica, forniture senza conferimenti) contano le letture associate (`PIA`) con `servizio_transponder` `SECCO` e, per le antenne, anche quelle lette in un giro del secco (`servizio_atteso` `SECCO`). Il secco è l'unico servizio che l'azienda fattura. Contare anche gli altri servizi falserebbe le statistiche: le saponette leggono quasi esclusivamente i bidoni del secco, quindi i servizi come carta o plastica risulterebbero letti solo dalle antenne e il confronto tra i due sistemi, o il rapporto tra letture e bidoni, sarebbe sballato.
+:::
+
 ```{r}
 #| label: propensione
 #| eval: !expr "!is.null(anagrafica_analisi)"
-propensione <- propensione_conferimento(unita, anagrafica_analisi, servizio_forniture)
+propensione <- propensione_conferimento(unita_secco, anagrafica_analisi, servizio_forniture)
 propensione <- propensione[propensione$forniture > 0, ]
 knitr::kable(
   dplyr::tibble(
@@ -690,15 +675,30 @@ knitr::kable(
     Contenitori = intero(propensione$contenitori),
     Letture = intero(propensione$letture),
     `Letture per contenitore` = num(propensione$propensione_numerica, 2),
-    `Raccolte attese` = intero(propensione$raccolte_attese),
-    `Letture / attese` = quota(propensione$propensione_sulle_attese),
+    `Letture per fornitura` = num(propensione$letture_per_fornitura, 2),
+    `Volume per fornitura (L)` = num(propensione$litri_per_fornitura, 0),
+    `Volume per contenitore (L)` = num(propensione$litri_per_contenitore, 0),
+    `Conferimenti massimi` = intero(propensione$conferimenti_massimi),
+    `Letture / massimo` = quota(propensione$propensione_sul_massimo),
     `Propensione volumetrica` = quota(propensione$propensione_volumetrica)
   ),
-  align = "lrrrrrrr"
+  align = "lrrrrrrrrrr"
 )
 ```
 
-La **propensione numerica** è il numero di letture associate, `PIA` (dei due sistemi insieme), diviso i contenitori delle forniture domestiche del gruppo. Le **raccolte attese** sono le raccolte annue previste × i giorni di attività / i giorni dell'anno × i contenitori: la propensione «letture / attese» dice a che frazione delle raccolte previste corrispondono i conferimenti rilevati. La **propensione volumetrica** è il volume letto (letture × volume del contenitore) diviso la capacità (volume dei contenitori × raccolte attese). Un valore sotto 100% non vuol dire che mancano conferimenti: un contenitore può non essere esposto a ogni raccolta, e le letture mancanti di un sistema abbassano i valori.
+Le righe sono i gruppi di forniture **domestiche del secco**; «Domestiche (totale)» le somma. Una lettura è uno svuotamento: una lettura associata (`PIA`) di un bidone del secco in un giorno, di saponette e antenne insieme (lo stesso bidone letto dai due sistemi nello stesso giorno conta uno). Il **volume** è sempre in litri conferiti: letture × volume del contenitore. Come leggere ogni campo:
+
+- **Gruppo.** *A cosa serve:* mette insieme forniture simili, perché una famiglia di 1 persona e una di 5 non conferiscono allo stesso modo. *Come è calcolato:* dai componenti medi del nucleo nel periodo (casa vuota, da 1 a 6 o più), più «Potenziamento» per chi ha la manovra sociale (neonati, anziani, disabili). *Interpretazione:* si guardano le righe una rispetto all'altra. *Quando è utile:* sempre, per non confrontare una media unica di situazioni diverse.
+- **Forniture.** *A cosa serve:* dice quante utenze del secco ci sono nel gruppo. *Come è calcolato:* si contano le forniture dell'associazione dei contenitori, non quelle lette. *Interpretazione:* con poche forniture gli altri valori della riga sono instabili. *Quando è utile:* per capire quanto pesa il gruppo e quanto fidarsi dei suoi numeri.
+- **Contenitori.** *A cosa serve:* dice quanti bidoni del secco hanno quelle forniture. *Come è calcolato:* somma dei contenitori distinti di ogni fornitura. *Interpretazione:* di solito è uguale alle forniture; è più alto se alcune hanno più di un bidone. *Quando è utile:* come denominatore delle letture per bidone.
+- **Letture.** *A cosa serve:* è il numero grezzo di conferimenti rilevati. *Come è calcolato:* conteggio delle letture associate del secco nel periodo. *Interpretazione:* cresce con la durata del periodo e con il numero di forniture, quindi da solo non si confronta tra gruppi. *Quando è utile:* è la base di tutti gli altri indici.
+- **Letture per contenitore.** *A cosa serve:* dice quante volte, in media, un bidone è stato svuotato. *Come è calcolato:* letture ÷ contenitori. *Interpretazione:* va letto con la lunghezza del periodo (in sei mesi con raccolta quindicinale il massimo è circa 13). *Quando è utile:* per confrontare i gruppi nello stesso periodo.
+- **Letture per fornitura.** *A cosa serve:* come sopra, ma per utenza, che è l'unità a cui si applica la tariffa. *Come è calcolato:* letture ÷ forniture. *Interpretazione:* uguale alle letture per contenitore se ogni fornitura ha un solo bidone, più alta se ne ha di più. *Quando è utile:* per ragionare su quante volte conferisce un'utenza.
+- **Volume per fornitura (L).** *A cosa serve:* dice quanti litri ha conferito in media una fornitura. *Come è calcolato:* litri conferiti ÷ forniture. *Interpretazione:* si confronta con i litri inclusi nella tariffa della fascia (annui, quindi ridotti al periodo): vicino o sopra vuol dire che il gruppo è al limite. *Quando è utile:* per vedere se il gruppo rischia l'eccedenza o può avere il premio.
+- **Volume per contenitore (L).** *A cosa serve:* dice quanti litri ha dato in media un bidone. *Come è calcolato:* litri conferiti ÷ contenitori. *Interpretazione:* dipende anche dalla taglia del bidone: a parità di svuotamenti un 120 litri dà più litri di un 40. *Quando è utile:* per distinguere chi conferisce spesso da chi conferisce tanto.
+- **Conferimenti massimi.** *A cosa serve:* è il tetto degli svuotamenti possibili nel periodo. *Come è calcolato:* per ogni bidone il massimo annuo (`numero_raccolte_annue`: 26 se la raccolta è quindicinale, 52 se settimanale) × la parte d'anno in cui la fornitura è attiva, sommato su tutti i bidoni. *Interpretazione:* non è il numero di conferimenti che ci si aspetta: molti clienti conferiscono meno, ed è normale. *Quando è utile:* come denominatore dei due indici seguenti.
+- **Letture / massimo.** *A cosa serve:* dice che frazione dei conferimenti possibili è stata fatta. *Come è calcolato:* letture ÷ conferimenti massimi, sulle sole forniture con massimo noto. *Interpretazione:* sotto 100% è la regola; più è basso, meno il gruppo usa il servizio (o più letture sono state perse dai sistemi); oltre 100% sarebbe anomalo, perché si sono contati più svuotamenti di quelli possibili (bidoni sbagliati o massimo errato nei dati). *Quando è utile:* per misurare l'uso del servizio e per scoprire dati incoerenti.
+- **Propensione volumetrica.** *A cosa serve:* come «Letture / massimo», ma contando i litri invece degli svuotamenti. *Come è calcolato:* litri conferiti ÷ litri massimi (volume di ogni bidone × suo massimo annuo × parte d'anno, sommati). *Interpretazione:* se i bidoni hanno taglie diverse si distacca da «Letture / massimo», perché un 240 litri pesa più di un 40. *Quando è utile:* per capire quanta della capacità di raccolta è stata usata.
 
 # Analisi economica del secco
 
@@ -708,10 +708,11 @@ La **propensione numerica** è il numero di letture associate, `PIA` (dei due si
 # Gli scenari sono quelli validi per i sistemi che hanno conferimenti del secco:
 # con un solo sistema c'è un solo scenario, la situazione reale.
 economia <- analisi_economica(
-  unita,
+  unita_secco,
   anagrafica_analisi,
   con_antenne = economia_con_antenne,
-  con_saponette = economia_con_saponette
+  con_saponette = economia_con_saponette,
+  annualizza = annualizza
 )
 economia_utile <- nrow(economia) > 0
 if (economia_utile) {
@@ -724,10 +725,11 @@ if (economia_utile) {
     Premialità = paste0(intero(riepilogo$premialita), " (", quota(riepilogo$quota_premialita), ")"),
     Ordinarie = paste0(intero(riepilogo$ordinarie), " (", quota(riepilogo$quota_ordinarie), ")"),
     Eccedenti = paste0(intero(riepilogo$eccedenti), " (", quota(riepilogo$quota_eccedenti), ")"),
-    `Litri conferiti` = intero(riepilogo$litri),
-    `Premi` = euro(riepilogo$premi_eur),
-    `Eccedenze` = euro(riepilogo$eccedenze_eur),
-    `Importo netto` = euro(riepilogo$importo_eur)
+    `Litri rilevati` = intero(riepilogo$litri_rilevati),
+    `Litri annualizzati` = intero(riepilogo$litri),
+    `Premi (anno)` = euro(riepilogo$premi_eur),
+    `Eccedenze (anno)` = euro(riepilogo$eccedenze_eur),
+    `Importo netto (anno)` = euro(riepilogo$importo_eur)
   )
 }
 ```
@@ -774,13 +776,15 @@ sistemi_attivi <- if (economia_due_sistemi) {
   "dalle sole antenne"
 }
 cat("I conferimenti sono quelli **effettivamente registrati** nel periodo ", sistemi_attivi, ": ogni lettura associata (`PIA`) è uno svuotamento e vale il volume del suo contenitore.\n\n", sep = "")
-if (periodo_ridotto) {
-  cat("Il periodo è di **", intero(giorni_periodo), " giorni**, il ", quota(fattore_periodo), " di un anno. I litri e le classi mostrati sotto sono i conferimenti effettivi del periodo, confrontati con soglie ridotte nella stessa proporzione (litri inclusi, volume minimo e massimo per la premialità, premio di un conferimento): una fornitura in premialità o in eccedenza lo è rispetto a soglie parziali. ", sep = "")
-  if (proiezione_possibile) {
-    cat("Come si chiuderà l'anno lo dice la sezione «Soglie e proiezione a fine anno».\n\n")
+if (annualizza) {
+  cat("**Annualizzazione.** Le soglie della tariffa sono annue e restano costanti. I litri del periodo si riportano a un anno intero: `litri annualizzati = litri rilevati / fattore`, dove il fattore è la parte di anno in cui la fornitura è attiva nel periodo (giorni di attività / giorni dell'anno). Classe, litri eccedenti, premi ed eccedenze in euro sono calcolati sui litri annualizzati, quindi sono valori **annui**. È una stima lineare con l'andamento del periodo: non conosce la stagionalità né i giorni che restano. ", sep = "")
+  if (periodo_ridotto) {
+    cat("Il periodo è di ", intero(giorni_periodo), " giorni, il ", quota(fattore_periodo), " di un anno: i litri annualizzati sono più del doppio di quelli rilevati se il periodo è sotto i sei mesi, e la stima è tanto più instabile quanto più il periodo è breve.\n\n", sep = "")
   } else {
-    cat("\n\n")
+    cat("Il periodo è un anno intero: litri rilevati e annualizzati coincidono per le forniture attive tutto l'anno.\n\n")
   }
+} else {
+  cat("Con i giri indicati i litri sono quelli di pochi giorni: non si annualizzano, e le soglie della tariffa (litri inclusi, volume minimo e massimo per la premialità, premio di un conferimento) si riducono per i giorni di attività / giorni dell'anno. Euro e litri sono del periodo.\n\n")
 }
 ```
 
@@ -789,7 +793,7 @@ if (periodo_ridotto) {
 ```{r}
 #| label: economia-riepilogo
 #| eval: !expr economia_utile
-knitr::kable(nuovo_riepilogo, align = "lrrrrrrrr")
+knitr::kable(nuovo_riepilogo, align = "lrrrrrrrrr")
 ```
 
 ```{r}
@@ -873,9 +877,9 @@ grafico_economia
 knitr::kable(
   dplyr::tibble(
     Scenario = riepilogo$scenario,
-    `Litri in premialità` = intero(riepilogo$litri_in_premialita),
-    `Litri sotto il massimo` = intero(riepilogo$litri_sotto_massimo),
-    `Litri eccedenti` = intero(riepilogo$litri_eccedenti)
+    `Litri in premialità (annui)` = intero(riepilogo$litri_in_premialita),
+    `Litri sotto il massimo (annui)` = intero(riepilogo$litri_sotto_massimo),
+    `Litri eccedenti (annui)` = intero(riepilogo$litri_eccedenti)
   ),
   align = "lrrr"
 )
@@ -928,13 +932,10 @@ tabella_gruppi <- dplyr::tibble(
   Premialità = paste0(intero(per_gruppo$premialita), " (", quota(per_gruppo$quota_premialita), ")"),
   Ordinarie = paste0(intero(per_gruppo$ordinarie), " (", quota(per_gruppo$quota_ordinarie), ")"),
   Eccedenti = paste0(intero(per_gruppo$eccedenti), " (", quota(per_gruppo$quota_eccedenti), ")"),
-  Premi = euro(per_gruppo$premi_eur),
-  Eccedenze = euro(per_gruppo$eccedenze_eur)
+  `Premi (anno)` = euro(per_gruppo$premi_eur),
+  `Eccedenze (anno)` = euro(per_gruppo$eccedenze_eur)
 )
-if (proiezione_possibile) {
-  tabella_gruppi[["Litri proiettati (anno)"]] <- intero(per_gruppo$litri_proiettati)
-  tabella_gruppi[["Importo proiettato (anno)"]] <- euro(per_gruppo$importo_proiettato_eur)
-}
+tabella_gruppi[["Litri annualizzati"]] <- intero(per_gruppo$litri)
 knitr::kable(tabella_gruppi, align = paste0("l", strrep("r", ncol(tabella_gruppi) - 1)))
 ```
 
@@ -942,55 +943,26 @@ knitr::kable(tabella_gruppi, align = paste0("l", strrep("r", ncol(tabella_gruppi
 #| label: economia-gruppi-testo
 #| eval: !expr economia_utile
 #| results: asis
-cat("Scenario: ", riferimento, ". La casa vuota (limite di 240 litri) e il potenziamento del secco (6.240 litri) non hanno né volume minimo né premio: per loro ci sono solo la classe ordinaria e l'eccedenza.\n", sep = "")
+cat("Scenario: ", riferimento, ". La casa vuota (limite di 240 litri) e il potenziamento del secco non hanno né volume minimo né premio. La casa vuota paga l'eccedenza oltre i 240 litri; il potenziamento non paga né eccedenza né premio, qualunque sia il volume conferito (paga già il beneficio): è sempre in classe ordinaria.\n", sep = "")
 ```
 
 ```{r}
-#| label: economia-soglie
-#| eval: !expr "economia_utile && periodo_ridotto"
+#| label: economia-annualizzazione
+#| eval: !expr "economia_utile && annualizza"
 #| results: asis
-cat("\n## Soglie e proiezione a fine anno\n\n")
+cat("\n## Annualizzazione e rischio di eccedenza\n\n")
 cat(
-  "Le soglie della tariffa sono annue. Il periodo è di ", intero(giorni_periodo),
-  " giorni, il ", quota(fattore_periodo), " di un anno: la tabella mostra le soglie annue e quelle riportate al periodo (annue × giorni del periodo / giorni dell'anno) per una fornitura attiva per tutto il periodo; una fornitura attiva solo una parte del periodo ha soglie ancora più basse, in proporzione ai suoi giorni di attività. Classi, litri ed euro del periodo si leggono rispetto a queste soglie.\n\n",
-  sep = ""
-)
-soglie <- soglie_del_periodo(dal, al)
-litri_o_trattino <- function(x) ifelse(is.na(x), "–", intero(x))
-print(knitr::kable(
-  dplyr::tibble(
-    Fascia = soglie$fascia,
-    `Litri inclusi (anno)` = litri_o_trattino(soglie$litri_inclusi),
-    `Litri inclusi (periodo)` = litri_o_trattino(soglie$litri_inclusi_periodo),
-    `Massimo per la premialità (anno)` = litri_o_trattino(soglie$litri_premialita),
-    `Massimo per la premialità (periodo)` = litri_o_trattino(soglie$litri_premialita_periodo),
-    `Minimo addebitato (anno)` = litri_o_trattino(soglie$litri_minimi),
-    `Minimo addebitato (periodo)` = litri_o_trattino(soglie$litri_minimi_periodo)
-  ),
-  align = "lrrrrrr"
-))
-if (con_giri) {
-  cat("\n::: {.callout-note}\nCon i giri indicati non si proietta l'anno: i litri sono quelli di pochi giorni, e moltiplicarli per i giorni che mancano all'anno darebbe numeri senza senso. Le soglie qui sopra servono per leggere le classi del campione.\n:::\n")
-}
-```
-
-```{r}
-#| label: economia-proiezione
-#| eval: !expr "economia_utile && proiezione_possibile"
-#| results: asis
-cat(
-  "\n**Proiezione annua.** Ogni fornitura è riportata a un anno intero con l'andamento del periodo: `litri proiettati = litri rilevati / fattore`, dove il fattore è la parte di anno in cui la fornitura è attiva nel periodo (giorni di attività / giorni dell'anno); lo stesso vale per premio, eccedenza e importo. Poiché litri e soglie si riducono nello stesso modo, la classe proiettata coincide con quella del periodo: una fornitura in premialità resta in premialità, e una ordinaria resta ordinaria, **se continua con lo stesso ritmo**. Scenario: ",
-  riferimento, ".\n\n",
+  "La tabella confronta i litri rilevati nel periodo con quelli annualizzati, per classe, nello scenario ", riferimento,
+  ". Poiché la classe si decide sui litri annualizzati contro le soglie annue, una fornitura in premialità resta in premialità e una ordinaria resta ordinaria **se continua con lo stesso ritmo**.\n\n",
   sep = ""
 )
 reale <- economia[economia$scenario == riferimento, ]
 per_classe <- reale |>
   dplyr::summarise(
     forniture = dplyr::n(),
-    litri = sum(.data$litri),
-    litri_proiettati = sum(.data$litri_proiettati, na.rm = TRUE),
+    litri_rilevati = sum(.data$litri),
+    litri_annui = sum(.data$litri_annui, na.rm = TRUE),
     importo = sum(.data$importo_eur, na.rm = TRUE),
-    importo_proiettato = sum(.data$importo_proiettato_eur, na.rm = TRUE),
     .by = "classe"
   ) |>
   dplyr::arrange(.data$classe) |>
@@ -1000,26 +972,25 @@ per_classe <- dplyr::bind_rows(
   dplyr::tibble(
     classe = "Totale",
     forniture = sum(per_classe$forniture),
-    litri = sum(per_classe$litri),
-    litri_proiettati = sum(per_classe$litri_proiettati),
-    importo = sum(per_classe$importo),
-    importo_proiettato = sum(per_classe$importo_proiettato)
+    litri_rilevati = sum(per_classe$litri_rilevati),
+    litri_annui = sum(per_classe$litri_annui),
+    importo = sum(per_classe$importo)
   )
 )
 print(knitr::kable(
   dplyr::tibble(
     Classe = per_classe$classe,
     Forniture = intero(per_classe$forniture),
-    `Litri rilevati` = intero(per_classe$litri),
-    `Litri proiettati (anno)` = intero(per_classe$litri_proiettati),
-    `Importo del periodo` = euro(per_classe$importo),
-    `Importo proiettato (anno)` = euro(per_classe$importo_proiettato)
+    `Litri rilevati` = intero(per_classe$litri_rilevati),
+    `Litri annualizzati` = intero(per_classe$litri_annui),
+    `Importo netto (anno)` = euro(per_classe$importo)
   ),
-  align = "lrrrrr"
+  align = "lrrrr"
 ))
-cat("\nQuanto del limite annuo (i litri inclusi nella tariffa) la proiezione ha già raggiunto: il rischio di chiudere l'anno in eccedenza sta nelle fasce alte. Le fasce sono indicative.\n\n")
+cat("\nQuanto del limite annuo (i litri inclusi nella tariffa) i litri annualizzati hanno già raggiunto: il rischio di chiudere l'anno in eccedenza sta nelle fasce alte. Il potenziamento non paga eccedenza e non entra in questa tabella. Le fasce sono indicative.\n\n")
+con_limite <- reale[!reale$regime %in% "potenziamento", ]
 avvicinamento <- cut(
-  reale$litri / reale$litri_limite,
+  con_limite$litri_annui / con_limite$litri_limite,
   c(-Inf, 0.5, 0.8, 1, Inf),
   labels = c("fino al 50%", "dal 50% all'80%", "dall'80% al 100%", "oltre il 100% (eccedenza)"),
   right = TRUE
@@ -1029,11 +1000,52 @@ print(knitr::kable(
   dplyr::tibble(
     `Quota del limite annuo raggiunta` = as.character(per_fascia_limite$fascia),
     Forniture = intero(per_fascia_limite$forniture),
-    Quota = quota(rapporto(per_fascia_limite$forniture, nrow(reale)))
+    Quota = quota(rapporto(per_fascia_limite$forniture, nrow(con_limite)))
   ),
   align = "lrr"
 ))
-cat("\nÈ una stima lineare: non conosce la stagionalità (più conferimenti d'estate o dopo le feste) né i giorni di attività che restano, ed è instabile su periodi molto brevi o su forniture attive pochi giorni. Le colonne `litri_proiettati`, `premio_proiettato_eur`, `eccedenza_proiettata_eur` e `importo_proiettato_eur` sono anche nel CSV per fornitura (parametro `cartella_csv`).\n")
+cat("\nÈ una stima lineare: non conosce la stagionalità (più conferimenti d'estate o dopo le feste), ed è instabile su periodi molto brevi o su forniture attive pochi giorni. Le colonne `litri`, `litri_annui`, `premio_eur`, `eccedenza_eur` e `importo_eur` sono anche nel CSV per fornitura (parametro `cartella_csv`).\n")
+```
+
+```{r}
+#| label: economia-eccedenza-massima
+#| eval: !expr economia_utile
+#| results: asis
+cat("\n## La fornitura con più eccedenza per fascia\n\n")
+piu <- fornitura_con_piu_eccedenza(economia)
+if (nrow(piu) == 0) {
+  cat("Nessuna fornitura domestica del secco supera i litri inclusi nella tariffa: non c'è eccedenza da pagare.\n\n")
+} else {
+  # I codici dei bidoni del secco di quelle forniture, dall'associazione dei contenitori.
+  bidoni <- bidoni_delle_forniture(
+    importa_contenitori(file$contenitori),
+    piu$id_fornitura,
+    dal,
+    al,
+    servizio_forniture
+  )
+  piu$bidoni <- bidoni$bidoni[match(piu$id_fornitura, bidoni$id_fornitura)]
+  unita_euro <- if (annualizza) "anno" else "periodo"
+  tabella_piu <- dplyr::tibble(
+    Fascia = as.character(piu$gruppo),
+    Fornitura = piu$id_fornitura,
+    Utenza = dplyr::coalesce(piu$id_utenza, ""),
+    `Bidoni del secco` = dplyr::coalesce(piu$bidoni, ""),
+    `Litri rilevati` = intero(piu$litri),
+    `Litri annualizzati` = intero(piu$litri_annui),
+    `Litri inclusi` = intero(piu$litri_limite),
+    `Litri eccedenti` = intero(piu$litri_eccedenti)
+  )
+  tabella_piu[[paste0("Eccedenza stimata (", unita_euro, ")")]] <- euro(piu$eccedenza_eur)
+  print(knitr::kable(tabella_piu, align = "lllrrrrr"))
+  cat(
+    "\nPer ogni fascia di componenti è la fornitura con l'eccedenza più alta nello scenario ", riferimento,
+    ". I **bidoni del secco** sono i contenitori della fornitura con servizio `SECCO` attivi nel periodo, con il volume tra parentesi. L'**eccedenza stimata** è quanto pagherebbe la fornitura oltre i litri inclusi nella tariffa: litri eccedenti × euro per litro del suo contenitore (per un carrellato da 120 litri 10 euro ogni 120 litri)",
+    if (annualizza) ", sui litri annualizzati, quindi è una cifra annua con l'andamento del periodo (stima lineare, senza stagionalità)" else ", sui litri del periodo (con i giri indicati non si annualizza)",
+    ". Il potenziamento non compare perché non paga eccedenza; le fasce senza forniture in eccedenza non hanno riga.\n\n",
+    sep = ""
+  )
+}
 ```
 
 ```{r}
@@ -1069,8 +1081,8 @@ knitr::kable(
 #| eval: !expr "economia_utile && economia_due_sistemi"
 #| results: asis
 cat(
-  "\n::: {.callout-warning}\n**Copertura parziale delle antenne.** Le antenne sono in funzione da agosto 2026 e solo su una parte dei mezzi; le saponette dal 2025 e su tutti i giri. Le antenne vedono il **", quota(rapporto(ind$associate_solo_antenne + ind$associate_in_comune, ind$associate_totali)),
-  "** delle letture associate della selezione e le saponette il **", quota(rapporto(ind$associate_solo_saponette + ind$associate_in_comune, ind$associate_totali)),
+  "\n::: {.callout-warning}\n**Copertura parziale delle antenne.** Le antenne sono in funzione da agosto 2026 e solo su una parte dei mezzi; le saponette dal 2025 e su tutti i giri. Le antenne vedono il **", quota(rapporto(ind_secco$associate_solo_antenne + ind_secco$associate_in_comune, ind_secco$associate_totali)),
+  "** delle letture associate del secco della selezione e le saponette il **", quota(rapporto(ind_secco$associate_solo_saponette + ind_secco$associate_in_comune, ind_secco$associate_totali)),
   "**. Lo scenario «Solo antenne» (o «Solo saponette») ha senso solo se quel sistema era attivo su tutti i mezzi e per tutto il periodo: le forniture che il sistema non vede hanno zero litri e prendono il premio massimo, quindi i «premi in più» dipendono dai mezzi o dai giorni che il sistema non copre.\n:::\n",
   sep = ""
 )
@@ -1087,12 +1099,12 @@ cat("Il confronto più vicino al costo reale di un sistema. Per ogni fornitura s
 
 ```{r}
 #| label: senza-conferimenti
-#| eval: !expr "!is.null(anagrafica_scelta) && !con_giri && servizio_forniture == 'SECCO'"
+#| eval: !expr "!is.null(anagrafica_scelta) && !con_giri"
 #| results: asis
 secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
-senza <- forniture_senza_conferimenti(unita, secco)
+senza <- forniture_senza_conferimenti(unita_secco, secco)
 cat(
-  "\nForniture del secco (domestiche, condomini e non domestiche) con almeno una raccolta attesa nel periodo e **nessuna lettura associata**, da nessuno dei due sistemi: **",
+  "\nForniture del secco (domestiche, condomini e non domestiche) che nel periodo potevano conferire almeno una volta (massimo annuo dei contenitori × parte di anno di attività) e hanno **nessuna lettura associata**, da nessuno dei due sistemi: **",
   intero(nrow(senza)), "** su ", intero(nrow(secco)),
   " (", quota(rapporto(nrow(senza), nrow(secco))), ").\n\n",
   sep = ""
@@ -1101,9 +1113,9 @@ escluse <- attr(senza, "escluse")
 if (sum(escluse) > 0) {
   cat(
     "::: {.callout-warning}\n",
-    "Tra le forniture del secco senza letture associate, **", intero(sum(escluse)), "** non sono nell'elenco, perché non si può dire che ci si aspettasse una raccolta: ",
-    intero(escluse[["raccolte_non_note"]]), " non hanno le raccolte annue previste nei dati, ",
-    intero(escluse[["meno_di_una_attesa"]]), " sono state attive così poco che nel periodo se ne aspettava meno di una.\n:::\n\n",
+    "Tra le forniture del secco senza letture associate, **", intero(sum(escluse)), "** non sono nell'elenco, perché non si può dire che potessero conferire nel periodo: ",
+    intero(escluse[["massimo_non_noto"]]), " non hanno il massimo annuo di conferimenti nei dati, ",
+    intero(escluse[["massimo_sotto_uno"]]), " sono state attive così poco che nel periodo ne potevano fare meno di uno.\n:::\n\n",
     sep = ""
   )
 }
@@ -1125,16 +1137,16 @@ if (nrow(senza) > 0) {
     align = "lrr"
   ))
   elenco <- senza |>
-    dplyr::arrange(dplyr::desc(.data$raccolte_attese)) |>
+    dplyr::arrange(dplyr::desc(.data$conferimenti_massimi)) |>
     utils::head(30)
-  cat("\nLe prime 30 per raccolte attese:\n\n")
+  cat("\nLe prime 30 per conferimenti massimi nel periodo:\n\n")
   print(knitr::kable(
     dplyr::tibble(
       Fornitura = elenco$id_fornitura,
       Utenza = dplyr::coalesce(elenco$id_utenza, ""),
       Gruppo = elenco$gruppo,
       Contenitori = intero(elenco$contenitori),
-      `Raccolte attese` = num(elenco$raccolte_attese, 1),
+      `Conferimenti massimi` = num(elenco$conferimenti_massimi, 1),
       `Giorni di attività` = intero(elenco$giorni_attivi)
     ),
     align = "lllrrr"
@@ -1180,10 +1192,9 @@ cat("\n::: {.callout-note}\nL'analisi economica richiede i file delle forniture 
 
 - **Tariffe.** Per ogni fascia di componenti la tabella dell'azienda dà i litri annui inclusi nella tariffa, il volume minimo addebitato e il volume massimo per accedere alla premialità. Oltre i litri inclusi si paga l'eccedenza (10 € ogni 120 litri per un carrellato); fino al volume massimo per la premialità si riceve un premio di 5 € a cui se ne aggiungono 5 per ogni 120 litri in meno, fino al volume minimo. Le tariffe stanno in `tariffe_secco()` e `tariffe_contenitori()` (`R/utils_tariffe.R`); si usano le attuali anche per gli anni passati.
 - **Contenitori diversi.** I volumi si sommano in litri; eccedenza e premio si calcolano al litro, con la tariffa del contenitore più frequente della fornitura (un volume che la tabella non ha usa quella del carrellato da 120 litri). Su un anno intero il risultato è quello dei conferimenti interi.
-- **Periodo.** Litri inclusi, volume minimo e massimo per la premialità si moltiplicano per i giorni di attività della fornitura nel periodo diviso i giorni dell'anno (366 solo per un periodo dentro un anno bisestile); il premio di un conferimento si riduce allo stesso modo, così premio ed eccedenza sono la quota del periodo dell'importo annuo. Con un periodo più corto di un anno litri e classi si leggono rispetto a queste soglie parziali (`soglie_del_periodo()`).
-- **Proiezione annua.** `litri proiettati = litri rilevati / fattore`, con il fattore della fornitura (giorni di attività / giorni dell'anno); premio, eccedenza e importo si riportano allo stesso modo (`economia_forniture()`). La classe non cambia: la proiezione dice quanto varrebbe l'anno intero se il ritmo del periodo continuasse. È lineare: niente stagionalità.
+- **Annualizzazione.** Le soglie sono annue e costanti. `litri annualizzati = litri rilevati / fattore`, con il fattore della fornitura (giorni di attività nel periodo / giorni dell'anno, 366 solo dentro un anno bisestile); classe, premio ed eccedenza si calcolano sui litri annualizzati e sono valori annui (`economia_forniture()`). Scalare le soglie al periodo darebbe la stessa classe: la scelta è del proprietario (8/11/2026). È lineare: niente stagionalità. Con i giri indicati non si annualizza (pochi giorni): si scalano le soglie.
 - **Scenari.** Con tutti e due i sistemi: «Saponette e antenne» (il riferimento, ogni lettura una volta), «Solo saponette» e «Solo antenne». Con un solo sistema, un solo scenario («Rilevazione reale (Saponette)» o «(Antenne)»): l'altro non si simula, perché darebbe zero litri a tutte le forniture, cioè il premio massimo a tutte. Un sistema conta se ha letture associate del secco nel periodo (`sistemi_con_conferimenti()`, `scenari_rilevazione()`).
-- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Le letture sono quelle del secco (`letture_del_secco()`): bidoni di altri servizi esclusi, saponette tutte, antenne con transponder `SECCO` o, senza servizio a database, con servizio atteso `SECCO`. Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
-- **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento vale il limite di 6.240 litri.
+- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Dalla propensione in poi le letture sono quelle associate del secco (`letture_associate_del_secco()`): saponette con transponder `SECCO`, antenne con transponder `SECCO` o letta in un giro del secco (`servizio_atteso` `SECCO`). Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
+- **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento non ci sono né premio né eccedenza, qualunque sia il volume.
 - **Anagrafica.** Forniture e contenitori vengono dalle tabelle estratte (`dv_cnt_associazione_contenitori`, `dv_associazione_componenti`, `dv_potenziamento_secco`), non dalle letture. Un contenitore senza tag non compare.
 - **Con i giri.** Vedi sopra: la finestra oraria di un giro è, in ordine, quella indicata nel file, quella delle letture delle antenne del giro allargata di `margine_minuti` minuti, o la giornata intera. Le forniture sono quelle lette nei giri, i litri sono quelli di quelle letture e le soglie annue valgono per il periodo scelto: va letto come un campione, non come l'anno di quelle forniture.

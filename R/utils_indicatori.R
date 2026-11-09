@@ -400,7 +400,7 @@ letture_di_un_sistema <- function(finali, scartate) {
 #'
 #' Risultato: una riga per lettura con `RFID`, `data_lettura`, `sistema`,
 #' `stato`, `id_fornitura`, `volume` e `servizio_transponder`. Il filtro sul secco
-#' si fa prima, sulle letture di ogni sistema (`letture_del_secco()`).
+#' si fa prima, sulle letture di ogni sistema (`letture_associate_del_secco()`), solo per le sezioni sul secco del report.
 #' @param antenne,saponette Letture dei file finali dei due sistemi.
 #' @param scartate_antenne,scartate_saponette Registro delle scartate.
 #' @noRd

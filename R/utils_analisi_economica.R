@@ -104,17 +104,27 @@ conferimenti_per_fornitura <- function(unita, anagrafica, sistemi, servizio = NU
 #' Propensione al conferimento delle forniture, per gruppo
 #'
 #' Contesto: gli indici `P_N` (letture per contenitore) e `P_V` (volume letto sul
-#' volume dei contenitori) del documento del proprietario. Dicono quanto, rispetto
-#' a quanto ci si aspettava, i contenitori sono stati conferiti.
+#' volume massimo conferibile) del documento del proprietario. Dicono quanto dei
+#' conferimenti possibili i contenitori hanno effettivamente fatto.
+#' `numero_raccolte_annue` dell'associazione dei contenitori non è quanti
+#' conferimenti ci si aspetta da una fornitura: è il **massimo** che quel bidone
+#' potrebbe fare in un anno (26 con una raccolta ogni due settimane, 52 con una a
+#' settimana). Molti clienti conferiscono meno, ed è normale: un valore sotto il
+#' massimo non è un'anomalia.
 #'
 #' Funzionamento: per gruppo di forniture (casa vuota, potenziamento, 1 ... 6 o
 #' più componenti, più le domestiche in totale) conta i contenitori `C` dell'anagrafica e le
 #' letture associate (`PIA`) `L` dei due sistemi insieme di quelle forniture.
 #' - `propensione_numerica` = `L / C`;
-#' - `raccolte_attese` = raccolte annue previste × `fattore` × contenitori, e
-#'   `propensione_sulle_attese` = `L` / raccolte attese;
-#' - `propensione_volumetrica` = litri letti / capacità, dove la capacità è il
-#'   volume dei contenitori × le raccolte attese.
+#' - `letture_per_fornitura` = `L` / forniture; `litri_per_fornitura` = litri
+#'   letti / forniture; `litri_per_contenitore` = litri letti / contenitori;
+#' - `conferimenti_massimi` = somma, sui contenitori, del massimo annuo di ognuno ×
+#'   `fattore` (la parte di anno di attività), e `propensione_sul_massimo` =
+#'   `L` / conferimenti massimi;
+#' - `propensione_volumetrica` = litri letti / `litri_massimi`, dove i litri massimi
+#'   sono la somma, sui contenitori, di volume × massimo annuo × `fattore`.
+#' Nei due rapporti col massimo entrano solo le forniture di cui il massimo è noto
+#' (`letture_con_massimo`, `litri_con_massimo`).
 #'
 #' Risultato: un tibble con una riga per gruppo.
 #' @param unita Risultato di `unita_di_lettura()`.
@@ -134,8 +144,9 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
     dplyr::mutate(
       conferimenti = dplyr::coalesce(.data$conferimenti, 0L),
       litri = dplyr::coalesce(.data$litri, 0),
-      raccolte_attese = .data$raccolte_annue * .data$fattore * .data$contenitori,
-      capacita = .data$volume_totale * .data$raccolte_annue * .data$fattore
+      conferimenti_massimi = .data$conferimenti_massimi_annui * .data$fattore,
+      litri_massimi = .data$litri_massimi_annui * .data$fattore,
+      massimo_noto = !is.na(.data$conferimenti_massimi)
     )
   riassunto <- function(x, gruppo) {
     dplyr::summarise(
@@ -143,9 +154,12 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
       forniture = dplyr::n(),
       contenitori = sum(.data$contenitori),
       letture = sum(.data$conferimenti),
-      raccolte_attese = sum(.data$raccolte_attese, na.rm = TRUE),
+      letture_con_massimo = sum(.data$conferimenti[.data$massimo_noto]),
+      conferimenti_massimi = sum(.data$conferimenti_massimi, na.rm = TRUE),
+      # prima di `litri`: una colonna appena creata nasconde l'originale
+      litri_con_massimo = sum(.data$litri[.data$massimo_noto]),
       litri = sum(.data$litri),
-      capacita = sum(.data$capacita, na.rm = TRUE)
+      litri_massimi = sum(.data$litri_massimi, na.rm = TRUE)
     ) |>
       dplyr::mutate(gruppo = gruppo, .before = 1)
   }
@@ -158,37 +172,42 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
   ) |>
     dplyr::mutate(
       propensione_numerica = rapporto(.data$letture, .data$contenitori),
-      propensione_sulle_attese = rapporto(.data$letture, .data$raccolte_attese),
-      propensione_volumetrica = rapporto(.data$litri, .data$capacita)
+      letture_per_fornitura = rapporto(.data$letture, .data$forniture),
+      litri_per_fornitura = rapporto(.data$litri, .data$forniture),
+      litri_per_contenitore = rapporto(.data$litri, .data$contenitori),
+      propensione_sul_massimo = rapporto(.data$letture_con_massimo, .data$conferimenti_massimi),
+      propensione_volumetrica = rapporto(.data$litri_con_massimo, .data$litri_massimi)
     )
 }
 
-#' Forniture senza nessun conferimento nel periodo in cui se ne aspettavano
+#' Forniture senza nessun conferimento nel periodo, pur potendone fare
 #'
 #' Contesto: una fornitura senza letture non è una fornitura virtuosa: può avere il
 #' tag rotto o non letto, il contenitore non esposto o lo smaltimento in un altro
-#' modo. Il report le segnala e non le premia.
+#' modo. Il report le segnala e non le premia. Si cercano solo quelle che nel
+#' periodo potevano conferire almeno una volta, secondo il massimo annuo dei loro
+#' contenitori (`numero_raccolte_annue`: il massimo possibile, non un'attesa).
 #' Funzionamento: tiene le forniture con tag dell'anagrafica (di qualunque gruppo:
 #' domestiche, condomini, non domestiche) che, nel periodo, non hanno nessuna
-#' lettura associata dei due sistemi insieme e per cui le raccolte attese
-#' (raccolte annue × `fattore`) sono almeno una. Le forniture senza lettura che
-#' restano fuori non spariscono in silenzio: se ne contano i due motivi
-#' nell'attributo `escluse`.
-#' Risultato: l'anagrafica di quelle forniture con `raccolte_attese`. L'attributo
-#' `escluse` è un vettore con `raccolte_non_note` (le raccolte annue mancano nei
-#' dati) e `meno_di_una_attesa` (nel periodo se ne aspetta meno di una).
+#' lettura associata dei due sistemi insieme e per cui i conferimenti massimi nel
+#' periodo (massimo annuo dei contenitori × `fattore`) sono almeno uno. Le
+#' forniture senza lettura che restano fuori non spariscono in silenzio: se ne
+#' contano i due motivi nell'attributo `escluse`.
+#' Risultato: l'anagrafica di quelle forniture con `conferimenti_massimi`. L'attributo
+#' `escluse` è un vettore con `massimo_non_noto` (il massimo annuo manca nei dati)
+#' e `massimo_sotto_uno` (nel periodo se ne potevano fare meno di uno).
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @noRd
 forniture_senza_conferimenti <- function(unita, anagrafica) {
   lette <- unique(unita$id_fornitura[unita$stato %in% "PIA"])
   senza_letture <- anagrafica |>
-    dplyr::mutate(raccolte_attese = .data$raccolte_annue * .data$fattore) |>
+    dplyr::mutate(conferimenti_massimi = .data$conferimenti_massimi_annui * .data$fattore) |>
     dplyr::filter(!.data$id_fornitura %in% lette)
-  risultato <- dplyr::filter(senza_letture, (.data$raccolte_attese >= 1) %in% TRUE)
+  risultato <- dplyr::filter(senza_letture, (.data$conferimenti_massimi >= 1) %in% TRUE)
   attr(risultato, "escluse") <- c(
-    raccolte_non_note = sum(is.na(senza_letture$raccolte_attese)),
-    meno_di_una_attesa = sum(senza_letture$raccolte_attese < 1, na.rm = TRUE)
+    massimo_non_noto = sum(is.na(senza_letture$conferimenti_massimi)),
+    massimo_sotto_uno = sum(senza_letture$conferimenti_massimi < 1, na.rm = TRUE)
   )
   risultato
 }
@@ -211,18 +230,21 @@ forniture_senza_conferimenti <- function(unita, anagrafica) {
 #' litri: è il premio che darebbe quel solo sistema, e `rilevata` è falso.
 #'
 #' Risultato: per fornitura e scenario, `conferimenti`, `litri`, `rilevata` e le
-#' colonne di `economia_forniture()` (comprese le proiezioni annue). Senza
+#' colonne di `economia_forniture()` (litri ed euro annualizzati). Senza
 #' scenari, un tibble senza righe.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @param con_antenne,con_saponette Quali sistemi hanno letture nel periodo
 #'   (`scenari_rilevazione()`).
+#' @param annualizza Se riportare i litri a un anno e usare le soglie annue
+#'   (predefinito), o scalare le soglie al periodo (`economia_forniture()`).
 #' @noRd
 analisi_economica <- function(
   unita,
   anagrafica,
   con_antenne = TRUE,
-  con_saponette = TRUE
+  con_saponette = TRUE,
+  annualizza = TRUE
 ) {
   popolazione <- anagrafica |>
     dplyr::filter(
@@ -246,7 +268,7 @@ analisi_economica <- function(
         conferimenti = dplyr::coalesce(.data$conferimenti, 0L),
         litri = dplyr::coalesce(.data$litri, 0)
       ) |>
-      economia_forniture()
+      economia_forniture(annualizza)
   }) |>
     dplyr::bind_rows() |>
     dplyr::mutate(scenario = factor(.data$scenario, names(scenari)))
@@ -265,10 +287,9 @@ analisi_economica <- function(
 #'
 #' Risultato: un tibble con `forniture`, `premialita`, `ordinarie`, `eccedenti`, le
 #' quote corrispondenti, `litri`, `litri_in_premialita`, `litri_sotto_massimo`,
-#' `litri_eccedenti`, `premi_eur`, `eccedenze_eur` e `importo_eur`, più la
-#' proiezione annua (`litri_proiettati`, `premi_proiettati_eur`,
-#' `eccedenze_proiettate_eur`, `importo_proiettato_eur`: ogni fornitura riportata
-#' a un anno intero con l'andamento del periodo, come in `economia_forniture()`).
+#' `litri_eccedenti`, `premi_eur`, `eccedenze_eur` e `importo_eur`. `litri_rilevati`
+#' sono i litri conferiti nel periodo; `litri` e gli altri litri ed euro sono
+#' annualizzati (`economia_forniture()`).
 #' @param economia Risultato di `analisi_economica()`.
 #' @param per_gruppo Se dividere anche per gruppo di forniture.
 #' @noRd
@@ -280,17 +301,14 @@ riepilogo_economico <- function(economia, per_gruppo = FALSE) {
       premialita = sum(.data$classe %in% "Premialit\u00e0"),
       ordinarie = sum(.data$classe %in% "Ordinaria"),
       eccedenti = sum(.data$classe %in% "Eccedente"),
-      litri_in_premialita = sum(.data$litri[.data$classe %in% "Premialit\u00e0"]),
-      litri = sum(.data$litri),
+      litri_in_premialita = sum(.data$litri_annui[.data$classe %in% "Premialit\u00e0"]),
+      litri_rilevati = sum(.data$litri),
+      litri = sum(.data$litri_annui, na.rm = TRUE),
       litri_sotto_massimo = sum(.data$litri_sotto_massimo, na.rm = TRUE),
       litri_eccedenti = sum(.data$litri_eccedenti, na.rm = TRUE),
       premi_eur = sum(.data$premio_eur, na.rm = TRUE),
       eccedenze_eur = sum(.data$eccedenza_eur, na.rm = TRUE),
       importo_eur = sum(.data$importo_eur, na.rm = TRUE),
-      litri_proiettati = sum(.data$litri_proiettati, na.rm = TRUE),
-      premi_proiettati_eur = sum(.data$premio_proiettato_eur, na.rm = TRUE),
-      eccedenze_proiettate_eur = sum(.data$eccedenza_proiettata_eur, na.rm = TRUE),
-      importo_proiettato_eur = sum(.data$importo_proiettato_eur, na.rm = TRUE),
       .by = dplyr::all_of(chiavi)
     ) |>
     dplyr::mutate(
@@ -329,6 +347,38 @@ forniture_per_fascia <- function(economia, su = c("eccedenza", "premio"), limiti
     dplyr::left_join(totali, by = "scenario") |>
     dplyr::mutate(quota = rapporto(.data$forniture, .data$totale)) |>
     dplyr::select(-"totale")
+}
+
+#' La fornitura con più eccedenza da pagare, per fascia di componenti
+#'
+#' Contesto: per ogni gruppo di forniture (casa vuota, 1 ... 6 o più componenti)
+#' dice qual è l'utenza che, secondo la stima, pagherebbe di più in eccedenza: il
+#' caso più grave del gruppo. Il potenziamento non compare mai, perché non paga
+#' eccedenza.
+#'
+#' Funzionamento: nello scenario indicato (di norma il riferimento) tiene le
+#' forniture con un'eccedenza positiva e, per ogni gruppo, quella con
+#' `eccedenza_eur` più alta (a pari eccedenza, più litri). I gruppi senza
+#' forniture eccedenti non compaiono. L'eccedenza è quella di
+#' `economia_forniture()`: annua se i litri sono annualizzati, del periodo
+#' altrimenti.
+#'
+#' Risultato: una riga per gruppo con `gruppo`, `id_fornitura`, `id_utenza`,
+#' `componenti_medi`, `litri` (rilevati nel periodo), `litri_annui`,
+#' `litri_limite`, `litri_eccedenti` ed `eccedenza_eur`.
+#' @param economia Risultato di `analisi_economica()`.
+#' @param scenario Scenario da guardare; senza, il riferimento.
+#' @noRd
+fornitura_con_piu_eccedenza <- function(economia, scenario = scenario_riferimento(economia)) {
+  nome_scenario <- scenario
+  economia |>
+    dplyr::filter(.data$scenario == nome_scenario, .data$eccedenza_eur > 0) |>
+    dplyr::arrange(.data$gruppo, dplyr::desc(.data$eccedenza_eur), dplyr::desc(.data$litri)) |>
+    dplyr::distinct(.data$gruppo, .keep_all = TRUE) |>
+    dplyr::select(
+      "gruppo", "id_fornitura", "id_utenza", "componenti_medi", "litri",
+      "litri_annui", "litri_limite", "litri_eccedenti", "eccedenza_eur"
+    )
 }
 
 #' Che cosa cambierebbe fatturando con un solo sistema

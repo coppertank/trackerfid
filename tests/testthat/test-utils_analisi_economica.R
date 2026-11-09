@@ -8,7 +8,8 @@ anagrafica_economia_prova <- function() {
       contenitori = 1L,
       volume_contenitore = 120,
       volume_totale = 120,
-      raccolte_annue = raccolte,
+      conferimenti_massimi_annui = raccolte,
+      litri_massimi_annui = raccolte * 120,
       fattore = fattore,
       componenti_medi = componenti,
       potenziamento = potenziamento
@@ -126,30 +127,26 @@ test_that("il riferimento dell'impatto e' il primo scenario, qualunque nome abbi
   )
 })
 
-test_that("la proiezione annua riporta litri ed euro a un anno intero", {
+test_that("l'analisi economica annualizza i litri e usa le soglie annue", {
   anagrafica <- anagrafica_economia_prova()
   # F1 e' attiva mezzo anno nel periodo: i suoi litri valgono il doppio in un anno
   anagrafica$fattore[anagrafica$id_fornitura == "F1"] <- 0.5
   economia <- analisi_economica(unita_economia_prova(), anagrafica)
   f1 <- economia[economia$scenario == "Saponette e antenne" & economia$id_fornitura == "F1", ]
-  expect_equal(f1$litri_proiettati, f1$litri / 0.5)
-  expect_equal(f1$importo_proiettato_eur, f1$importo_eur / 0.5)
-  # la classe non cambia: litri e soglie si scalano allo stesso modo
-  annuale <- economia_forniture(dplyr::tibble(
-    litri = f1$litri_proiettati,
-    componenti_medi = f1$componenti_medi,
-    potenziamento = FALSE,
-    fattore = 1
-  ))
-  expect_identical(as.character(annuale$classe), as.character(f1$classe))
-  expect_equal(annuale$importo_eur, f1$importo_proiettato_eur)
-  # il riepilogo somma le proiezioni delle forniture
+  expect_equal(f1$litri_annui, f1$litri / 0.5)
+  expect_equal(f1$litri_limite, 720)
+  # stessi litri, stessa classe e importo dimezzato scalando le soglie al periodo
+  scalata <- analisi_economica(unita_economia_prova(), anagrafica, annualizza = FALSE)
+  s1 <- scalata[scalata$scenario == "Saponette e antenne" & scalata$id_fornitura == "F1", ]
+  expect_identical(as.character(s1$classe), as.character(f1$classe))
+  expect_equal(s1$importo_eur, f1$importo_eur * 0.5)
+  # il riepilogo distingue i litri rilevati da quelli annualizzati
   riepilogo <- riepilogo_economico(economia)
   unione <- riepilogo[riepilogo$scenario == "Saponette e antenne", ]
   tutte <- economia[economia$scenario == "Saponette e antenne", ]
-  expect_equal(unione$litri_proiettati, sum(tutte$litri_proiettati))
-  expect_equal(unione$importo_proiettato_eur, sum(tutte$importo_proiettato_eur))
-  expect_gt(unione$litri_proiettati, unione$litri)
+  expect_equal(unione$litri_rilevati, sum(tutte$litri))
+  expect_equal(unione$litri, sum(tutte$litri_annui))
+  expect_gt(unione$litri, unione$litri_rilevati)
 })
 
 test_that("le fasce si dividono per scenario solo se gli scenari sono piu' di uno", {
@@ -204,31 +201,31 @@ test_that("i conferimenti sono le letture compatibili e i litri il volume dei co
   )
 })
 
-test_that("le forniture senza conferimenti sono quelle da cui ci si aspettava almeno una raccolta", {
+test_that("le forniture senza conferimenti sono quelle che potevano conferire almeno una volta", {
   senza <- forniture_senza_conferimenti(unita_economia_prova(), anagrafica_economia_prova())
-  # F3 e F7 non hanno nessuna lettura; F4 non era attiva abbastanza; F5 e' un condominio ma e' senza letture
+  # F3 e F7 non hanno nessuna lettura; F4 non era attiva abbastanza (massimo sotto uno); F5 e' un condominio ma e' senza letture
   expect_setequal(senza$id_fornitura, c("F3", "F5", "F7"))
-  expect_true(all(senza$raccolte_attese >= 1))
+  expect_true(all(senza$conferimenti_massimi >= 1))
   # una lettura non compatibile non basta
   solo_pit <- dplyr::filter(unita_economia_prova(), stato == "PIT")
   expect_true("F1" %in% forniture_senza_conferimenti(solo_pit, anagrafica_economia_prova())$id_fornitura)
 })
 
 test_that("le forniture senza letture che restano fuori dall'elenco si contano per motivo", {
-  # F4 e' attiva cinque giorni: ci si aspetta meno di una raccolta
+  # F4 e' attiva cinque giorni: nel periodo poteva conferire meno di una volta
   senza <- forniture_senza_conferimenti(unita_economia_prova(), anagrafica_economia_prova())
-  expect_equal(attr(senza, "escluse"), c(raccolte_non_note = 0, meno_di_una_attesa = 1))
-  # se le raccolte annue di F3 mancano nei dati, F3 non e' nell'elenco ma si conta
+  expect_equal(attr(senza, "escluse"), c(massimo_non_noto = 0, massimo_sotto_uno = 1))
+  # se il massimo annuo di F3 manca nei dati, F3 non e' nell'elenco ma si conta
   anagrafica <- anagrafica_economia_prova()
-  anagrafica$raccolte_annue[anagrafica$id_fornitura == "F3"] <- NA
+  anagrafica$conferimenti_massimi_annui[anagrafica$id_fornitura == "F3"] <- NA
   senza <- forniture_senza_conferimenti(unita_economia_prova(), anagrafica)
   expect_setequal(senza$id_fornitura, c("F5", "F7"))
-  expect_equal(attr(senza, "escluse"), c(raccolte_non_note = 1, meno_di_una_attesa = 1))
+  expect_equal(attr(senza, "escluse"), c(massimo_non_noto = 1, massimo_sotto_uno = 1))
   # le forniture lette non sono escluse: non c'e' niente da segnalare
   tutte_lette <- dplyr::filter(anagrafica_economia_prova(), id_fornitura %in% c("F1", "F2"))
   vuota <- forniture_senza_conferimenti(unita_economia_prova(), tutte_lette)
   expect_identical(nrow(vuota), 0L)
-  expect_equal(attr(vuota, "escluse"), c(raccolte_non_note = 0, meno_di_una_attesa = 0))
+  expect_equal(attr(vuota, "escluse"), c(massimo_non_noto = 0, massimo_sotto_uno = 0))
 })
 
 test_that("l'analisi economica classifica le forniture domestiche del secco in ogni scenario", {
@@ -336,10 +333,15 @@ test_that("la propensione divide letture e litri per contenitori e capacita'", {
   expect_identical(uno$contenitori, 4L)
   expect_identical(uno$letture, 5L)
   expect_equal(uno$propensione_numerica, 5 / 4)
-  attese <- 26 * 1 + 26 + 26 * 5 / 365 + 26
-  expect_equal(uno$raccolte_attese, attese)
-  expect_equal(uno$propensione_sulle_attese, 5 / attese)
-  expect_equal(uno$propensione_volumetrica, (5 * 120) / (120 * attese))
+  # letture e litri per fornitura e per contenitore (5 letture da 120 litri, 4 forniture, 4 contenitori)
+  expect_equal(uno$letture_per_fornitura, 5 / 4)
+  expect_equal(uno$litri_per_fornitura, 600 / 4)
+  expect_equal(uno$litri_per_contenitore, 600 / 4)
+  # conferimenti massimi: 26 per ogni contenitore, ridotti dalla parte di anno di attivita'
+  massimi <- 26 * 1 + 26 + 26 * 5 / 365 + 26
+  expect_equal(uno$conferimenti_massimi, massimi)
+  expect_equal(uno$propensione_sul_massimo, 5 / massimi)
+  expect_equal(uno$propensione_volumetrica, (5 * 120) / (120 * massimi))
   totale <- propensione[propensione$gruppo == "Domestiche (totale)", ]
   expect_identical(totale$forniture, 6L)
   expect_identical(totale$letture, 5L + 9L + 3L)
@@ -348,3 +350,29 @@ test_that("la propensione divide letture e litri per contenitori e capacita'", {
   expect_identical(vuoto$forniture, 0L)
   expect_true(is.na(vuoto$propensione_numerica))
 })
+
+test_that("per ogni gruppo si sceglie la fornitura con piu' eccedenza, non il potenziamento", {
+  economia <- dplyr::tibble(
+    scenario = factor("Saponette e antenne"),
+    id_fornitura = c("F1", "F2", "F3", "F4", "F5"),
+    id_utenza = paste0("U", 1:5),
+    gruppo = factor(
+      c("1 componente", "1 componente", "2 componenti", "Potenziamento", "3 componenti"),
+      gruppi_forniture()
+    ),
+    componenti_medi = c(1, 1, 2, 3, 3),
+    litri = c(900, 1500, 1000, 9000, 500),
+    litri_annui = c(900, 1500, 1000, 9000, 500),
+    litri_limite = c(720, 720, 960, 6240, 1200),
+    litri_eccedenti = c(180, 780, 40, 0, 0),
+    eccedenza_eur = c(15, 65, 3.33, 0, 0)
+  )
+  piu <- fornitura_con_piu_eccedenza(economia)
+  # F2 batte F1 nel gruppo; il potenziamento (non paga) e il gruppo senza eccedenza non compaiono
+  expect_identical(piu$id_fornitura, c("F2", "F3"))
+  expect_identical(as.character(piu$gruppo), c("1 componente", "2 componenti"))
+  expect_equal(piu$eccedenza_eur, c(65, 3.33))
+  # in un solo scenario non c'e' altro da scegliere; senza eccedenze la tabella e' vuota
+  expect_identical(nrow(fornitura_con_piu_eccedenza(dplyr::mutate(economia, eccedenza_eur = 0))), 0L)
+})
+

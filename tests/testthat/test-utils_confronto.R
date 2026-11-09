@@ -159,32 +159,28 @@ test_that("il confronto usa le letture delle antenne già filtrate", {
   expect_identical(secco$origine, c("Entrambe", "Saponette"))
 })
 
-test_that("le letture del secco: bidoni di altri servizi mai, saponette tutto il resto, antenne dal giro", {
+test_that("le letture associate del secco: saponette per transponder, antenne per transponder o giro", {
   letture <- dplyr::tibble(
     RFID = c("A1", "A2", "A3", "A4", "A5", "A6", "A7"),
-    presente_a_database = c("PIA", "PIA", "PIA", "PIA", "PIT", "NP", "NP"),
-    servizio_transponder = c("SECCO", " secco ", "CARTA", NA, NA, NA, ""),
-    servizio_atteso = c("CARTA", "SECCO", "SECCO", "SECCO", "SECCO", "CARTA", "secco")
+    presente_a_database = c("PIA", "PIA", "PIA", "PIT", "NP", "PIA", "Presente"),
+    servizio_transponder = c("SECCO", " secco ", "CARTA", NA, NA, "PLASTICA E METALLI", "SECCO"),
+    servizio_atteso = c("CARTA", "SECCO", "SECCO", "SECCO", "SECCO", "CARTA", "CARTA")
   )
-  # antenne: A1 e A2 sono bidoni del secco (anche letti in un giro della carta);
-  # A3 e' un bidone della carta, che un giro del secco non rende del secco;
-  # A4, A5 e A7 non hanno servizio a database e sono letti in un giro del secco;
-  # A6 non ha servizio e il giro e' della carta
+  # antenne: A1 e A2 hanno il transponder del secco; A3 e' un bidone della carta letto in un giro
+  # del secco (conta per il servizio atteso); A4 e A5 non sono associati; A6 e' di altro servizio e giro;
+  # A7 e' un vecchio "Presente" con transponder del secco
   expect_identical(
-    letture_del_secco(letture, "antenne")$RFID,
-    c("A1", "A2", "A4", "A5", "A7")
+    letture_associate_del_secco(letture, "antenne")$RFID,
+    c("A1", "A2", "A3", "A7")
   )
-  # saponette: tutte le letture sono del secco, tranne i bidoni di altri servizi
-  # (il servizio atteso non conta: le saponette non lo hanno)
+  # saponette: conta solo il transponder (non hanno il servizio atteso)
   expect_identical(
-    letture_del_secco(letture, "saponette")$RFID,
-    c("A1", "A2", "A4", "A5", "A6", "A7")
+    letture_associate_del_secco(letture, "saponette")$RFID,
+    c("A1", "A2", "A7")
   )
-  # senza servizio atteso (come le saponette) un'antenna non ha un giro: restano i bidoni del secco
+  # un'antenna senza servizio atteso non ha un giro: contano i bidoni del secco
   senza_atteso <- dplyr::select(letture, -"servizio_atteso")
-  expect_identical(letture_del_secco(senza_atteso, "antenne")$RFID, c("A1", "A2"))
-  # nessuna riga da togliere: le stesse letture; senza righe resta senza righe
-  solo_secco <- dplyr::filter(letture, RFID %in% c("A1", "A5"))
-  expect_identical(letture_del_secco(solo_secco, "saponette"), solo_secco)
-  expect_identical(nrow(letture_del_secco(letture[0, ], "antenne")), 0L)
+  expect_identical(letture_associate_del_secco(senza_atteso, "antenne")$RFID, c("A1", "A2", "A7"))
+  expect_identical(nrow(letture_associate_del_secco(letture[0, ], "antenne")), 0L)
 })
+

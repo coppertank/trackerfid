@@ -311,7 +311,7 @@ La media è il tasso di tutte le forniture domestiche censite con le occasioni c
 
 <p class="formula">conferimenti dell'anno = tasso × raccolte previste in un anno × contenitori attivi</p>
 
-Le raccolte previste vengono dall'anagrafica del contenitore: 26 per una raccolta ogni due settimane. I contenitori attivi sono quelli della fornitura non cessati alla fine del periodo: un contenitore sostituito non conta due volte, due contenitori attivi insieme sì.
+Le raccolte previste vengono dall'anagrafica del contenitore (`numero_raccolte_annue`) e sono il **massimo** di conferimenti che quel bidone può fare in un anno, non quanti ne farà: 26 per una raccolta ogni due settimane, 52 per una a settimana. Sono quindi il numero di occasioni possibili, e il tasso è la quota di quelle occasioni in cui il bidone è stato esposto. I contenitori attivi sono quelli della fornitura non cessati alla fine del periodo: un contenitore sostituito non conta due volte, due contenitori attivi insieme sì.
 
 L'incertezza della stima è un intervallo: con probabilità `{r} quota(parametri$livello_intervallo)` i conferimenti dell'anno stanno tra un valore basso e uno alto, riportati nei CSV. Il tasso si tratta come una probabilità incerta, con una distribuzione Beta che ha la media della formula sopra: più occasioni, intervallo più stretto.
 

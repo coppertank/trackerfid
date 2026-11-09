@@ -224,7 +224,8 @@ componenti_medi_pesati <- function(attivita, componenti) {
 #'
 #' Risultato: una riga per fornitura con `id_fornitura`, `servizio`, `id_utenza`,
 #' `categoria`, `sottocategoria`, `tipo`, `contenitori`, `volume_contenitore` (il
-#' più frequente), `volume_totale`, `raccolte_annue`, `inizio`, `fine`,
+#' più frequente), `volume_totale`, `conferimenti_massimi_annui` (somma dei massimi annui dei
+#' contenitori), `litri_massimi_annui`, `inizio`, `fine`,
 #' `giorni_attivi`, `fattore`, `componenti_medi`, `giorni_con_componenti`,
 #' `potenziamento` e `gruppo`.
 #' @param contenitori Tabella di `importa_contenitori(categoria = TRUE)`.
@@ -268,11 +269,18 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
   primo_del_contenitore <- !duplicated(paste(gruppo, attivi$codice_transponder))
   # A parità di frequenza vince il volume più grande: si ordinano per volume.
   per_volume <- order(gruppo, attivi$volume)
-  raccolte <- estremi_per_gruppo(
-    dplyr::coalesce(as.numeric(attivi$numero_raccolte_annue), -Inf),
+  # `numero_raccolte_annue` è il massimo di conferimenti che un bidone può fare in
+  # un anno (26 per una raccolta ogni due settimane, 52 per una a settimana), non
+  # quanti ne farà: per la fornitura si sommano i massimi dei suoi contenitori,
+  # ognuno una volta, e i litri massimi (volume × massimo di ogni contenitore).
+  raccolte_bidone <- ifelse(primo_del_contenitore, as.numeric(attivi$numero_raccolte_annue), NA_real_)
+  con_massimo <- somma_per_gruppo(as.numeric(!is.na(raccolte_bidone)), gruppo, n_gruppi) > 0
+  massimo_annuo <- somma_per_gruppo(dplyr::coalesce(raccolte_bidone, 0), gruppo, n_gruppi)
+  litri_massimi <- somma_per_gruppo(
+    dplyr::coalesce(raccolte_bidone * attivi$volume, 0),
     gruppo,
     n_gruppi
-  )$massimo
+  )
   per_fornitura <- dplyr::tibble(
     id_fornitura = attivi$id_fornitura[!duplicated(gruppo)],
     servizio = toupper(primo_per_gruppo(attivi$servizio_transponder, gruppo, n_gruppi)),
@@ -289,7 +297,8 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
       gruppo,
       n_gruppi
     ),
-    raccolte_annue = ifelse(is.finite(raccolte), raccolte, NA_real_),
+    conferimenti_massimi_annui = ifelse(con_massimo, massimo_annuo, NA_real_),
+    litri_massimi_annui = ifelse(con_massimo, litri_massimi, NA_real_),
     inizio = pmax(as.Date(attivazione$minimo, origin = "1970-01-01"), dal),
     fine = pmin(as.Date(cessazione$massimo, origin = "1970-01-01"), al)
   ) |>
@@ -338,6 +347,151 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
       )
     ) |>
     dplyr::select(-"giorni_potenziamento", -"categoria_nuclei")
+}
+
+#' Bidoni di alcune forniture, per servizio
+#'
+#' Contesto: l'anagrafica delle forniture non conserva i codici dei contenitori; per
+#' mostrare di quali bidoni parla una riga di una tabella (per esempio la fornitura
+#' con più eccedenza) si cercano nell'associazione dei contenitori.
+#' Funzionamento: tiene i contenitori delle forniture indicate, attivi almeno un
+#' giorno nel periodo e del servizio scelto (maiuscole e spazi ininfluenti); per
+#' ogni fornitura elenca i codici distinti con il volume tra parentesi.
+#' Risultato: `id_fornitura` e `bidoni`, per esempio `0000012345 (120 L)`; i
+#' contenitori di una stessa fornitura sono separati da una virgola.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param id_forniture Forniture da cercare.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @noRd
+bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio = "SECCO") {
+  dal <- as.Date(dal)
+  al <- as.Date(al)
+  attivi <- contenitori |>
+    dplyr::mutate(id_fornitura = as.character(.data$id_fornitura)) |>
+    dplyr::filter(
+      .data$id_fornitura %in% as.character(id_forniture),
+      (.data$data_attivazione_contenitore <= al &
+        .data$data_cessazione_contenitore >= dal) %in% TRUE
+    )
+  if (!is.null(servizio)) {
+    attivi <- dplyr::filter(
+      attivi,
+      toupper(trimws(.data$servizio_transponder)) %in% toupper(trimws(servizio))
+    )
+  }
+  attivi |>
+    dplyr::distinct(.data$id_fornitura, .data$codice_transponder, .keep_all = TRUE) |>
+    dplyr::mutate(
+      bidone = paste0(
+        .data$codice_transponder,
+        ifelse(is.na(.data$volume), "", paste0(" (", formatta_numero(.data$volume), " L)"))
+      )
+    ) |>
+    dplyr::summarise(bidoni = paste(.data$bidone, collapse = ", "), .by = "id_fornitura")
+}
+
+#' Anagrafica delle forniture di tutti i servizi: una riga per fornitura e servizio
+#'
+#' Contesto: la tabella di forniture e contenitori del report mostra tutti i
+#' servizi dell'associazione dei contenitori (secco, carta, plastica...), non solo
+#' il secco.
+#' Funzionamento: individua i servizi dei contenitori attivi nel periodo e per
+#' ognuno chiama `anagrafica_forniture(servizio =)`, che conta solo i contenitori di
+#' quel servizio. Una fornitura con contenitori di servizi diversi compare quindi
+#' una volta per servizio, ciascuna con i suoi contenitori e volumi; gruppo,
+#' componenti e potenziamento sono quelli della fornitura. I contenitori senza
+#' servizio indicato non compaiono.
+#' Risultato: la tabella di `anagrafica_forniture()` con in più le righe di tutti
+#' i servizi (colonna `servizio` in maiuscolo).
+#' @inheritParams anagrafica_forniture
+#' @noRd
+anagrafica_forniture_per_servizio <- function(contenitori, componenti, manovre, dal, al) {
+  dal_data <- as.Date(dal)
+  al_data <- as.Date(al)
+  servizi <- contenitori |>
+    dplyr::filter(
+      (.data$data_attivazione_contenitore <= al_data &
+        .data$data_cessazione_contenitore >= dal_data) %in% TRUE
+    ) |>
+    dplyr::pull("servizio_transponder") |>
+    trimws() |>
+    toupper() |>
+    unique()
+  servizi <- sort(servizi[!is.na(servizi) & nzchar(servizi)])
+  dplyr::bind_rows(lapply(servizi, function(servizio) {
+    anagrafica_forniture(contenitori, componenti, manovre, dal, al, servizio)
+  }))
+}
+
+#' Anagrafica per servizio, dalle tabelle estratte
+#'
+#' Contesto: legge i tre file dell'anagrafica una volta sola e li passa ad
+#' `anagrafica_forniture_per_servizio()`.
+#' Risultato: la tabella di `anagrafica_forniture_per_servizio()`.
+#' @param file Percorsi di `file_origine()`.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @noRd
+leggi_anagrafica_forniture_per_servizio <- function(file = file_origine(), dal, al) {
+  anagrafica_forniture_per_servizio(
+    importa_contenitori(file$contenitori, categoria = TRUE),
+    importa_componenti(file$componenti),
+    importa_manovre(file$manovre),
+    dal,
+    al
+  )
+}
+
+#' Forniture, contenitori e volumi per gruppo e servizio
+#'
+#' Contesto: la prima tabella del report. Per ogni gruppo di forniture (casa vuota,
+#' potenziamento, da 1 a 6 o più componenti, condomini, non domestiche...) dice
+#' quante forniture ci sono e quanti contenitori hanno, divisi per servizio.
+#'
+#' Funzionamento: per ogni gruppo una riga con `servizio` «Tutti i servizi» (le
+#' forniture distinte del gruppo; i contenitori e i volumi sommati su tutti i
+#' servizi) e una riga per ogni servizio presente (le forniture del gruppo con
+#' contenitori di quel servizio; i loro contenitori e volumi). In coda le righe
+#' «Domestiche (totale)» e «Tutte le forniture». `volume_totale` è la somma dei
+#' volumi dei contenitori, `volume_medio` il volume totale diviso i contenitori.
+#' I gruppi senza forniture non compaiono.
+#'
+#' Risultato: `gruppo`, `servizio`, `forniture`, `contenitori`, `volume_totale`
+#' e `volume_medio`.
+#' @param anagrafica Tabella di `anagrafica_forniture_per_servizio()`.
+#' @noRd
+conta_forniture_per_servizio <- function(anagrafica) {
+  gruppi <- gruppi_forniture()
+  riga <- function(x, gruppo, servizio) {
+    dplyr::tibble(
+      gruppo = gruppo,
+      servizio = servizio,
+      forniture = dplyr::n_distinct(x$id_fornitura),
+      contenitori = sum(x$contenitori),
+      volume_totale = sum(x$volume_totale),
+      volume_medio = ifelse(sum(x$contenitori) > 0, sum(x$volume_totale) / sum(x$contenitori), NA_real_)
+    )
+  }
+  servizi <- sort(unique(anagrafica$servizio))
+  # Il secco per primo: è il servizio fatturato.
+  servizi <- c(intersect("SECCO", servizi), setdiff(servizi, "SECCO"))
+  blocco <- function(x, nome) {
+    if (nrow(x) == 0) {
+      return(NULL)
+    }
+    dplyr::bind_rows(
+      riga(x, nome, "Tutti i servizi"),
+      lapply(servizi, function(servizio) {
+        del_servizio <- x[x$servizio == servizio, ]
+        if (nrow(del_servizio) > 0) riga(del_servizio, nome, servizio)
+      })
+    )
+  }
+  dplyr::bind_rows(
+    lapply(gruppi, function(g) blocco(anagrafica[anagrafica$gruppo %in% g, ], g)),
+    blocco(anagrafica[anagrafica$gruppo %in% gruppi[1:9], ], "Domestiche (totale)"),
+    blocco(anagrafica, "Tutte le forniture")
+  )
 }
 
 #' Anagrafica delle forniture di un periodo, dalle tabelle estratte

@@ -109,7 +109,9 @@ test_that("l'anagrafica tiene le forniture attive nel periodo, con i loro conten
   # attiva dal 1 gennaio al 30 giugno
   expect_identical(f2$giorni_attivi, 181)
   expect_equal(f2$fattore, 181 / 365)
-  expect_identical(f2$raccolte_annue, 26)
+  # due contenitori da 26 conferimenti massimi l'anno: il massimo della fornitura e' la somma
+  expect_identical(f2$conferimenti_massimi_annui, 52)
+  expect_identical(f2$litri_massimi_annui, 26 * 120 + 26 * 40)
   # il periodo riduce l'attività: dal 1 aprile, 275 giorni
   parziale <- anagrafica_prova("2025-04-01", "2025-12-31")
   expect_identical(parziale$giorni_attivi[parziale$id_fornitura == "F1"], 275)
@@ -301,5 +303,106 @@ test_that("con un servizio si contano solo i contenitori di quel servizio, anche
     conta_forniture(secco)$contenitori[conta_forniture(secco)$gruppo == "Tutte le forniture"],
     sum(secco$contenitori)
   )
+})
+
+test_that("il massimo annuo di conferimenti e' la somma di quello di ogni contenitore", {
+  contenitore <- function(codice, fornitura, raccolte, volume = 120) {
+    dplyr::tibble(
+      codice_transponder = codice,
+      servizio_transponder = "SECCO",
+      volume = volume,
+      numero_raccolte_annue = raccolte,
+      data_attivazione_contenitore = as.Date("2020-01-01"),
+      data_cessazione_contenitore = as.Date("2099-12-31"),
+      id_fornitura = fornitura,
+      id_utenza = paste0("U", fornitura),
+      categoria_contenitore = "31"
+    )
+  }
+  contenitori <- dplyr::bind_rows(
+    # un bidone quindicinale (26) e uno settimanale (52) nella stessa fornitura
+    contenitore("B1", "G1", 26),
+    contenitore("B2", "G1", 52, volume = 240),
+    # lo stesso bidone con due righe di associazione conta una volta
+    contenitore("B3", "G2", 52),
+    contenitore("B3", "G2", 52),
+    # massimo annuo non noto per un bidone su due: conta quello noto
+    contenitore("B4", "G3", 26),
+    contenitore("B5", "G3", NA),
+    # massimo annuo non noto per tutti
+    contenitore("B6", "G4", NA)
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  riga <- function(f) anagrafica[anagrafica$id_fornitura == f, ]
+  expect_identical(riga("G1")$conferimenti_massimi_annui, 78)
+  expect_identical(riga("G1")$litri_massimi_annui, 26 * 120 + 52 * 240)
+  expect_identical(riga("G2")$conferimenti_massimi_annui, 52)
+  expect_identical(riga("G3")$conferimenti_massimi_annui, 26)
+  expect_true(is.na(riga("G4")$conferimenti_massimi_annui))
+  expect_true(is.na(riga("G4")$litri_massimi_annui))
+  expect_false("raccolte_annue" %in% names(anagrafica))
+})
+
+test_that("forniture, contenitori e volumi si contano per gruppo e per servizio", {
+  contenitori <- dplyr::bind_rows(
+    contenitori_forniture_prova(),
+    # una fornitura domestica con un bidone del secco (120 L) e uno della carta (240 L)
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "M1", id_fornitura = "FM", volume = 120),
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "M2", id_fornitura = "FM", servizio_transponder = "CARTA", volume = 240)
+  )
+  per_servizio <- anagrafica_forniture_per_servizio(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  expect_setequal(unique(per_servizio$servizio), c("SECCO", "CARTA"))
+  # la fornitura mista compare una volta per servizio, con i suoi contenitori
+  mista <- per_servizio[per_servizio$id_fornitura == "FM", ]
+  expect_setequal(mista$servizio, c("SECCO", "CARTA"))
+  expect_identical(mista$contenitori[mista$servizio == "CARTA"], 1L)
+  expect_identical(mista$volume_totale[mista$servizio == "CARTA"], 240)
+
+  tabella <- conta_forniture_per_servizio(per_servizio)
+  tutte <- tabella[tabella$gruppo == "Tutte le forniture", ]
+  riga <- function(servizio) tutte[tutte$servizio == servizio, ]
+  # le forniture del totale sono distinte (la mista conta una volta), i contenitori e i volumi si sommano
+  expect_identical(riga("Tutti i servizi")$forniture, dplyr::n_distinct(per_servizio$id_fornitura))
+  expect_identical(riga("Tutti i servizi")$contenitori, sum(per_servizio$contenitori))
+  expect_equal(riga("Tutti i servizi")$volume_totale, sum(per_servizio$volume_totale))
+  expect_equal(riga("Tutti i servizi")$volume_medio, sum(per_servizio$volume_totale) / sum(per_servizio$contenitori))
+  expect_identical(riga("CARTA")$contenitori, 2L)
+  expect_equal(riga("CARTA")$volume_totale, 120 + 240)
+  expect_equal(riga("CARTA")$volume_medio, 180)
+  # per servizio i contenitori sommano al totale
+  expect_identical(
+    riga("SECCO")$contenitori + riga("CARTA")$contenitori,
+    riga("Tutti i servizi")$contenitori
+  )
+  # il secco e' il primo servizio di ogni gruppo
+  uno <- tabella[tabella$gruppo == "1 componente", ]
+  expect_identical(uno$servizio[1], "Tutti i servizi")
+  expect_identical(uno$servizio[2], "SECCO")
+  # i gruppi senza forniture non compaiono
+  expect_false("Potenziamento" %in% tabella$gruppo[tabella$forniture == 0])
+  expect_true(all(tabella$forniture > 0))
+})
+
+test_that("i bidoni di una fornitura si elencano per servizio e periodo", {
+  contenitori <- dplyr::bind_rows(
+    contenitori_forniture_prova(),
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "M1", id_fornitura = "F2", volume = 240),
+    # lo stesso bidone con due righe conta una volta; un bidone della carta non entra
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "M2", id_fornitura = "F1", servizio_transponder = "CARTA")
+  )
+  bidoni <- bidoni_delle_forniture(contenitori, c("F1", "F2", "F7"), "2025-01-01", "2025-12-31")
+  riga <- function(f) bidoni$bidoni[bidoni$id_fornitura == f]
+  expect_identical(riga("F1"), "A1 (120 L)")
+  # F2 ha A2 (120 L), A3 (40 L) e M1 (240 L)
+  expect_identical(riga("F2"), "A2 (120 L), A3 (40 L), M1 (240 L)")
+  # F7 e' cessata prima del periodo: nessun bidone
+  expect_false("F7" %in% bidoni$id_fornitura)
+  # senza servizio c'e' anche la carta
+  tutti <- bidoni_delle_forniture(contenitori, "F1", "2025-01-01", "2025-12-31", servizio = NULL)
+  expect_identical(tutti$bidoni, "A1 (120 L), M2 (120 L)")
 })
 

@@ -39,7 +39,7 @@ Una riga per ogni cluster di ogni RFID, 29 campi. La specifica parlava di 25 cam
 | `volume_previsto` | Volume a database, solo per i censiti |
 | `volume_atteso` | Copia di `volume_previsto`, riservata a sviluppi futuri |
 | `analisi_dal`, `analisi_al` | Periodo di analisi |
-| `numero_raccolte_annue_previste` | Raccolte annue a database, solo per i censiti |
+| `numero_raccolte_annue_previste` | Massimo di conferimenti annui del bidone a database (26 con una raccolta ogni due settimane, 52 con una a settimana), solo per i censiti: non è quanti ne farà |
 | `numero_raccolte_annue_presunte` | Raccolte annue stimate dalle letture del cluster |
 | `globale_numero_letture` | Letture dell'RFID nel periodo |
 | `cluster_numero_letture` | Letture del cluster |
@@ -89,10 +89,10 @@ Somma pesata di sei componenti, ognuna tra 0 e 1. Il report [indice_fiducia.Rmd]
 | Letture | 0,25 | Il cluster ha almeno 10 letture | Cresce in proporzione da 0 a 10 |
 | Compattezza | 0,25 | Dispersione fino a 50 m | Dispersione da 500 m in su, scala logaritmica |
 | Stabilità del servizio | 0,15 | Censito con servizio mai cambiato, oppure non censito con giro prevalente dall'80% | Non censito con giro prevalente fino al 50%. Vale 0,5 per un censito che ha cambiato servizio |
-| Raccolte | 0,10 | Presunte uguali alle previste | Presunte lontanissime dalle previste. Vale 0,5 se le previste non sono note |
+| Raccolte | 0,10 | Presunte entro il massimo annuo del bidone (le previste) | Presunte molto oltre il massimo. Vale 0,5 se le previste non sono note |
 | Unicità | 0,10 | Tutte le letture dell'RFID sono nel cluster | Il cluster contiene una quota minima delle letture |
 
-La componente delle raccolte è il rapporto tra il valore minore e il maggiore: 26 previste e 52 presunte danno 0,5, 26 previste e 200 presunte danno 0,13.
+La componente delle raccolte vale 1 se le presunte non superano il massimo annuo del bidone (conferire meno è normale: molti clienti non usano tutte le raccolte). Se lo superano è il rapporto previste / presunte: 26 previste e 52 presunte danno 0,5, 26 previste e 200 presunte danno 0,13.
 
 Si è scelta la somma pesata perché si spiega facilmente e ogni punto perso è riconducibile a una causa. Compattezza e numero di letture pesano di più perché sono misurati direttamente, mentre censimento e raccolte dipendono dalla qualità dell'anagrafica.
 
