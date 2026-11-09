@@ -16,6 +16,7 @@ params:
   giri: ""
   componenti: ""
   margine_minuti: 30
+  numero_forniture_eccedenti: 10
   cartella_csv: ""
 format:
   html:
@@ -51,7 +52,7 @@ knitr:
 # Parametri (i percorsi relativi partono dalla radice del progetto; un parametro
 # vuoto non filtra):
 #   dal, al             primo e ultimo giorno del periodo (AAAA-MM-GG); vuoti:
-#                       tutte le letture del secco disponibili (o i giorni dei giri)
+#                       tutte le letture disponibili (o i giorni dei giri)
 #   letture_antenne, letture_saponette    CSV delle letture finali della pipeline
 #   scartate_antenne, scartate_saponette  CSV del registro delle letture scartate
 #   cartella_origine    cartella dei file estratti: contenitori, componenti, manovre
@@ -62,6 +63,8 @@ knitr:
 #                       economia: 0 (casa vuota), 1-5, 6+ o potenziamento
 #   margine_minuti      minuti aggiunti ai due lati della finestra ricavata dalle
 #                       letture delle antenne di un giro
+#   numero_forniture_eccedenti   quante forniture con più eccedenza mostrare per
+#                       fascia di componenti (numero intero da 1, predefinito 10)
 #   cartella_csv        se indicata, vi scrive i CSV delle forniture e dei giri
 
 if (!file.exists("../DESCRIPTION")) {
@@ -148,6 +151,12 @@ giri <- if (con_giri) giri_di_analisi(percorso_progetto(params$giri))
 # usano invece tutte le letture disponibili.
 servizio_forniture <- "SECCO"
 gruppo_scelto <- gruppo_da_filtro(params$componenti)
+# Quante forniture con più eccedenza mostrare per fascia: un intero da 1.
+numero_eccedenti <- suppressWarnings(as.numeric(params$numero_forniture_eccedenti))
+if (length(numero_eccedenti) != 1 || is.na(numero_eccedenti) || numero_eccedenti < 1 || numero_eccedenti != round(numero_eccedenti)) {
+  stop("`numero_forniture_eccedenti` deve essere un numero intero da 1.", call. = FALSE)
+}
+numero_eccedenti <- as.integer(numero_eccedenti)
 
 date_base <- if (con_giri) {
   giri$data_giro
@@ -1026,23 +1035,31 @@ cat("\nÈ una stima lineare: non conosce la stagionalità (più conferimenti d'e
 #| label: economia-eccedenza-massima
 #| eval: !expr economia_utile
 #| results: asis
-cat("\n## La fornitura con più eccedenza per fascia\n\n")
-piu <- fornitura_con_piu_eccedenza(economia)
+cat(
+  "\n## ",
+  if (numero_eccedenti == 1) "La fornitura con più eccedenza per fascia" else paste0("Le ", numero_eccedenti, " forniture con più eccedenza per fascia"),
+  "\n\n",
+  sep = ""
+)
+piu <- forniture_con_piu_eccedenza(economia, n = numero_eccedenti)
 if (nrow(piu) == 0) {
   cat("Nessuna fornitura domestica del secco supera i litri inclusi nella tariffa: non c'è eccedenza da pagare.\n\n")
 } else {
   # I codici dei bidoni del secco di quelle forniture, dall'associazione dei contenitori.
   bidoni <- bidoni_delle_forniture(
     importa_contenitori(file$contenitori),
-    piu$id_fornitura,
+    unique(piu$id_fornitura),
     dal,
     al,
     servizio_forniture
   )
   piu$bidoni <- bidoni$bidoni[match(piu$id_fornitura, bidoni$id_fornitura)]
   unita_euro <- if (annualizza) "anno" else "periodo"
+  # Il nome della fascia si scrive solo sulla prima riga del suo blocco.
+  primo_della_fascia <- !duplicated(piu$gruppo)
   tabella_piu <- dplyr::tibble(
-    Fascia = as.character(piu$gruppo),
+    Fascia = ifelse(primo_della_fascia, as.character(piu$gruppo), ""),
+    `#` = piu$posizione,
     Fornitura = piu$id_fornitura,
     Utenza = dplyr::coalesce(piu$id_utenza, ""),
     `Bidoni del secco` = dplyr::coalesce(piu$bidoni, ""),
@@ -1052,12 +1069,13 @@ if (nrow(piu) == 0) {
     `Litri eccedenti` = intero(piu$litri_eccedenti)
   )
   tabella_piu[[paste0("Eccedenza stimata (", unita_euro, ")")]] <- euro(piu$eccedenza_eur)
-  print(knitr::kable(tabella_piu, align = "lllrrrrr"))
+  print(knitr::kable(tabella_piu, align = "lrlllrrrrr"))
   cat(
-    "\nPer ogni fascia di componenti è la fornitura con l'eccedenza più alta nello scenario ", riferimento,
-    ". I **bidoni del secco** sono i contenitori della fornitura con servizio `SECCO` attivi nel periodo, con il volume tra parentesi (e «gratuito» per quelli gratuiti, che non si fatturano). L'**eccedenza stimata** è quanto pagherebbe la fornitura oltre i litri inclusi nella tariffa: litri eccedenti × euro per litro del suo contenitore (per un carrellato da 120 litri 10 euro ogni 120 litri)",
+    "\nPer ogni fascia di componenti ", if (numero_eccedenti == 1) "è la **fornitura con l'eccedenza più alta**" else paste0("sono le **", numero_eccedenti, " forniture con l'eccedenza più alta**"),
+    " nello scenario ", riferimento,
+    ", dalla più alta (`#` 1) alla più bassa; a pari eccedenza viene prima quella con più litri. Il numero si sceglie con il parametro `numero_forniture_eccedenti`. Una fascia con meno forniture in eccedenza ne mostra meno, e una senza forniture in eccedenza non ha righe. I **bidoni del secco** sono i contenitori della fornitura con servizio `SECCO` attivi nel periodo, con il volume tra parentesi (e «gratuito» per quelli gratuiti, che non si fatturano). L'**eccedenza stimata** è quanto pagherebbe la fornitura oltre i litri inclusi nella tariffa: litri eccedenti × euro per litro del suo contenitore (per un carrellato da 120 litri 10 euro ogni 120 litri)",
     if (annualizza) ", sui litri annualizzati, quindi è una cifra annua con l'andamento del periodo (stima lineare, senza stagionalità)" else ", sui litri del periodo (con i giri indicati non si annualizza)",
-    ". Il potenziamento non compare perché non paga eccedenza; le fasce senza forniture in eccedenza non hanno riga.\n\n",
+    ". Il potenziamento non compare perché non paga eccedenza.\n\n",
     sep = ""
   )
 }

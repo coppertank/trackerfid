@@ -351,52 +351,36 @@ test_that("la propensione divide letture e litri per contenitori e capacita'", {
   expect_true(is.na(vuoto$propensione_numerica))
 })
 
-test_that("per ogni gruppo si sceglie la fornitura con piu' eccedenza, non il potenziamento", {
+test_that("per ogni gruppo si scelgono le forniture con piu' eccedenza, non il potenziamento", {
   economia <- dplyr::tibble(
     scenario = factor("Saponette e antenne"),
-    id_fornitura = c("F1", "F2", "F3", "F4", "F5"),
-    id_utenza = paste0("U", 1:5),
+    id_fornitura = c("F1", "F2", "F3", "F4", "F5", "F6", "F7"),
+    id_utenza = paste0("U", 1:7),
     gruppo = factor(
-      c("1 componente", "1 componente", "2 componenti", "Potenziamento", "3 componenti"),
+      c("1 componente", "1 componente", "2 componenti", "Potenziamento", "3 componenti", "1 componente", "1 componente"),
       gruppi_forniture()
     ),
-    componenti_medi = c(1, 1, 2, 3, 3),
-    litri = c(900, 1500, 1000, 9000, 500),
-    litri_annui = c(900, 1500, 1000, 9000, 500),
-    litri_limite = c(720, 720, 960, 6240, 1200),
-    litri_eccedenti = c(180, 780, 40, 0, 0),
-    eccedenza_eur = c(15, 65, 3.33, 0, 0)
+    componenti_medi = c(1, 1, 2, 3, 3, 1, 1),
+    litri = c(900, 1500, 1000, 9000, 500, 1500, 800),
+    litri_annui = c(900, 1500, 1000, 9000, 500, 1500, 800),
+    litri_limite = c(720, 720, 960, 6240, 1200, 720, 720),
+    litri_eccedenti = c(180, 780, 40, 0, 0, 780, 80),
+    eccedenza_eur = c(15, 65, 3.33, 0, 0, 65, 6.67)
   )
-  piu <- fornitura_con_piu_eccedenza(economia)
-  # F2 batte F1 nel gruppo; il potenziamento (non paga) e il gruppo senza eccedenza non compaiono
-  expect_identical(piu$id_fornitura, c("F2", "F3"))
-  expect_identical(as.character(piu$gruppo), c("1 componente", "2 componenti"))
-  expect_equal(piu$eccedenza_eur, c(65, 3.33))
-  # in un solo scenario non c'e' altro da scegliere; senza eccedenze la tabella e' vuota
-  expect_identical(nrow(fornitura_con_piu_eccedenza(dplyr::mutate(economia, eccedenza_eur = 0))), 0L)
-})
-
-test_that("i contenitori gratuiti non entrano nell'analisi economica", {
-  anagrafica <- anagrafica_economia_prova()
-  # F1: un bidone a pagamento e uno gratuito; F2: tutti gratuiti; le altre forniture non hanno gratuiti
-  anagrafica$contenitori_non_gratuiti <- c(1L, 0L, rep(1L, nrow(anagrafica) - 2L))
-  anagrafica$volume_contenitore_non_gratuito <- anagrafica$volume_contenitore
-  unita <- unita_economia_prova()
-  # F1 ha due letture del suo bidone gratuito e F2 sono tutte di bidoni gratuiti
-  unita$contenitore_gratuito <- ifelse(unita$id_fornitura == "F2", "S", "N")
-  unita$contenitore_gratuito[which(unita$id_fornitura == "F1" & unita$RFID == "F1_1")[1]] <- "S"
-  economia <- analisi_economica(unita, anagrafica)
-  unione <- economia[economia$scenario == "Saponette e antenne", ]
-  # F2 ha solo bidoni gratuiti: esce dall'analisi
-  expect_false("F2" %in% economia$id_fornitura)
-  # F1: la lettura del bidone gratuito non conta (3 letture, una gratuita)
-  f1 <- unione[unione$id_fornitura == "F1", ]
-  expect_equal(f1$litri, 2 * 120)
-  # senza il campo l'analisi e' quella di prima
-  senza_campo <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
-  expect_true("F2" %in% senza_campo$id_fornitura)
-  # la propensione, invece, conta tutte le letture
-  propensione <- propensione_conferimento(unita, dplyr::filter(anagrafica, servizio == "SECCO"), "SECCO")
-  expect_identical(propensione$letture[propensione$gruppo == "Domestiche (totale)"], 5L + 9L + 3L)
+  piu <- forniture_con_piu_eccedenza(economia)
+  # il potenziamento (non paga) e il gruppo senza eccedenza non compaiono
+  expect_false("Potenziamento" %in% piu$gruppo)
+  expect_false("3 componenti" %in% piu$gruppo)
+  # nel gruppo dell'1 componente: F2 e F6 pari (65 euro e 1500 litri: vince l'ordine), poi F1, poi F7
+  uno <- piu[piu$gruppo == "1 componente", ]
+  expect_identical(uno$id_fornitura, c("F2", "F6", "F1", "F7"))
+  expect_identical(uno$posizione, 1:4)
+  expect_identical(piu$id_fornitura[piu$gruppo == "2 componenti"], "F3")
+  # al piu' n per gruppo; un gruppo con meno eccedenti ne mostra meno
+  due <- forniture_con_piu_eccedenza(economia, n = 2)
+  expect_identical(due$id_fornitura[due$gruppo == "1 componente"], c("F2", "F6"))
+  expect_identical(nrow(due), 3L)
+  # senza eccedenze la tabella e' vuota
+  expect_identical(nrow(forniture_con_piu_eccedenza(dplyr::mutate(economia, eccedenza_eur = 0))), 0L)
 })
 

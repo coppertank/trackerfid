@@ -379,35 +379,47 @@ forniture_per_fascia <- function(economia, su = c("eccedenza", "premio"), limiti
     dplyr::select(-"totale")
 }
 
-#' La fornitura con più eccedenza da pagare, per fascia di componenti
+#' Le forniture con più eccedenza da pagare, per fascia di componenti
 #'
 #' Contesto: per ogni gruppo di forniture (casa vuota, 1 ... 6 o più componenti)
-#' dice qual è l'utenza che, secondo la stima, pagherebbe di più in eccedenza: il
-#' caso più grave del gruppo. Il potenziamento non compare mai, perché non paga
-#' eccedenza.
+#' dice quali sono le utenze che, secondo la stima, pagherebbero di più in
+#' eccedenza: i casi più gravi del gruppo. Il potenziamento non compare mai, perché
+#' non paga eccedenza.
 #'
 #' Funzionamento: nello scenario indicato (di norma il riferimento) tiene le
-#' forniture con un'eccedenza positiva e, per ogni gruppo, quella con
-#' `eccedenza_eur` più alta (a pari eccedenza, più litri). I gruppi senza
-#' forniture eccedenti non compaiono. L'eccedenza è quella di
-#' `economia_forniture()`: annua se i litri sono annualizzati, del periodo
-#' altrimenti.
+#' forniture con un'eccedenza positiva e, per ogni gruppo, le `n` con
+#' `eccedenza_eur` più alta (a pari eccedenza, più litri, poi l'ordine della
+#' fornitura). I gruppi senza forniture eccedenti non compaiono e un gruppo con meno
+#' di `n` eccedenti ne mostra meno. L'eccedenza è quella di `economia_forniture()`:
+#' annua se i litri sono annualizzati, del periodo altrimenti.
 #'
-#' Risultato: una riga per gruppo con `gruppo`, `id_fornitura`, `id_utenza`,
+#' Risultato: per gruppo, al più `n` righe in ordine di eccedenza decrescente con
+#' `gruppo`, `posizione` (1 è la più alta), `id_fornitura`, `id_utenza`,
 #' `componenti_medi`, `litri` (rilevati nel periodo), `litri_annui`,
 #' `litri_limite`, `litri_eccedenti` ed `eccedenza_eur`.
 #' @param economia Risultato di `analisi_economica()`.
 #' @param scenario Scenario da guardare; senza, il riferimento.
+#' @param n Quante forniture tenere per gruppo.
 #' @noRd
-fornitura_con_piu_eccedenza <- function(economia, scenario = scenario_riferimento(economia)) {
+forniture_con_piu_eccedenza <- function(
+  economia,
+  scenario = scenario_riferimento(economia),
+  n = 10
+) {
   nome_scenario <- scenario
   economia |>
     dplyr::filter(.data$scenario == nome_scenario, .data$eccedenza_eur > 0) |>
-    dplyr::arrange(.data$gruppo, dplyr::desc(.data$eccedenza_eur), dplyr::desc(.data$litri)) |>
-    dplyr::distinct(.data$gruppo, .keep_all = TRUE) |>
+    dplyr::arrange(
+      .data$gruppo,
+      dplyr::desc(.data$eccedenza_eur),
+      dplyr::desc(.data$litri),
+      .data$id_fornitura
+    ) |>
+    dplyr::mutate(posizione = dplyr::row_number(), .by = "gruppo") |>
+    dplyr::filter(.data$posizione <= n) |>
     dplyr::select(
-      "gruppo", "id_fornitura", "id_utenza", "componenti_medi", "litri",
-      "litri_annui", "litri_limite", "litri_eccedenti", "eccedenza_eur"
+      "gruppo", "posizione", "id_fornitura", "id_utenza", "componenti_medi",
+      "litri", "litri_annui", "litri_limite", "litri_eccedenti", "eccedenza_eur"
     )
 }
 
