@@ -508,3 +508,66 @@ test_that("un bidone gratuito si riconosce nell'elenco dei bidoni di una fornitu
   expect_identical(bidoni$bidoni, "B1 (120 L), B2 (240 L, gratuito)")
 })
 
+test_that("la propensione parte dai soli bidoni e forniture letti nel periodo", {
+  contenitore <- function(codice, fornitura, volume = 120, raccolte = 26, gratuito = "N", servizio = "SECCO") {
+    dplyr::tibble(
+      codice_transponder = codice,
+      servizio_transponder = servizio,
+      volume = volume,
+      numero_raccolte_annue = raccolte,
+      contenitore_gratuito = gratuito,
+      data_attivazione_contenitore = as.Date("2020-01-01"),
+      data_cessazione_contenitore = as.Date("2099-12-31"),
+      id_fornitura = fornitura,
+      id_utenza = paste0("U", fornitura),
+      categoria_contenitore = "31"
+    )
+  }
+  contenitori <- dplyr::bind_rows(
+    # G1: due bidoni, ne e' letto uno solo (120 L, 26 conferimenti)
+    contenitore("B1", "G1"),
+    contenitore("B2", "G1", volume = 240, raccolte = 52),
+    # G2: letti tutti e due, uno gratuito, uno senza massimo annuo
+    contenitore("B3", "G2", volume = 60, gratuito = "S"),
+    contenitore("B4", "G2", volume = 120, raccolte = NA_real_),
+    # G3: mai letto nel periodo
+    contenitore("B5", "G3"),
+    # G4: letto, ma e' della carta
+    contenitore("B6", "G4", servizio = "CARTA")
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31", "SECCO"
+  )
+  letture <- function(rfid, fornitura, stato = "PIA") {
+    dplyr::tibble(RFID = rfid, id_fornitura = fornitura, stato = factor(stato, stati_lettura()))
+  }
+  unita <- dplyr::bind_rows(
+    letture("B1", "G1"), letture("B1", "G1"),
+    letture("B3", "G2"), letture("B4", "G2"),
+    letture("B6", "G4"),
+    # una lettura non associata non fa di un bidone un bidone letto
+    letture("B5", "G3", "PIT")
+  )
+  letti <- anagrafica_dei_bidoni_letti(anagrafica, contenitori, unita, "2025-01-01", "2025-12-31")
+  # restano G1 e G2: G3 non e' mai letto, G4 e' un altro servizio
+  expect_setequal(letti$id_fornitura, c("G1", "G2"))
+  g1 <- letti[letti$id_fornitura == "G1", ]
+  # di G1 conta solo B1: un contenitore, 120 L, 26 conferimenti, 3.120 litri massimi
+  expect_identical(g1$contenitori, 1L)
+  expect_equal(g1$volume_totale, 120)
+  expect_equal(g1$conferimenti_massimi_annui, 26)
+  expect_equal(g1$litri_massimi_annui, 26 * 120)
+  # di G2 contano entrambi: uno gratuito, e il massimo e' quello del solo bidone che lo ha
+  g2 <- letti[letti$id_fornitura == "G2", ]
+  expect_identical(g2$contenitori, 2L)
+  expect_identical(g2$contenitori_gratuiti, 1L)
+  expect_identical(g2$contenitori_non_gratuiti, 1L)
+  expect_identical(g2$contenitori_con_massimo, 1L)
+  expect_equal(g2$conferimenti_massimi_annui, 26)
+  expect_equal(g2$litri_massimi_annui, 26 * 60)
+  # gruppo, tipo e fattore restano quelli dell'anagrafica
+  expect_identical(g1$gruppo, anagrafica$gruppo[anagrafica$id_fornitura == "G1"])
+  # un periodo senza letture non lascia niente
+  vuota <- anagrafica_dei_bidoni_letti(anagrafica, contenitori, unita[0, ], "2025-01-01", "2025-12-31")
+  expect_identical(nrow(vuota), 0L)
+})

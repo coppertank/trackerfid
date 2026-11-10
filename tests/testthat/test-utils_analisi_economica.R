@@ -384,3 +384,88 @@ test_that("per ogni gruppo si scelgono le forniture con piu' eccedenza, non il p
   expect_identical(nrow(forniture_con_piu_eccedenza(dplyr::mutate(economia, eccedenza_eur = 0))), 0L)
 })
 
+test_that("la propensione ha il volume massimo conferibile, le medie e la soglia di fatturazione", {
+  anagrafica <- dplyr::filter(anagrafica_economia_prova(), servizio == "SECCO")
+  propensione <- propensione_conferimento(unita_economia_prova(), anagrafica, "SECCO")
+  uno <- propensione[propensione$gruppo == "1 componente", ]
+  # F1, F3, F4, F8: quattro forniture e quattro contenitori da 120 L e 26 conferimenti massimi l'anno
+  expect_equal(uno$litri_massimi_annui, 4 * 26 * 120)
+  expect_equal(uno$volumetria_media_per_fornitura, 26 * 120)
+  expect_equal(uno$volumetria_media_per_contenitore, 26 * 120)
+  # soglia di fatturazione della fascia, in litri all'anno
+  expect_equal(uno$soglia_fatturazione_annua, 720)
+  due <- propensione[propensione$gruppo == "2 componenti", ]
+  expect_equal(due$soglia_fatturazione_annua, 960)
+  # il potenziamento non ha un limite, e il totale non ha una fascia
+  expect_true(is.na(propensione$soglia_fatturazione_annua[propensione$gruppo == "Potenziamento"]))
+  expect_true(is.na(propensione$soglia_fatturazione_annua[propensione$gruppo == "Domestiche (totale)"]))
+  # le medie dividono per le sole forniture e contenitori con il massimo noto
+  anagrafica$conferimenti_massimi_annui[anagrafica$id_fornitura == "F3"] <- NA
+  anagrafica$litri_massimi_annui[anagrafica$id_fornitura == "F3"] <- NA
+  senza_massimo <- propensione_conferimento(unita_economia_prova(), anagrafica, "SECCO")
+  uno <- senza_massimo[senza_massimo$gruppo == "1 componente", ]
+  expect_equal(uno$litri_massimi_annui, 3 * 26 * 120)
+  expect_equal(uno$volumetria_media_per_fornitura, 26 * 120)
+  expect_equal(uno$volumetria_media_per_contenitore, 26 * 120)
+})
+
+test_that("le forniture eccedenti si contano per gruppo e per fascia di importo", {
+  gruppi <- c(
+    "1 componente", "1 componente", "1 componente", "1 componente", "1 componente",
+    "2 componenti", "2 componenti", "Potenziamento", "3 componenti"
+  )
+  economia <- dplyr::tibble(
+    scenario = factor("Saponette e antenne"),
+    id_fornitura = paste0("F", 1:9),
+    gruppo = factor(gruppi, gruppi_forniture()),
+    # estremi inclusi a destra: 50 e' nella prima fascia, 50,01 nella seconda, 200 nella terza
+    eccedenza_eur = c(50, 50.01, 200, 200.01, 0, 10, 120, 0, 0)
+  )
+  tabella <- forniture_eccedenti_per_fascia(economia)
+  fasce <- attr(tabella, "fasce")
+  expect_identical(
+    fasce,
+    c("fino a 50 \u20ac", "oltre 50 e fino a 100 \u20ac", "oltre 100 e fino a 200 \u20ac", "oltre 200 \u20ac")
+  )
+  uno <- tabella[tabella$gruppo == "1 componente", ]
+  expect_equal(uno$forniture, 5)
+  # F5 non ha eccedenza: non e' eccedente
+  expect_equal(uno$eccedenti, 4)
+  expect_equal(unlist(uno[fasce], use.names = FALSE), c(1, 1, 1, 1))
+  due <- tabella[tabella$gruppo == "2 componenti", ]
+  expect_equal(unlist(due[fasce], use.names = FALSE), c(1, 0, 1, 0))
+  expect_equal(due$eccedenza_totale_eur, 130)
+  # il potenziamento e il gruppo senza eccedenze compaiono con zero eccedenti
+  expect_equal(tabella$eccedenti[tabella$gruppo == "Potenziamento"], 0)
+  expect_equal(tabella$forniture[tabella$gruppo == "3 componenti"], 1)
+  # il totale somma i gruppi
+  totale <- tabella[tabella$gruppo == "Totale", ]
+  expect_equal(totale$forniture, 9)
+  expect_equal(totale$eccedenti, 6)
+  expect_equal(unlist(totale[fasce], use.names = FALSE), c(2, 1, 2, 1))
+  expect_equal(sum(unlist(totale[fasce])), totale$eccedenti)
+  # i gruppi non presenti non compaiono, e gli estremi si possono cambiare
+  expect_false("4 componenti" %in% tabella$gruppo)
+  altri <- forniture_eccedenti_per_fascia(economia, limiti = c(100))
+  expect_identical(attr(altri, "fasce"), c("fino a 100 \u20ac", "oltre 100 \u20ac"))
+})
+
+test_that("gli estremi delle fasce di importo si leggono dal parametro del report", {
+  # un vettore, una lista dello yaml o un testo
+  expect_equal(limiti_fasce_da_parametro(c(50, 100, 200)), c(50, 100, 200))
+  expect_equal(limiti_fasce_da_parametro(list(50, 100, 200)), c(50, 100, 200))
+  expect_equal(limiti_fasce_da_parametro("50, 100, 200"), c(50, 100, 200))
+  expect_equal(limiti_fasce_da_parametro("50;100 200"), c(50, 100, 200))
+  # ordina, toglie i doppioni e accetta i decimali con il punto
+  expect_equal(limiti_fasce_da_parametro(c(200, 50, 50, 12.5)), c(12.5, 50, 200))
+  expect_equal(limiti_fasce_da_parametro(100), 100)
+  # valori non validi fermano il report con un messaggio
+  expect_error(limiti_fasce_da_parametro(NULL), "uno o pi")
+  expect_error(limiti_fasce_da_parametro(""), "uno o pi")
+  expect_error(limiti_fasce_da_parametro("50, abc"), "limiti_fasce_eccedenza")
+  expect_error(limiti_fasce_da_parametro(c(50, -10)), "maggiori di zero")
+  expect_error(limiti_fasce_da_parametro(c(50, 0)), "maggiori di zero")
+  expect_error(limiti_fasce_da_parametro(c(50, NA)), "uno o pi")
+  expect_error(limiti_fasce_da_parametro(Inf), "uno o pi")
+})
+

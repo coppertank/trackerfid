@@ -128,6 +128,12 @@ conferimenti_per_fornitura <- function(
 #' più componenti, più le domestiche in totale) conta i contenitori `C` dell'anagrafica e le
 #' letture associate (`PIA`) `L` dei due sistemi insieme di quelle forniture.
 #' - `propensione_numerica` = `L / C`;
+#' - `litri_massimi_annui` = volume massimo conferibile in un anno: per ogni
+#'   contenitore, volume × massimo annuo di conferimenti, sommati;
+#'   `volumetria_media_per_fornitura` e `volumetria_media_per_contenitore` lo
+#'   dividono per le forniture e per i contenitori (di cui il massimo è noto);
+#'   `soglia_fatturazione_annua` è la soglia massima di fatturazione della fascia
+#'   (`soglia_fatturazione_del_gruppo()`), per un confronto rapido;
 #' - `letture_per_fornitura` = `L` / forniture; `litri_per_fornitura` = litri
 #'   letti / forniture; `litri_per_contenitore` = litri letti / contenitori;
 #' - `conferimenti_massimi` = somma, sui contenitori, del massimo annuo di ognuno ×
@@ -137,6 +143,9 @@ conferimenti_per_fornitura <- function(
 #'   sono la somma, sui contenitori, di volume × massimo annuo × `fattore`.
 #' Nei due rapporti col massimo entrano solo le forniture di cui il massimo è noto
 #' (`letture_con_massimo`, `litri_con_massimo`).
+#'
+#' La base sono le forniture e i contenitori che hanno almeno una lettura nel
+#' periodo (`anagrafica_dei_bidoni_letti()`): è l'`anagrafica` che si passa.
 #'
 #' Risultato: un tibble con una riga per gruppo.
 #' @param unita Risultato di `unita_di_lettura()`.
@@ -158,7 +167,13 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
       litri = dplyr::coalesce(.data$litri, 0),
       conferimenti_massimi = .data$conferimenti_massimi_annui * .data$fattore,
       litri_massimi = .data$litri_massimi_annui * .data$fattore,
-      massimo_noto = !is.na(.data$conferimenti_massimi)
+      massimo_noto = !is.na(.data$conferimenti_massimi),
+      # contenitori di cui il massimo è noto (senza il dato, tutti se il massimo è noto)
+      contenitori_noti = if ("contenitori_con_massimo" %in% names(domestiche)) {
+        .data$contenitori_con_massimo
+      } else {
+        ifelse(!is.na(.data$conferimenti_massimi), .data$contenitori, 0L)
+      }
     )
   riassunto <- function(x, gruppo) {
     dplyr::summarise(
@@ -171,7 +186,10 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
       # prima di `litri`: una colonna appena creata nasconde l'originale
       litri_con_massimo = sum(.data$litri[.data$massimo_noto]),
       litri = sum(.data$litri),
-      litri_massimi = sum(.data$litri_massimi, na.rm = TRUE)
+      litri_massimi = sum(.data$litri_massimi, na.rm = TRUE),
+      forniture_con_massimo = sum(.data$massimo_noto),
+      contenitori_con_massimo = sum(.data$contenitori_noti),
+      litri_massimi_annui = sum(.data$litri_massimi_annui, na.rm = TRUE)
     ) |>
       dplyr::mutate(gruppo = gruppo, .before = 1)
   }
@@ -188,7 +206,10 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
       litri_per_fornitura = rapporto(.data$litri, .data$forniture),
       litri_per_contenitore = rapporto(.data$litri, .data$contenitori),
       propensione_sul_massimo = rapporto(.data$letture_con_massimo, .data$conferimenti_massimi),
-      propensione_volumetrica = rapporto(.data$litri_con_massimo, .data$litri_massimi)
+      propensione_volumetrica = rapporto(.data$litri_con_massimo, .data$litri_massimi),
+      volumetria_media_per_fornitura = rapporto(.data$litri_massimi_annui, .data$forniture_con_massimo),
+      volumetria_media_per_contenitore = rapporto(.data$litri_massimi_annui, .data$contenitori_con_massimo),
+      soglia_fatturazione_annua = soglia_fatturazione_del_gruppo(.data$gruppo)
     )
 }
 
@@ -377,6 +398,107 @@ forniture_per_fascia <- function(economia, su = c("eccedenza", "premio"), limiti
     dplyr::left_join(totali, by = "scenario") |>
     dplyr::mutate(quota = rapporto(.data$forniture, .data$totale)) |>
     dplyr::select(-"totale")
+}
+
+#' Estremi delle fasce di importo dell'eccedenza, dal parametro del report
+#'
+#' Contesto: il parametro `limiti_fasce_eccedenza` di `docs/indicatori_letture.qmd`
+#' sceglie gli estremi superiori delle fasce di importo (50, 100 e 200 euro di
+#' predefinito), per `forniture_eccedenti_per_fascia()`.
+#' Funzionamento: accetta un vettore o una lista di numeri (come arriva dallo yaml)
+#' o un testo con i numeri separati da virgole, punti e virgola o spazi
+#' (`"50, 100, 200"`); il separatore dei decimali è il punto. Toglie i doppioni e
+#' ordina. Ferma con un messaggio se non ci sono numeri, se uno non è leggibile o se
+#' non è maggiore di zero.
+#' Risultato: un vettore numerico crescente, senza doppioni.
+#' @param x Valore del parametro.
+#' @param nome Nome del parametro, per il messaggio d'errore.
+#' @noRd
+limiti_fasce_da_parametro <- function(x, nome = "limiti_fasce_eccedenza") {
+  valori <- unlist(x)
+  if (is.character(valori)) {
+    valori <- unlist(strsplit(valori, "[,; ]+"))
+    valori <- valori[nzchar(valori)]
+  }
+  numeri <- suppressWarnings(as.numeric(valori))
+  if (length(numeri) == 0 || anyNA(numeri) || any(!is.finite(numeri)) || any(numeri <= 0)) {
+    stop(
+      "`", nome, "` deve contenere uno o pi\u00f9 importi in euro maggiori di zero, ",
+      "per esempio 50, 100, 200.",
+      call. = FALSE
+    )
+  }
+  sort(unique(numeri))
+}
+
+#' Forniture eccedenti per fascia di componenti e per fascia di importo
+#'
+#' Contesto: riassume quante forniture pagherebbero un'eccedenza piccola o grande,
+#' gruppo per gruppo (casa vuota, 1 ... 6 o più componenti, potenziamento), per
+#' vedere dove l'eccedenza pesa di più.
+#'
+#' Funzionamento: nello scenario indicato (di norma il riferimento) conta, per
+#' ogni gruppo, le forniture analizzate e quelle con un'eccedenza positiva
+#' (`eccedenza_eur` > 0), e divide queste ultime in fasce di importo con estremi a
+#' destra inclusi: con i `limiti` predefiniti 50, 100 e 200 euro sono «fino a 50
+#' euro» (da zero escluso a 50 compreso), «oltre 50 e fino a 100», «oltre 100 e
+#' fino a 200» e «oltre 200». In coda una riga «Totale». Il potenziamento compare con
+#' zero eccedenti, perché non paga eccedenza. L'importo è quello di
+#' `economia_forniture()`: annuo se i litri sono annualizzati, del periodo
+#' altrimenti.
+#'
+#' Risultato: un tibble con `gruppo`, `forniture` (analizzate), `eccedenti`,
+#' `eccedenza_totale_eur` e una colonna per fascia di importo, con il nome della
+#' fascia (`attr(, "fasce")` ne elenca i nomi nell'ordine).
+#' @param economia Risultato di `analisi_economica()`.
+#' @param scenario Scenario da guardare; senza, il riferimento.
+#' @param limiti Estremi delle fasce di importo, in euro, crescenti.
+#' @noRd
+forniture_eccedenti_per_fascia <- function(
+  economia,
+  scenario = scenario_riferimento(economia),
+  limiti = c(50, 100, 200)
+) {
+  nome_scenario <- scenario
+  limiti <- sort(unique(limiti))
+  euro <- function(x) formatta_numero(x)
+  intermedie <- if (length(limiti) > 1) {
+    paste0("oltre ", euro(limiti[-length(limiti)]), " e fino a ", euro(limiti[-1]), " \u20ac")
+  } else {
+    character(0)
+  }
+  etichette <- c(
+    paste0("fino a ", euro(limiti[1]), " \u20ac"),
+    intermedie,
+    paste0("oltre ", euro(limiti[length(limiti)]), " \u20ac")
+  )
+  forniture <- dplyr::filter(economia, .data$scenario == nome_scenario)
+  fascia <- cut(
+    forniture$eccedenza_eur,
+    c(0, limiti, Inf),
+    labels = etichette,
+    right = TRUE
+  )
+  forniture$fascia_importo <- fascia
+  riga <- function(x, gruppo) {
+    conteggi <- vapply(etichette, function(e) sum(x$fascia_importo %in% e), numeric(1))
+    esito <- dplyr::tibble(
+      gruppo = gruppo,
+      forniture = nrow(x),
+      eccedenti = sum(!is.na(x$fascia_importo)),
+      eccedenza_totale_eur = sum(x$eccedenza_eur[x$eccedenza_eur > 0], na.rm = TRUE)
+    )
+    esito[etichette] <- as.list(conteggi)
+    esito
+  }
+  gruppi <- levels(forniture$gruppo)
+  gruppi <- gruppi[gruppi %in% as.character(forniture$gruppo)]
+  risultato <- dplyr::bind_rows(
+    lapply(gruppi, function(g) riga(forniture[forniture$gruppo %in% g, ], g)),
+    riga(forniture, "Totale")
+  )
+  attr(risultato, "fasce") <- etichette
+  risultato
 }
 
 #' Le forniture con più eccedenza da pagare, per fascia di componenti

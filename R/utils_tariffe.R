@@ -227,6 +227,25 @@ riporta_ad_anno <- function(x, fattore) {
   ifelse(fattore > 0, x / fattore, NA_real_)
 }
 
+#' Soglia massima di fatturazione di un gruppo di forniture, in litri all'anno
+#'
+#' Contesto: per confrontare i volumi di un gruppo con il limite oltre il quale la
+#' fornitura paga l'eccedenza (i litri inclusi nella tariffa, `tariffe_secco()`).
+#' Funzionamento: il gruppo «Casa vuota» ha la soglia della fascia 0, i gruppi da
+#' «1 componente» a «6 o più» quella della loro fascia. Il potenziamento non paga
+#' eccedenza (nessun limite), e «Componenti non noti», i condomini, le non
+#' domestiche, «Altre» e i totali non hanno una fascia: mancante.
+#' Risultato: un vettore numerico della lunghezza di `gruppo`.
+#' @param gruppo Nomi dei gruppi (testo o fattore).
+#' @noRd
+soglia_fatturazione_del_gruppo <- function(gruppo) {
+  tariffe <- tariffe_secco()
+  gruppi <- gruppi_forniture()
+  fascia <- c(0L, NA_integer_, 1:6, rep(NA_integer_, length(gruppi) - 8L))
+  componenti <- fascia[match(as.character(gruppo), gruppi)]
+  tariffe$litri_inclusi[match(componenti, tariffe$componenti)]
+}
+
 #' Fasce di litri eccedenti e quote di premio, per le tabelle del report
 #'
 #' Contesto: le tabelle del report contano le forniture per fascia di eccedenza

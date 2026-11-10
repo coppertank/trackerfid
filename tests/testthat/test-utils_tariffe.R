@@ -159,3 +159,14 @@ test_that("le fasce di eccedenza e le quote di premio hanno etichette leggibili"
     c("fino a 60 lt", "da 60 a 120 lt", "oltre 120 lt")
   )
 })
+
+test_that("la soglia di fatturazione di un gruppo e' quella della sua fascia", {
+  soglie <- soglia_fatturazione_del_gruppo(c(
+    "Casa vuota", "Potenziamento", "1 componente", "2 componenti", "3 componenti",
+    "4 componenti", "5 componenti", "6 o pi\u00f9", "Componenti non noti",
+    "Condomini", "Domestiche (totale)"
+  ))
+  expect_equal(soglie, c(240, NA, 720, 960, 1200, 1440, 1680, 1680, NA, NA, NA))
+  # accetta anche un fattore, come `gruppo` delle forniture
+  expect_equal(soglia_fatturazione_del_gruppo(factor("2 componenti", gruppi_forniture())), 960)
+})

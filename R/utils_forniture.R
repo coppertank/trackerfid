@@ -426,6 +426,95 @@ bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio 
     dplyr::summarise(bidoni = paste(.data$bidone, collapse = ", "), .by = "id_fornitura")
 }
 
+#' Forniture e contenitori che hanno almeno una lettura nel periodo
+#'
+#' Contesto: la propensione al conferimento guarda solo i bidoni che sono stati
+#' effettivamente letti tra `dal` e `al`: un bidone mai letto nel periodo non è
+#' un'osservazione, e una fornitura i cui bidoni non sono mai stati letti nemmeno.
+#' Funzionamento: tiene i contenitori del servizio indicato, attivi almeno un giorno
+#' nel periodo e con un codice vero, che compaiono come lettura associata (`PIA`)
+#' di `unita` con la stessa fornitura (un contenitore conta una volta, come in
+#' `anagrafica_forniture()`). Delle forniture rimaste (una riga di `anagrafica`
+#' per fornitura) ricalcola i soli campi dei contenitori sui bidoni letti:
+#' `contenitori`, `contenitori_gratuiti`, `contenitori_non_gratuiti`,
+#' `volume_totale`, `conferimenti_massimi_annui` (somma dei massimi annui dei
+#' bidoni letti), `litri_massimi_annui` (somma di volume × massimo annuo) e
+#' `contenitori_con_massimo` (quelli di cui il massimo è noto). Gruppo, tipo e
+#' fattore restano quelli di `anagrafica`.
+#' Risultato: le righe di `anagrafica` delle forniture con almeno un bidone letto,
+#' con i campi dei contenitori riferiti ai soli bidoni letti.
+#' @param anagrafica Tabella di `anagrafica_forniture()` del servizio.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param unita Risultato di `unita_di_lettura()`.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @noRd
+anagrafica_dei_bidoni_letti <- function(anagrafica, contenitori, unita, dal, al, servizio = "SECCO") {
+  dal <- as.Date(dal)
+  al <- as.Date(al)
+  letti <- unita |>
+    dplyr::filter(.data$stato %in% "PIA", !is.na(.data$id_fornitura)) |>
+    dplyr::transmute(
+      codice_transponder = .data$RFID,
+      id_fornitura = as.character(.data$id_fornitura)
+    ) |>
+    dplyr::distinct()
+  contenitori$contenitore_gratuito <- contenitori[["contenitore_gratuito"]] %||%
+    rep("N", nrow(contenitori))
+  bidoni <- contenitori |>
+    dplyr::mutate(id_fornitura = as.character(.data$id_fornitura)) |>
+    dplyr::filter(
+      !is.na(.data$id_fornitura),
+      (.data$data_attivazione_contenitore <= al &
+        .data$data_cessazione_contenitore >= dal) %in% TRUE,
+      !is.na(.data$codice_transponder),
+      !grepl("^0*$", .data$codice_transponder)
+    )
+  if (!is.null(servizio)) {
+    bidoni <- dplyr::filter(
+      bidoni,
+      toupper(trimws(.data$servizio_transponder)) %in% toupper(trimws(servizio))
+    )
+  }
+  per_fornitura <- bidoni |>
+    dplyr::semi_join(letti, by = c("codice_transponder", "id_fornitura")) |>
+    dplyr::distinct(.data$id_fornitura, .data$codice_transponder, .keep_all = TRUE) |>
+    dplyr::mutate(
+      gratuito = .data$contenitore_gratuito %in% "S",
+      massimo = as.numeric(.data$numero_raccolte_annue),
+      litri_del_massimo = .data$massimo * .data$volume,
+      volume_noto = dplyr::coalesce(.data$volume, 0)
+    ) |>
+    dplyr::summarise(
+      contenitori = dplyr::n(),
+      contenitori_gratuiti = sum(.data$gratuito),
+      volume_totale = sum(.data$volume_noto),
+      contenitori_con_massimo = sum(!is.na(.data$massimo)),
+      conferimenti_massimi_annui = sum(.data$massimo, na.rm = TRUE),
+      litri_massimi_annui = sum(.data$litri_del_massimo, na.rm = TRUE),
+      .by = "id_fornitura"
+    ) |>
+    dplyr::mutate(
+      contenitori_non_gratuiti = .data$contenitori - .data$contenitori_gratuiti,
+      conferimenti_massimi_annui = dplyr::if_else(
+        .data$contenitori_con_massimo > 0,
+        .data$conferimenti_massimi_annui,
+        NA_real_
+      ),
+      litri_massimi_annui = dplyr::if_else(
+        .data$contenitori_con_massimo > 0,
+        .data$litri_massimi_annui,
+        NA_real_
+      )
+    )
+  anagrafica |>
+    dplyr::select(-dplyr::any_of(c(
+      "contenitori", "contenitori_gratuiti", "contenitori_non_gratuiti",
+      "volume_totale", "conferimenti_massimi_annui", "litri_massimi_annui"
+    ))) |>
+    dplyr::inner_join(per_fornitura, by = "id_fornitura")
+}
+
 #' Anagrafica delle forniture di tutti i servizi: una riga per fornitura e servizio
 #'
 #' Contesto: la tabella di forniture e contenitori del report mostra tutti i
