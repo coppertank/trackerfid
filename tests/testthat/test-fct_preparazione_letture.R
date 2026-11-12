@@ -82,6 +82,7 @@ colonne_passo_3 <- c(
   "id_giro",
   "eseguito",
   "RFID",
+  "passo_associazione_rfid",
   "presente_a_database",
   "servizio_transponder",
   "servizio_atteso",
@@ -314,7 +315,10 @@ test_that("un codice letto male si ripara con i tre passi, nell'ordine, e il dat
   )
   expect_message(
     riparate <- ripara_codici_rfid(letture, contenitori, tag),
-    "Codici RFID riparati \\(letture\\): 1 trasposizione; 1 coppie; 1 trasposizione_e_coppie\\."
+    paste0(
+      "Passo di associazione dei codici RFID \\(letture\\): 1 diretto; 1 trasposizione; ",
+      "1 coppie; 1 trasposizione_e_coppie; 2 non_associato\\."
+    )
   )
   expect_identical(
     riparate$RFID,
@@ -330,17 +334,41 @@ test_that("un codice letto male si ripara con i tre passi, nell'ordine, e il dat
   )
   # le altre colonne e l'ordine non cambiano
   expect_identical(riparate$n, 1:7)
+  # in quale passo il codice e' stato associato; il sacchetto non si prova
+  expect_identical(
+    riparate$passo_associazione_rfid,
+    c(
+      "diretto",
+      "trasposizione",
+      "non_associato", # il contenitore era cessato
+      "coppie",
+      "trasposizione_e_coppie",
+      "non_associato", # nessun passo: resta il codice normalizzato
+      NA
+    )
+  )
+  expect_identical(
+    valori_passo_associazione_rfid(),
+    c("diretto", "trasposizione", "coppie", "trasposizione_e_coppie", "non_associato")
+  )
 
   # il contenitore del passo 2 era cessato il 28 febbraio: la sera prima si ripara
   prima <- dplyr::mutate(letture[3, ], data_lettura = as.Date("2026-02-20"))
-  expect_identical(
-    suppressMessages(ripara_codici_rfid(prima, contenitori, tag))$RFID,
-    "0091827364"
-  )
+  riparata_prima <- suppressMessages(ripara_codici_rfid(prima, contenitori, tag))
+  expect_identical(riparata_prima$RFID, "0091827364")
+  expect_identical(riparata_prima$passo_associazione_rfid, "coppie")
 
-  # nessun codice da riparare: nessun messaggio
+  # nessun codice da riparare: il messaggio lo dice, senza passi di riparazione
   intatte <- letture[c(1, 6), ]
-  expect_no_message(ripara_codici_rfid(intatte, contenitori, tag))
+  expect_message(
+    senza_riparazioni <- ripara_codici_rfid(intatte, contenitori, tag),
+    "1 diretto; 0 trasposizione; 0 coppie; 0 trasposizione_e_coppie; 1 non_associato\\."
+  )
+  expect_identical(senza_riparazioni$passo_associazione_rfid, c("diretto", "non_associato"))
+  # solo sacchetti (o nessuna lettura): niente da dire e passo vuoto
+  expect_no_message(solo_sacchetto <- ripara_codici_rfid(letture[7, ], contenitori, tag))
+  expect_true(is.na(solo_sacchetto$passo_associazione_rfid))
+  expect_no_message(ripara_codici_rfid(letture[0, ], contenitori, tag))
 
   # un codice che non cambia con il passo non e' riparato (palindromo di coppie)
   expect_identical(
@@ -1766,7 +1794,12 @@ test_that("la pulizia dei codici e' la stessa per antenne e saponette, nell'ordi
   expect_identical(format(doppione$data_ora_lettura, "%H"), "09")
   # i codici scartati prima della riparazione non entrano nei suoi conteggi
   messaggi <- testthat::capture_messages(pulisci_codici_rfid(letture, contenitori, tag))
-  expect_match(messaggi, "riparati.*1 trasposizione", all = FALSE)
+  expect_match(messaggi, "Passo di associazione.*1 trasposizione", all = FALSE)
+  # il campo accompagna ogni lettura tenuta; il sacchetto non ha passo
+  expect_identical(
+    pulite$passo_associazione_rfid,
+    c("diretto", "trasposizione", "non_associato", NA)
+  )
   # la stessa funzione per le due; senza letture non si rompe
   vuote <- pulisci_codici_rfid(letture[0, ], contenitori, tag)
   expect_identical(nrow(vuote), 0L)

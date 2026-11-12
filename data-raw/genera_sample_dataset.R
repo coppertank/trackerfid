@@ -1,5 +1,5 @@
 # Genera inst/extdata/sample_rfid_dataset.csv: letture simulate con le
-# antenne, ottobre 2024 - dicembre 2025, con le 36 colonne e i formati della
+# antenne, ottobre 2024 - dicembre 2025, con le 37 colonne e i formati della
 # pipeline dei dati reali. Ogni contenitore è letto a cadenza fissa dal giro
 # del suo servizio, nei comuni veri del territorio, dentro il confine; ci
 # sono esempi per tutti gli indicatori dei cluster e alcuni sacchetti. Seme
@@ -1346,6 +1346,14 @@ finale <- data.frame(
   id_giro = 1800L + letture$id_giro,
   eseguito = letture$eseguito,
   RFID = letture$RFID,
+  # Nell'esempio i codici sono scritti come nel database: i censiti si
+  # riconoscono subito (`diretto`), i non presenti no (`non_associato`, nessun
+  # passo di riparazione li riporta a un contenitore); i sacchetti non si provano.
+  passo_associazione_rfid = ifelse(
+    rfid_sacchetto(letture$RFID),
+    NA_character_,
+    ifelse(letture$presente_a_database == "PIA", "diretto", "non_associato")
+  ),
   presente_a_database = letture$presente_a_database,
   servizio_transponder = letture$servizio_transponder,
   servizio_atteso = letture$servizio_atteso,
@@ -1605,8 +1613,11 @@ stopifnot(
   # nucleo e categoria: solo per le forniture dei contenitori; il nucleo solo
   # per quelle domestiche; il potenziamento per ogni fornitura, vero solo per
   # domestiche
-  ncol(finale) == 36,
-  identical(names(finale)[30:36], colonne_nucleo_manovra()),
+  ncol(finale) == 37,
+  identical(names(finale)[31:37], colonne_nucleo_manovra()),
+  identical(names(finale)[7:8], c("RFID", "passo_associazione_rfid")),
+  all(is.na(finale$passo_associazione_rfid) == sacchetto),
+  all(finale$passo_associazione_rfid[!sacchetto] %in% c("diretto", "non_associato")),
   all(is.na(finale$tipo_categoria[non_presente | sacchetto])),
   any(is.na(finale$tipo_categoria) & !non_presente & !sacchetto),
   all(is.na(finale$sottocategoria) == is.na(finale$tipo_categoria)),

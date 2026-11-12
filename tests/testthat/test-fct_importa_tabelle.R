@@ -299,12 +299,32 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     "^1 giri confermati di mezzi con l'antenna non hanno nessuna lettura"
   )
   expect_identical(
-    names(letture)[30:36],
+    names(letture)[31:37],
     colonne_nucleo_manovra()
   )
-  expect_equal(ncol(letture), 36)
+  expect_equal(ncol(letture), 37)
   # il campo del contenitore resta nelle letture (vuoto per il sacchetto)
-  expect_identical(names(letture)[16], "contenitore_gratuito")
+  expect_identical(names(letture)[17], "contenitore_gratuito")
+  # il passo di associazione del codice sta accanto all'RFID: riconosciuto subito
+  # nell'associazione o tra i tag (anche se poi e' PIT), non associato dopo i tre
+  # passi, vuoto per il sacchetto
+  expect_identical(names(letture)[7:8], c("RFID", "passo_associazione_rfid"))
+  codici_prova <- c("0000000123", "0000000128", "0000000999", "0000000124", "0000000129")
+  expect_identical(
+    vapply(
+      codici_prova,
+      function(codice) unique(letture$passo_associazione_rfid[letture$RFID == codice]),
+      character(1)
+    ),
+    c(
+      `0000000123` = "diretto",
+      `0000000128` = "diretto",
+      `0000000999` = "diretto",
+      `0000000124` = "non_associato",
+      `0000000129` = "non_associato"
+    )
+  )
+  expect_true(is.na(letture$passo_associazione_rfid[letture$RFID == "00BD00000000000000000001"]))
   # censito tre volte, quattro non censiti una (due senza posizione o comune); il
   # sacchetto resta, con la fornitura del suo gruppo
   expect_identical(
@@ -465,7 +485,7 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
   # il codice 84C era il 123 con i bit invertiti: riparato; quello di 11 cifre
   # e' scartato; quello HERA resta com'e'
   expect_match(messaggi_saponette, "non compatibile.*: 1\\.", all = FALSE)
-  expect_match(messaggi_saponette, "riparati.*1 trasposizione", all = FALSE)
+  expect_match(messaggi_saponette, "Passo di associazione.*1 trasposizione", all = FALSE)
   expect_identical(
     saponette$RFID,
     c(
@@ -482,6 +502,12 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     c("PIA", "PIA", "PIA", "PIA", "NP")
   )
   expect_identical(saponette$id_fornitura, c("F1", "S1", "F1", "F1", NA))
+  # il passo con cui ogni codice e' stato associato: il 123 con i bit invertiti si
+  # e' riconosciuto con la trasposizione, il codice HERA sconosciuto no
+  expect_identical(
+    saponette$passo_associazione_rfid,
+    c("diretto", NA, "diretto", "trasposizione", "non_associato")
+  )
   expect_identical(
     saponette$servizio_transponder,
     c("SECCO", NA, "SECCO", "SECCO", NA)

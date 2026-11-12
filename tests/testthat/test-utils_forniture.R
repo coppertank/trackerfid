@@ -571,3 +571,129 @@ test_that("la propensione parte dai soli bidoni e forniture letti nel periodo", 
   vuota <- anagrafica_dei_bidoni_letti(anagrafica, contenitori, unita[0, ], "2025-01-01", "2025-12-31")
   expect_identical(nrow(vuota), 0L)
 })
+
+test_that("la base della propensione sono i bidoni attivi alla data dal, letti o no", {
+  contenitore <- function(codice, fornitura, da = "2020-01-01", a = "2099-12-31", volume = 120, raccolte = 26, gratuito = "N", servizio = "SECCO") {
+    dplyr::tibble(
+      codice_transponder = codice,
+      servizio_transponder = servizio,
+      volume = volume,
+      numero_raccolte_annue = raccolte,
+      contenitore_gratuito = gratuito,
+      data_attivazione_contenitore = as.Date(da),
+      data_cessazione_contenitore = as.Date(a),
+      id_fornitura = fornitura,
+      id_utenza = paste0("U", fornitura),
+      categoria_contenitore = "31"
+    )
+  }
+  contenitori <- dplyr::bind_rows(
+    # G1: un bidone attivo dal 2020 e uno attivato a meta' anno (non e' nella base)
+    contenitore("B1", "G1"),
+    contenitore("B2", "G1", da = "2025-06-01", volume = 240, raccolte = 52),
+    # G2: un bidone mai letto (conta lo stesso)
+    contenitore("B3", "G2"),
+    # G3: cessato a marzo, quindi attivo il primo giorno
+    contenitore("B4", "G3", a = "2025-03-31"),
+    # G4: attivato dopo la data dal: non e' nella base, anche se letto
+    contenitore("B5", "G4", da = "2025-03-01"),
+    # G5: della carta
+    contenitore("B6", "G5", servizio = "CARTA"),
+    # G6: cessato prima della data dal
+    contenitore("B7", "G6", a = "2024-12-31"),
+    # G7: un bidone gratuito, e uno senza massimo annuo
+    contenitore("B8", "G7", volume = 60, gratuito = "S"),
+    contenitore("B9", "G7", raccolte = NA_real_),
+    # G8: un codice di soli zeri non e' un bidone
+    contenitore("0000000000", "G8")
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-01-01", "2025-12-31", "SECCO"
+  )
+  base <- anagrafica_dei_bidoni_attivi(anagrafica, contenitori, "2025-01-01")
+  # G1, G2, G3 e G7: G4 non era attivo, G5 e' un altro servizio, G6 era cessato, G8 non ha bidoni
+  expect_setequal(base$id_fornitura, c("G1", "G2", "G3", "G7"))
+  # di G1 conta il solo bidone attivo alla data: 120 L, 26 conferimenti
+  g1 <- base[base$id_fornitura == "G1", ]
+  expect_identical(g1$contenitori, 1L)
+  expect_equal(g1$volume_totale, 120)
+  expect_equal(g1$conferimenti_massimi_annui, 26)
+  expect_equal(g1$litri_massimi_annui, 26 * 120)
+  # con le letture non c'entra: un bidone mai letto resta (G2), cessato nel
+  # periodo anche (G3)
+  expect_identical(base$contenitori[base$id_fornitura %in% c("G2", "G3")], c(1L, 1L))
+  # G7: uno gratuito, e il massimo e' quello del solo bidone che lo ha
+  g7 <- base[base$id_fornitura == "G7", ]
+  expect_identical(g7$contenitori, 2L)
+  expect_identical(g7$contenitori_gratuiti, 1L)
+  expect_identical(g7$contenitori_con_massimo, 1L)
+  expect_equal(g7$litri_massimi_annui, 26 * 60)
+  # gruppo, tipo e fattore restano quelli dell'anagrafica
+  expect_identical(g1$gruppo, anagrafica$gruppo[anagrafica$id_fornitura == "G1"])
+  expect_equal(g1$fattore, anagrafica$fattore[anagrafica$id_fornitura == "G1"])
+  # un'altra data dal: a meta' anno G4 e G1 hanno il secondo bidone
+  a_meta <- anagrafica_dei_bidoni_attivi(anagrafica, contenitori, "2025-06-15")
+  expect_true("G4" %in% a_meta$id_fornitura)
+  expect_false("G3" %in% a_meta$id_fornitura)
+  expect_identical(a_meta$contenitori[a_meta$id_fornitura == "G1"], 2L)
+  # senza contenitori attivi non resta niente
+  expect_identical(nrow(anagrafica_dei_bidoni_attivi(anagrafica, contenitori, "1999-01-01")), 0L)
+})
+
+test_that("la tabella di forniture e contenitori conta i bidoni attivi anche solo in parte nel periodo", {
+  contenitore <- function(codice, fornitura, da, a, servizio = "SECCO", volume = 120) {
+    dplyr::tibble(
+      codice_transponder = codice,
+      servizio_transponder = servizio,
+      volume = volume,
+      numero_raccolte_annue = 26,
+      data_attivazione_contenitore = as.Date(da),
+      data_cessazione_contenitore = as.Date(a),
+      id_fornitura = fornitura,
+      id_utenza = paste0("U", fornitura),
+      categoria_contenitore = "31"
+    )
+  }
+  # periodo: 1 marzo - 30 giugno 2025
+  contenitori <- dplyr::bind_rows(
+    # interi nel periodo, o a cavallo di uno dei due estremi: contano
+    contenitore("C1", "H1", "2020-01-01", "2099-12-31"),
+    contenitore("C2", "H2", "2025-04-10", "2099-12-31"), # attivato nel periodo
+    contenitore("C3", "H3", "2020-01-01", "2025-04-10"), # cessato nel periodo
+    contenitore("C4", "H4", "2025-06-30", "2099-12-31"), # attivo solo l'ultimo giorno
+    contenitore("C5", "H5", "2020-01-01", "2025-03-01"), # attivo solo il primo giorno
+    # fuori dal periodo: non contano
+    contenitore("C6", "H6", "2025-07-01", "2099-12-31"), # attivato il giorno dopo
+    contenitore("C7", "H7", "2020-01-01", "2025-02-28"), # cessato il giorno prima
+    # una fornitura con un bidone attivo e uno no: conta solo il primo
+    contenitore("C8", "H8", "2020-01-01", "2099-12-31", volume = 120),
+    contenitore("C9", "H8", "2025-09-01", "2099-12-31", volume = 240),
+    # un bidone della carta attivo in parte: la fornitura compare nel suo servizio
+    contenitore("C10", "H1", "2025-05-01", "2025-05-31", servizio = "CARTA", volume = 240)
+  )
+  per_servizio <- anagrafica_forniture_per_servizio(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-03-01", "2025-06-30"
+  )
+  secco <- per_servizio[per_servizio$servizio == "SECCO", ]
+  expect_setequal(secco$id_fornitura, c("H1", "H2", "H3", "H4", "H5", "H8"))
+  expect_false(any(c("H6", "H7") %in% per_servizio$id_fornitura))
+  # H8: del secondo bidone (attivato a settembre) non si conta niente
+  h8 <- secco[secco$id_fornitura == "H8", ]
+  expect_identical(h8$contenitori, 1L)
+  expect_equal(h8$volume_totale, 120)
+  # la tabella somma i soli bidoni attivi: 6 del secco e 1 della carta
+  tabella <- conta_forniture_per_servizio(per_servizio)
+  tutte <- tabella[tabella$gruppo == "Tutte le forniture", ]
+  riga <- function(servizio) tutte[tutte$servizio == servizio, ]
+  expect_identical(riga("SECCO")$forniture, 6L)
+  expect_identical(riga("SECCO")$contenitori, 6L)
+  expect_equal(riga("CARTA")$volume_totale, 240)
+  # H1 ha il secco e la carta: nel totale e' una fornitura sola, con due bidoni
+  expect_identical(riga("Tutti i servizi")$forniture, 6L)
+  expect_identical(riga("Tutti i servizi")$contenitori, 7L)
+  # un periodo di un solo giorno (30 giugno) tiene i bidoni attivi quel giorno
+  un_giorno <- anagrafica_forniture_per_servizio(
+    contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-06-30", "2025-06-30"
+  )
+  expect_setequal(un_giorno$id_fornitura, c("H1", "H2", "H4", "H8"))
+})

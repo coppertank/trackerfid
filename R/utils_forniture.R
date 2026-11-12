@@ -426,47 +426,26 @@ bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio 
     dplyr::summarise(bidoni = paste(.data$bidone, collapse = ", "), .by = "id_fornitura")
 }
 
-#' Forniture e contenitori che hanno almeno una lettura nel periodo
+#' Contenitori del servizio con un codice vero, pronti per ricalcolare i campi dell'anagrafica
 #'
-#' Contesto: la propensione al conferimento guarda solo i bidoni che sono stati
-#' effettivamente letti tra `dal` e `al`: un bidone mai letto nel periodo non è
-#' un'osservazione, e una fornitura i cui bidoni non sono mai stati letti nemmeno.
-#' Funzionamento: tiene i contenitori del servizio indicato, attivi almeno un giorno
-#' nel periodo e con un codice vero, che compaiono come lettura associata (`PIA`)
-#' di `unita` con la stessa fornitura (un contenitore conta una volta, come in
-#' `anagrafica_forniture()`). Delle forniture rimaste (una riga di `anagrafica`
-#' per fornitura) ricalcola i soli campi dei contenitori sui bidoni letti:
-#' `contenitori`, `contenitori_gratuiti`, `contenitori_non_gratuiti`,
-#' `volume_totale`, `conferimenti_massimi_annui` (somma dei massimi annui dei
-#' bidoni letti), `litri_massimi_annui` (somma di volume × massimo annuo) e
-#' `contenitori_con_massimo` (quelli di cui il massimo è noto). Gruppo, tipo e
-#' fattore restano quelli di `anagrafica`.
-#' Risultato: le righe di `anagrafica` delle forniture con almeno un bidone letto,
-#' con i campi dei contenitori riferiti ai soli bidoni letti.
-#' @param anagrafica Tabella di `anagrafica_forniture()` del servizio.
+#' Contesto: passo comune a `anagrafica_dei_bidoni_letti()` e
+#' `anagrafica_dei_bidoni_attivi()`.
+#' Funzionamento: tiene i contenitori con una fornitura e con un codice vero
+#' (un codice mancante o di soli zeri non è un bidone) e, se `servizio` non è
+#' `NULL`, del servizio indicato (maiuscole e spazi ininfluenti). Un file senza
+#' `contenitore_gratuito` vale `N` per tutti. La scelta delle date spetta a chi
+#' chiama.
+#' Risultato: la tabella dei contenitori, con `id_fornitura` in testo.
 #' @param contenitori Tabella di `importa_contenitori()`.
-#' @param unita Risultato di `unita_di_lettura()`.
-#' @param dal,al Primo e ultimo giorno del periodo.
 #' @param servizio Servizio dei contenitori, o `NULL` per tutti.
 #' @noRd
-anagrafica_dei_bidoni_letti <- function(anagrafica, contenitori, unita, dal, al, servizio = "SECCO") {
-  dal <- as.Date(dal)
-  al <- as.Date(al)
-  letti <- unita |>
-    dplyr::filter(.data$stato %in% "PIA", !is.na(.data$id_fornitura)) |>
-    dplyr::transmute(
-      codice_transponder = .data$RFID,
-      id_fornitura = as.character(.data$id_fornitura)
-    ) |>
-    dplyr::distinct()
+bidoni_con_codice <- function(contenitori, servizio = "SECCO") {
   contenitori$contenitore_gratuito <- contenitori[["contenitore_gratuito"]] %||%
     rep("N", nrow(contenitori))
   bidoni <- contenitori |>
     dplyr::mutate(id_fornitura = as.character(.data$id_fornitura)) |>
     dplyr::filter(
       !is.na(.data$id_fornitura),
-      (.data$data_attivazione_contenitore <= al &
-        .data$data_cessazione_contenitore >= dal) %in% TRUE,
       !is.na(.data$codice_transponder),
       !grepl("^0*$", .data$codice_transponder)
     )
@@ -476,8 +455,29 @@ anagrafica_dei_bidoni_letti <- function(anagrafica, contenitori, unita, dal, al,
       toupper(trimws(.data$servizio_transponder)) %in% toupper(trimws(servizio))
     )
   }
+  bidoni
+}
+
+#' Rimette nell'anagrafica i campi dei contenitori, calcolati sui bidoni indicati
+#'
+#' Contesto: la propensione guarda un sottoinsieme dei bidoni di ogni fornitura
+#' (quelli letti, o quelli attivi a una data); i campi dell'anagrafica che
+#' dipendono dai contenitori vanno ricalcolati su quel sottoinsieme.
+#' Funzionamento: per ogni fornitura che ha almeno un bidone tra quelli indicati
+#' (un contenitore conta una volta, come in `anagrafica_forniture()`) ricalcola
+#' `contenitori`, `contenitori_gratuiti`, `contenitori_non_gratuiti`,
+#' `volume_totale`, `conferimenti_massimi_annui` (somma dei massimi annui dei
+#' bidoni), `litri_massimi_annui` (somma di volume × massimo annuo) e
+#' `contenitori_con_massimo` (quelli di cui il massimo è noto). Gruppo, tipo e
+#' fattore restano quelli di `anagrafica`; le forniture senza bidoni indicati
+#' escono.
+#' Risultato: le righe di `anagrafica` delle forniture con almeno un bidone
+#' indicato, con i campi dei contenitori riferiti ai soli bidoni indicati.
+#' @param anagrafica Tabella di `anagrafica_forniture()` del servizio.
+#' @param bidoni Tabella di `bidoni_con_codice()`, già filtrata.
+#' @noRd
+anagrafica_con_bidoni <- function(anagrafica, bidoni) {
   per_fornitura <- bidoni |>
-    dplyr::semi_join(letti, by = c("codice_transponder", "id_fornitura")) |>
     dplyr::distinct(.data$id_fornitura, .data$codice_transponder, .keep_all = TRUE) |>
     dplyr::mutate(
       gratuito = .data$contenitore_gratuito %in% "S",
@@ -515,12 +515,86 @@ anagrafica_dei_bidoni_letti <- function(anagrafica, contenitori, unita, dal, al,
     dplyr::inner_join(per_fornitura, by = "id_fornitura")
 }
 
+#' Forniture e contenitori attivi a una data: la base della propensione
+#'
+#' Contesto: la propensione al conferimento (richiesta del proprietario,
+#' 12/11/2026) non guarda solo i bidoni che hanno avuto una lettura, ma tutti
+#' quelli del servizio che erano attivi alla data di inizio dell'analisi
+#' (`dal`) nell'associazione dei contenitori. Chi conferisce nelle isole
+#' ecologiche non ha un bidone nella tabella, quindi non entra; chi ha un bidone
+#' e non lo usa (o non viene letto) conta, con zero letture. Con la sola base dei
+#' bidoni letti la propensione sarebbe sovrastimata.
+#'
+#' Funzionamento: tiene i contenitori del servizio indicato con un codice vero,
+#' attivi nel giorno `dal` (`data_attivazione_contenitore` fino a `dal` e
+#' `data_cessazione_contenitore` da `dal` in poi: un bidone attivato dopo, o già
+#' cessato prima, non è nella base), e ricalcola su quelli i campi dei
+#' contenitori di `anagrafica` (`anagrafica_con_bidoni()`). Le letture non
+#' contano: la fornitura senza nessuna lettura resta.
+#' Risultato: le righe di `anagrafica` delle forniture con almeno un bidone attivo
+#' a `dal`, con i campi dei contenitori riferiti ai soli bidoni attivi a `dal`.
+#' @param anagrafica Tabella di `anagrafica_forniture()` del servizio.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param dal Primo giorno del periodo.
+#' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @noRd
+anagrafica_dei_bidoni_attivi <- function(anagrafica, contenitori, dal, servizio = "SECCO") {
+  dal <- as.Date(dal)
+  bidoni <- contenitori |>
+    bidoni_con_codice(servizio) |>
+    dplyr::filter(
+      (.data$data_attivazione_contenitore <= dal &
+        .data$data_cessazione_contenitore >= dal) %in% TRUE
+    )
+  anagrafica_con_bidoni(anagrafica, bidoni)
+}
+
+#' Forniture e contenitori che hanno almeno una lettura nel periodo
+#'
+#' Contesto: con i giri indicati la propensione guarda solo i bidoni che sono
+#' stati effettivamente letti tra `dal` e `al` (un campione: le altre forniture
+#' non hanno letture perché i loro giri non sono nell'analisi). Senza giri la
+#' base è `anagrafica_dei_bidoni_attivi()`.
+#' Funzionamento: tiene i contenitori del servizio indicato, attivi almeno un giorno
+#' nel periodo e con un codice vero, che compaiono come lettura associata (`PIA`)
+#' di `unita` con la stessa fornitura (un contenitore conta una volta, come in
+#' `anagrafica_forniture()`), e ricalcola su quelli i campi dei contenitori di
+#' `anagrafica` (`anagrafica_con_bidoni()`).
+#' Risultato: le righe di `anagrafica` delle forniture con almeno un bidone letto,
+#' con i campi dei contenitori riferiti ai soli bidoni letti.
+#' @param anagrafica Tabella di `anagrafica_forniture()` del servizio.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param unita Risultato di `unita_di_lettura()`.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @noRd
+anagrafica_dei_bidoni_letti <- function(anagrafica, contenitori, unita, dal, al, servizio = "SECCO") {
+  dal <- as.Date(dal)
+  al <- as.Date(al)
+  letti <- unita |>
+    dplyr::filter(.data$stato %in% "PIA", !is.na(.data$id_fornitura)) |>
+    dplyr::transmute(
+      codice_transponder = .data$RFID,
+      id_fornitura = as.character(.data$id_fornitura)
+    ) |>
+    dplyr::distinct()
+  bidoni <- contenitori |>
+    bidoni_con_codice(servizio) |>
+    dplyr::filter(
+      (.data$data_attivazione_contenitore <= al &
+        .data$data_cessazione_contenitore >= dal) %in% TRUE
+    ) |>
+    dplyr::semi_join(letti, by = c("codice_transponder", "id_fornitura"))
+  anagrafica_con_bidoni(anagrafica, bidoni)
+}
+
 #' Anagrafica delle forniture di tutti i servizi: una riga per fornitura e servizio
 #'
 #' Contesto: la tabella di forniture e contenitori del report mostra tutti i
 #' servizi dell'associazione dei contenitori (secco, carta, plastica...), non solo
 #' il secco.
-#' Funzionamento: individua i servizi dei contenitori attivi nel periodo e per
+#' Funzionamento: individua i servizi dei contenitori attivi nel periodo (almeno un
+#' giorno tra `dal` e `al`, anche se attivi solo in parte) e per
 #' ognuno chiama `anagrafica_forniture(servizio =)`, che conta solo i contenitori di
 #' quel servizio. Una fornitura con contenitori di servizi diversi compare quindi
 #' una volta per servizio, ciascuna con i suoi contenitori e volumi; gruppo,

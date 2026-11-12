@@ -289,6 +289,7 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "id_giro",
       "eseguito",
       "RFID",
+      "passo_associazione_rfid",
       "presente_a_database",
       "servizio_transponder",
       "servizio_atteso",
@@ -313,6 +314,14 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "longitudine",
       colonne_nucleo_manovra()
     )
+  )
+  # il passo con cui il codice e' stato associato: i censiti si riconoscono
+  # subito, i non presenti no, i sacchetti non si provano
+  sacchetti_grezzi <- startsWith(grezzo$RFID, "00BD")
+  expect_true(all(is.na(grezzo$passo_associazione_rfid[sacchetti_grezzi])))
+  expect_identical(
+    grezzo$passo_associazione_rfid[!sacchetti_grezzi],
+    ifelse(grezzo$presente_a_database[!sacchetti_grezzi] == "PIA", "diretto", "non_associato")
   )
   # la coerenza del file è quella che l'app ricalcola al caricamento
   expect_identical(grezzo$coerenza_servizio, d$coerenza_servizio)

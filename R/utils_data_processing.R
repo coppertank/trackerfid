@@ -126,7 +126,7 @@ colonne_derivate <- function() {
 
 #' Colonne della pipeline che l'app non usa, con il tipo SQL
 #'
-#' Contesto: il CSV della pipeline ha 36 colonne; l'app ne usa 21. Le altre
+#' Contesto: il CSV della pipeline ha 37 colonne; l'app ne usa 21. Le altre
 #' servono all'analisi dei conferimenti (nucleo, categoria, potenziamento) e ai
 #' report, che le leggono con `colonne = "tutte"`.
 #' Funzionamento: associa a ogni colonna il tipo (`VARCHAR`, `DATE`, `INTEGER`,
@@ -138,6 +138,7 @@ colonne_derivate <- function() {
 tipi_colonne_preparazione <- function() {
   c(
     data_lettura = "DATE",
+    passo_associazione_rfid = "VARCHAR",
     id_giro = "VARCHAR",
     frequenza = "VARCHAR",
     contenitore_gratuito = "VARCHAR",

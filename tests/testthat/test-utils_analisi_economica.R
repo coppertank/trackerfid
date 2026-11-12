@@ -324,6 +324,27 @@ test_that("l'impatto dei sistemi dice che cosa cambierebbe con uno solo", {
   expect_equal(antenne$differenza_eur, 0)
 })
 
+test_that("una fornitura dell'anagrafica senza letture conta nella propensione, con zero letture", {
+  anagrafica <- dplyr::filter(anagrafica_economia_prova(), servizio == "SECCO")
+  unita <- unita_economia_prova()
+  con_letture <- propensione_conferimento(unita, anagrafica, "SECCO")
+  uno <- con_letture[con_letture$gruppo == "1 componente", ]
+  # tolte tutte le letture di F1, la fornitura resta: stessi contenitori e massimi, meno letture
+  senza_f4 <- propensione_conferimento(unita[unita$id_fornitura != "F1", ], anagrafica, "SECCO")
+  uno_senza <- senza_f4[senza_f4$gruppo == "1 componente", ]
+  letture_f4 <- sum(unita$id_fornitura == "F1" & unita$stato %in% "PIA")
+  expect_gt(letture_f4, 0)
+  expect_identical(uno_senza$forniture, uno$forniture)
+  expect_identical(uno_senza$contenitori, uno$contenitori)
+  expect_equal(uno_senza$conferimenti_massimi, uno$conferimenti_massimi)
+  expect_identical(uno_senza$letture, uno$letture - letture_f4)
+  expect_lt(uno_senza$propensione_sul_massimo, uno$propensione_sul_massimo)
+  # senza nessuna lettura la propensione e' zero, non mancante
+  nessuna <- propensione_conferimento(unita[0, ], anagrafica, "SECCO")
+  expect_identical(nessuna$letture[nessuna$gruppo == "Domestiche (totale)"], 0L)
+  expect_equal(nessuna$propensione_sul_massimo[nessuna$gruppo == "Domestiche (totale)"], 0)
+})
+
 test_that("la propensione divide letture e litri per contenitori e capacita'", {
   anagrafica <- dplyr::filter(anagrafica_economia_prova(), servizio == "SECCO")
   propensione <- propensione_conferimento(unita_economia_prova(), anagrafica, "SECCO")

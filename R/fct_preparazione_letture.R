@@ -435,18 +435,26 @@ codici_riconosciuti <- function(codice, giorno, contenitori, tag) {
 #' Contesto: i lettori scrivono a volte un codice diverso da quello del database:
 #' con i bit di ogni cifra invertiti, con i nibble scambiati a coppie, o con
 #' entrambe le cose. Prima di ogni associazione si prova a riportare il codice a
-#' quello che il database conosce. Regola del proprietario (28/10/2026).
+#' quello che il database conosce. Regola del proprietario (28/10/2026). Il campo
+#' `passo_associazione_rfid` dice in quale passo il codice è stato riconosciuto
+#' (richiesta del proprietario, 12/11/2026).
 #'
 #' Funzionamento: un codice già riconosciuto, cioè nell'associazione dei
-#' contenitori (con il contenitore attivo nel giorno) o tra i tag, resta com'è.
-#' Gli altri si provano con tre passi, in quest'ordine, e al primo che li
-#' riconosce si tiene il codice nuovo: 1. trasposizione (`trasponi_codice()`);
-#' 2. scambio dei caratteri a coppie (`scambia_coppie()`); 3. trasposizione e
-#' scambio insieme. Se nessun passo li riconosce restano com'erano. I sacchetti
-#' (`00BD`) non si provano: non hanno un contenitore. Un messaggio dice quante
-#' letture ha riparato ogni passo.
+#' contenitori (con il contenitore attivo nel giorno) o tra i tag, resta com'è:
+#' passo `diretto`. Gli altri si provano con tre passi, in quest'ordine, e al
+#' primo che li riconosce si tiene il codice nuovo: 1. `trasposizione`
+#' (`trasponi_codice()`); 2. `coppie`, lo scambio dei caratteri a coppie
+#' (`scambia_coppie()`); 3. `trasposizione_e_coppie`, i due insieme. Se nessun
+#' passo li riconosce restano com'erano (cioè normalizzati) e il passo è
+#' `non_associato`. I sacchetti (`00BD`) non si provano: non hanno un contenitore
+#' e il passo resta vuoto. «Associato» qui vuol dire riconosciuto
+#' nell'associazione attiva o tra i tag: un codice solo nei tag è `diretto` anche
+#' se poi `presente_a_database` è `PIT`. Un messaggio dice quante letture sono
+#' arrivate a ogni passo.
 #'
-#' Risultato: le letture con `RFID` riparato dove è stato possibile.
+#' Risultato: le letture con `RFID` riparato dove è stato possibile e la colonna
+#' `passo_associazione_rfid` in fondo: `diretto`, `trasposizione`, `coppie`,
+#' `trasposizione_e_coppie`, `non_associato`, vuota per i sacchetti.
 #' @param letture Letture con `RFID` normalizzato e `data_lettura`.
 #' @param contenitori Tabella di `importa_contenitori()`.
 #' @param tag_contenitori Tabella di `importa_tag_contenitori()`.
@@ -467,7 +475,7 @@ ripara_codici_rfid <- function(letture, contenitori, tag_contenitori) {
     tag
   )
   nuovo <- coppie$RFID
-  passo <- rep(NA_character_, nrow(coppie))
+  passo <- dplyr::if_else(riconosciuta, "diretto", NA_character_)
   for (nome in names(passi_riparazione_codici())) {
     da_provare <- which(!riconosciuta)
     if (length(da_provare) == 0) {
@@ -485,28 +493,44 @@ ripara_codici_rfid <- function(letture, contenitori, tag_contenitori) {
     passo[riparati] <- nome
     riconosciuta[riparati] <- TRUE
   }
+  passo[!riconosciuta] <- "non_associato"
 
-  riparazioni <- coppie |>
-    dplyr::mutate(RFID_riparato = nuovo, passo = passo) |>
-    dplyr::filter(!is.na(.data$passo))
-  if (nrow(riparazioni) == 0) {
-    return(letture)
-  }
-
-  riparate <- letture |>
+  risultato <- letture |>
     dplyr::left_join(
-      dplyr::select(riparazioni, "RFID", "data_lettura", "RFID_riparato", "passo"),
+      dplyr::tibble(
+        RFID = coppie$RFID,
+        data_lettura = coppie$data_lettura,
+        RFID_riparato = nuovo,
+        passo_associazione_rfid = passo
+      ),
       by = c("RFID", "data_lettura")
-    )
-  conteggio <- table(factor(riparate$passo, levels = names(passi_riparazione_codici())))
-  message(
-    "Codici RFID riparati (letture): ",
-    paste(formatta_numero(as.integer(conteggio)), names(conteggio), collapse = "; "),
-    "."
-  )
-  riparate |>
+    ) |>
     dplyr::mutate(RFID = dplyr::coalesce(.data$RFID_riparato, .data$RFID)) |>
-    dplyr::select(-"RFID_riparato", -"passo")
+    dplyr::select(-"RFID_riparato")
+
+  conteggio <- table(factor(
+    risultato$passo_associazione_rfid,
+    levels = valori_passo_associazione_rfid()
+  ))
+  if (sum(conteggio) > 0) {
+    message(
+      "Passo di associazione dei codici RFID (letture): ",
+      paste(formatta_numero(as.integer(conteggio)), names(conteggio), collapse = "; "),
+      "."
+    )
+  }
+  risultato
+}
+
+#' Valori del campo `passo_associazione_rfid`, nell'ordine dei passi
+#'
+#' Contesto: il campo dice come il codice RFID di una lettura è arrivato a
+#' essere riconosciuto (vedi `ripara_codici_rfid()`).
+#' Risultato: `diretto` (nessuna variazione), i tre passi di
+#' `passi_riparazione_codici()` e `non_associato`.
+#' @noRd
+valori_passo_associazione_rfid <- function() {
+  c("diretto", names(passi_riparazione_codici()), "non_associato")
 }
 
 #' Una lettura al giorno per RFID: si scartano i doppioni
@@ -1283,13 +1307,13 @@ servizio_dei_censiti_del_mezzo <- function(letture) {
 #' Un messaggio conta le letture associate da ogni passo e quelle dei mezzi senza
 #' giri rimaste senza servizio atteso.
 #'
-#' Risultato: le 28 colonne del CSV, con l'attributo `associazione`: le letture
+#' Risultato: le 30 colonne del CSV, con l'attributo `associazione`: le letture
 #' di ogni passo e quelle senza giro.
 #' @param df_letture Letture di `associa_contenitore_e_fornitura()`.
 #' @param df_calendario Calendario di `unisci_calendari()`; senza la colonna
 #'   `pianificato` vale come di soli giri pianificati.
 #' @param servizi_applica_moda Giri dei servizi, vedi `giri_servizio_dai_censiti()`.
-#' @return Le 28 colonne del CSV delle letture delle antenne, con l'attributo
+#' @return Le 30 colonne del CSV delle letture delle antenne, con l'attributo
 #'   `associazione`.
 #' @noRd
 associa_giro_e_servizio_atteso <- function(
@@ -1352,6 +1376,9 @@ associa_giro_e_servizio_atteso <- function(
   # Un'anagrafica senza il campo (file vecchi) lascia la colonna vuota.
   letture$contenitore_gratuito <- letture[["contenitore_gratuito"]] %||%
     rep(NA_character_, nrow(letture))
+  # Senza la pulizia dei codici (letture di prova) il passo resta vuoto.
+  letture$passo_associazione_rfid <- letture[["passo_associazione_rfid"]] %||%
+    rep(NA_character_, nrow(letture))
 
   senza_giri <- letture$senza_giri %in% TRUE
   if (any(senza_giri)) {
@@ -1397,6 +1424,7 @@ associa_giro_e_servizio_atteso <- function(
       "id_giro",
       "eseguito",
       "RFID",
+      "passo_associazione_rfid",
       "presente_a_database",
       "servizio_transponder",
       "servizio_atteso",
@@ -1876,11 +1904,11 @@ scarta_codici_nulli <- function(letture) {
 #' Messaggi e avvisi dicono quante letture ha associato ogni passo e che cosa
 #' controllare.
 #'
-#' Risultato: le 36 colonne del CSV, con gli attributi `controllo_giri`,
+#' Risultato: le 37 colonne del CSV, con gli attributi `controllo_giri`,
 #' `comuni_corretti` e `scartate` (le letture scartate dalla pulizia, vedi
 #' `righe_scartate()`); i file li scrivono i target della pipeline.
 #' @param file Percorsi di `file_origine()`.
-#' @return Le 36 colonne del CSV delle letture delle antenne, con gli attributi
+#' @return Le 37 colonne del CSV delle letture delle antenne, con gli attributi
 #'   `controllo_giri` e `comuni_corretti`.
 #' @noRd
 prepara_letture_antenne <- function(file = file_origine()) {
@@ -2003,6 +2031,7 @@ colonne_letture_saponette <- function() {
     "data_lettura",
     "matricola_saponetta",
     "RFID",
+    "passo_associazione_rfid",
     "presente_a_database",
     "servizio_transponder",
     "volume",
