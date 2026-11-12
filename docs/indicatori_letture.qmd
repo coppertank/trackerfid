@@ -903,7 +903,7 @@ knitr::kable(nuovo_riepilogo, align = "lrrrrrrrrr")
 if (un_solo_scenario) {
   cat("Un solo scenario: **", riferimento, "** è la fotografia reale delle forniture, con tutte le letture del secco disponibili nel periodo. Non ci sono scenari alternativi perché l'altro sistema non ha conferimenti del secco nel periodo: simularlo darebbe zero litri a ogni fornitura, cioè il premio massimo a tutte. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n", sep = "")
 } else {
-  cat("Gli scenari rispondono alla domanda: che cosa sarebbe successo fatturando con le letture di un solo sistema? **Saponette e antenne** (tutte le letture del secco disponibili) unisce i due, ogni lettura una volta, ed è il riferimento. L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n")
+  cat("Gli scenari rispondono alla domanda: che cosa sarebbe successo fatturando con le letture di un solo sistema? **Saponette e antenne** (tutte le letture del secco disponibili) unisce i due, ogni lettura una volta, ed è il riferimento. Ogni scenario ha le forniture lette da quel sistema (la colonna «Forniture» cambia da uno scenario all'altro). L'**importo netto** è eccedenze meno premi: negativo vuol dire che la somma dei premi supera quella delle eccedenze.\n")
 }
 ```
 
@@ -1198,17 +1198,18 @@ impatto <- impatto_dei_sistemi(economia)
 knitr::kable(
   dplyr::tibble(
     Scenario = impatto$scenario,
-    Forniture = intero(impatto$forniture),
-    `Lette dallo scenario` = intero(impatto$rilevate),
+    `Lette dallo scenario` = intero(impatto$forniture),
+    `Non lette dallo scenario` = intero(impatto$non_lette),
     `Stessa classe` = intero(impatto$stessa_classe),
     `Classe diversa` = intero(impatto$classe_diversa),
     `Premi in più` = intero(impatto$premi_in_piu),
     `Premi in meno` = intero(impatto$premi_in_meno),
-    `Importo riferimento` = euro(impatto$importo_riferimento_eur),
+    `Importo riferimento (sulle lette)` = euro(impatto$importo_riferimento_eur),
     `Importo scenario` = euro(impatto$importo_scenario_eur),
-    Differenza = euro(impatto$differenza_eur)
+    Differenza = euro(impatto$differenza_eur),
+    `Importo riferimento delle non lette` = euro(impatto$importo_non_lette_eur)
   ),
-  align = "lrrrrrrrrr"
+  align = "lrrrrrrrrrr"
 )
 ```
 
@@ -1219,7 +1220,7 @@ knitr::kable(
 cat(
   "\n::: {.callout-warning}\n**Copertura parziale delle antenne.** Le antenne sono in funzione da agosto 2026 e solo su una parte dei mezzi; le saponette dal 2025 e su tutti i giri. Le antenne vedono il **", quota(rapporto(ind_secco$associate_solo_antenne + ind_secco$associate_in_comune, ind_secco$associate_totali)),
   "** delle letture associate del secco della selezione e le saponette il **", quota(rapporto(ind_secco$associate_solo_saponette + ind_secco$associate_in_comune, ind_secco$associate_totali)),
-  "**. Lo scenario «Solo antenne» (o «Solo saponette») ha senso solo se quel sistema era attivo su tutti i mezzi e per tutto il periodo: le forniture che il sistema non vede hanno zero litri e prendono il premio massimo, quindi i «premi in più» dipendono dai mezzi o dai giorni che il sistema non copre.\n:::\n",
+  "**. Ogni scenario «Solo antenne» (o «Solo saponette») ha solo le forniture che quel sistema ha letto almeno una volta: quelle che il sistema non vede, per esempio perché passano su mezzi senza antenna, non compaiono e non prendono il premio massimo per zero litri. Una fornitura vista solo in parte (alcuni passaggi non letti) ha invece meno litri del riferimento, e i «premi in più» misurano proprio questo: dipendono dai giorni che il sistema non copre.\n:::\n",
   sep = ""
 )
 ```
@@ -1228,7 +1229,7 @@ cat(
 #| label: spiegazione-impatto
 #| eval: !expr "economia_utile && economia_due_sistemi"
 #| results: asis
-cat("Il confronto più vicino al costo reale di un sistema. Per ogni fornitura si confronta la classe di ogni scenario a sistema singolo con quella di «Saponette e antenne». Una fornitura che il sistema non ha letto mai ha zero litri, e quindi il premio massimo: sono i **premi in più** (premialità solo nello scenario). I **premi in meno** sono quelli che il riferimento darebbe e lo scenario no. La **differenza** è l'importo dello scenario meno quello del riferimento: negativa vuol dire meno da pagare, cioè premi dati o eccedenze mancate per letture che il sistema non ha fatto.\n")
+cat("Il confronto più vicino al costo reale di un sistema. Ogni scenario a sistema singolo ha solo le **forniture che quel sistema ha letto almeno una volta** (le **non lette** sono forniture del riferimento che il sistema non vede mai, e non entrano nello scenario). Per ogni fornitura letta si confronta la classe dello scenario con quella di «Saponette e antenne»: i **premi in più** sono le forniture in premialità solo nello scenario, di solito perché il sistema ha perso una parte delle letture e quindi ha meno litri; i **premi in meno** sono quelli che il riferimento darebbe e lo scenario no. Gli importi sono sulle sole forniture lette dallo scenario, così la **differenza** (importo dello scenario meno quello del riferimento; negativa vuol dire meno da pagare, cioè premi dati o eccedenze mancate per letture che il sistema non ha fatto) misura le letture perse e non la copertura. L'**importo riferimento delle non lette** è quello che il riferimento ha per le forniture che il sistema non vede: sono i premi e le eccedenze di cui quel sistema, da solo, non si accorgerebbe.\n")
 ```
 
 ## Forniture senza conferimenti rilevati
@@ -1329,7 +1330,7 @@ cat("\n::: {.callout-note}\nL'analisi economica richiede i file delle forniture 
 - **Tariffe.** Per ogni fascia di componenti la tabella dell'azienda dà i litri annui inclusi nella tariffa, il volume minimo addebitato e il volume massimo per accedere alla premialità. Oltre i litri inclusi si paga l'eccedenza (10 € ogni 120 litri per un carrellato); fino al volume massimo per la premialità si riceve un premio di 5 € a cui se ne aggiungono 5 per ogni 120 litri in meno, fino al volume minimo. Le tariffe stanno in `tariffe_secco()` e `tariffe_contenitori()` (`R/utils_tariffe.R`); si usano le attuali anche per gli anni passati.
 - **Contenitori diversi.** I volumi si sommano in litri; eccedenza e premio si calcolano al litro, con la tariffa del contenitore più frequente della fornitura (un volume che la tabella non ha usa quella del carrellato da 120 litri). Su un anno intero il risultato è quello dei conferimenti interi.
 - **Annualizzazione.** Le soglie sono annue e costanti. `litri annualizzati = litri rilevati / fattore`, con il fattore del periodo (giorni da «dal» a «al» / giorni dell'anno, 366 solo dentro un anno bisestile; non dipende da quando la fornitura è stata attivata); classe, premio ed eccedenza si calcolano sui litri annualizzati e sono valori annui (`economia_forniture()`). Scalare le soglie al periodo darebbe la stessa classe: la scelta è del proprietario (8/11/2026). È lineare: niente stagionalità. Con i giri indicati non si annualizza (pochi giorni): si scalano le soglie.
-- **Scenari.** Con tutti e due i sistemi: «Saponette e antenne» (il riferimento, ogni lettura una volta), «Solo saponette» e «Solo antenne». Con un solo sistema, un solo scenario («Rilevazione reale (Saponette)» o «(Antenne)»): l'altro non si simula, perché darebbe zero litri a tutte le forniture, cioè il premio massimo a tutte. Un sistema conta se ha letture associate del secco nel periodo (`sistemi_con_conferimenti()`, `scenari_rilevazione()`).
+- **Scenari.** Con tutti e due i sistemi: «Saponette e antenne» (il riferimento, ogni lettura una volta), «Solo saponette» e «Solo antenne». **Ogni scenario ha le sue forniture**: il riferimento quelle lette almeno una volta da uno dei due sistemi, ogni scenario a sistema singolo solo quelle lette almeno una volta da quel sistema (un sottoinsieme del riferimento); una fornitura che il sistema non vede non compare nel suo scenario e non prende il premio massimo per zero litri. Con un solo sistema, un solo scenario («Rilevazione reale (Saponette)» o «(Antenne)»): l'altro non si simula, perché darebbe zero litri a tutte le forniture, cioè il premio massimo a tutte. Un sistema conta se ha letture associate del secco nel periodo (`sistemi_con_conferimenti()`, `scenari_rilevazione()`).
 - **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Dalla propensione in poi le letture sono quelle associate del secco (`letture_associate_del_secco()`): saponette con transponder `SECCO`, antenne con transponder `SECCO` o letta in un giro del secco (`servizio_atteso` `SECCO`). Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: per questo le forniture senza letture non si classificano.
 - **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento non ci sono né premio né eccedenza, qualunque sia il volume.
 - **Anagrafica.** Forniture e contenitori vengono dalle tabelle estratte (`dv_cnt_associazione_contenitori`, `dv_associazione_componenti`, `dv_potenziamento_secco`), non dalle letture (la propensione parte da tutti i bidoni del secco attivi alla data «dal», letti o no, e conta anche i contenitori gratuiti, che l'analisi economica esclude; l'analisi economica guarda le sole forniture con almeno un conferimento: per questo le forniture possono essere più numerose nella propensione. Con i giri indicati la propensione guarda i bidoni letti nei giri). Un contenitore senza codice (mancante o di soli zeri) non è un bidone e non compare.

@@ -252,12 +252,37 @@ test_that("l'analisi economica classifica le forniture domestiche del secco in o
   # con le sole saponette F1 ha 240 litri (premio massimo) e F2 840 (ordinaria)
   expect_equal(riga("Solo saponette", "F1")$premio_eur, 15)
   expect_identical(as.character(riga("Solo saponette", "F2")$classe), "Ordinaria")
-  # F8 non e' letta dalle antenne: litri zero, e senza dati il premio massimo
-  f8 <- riga("Solo antenne", "F8")
-  expect_false(f8$rilevata)
-  expect_equal(f8$litri, 0)
-  expect_equal(f8$premio_eur, 15)
-  expect_true(riga("Solo saponette", "F8")$rilevata)
+  # F8 non e' letta dalle antenne: non compare nello scenario delle antenne (non
+  # prende il premio massimo per zero litri), ma e' nelle saponette e nell'unione
+  expect_identical(nrow(riga("Solo antenne", "F8")), 0L)
+  expect_identical(nrow(riga("Solo saponette", "F8")), 1L)
+  expect_identical(nrow(riga("Saponette e antenne", "F8")), 1L)
+})
+
+test_that("ogni scenario ha solo le forniture lette dai suoi sistemi", {
+  economia <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
+  per_scenario <- split(economia$id_fornitura, economia$scenario)
+  unione <- per_scenario[["Saponette e antenne"]]
+  # il riferimento e' l'unione: tutte le forniture lette da almeno un sistema
+  expect_setequal(unione, c("F1", "F2", "F6", "F8"))
+  # gli scenari a sistema singolo sono un sottoinsieme del riferimento
+  expect_true(all(per_scenario[["Solo antenne"]] %in% unione))
+  expect_true(all(per_scenario[["Solo saponette"]] %in% unione))
+  expect_lt(length(per_scenario[["Solo antenne"]]), length(unione))
+  # nessuna fornitura con zero litri: ogni riga di ogni scenario ha almeno un conferimento
+  expect_true(all(economia$conferimenti >= 1))
+  expect_true(all(economia$litri > 0))
+  expect_false("rilevata" %in% names(economia))
+  # una fornitura letta solo da un sistema compare solo nel suo scenario e nell'unione
+  unita <- unita_economia_prova()
+  letta_solo_da_antenne <- unita[unita$id_fornitura == "F8" & unita$stato %in% "PIA", ]
+  letta_solo_da_antenne$sistema <- factor("Solo antenne", sistemi_lettura())
+  senza_f8 <- unita[!(unita$id_fornitura == "F8"), ]
+  economia_antenne <- analisi_economica(dplyr::bind_rows(senza_f8, letta_solo_da_antenne), anagrafica_economia_prova())
+  quali <- split(economia_antenne$id_fornitura, economia_antenne$scenario)
+  expect_true("F8" %in% quali[["Solo antenne"]])
+  expect_true("F8" %in% quali[["Saponette e antenne"]])
+  expect_false("F8" %in% quali[["Solo saponette"]])
 })
 
 test_that("il riepilogo conta classi, litri ed euro per scenario e per gruppo", {
@@ -310,18 +335,29 @@ test_that("l'impatto dei sistemi dice che cosa cambierebbe con uno solo", {
   )
   saponette <- impatto[impatto$scenario == "Solo saponette", ]
   antenne <- impatto[impatto$scenario == "Solo antenne", ]
+  # le saponette leggono tutte e quattro le forniture, le antenne tre (non F8)
   expect_identical(saponette$forniture, 4L)
+  expect_identical(saponette$non_lette, 0L)
+  expect_identical(antenne$forniture, 3L)
+  expect_identical(antenne$non_lette, 1L)
   # saponette: F1 resta in premialita' (ma 15 euro invece di 10), F2 diventa ordinaria
   expect_identical(saponette$classe_diversa, 1L)
   expect_identical(saponette$stessa_classe, 3L)
-  expect_identical(saponette$rilevate, 4L)
   expect_equal(saponette$importo_riferimento_eur, 10 - 10 - 15)
   expect_equal(saponette$importo_scenario_eur, -15 - 0 - 15)
   expect_equal(saponette$differenza_eur, -15)
-  # antenne: non vedono F8, che resta in premialita' con litri zero (15 euro)
-  expect_identical(antenne$rilevate, 3L)
+  expect_equal(saponette$importo_non_lette_eur, 0)
+  # antenne: F8 non c'e' nello scenario, quindi niente premio per zero litri; sulle
+  # tre forniture lette gli importi sono quelli del riferimento, e l'importo di F8
+  # (premio di 15 euro nel riferimento) e' a parte
   expect_identical(antenne$classe_diversa, 0L)
+  expect_identical(antenne$premi_in_piu, 0L)
   expect_equal(antenne$differenza_eur, 0)
+  expect_equal(antenne$importo_non_lette_eur, -15)
+  expect_equal(
+    antenne$importo_riferimento_eur + antenne$importo_non_lette_eur,
+    sum(economia$importo_eur[economia$scenario == "Saponette e antenne"])
+  )
 })
 
 test_that("una fornitura dell'anagrafica senza letture conta nella propensione, con zero letture", {
