@@ -146,9 +146,9 @@ conferimenti_per_fornitura <- function(
 #' (`letture_con_massimo`, `litri_con_massimo`).
 #'
 #' La base è l'`anagrafica` che si passa: nel report sono tutte le forniture e i
-#' bidoni del secco attivi alla data `dal` nell'associazione dei contenitori, letti
-#' o no (`anagrafica_dei_bidoni_attivi()`; con i giri, solo quelli letti,
-#' `anagrafica_dei_bidoni_letti()`). Una fornitura della base senza letture conta
+#' bidoni del secco attivi almeno un giorno nel periodo nell'associazione dei
+#' contenitori, letti o no (`anagrafica_dei_bidoni_attivi()`; con i giri, solo
+#' quelli letti, `anagrafica_dei_bidoni_letti()`). Una fornitura della base senza letture conta
 #' con zero conferimenti. Le letture sono quelle della fornitura.
 #'
 #' Risultato: un tibble con una riga per gruppo.

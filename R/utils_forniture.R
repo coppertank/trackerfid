@@ -515,35 +515,43 @@ anagrafica_con_bidoni <- function(anagrafica, bidoni) {
     dplyr::inner_join(per_fornitura, by = "id_fornitura")
 }
 
-#' Forniture e contenitori attivi a una data: la base della propensione
+#' Forniture e contenitori attivi nel periodo: la base della propensione
 #'
 #' Contesto: la propensione al conferimento (richiesta del proprietario,
 #' 12/11/2026) non guarda solo i bidoni che hanno avuto una lettura, ma tutti
-#' quelli del servizio che erano attivi alla data di inizio dell'analisi
-#' (`dal`) nell'associazione dei contenitori. Chi conferisce nelle isole
+#' quelli del servizio che erano attivi nel periodo di analisi nell'associazione
+#' dei contenitori, anche solo in parte (regola precisata il 13/11/2026, la stessa
+#' della tabella di forniture e contenitori). Chi conferisce nelle isole
 #' ecologiche non ha un bidone nella tabella, quindi non entra; chi ha un bidone
-#' e non lo usa (o non viene letto) conta, con zero letture. Con la sola base dei
-#' bidoni letti la propensione sarebbe sovrastimata.
+#' e non lo usa (o non viene letto) conta, con zero letture; chi ha avuto almeno
+#' una lettura è compreso per costruzione, perché una lettura associata (`PIA`)
+#' ha un contenitore attivo quel giorno. Con la sola base dei bidoni letti la
+#' propensione sarebbe sovrastimata.
 #'
 #' Funzionamento: tiene i contenitori del servizio indicato con un codice vero,
-#' attivi nel giorno `dal` (`data_attivazione_contenitore` fino a `dal` e
-#' `data_cessazione_contenitore` da `dal` in poi: un bidone attivato dopo, o già
-#' cessato prima, non è nella base), e ricalcola su quelli i campi dei
-#' contenitori di `anagrafica` (`anagrafica_con_bidoni()`). Le letture non
-#' contano: la fornitura senza nessuna lettura resta.
+#' attivi almeno un giorno tra `dal` e `al` (`data_attivazione_contenitore` fino
+#' ad `al` e `data_cessazione_contenitore` da `dal` in poi: attivato o cessato a
+#' metà periodo conta, attivato dopo `al` o cessato prima di `dal` no), e ricalcola
+#' su quelli i campi dei contenitori di `anagrafica` (`anagrafica_con_bidoni()`).
+#' Le letture non contano: la fornitura senza nessuna lettura resta. I conferimenti
+#' massimi di un bidone attivo solo in parte sono comunque quelli di tutto il
+#' periodo (`fattore` uguale per tutti: conseguenza accettata dal proprietario il
+#' 10/11/2026).
 #' Risultato: le righe di `anagrafica` delle forniture con almeno un bidone attivo
-#' a `dal`, con i campi dei contenitori riferiti ai soli bidoni attivi a `dal`.
+#' nel periodo, con i campi dei contenitori riferiti ai soli bidoni attivi nel
+#' periodo.
 #' @param anagrafica Tabella di `anagrafica_forniture()` del servizio.
 #' @param contenitori Tabella di `importa_contenitori()`.
-#' @param dal Primo giorno del periodo.
+#' @param dal,al Primo e ultimo giorno del periodo.
 #' @param servizio Servizio dei contenitori, o `NULL` per tutti.
 #' @noRd
-anagrafica_dei_bidoni_attivi <- function(anagrafica, contenitori, dal, servizio = "SECCO") {
+anagrafica_dei_bidoni_attivi <- function(anagrafica, contenitori, dal, al, servizio = "SECCO") {
   dal <- as.Date(dal)
+  al <- as.Date(al)
   bidoni <- contenitori |>
     bidoni_con_codice(servizio) |>
     dplyr::filter(
-      (.data$data_attivazione_contenitore <= dal &
+      (.data$data_attivazione_contenitore <= al &
         .data$data_cessazione_contenitore >= dal) %in% TRUE
     )
   anagrafica_con_bidoni(anagrafica, bidoni)
