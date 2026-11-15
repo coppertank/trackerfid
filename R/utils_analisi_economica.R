@@ -217,36 +217,139 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
     )
 }
 
-#' Forniture senza nessun conferimento nel periodo, pur potendone fare
+#' Forniture dell'anagrafica senza nessuna lettura associata nel periodo
 #'
-#' Contesto: una fornitura senza letture non è una fornitura virtuosa: può avere il
-#' tag rotto o non letto, il contenitore non esposto o lo smaltimento in un altro
-#' modo. Il report le segnala e non le premia. Si cercano solo quelle che nel
-#' periodo potevano conferire almeno una volta, secondo il massimo annuo dei loro
-#' contenitori (`numero_raccolte_annue`: il massimo possibile, non un'attesa).
-#' Funzionamento: tiene le forniture con tag dell'anagrafica (di qualunque gruppo:
-#' domestiche, condomini, non domestiche) che, nel periodo, non hanno nessuna
-#' lettura associata dei due sistemi insieme e per cui i conferimenti massimi nel
-#' periodo (massimo annuo dei contenitori × `fattore`) sono almeno uno. Le
-#' forniture senza lettura che restano fuori non spariscono in silenzio: se ne
-#' contano i due motivi nell'attributo `escluse`.
-#' Risultato: l'anagrafica di quelle forniture con `conferimenti_massimi`. L'attributo
-#' `escluse` è un vettore con `massimo_non_noto` (il massimo annuo manca nei dati)
-#' e `massimo_sotto_uno` (nel periodo se ne potevano fare meno di uno).
+#' Contesto: il report segnala le forniture del secco che nel periodo non hanno
+#' ricevuto nemmeno una lettura, per fascia di componenti, e ne salva l'elenco
+#' (`elenco_forniture_senza_letture()`). Una fornitura senza letture non è una
+#' fornitura virtuosa: può avere il tag rotto o non letto, il contenitore non
+#' esposto o lo smaltimento in un altro modo; per questo non entra nell'analisi
+#' economica, che altrimenti le darebbe il premio massimo per mancanza di dati.
+#' Definizione del proprietario (15/11/2026): niente conferimenti massimi né
+#' altri controlli, solo l'attività nel periodo e le letture.
+#'
+#' Funzionamento: `anagrafica` ha le forniture con almeno un contenitore del
+#' servizio attivo almeno un giorno nel periodo (`anagrafica_forniture()`), con i
+#' componenti medi e il gruppo. Una fornitura è «letta» se ha almeno una lettura
+#' associata (`PIA`) in `unita` con il suo `id_fornitura`; le altre righe di
+#' `anagrafica` sono senza letture.
+#'
+#' Risultato: le righe di `anagrafica` senza letture, nello stesso ordine.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @noRd
-forniture_senza_conferimenti <- function(unita, anagrafica) {
+forniture_senza_letture <- function(unita, anagrafica) {
   lette <- unique(unita$id_fornitura[unita$stato %in% "PIA"])
-  senza_letture <- anagrafica |>
-    dplyr::mutate(conferimenti_massimi = .data$conferimenti_massimi_annui * .data$fattore) |>
-    dplyr::filter(!.data$id_fornitura %in% lette)
-  risultato <- dplyr::filter(senza_letture, (.data$conferimenti_massimi >= 1) %in% TRUE)
-  attr(risultato, "escluse") <- c(
-    massimo_non_noto = sum(is.na(senza_letture$conferimenti_massimi)),
-    massimo_sotto_uno = sum(senza_letture$conferimenti_massimi < 1, na.rm = TRUE)
-  )
-  risultato
+  dplyr::filter(anagrafica, !.data$id_fornitura %in% lette)
+}
+
+#' Elenco completo delle forniture senza letture, con i dati per capire perché
+#'
+#' Contesto: richiesta del proprietario (15/11/2026). Le forniture senza letture del
+#' report sembravano più numerose di quelle reali: l'elenco salvato in
+#' `data-raw/output` serve a guardarle una per una. Una fornitura può risultare
+#' senza letture per motivi diversi: i suoi bidoni non sono mai stati letti; sono
+#' stati letti ma la lettura non è associata (per esempio fuori dalle date di
+#' attivazione e cessazione del contenitore, quindi `PIT` o `NP`); sono stati letti
+#' e associati a un'altra fornitura (un contenitore che cambia fornitura, o due
+#' forniture con il contenitore attivo nello stesso giorno); la fornitura è attiva
+#' solo da pochi giorni del periodo o è cessata a database con il contenitore ancora
+#' aperto.
+#'
+#' Funzionamento: parte dalle forniture senza letture
+#' (`forniture_senza_letture()`) e per ognuna aggiunge: i codici dei bidoni del servizio attivi nel periodo
+#' (`bidoni_delle_forniture()`); lo `stato_fornitura` dei contenitori; la prima
+#' attivazione e l'ultima cessazione dei bidoni (cessazione `2099-12-31` se
+#' aperta); le letture di quei codici nel periodo, di qualunque servizio, senza le
+#' scartate: quante in tutto, quante non associate (`PIT` o `NP`, con la prima e
+#' l'ultima data) e quante associate a un'altra fornitura.
+#'
+#' Risultato: una riga per fornitura con `id_fornitura`, `id_utenza`, `gruppo`,
+#' `componenti_medi`, `potenziamento`, `contenitori`, `bidoni`, `volume_totale`,
+#' `stato_fornitura`, `data_attivazione_bidoni`, `data_cessazione_bidoni`,
+#' `giorni_attivi` (nel periodo), `letture_bidoni`, `letture_non_associate`,
+#' `prima_lettura_non_associata`, `ultima_lettura_non_associata`,
+#' `letture_altra_fornitura`. Senza forniture, un tibble senza righe con le stesse
+#' colonne.
+#' @param senza Risultato di `forniture_senza_letture()`.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param unita Risultato di `unita_di_lettura()` su **tutte** le letture del
+#'   periodo (non solo quelle del secco): serve a trovare le letture non associate.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @noRd
+elenco_forniture_senza_letture <- function(senza, contenitori, unita, dal, al, servizio = "SECCO") {
+  dal <- as.Date(dal)
+  al <- as.Date(al)
+  # Date estreme di un gruppo, mancanti se il gruppo e' vuoto (senza avvisi).
+  prima <- function(x) if (length(x) > 0) min(x) else as.Date(NA)
+  ultima <- function(x) if (length(x) > 0) max(x) else as.Date(NA)
+  # Un'anagrafica senza il campo (file vecchi) lascia la colonna vuota.
+  contenitori$stato_fornitura <- contenitori[["stato_fornitura"]] %||%
+    rep(NA_character_, nrow(contenitori))
+  bidoni <- contenitori |>
+    bidoni_con_codice(servizio) |>
+    dplyr::filter(
+      .data$id_fornitura %in% senza$id_fornitura,
+      (.data$data_attivazione_contenitore <= al &
+        .data$data_cessazione_contenitore >= dal) %in% TRUE
+    ) |>
+    dplyr::distinct(.data$id_fornitura, .data$codice_transponder, .keep_all = TRUE)
+
+  dei_bidoni <- bidoni |>
+    dplyr::summarise(
+      stato_fornitura = paste(sort(unique(stats::na.omit(.data$stato_fornitura))), collapse = ", "),
+      data_attivazione_bidoni = prima(.data$data_attivazione_contenitore),
+      data_cessazione_bidoni = ultima(.data$data_cessazione_contenitore),
+      .by = "id_fornitura"
+    )
+  codici_testo <- bidoni_delle_forniture(contenitori, senza$id_fornitura, dal, al, servizio)
+
+  # Le letture di quei codici nel periodo, ognuna con il suo stato e la fornitura
+  # a cui è stata associata (le scartate non hanno una fornitura e non contano).
+  codici <- dplyr::distinct(bidoni, .data$id_fornitura, codice = .data$codice_transponder)
+  lette <- unita |>
+    dplyr::filter(.data$RFID %in% codici$codice, as.character(.data$stato) %in% c("PIA", "PIT", "NP")) |>
+    dplyr::transmute(
+      codice = .data$RFID,
+      .data$data_lettura,
+      stato = as.character(.data$stato),
+      fornitura_letta = as.character(.data$id_fornitura)
+    )
+  dei_codici <- dplyr::inner_join(codici, lette, by = "codice", relationship = "many-to-many")
+  totali <- dei_codici |>
+    dplyr::summarise(
+      letture_bidoni = dplyr::n(),
+      letture_non_associate = sum(.data$stato != "PIA"),
+      letture_altra_fornitura = sum(.data$stato == "PIA" & !.data$fornitura_letta %in% .data$id_fornitura),
+      .by = "id_fornitura"
+    )
+  non_associate <- dei_codici |>
+    dplyr::filter(.data$stato != "PIA") |>
+    dplyr::summarise(
+      prima_lettura_non_associata = prima(.data$data_lettura),
+      ultima_lettura_non_associata = ultima(.data$data_lettura),
+      .by = "id_fornitura"
+    )
+
+  senza |>
+    dplyr::left_join(dei_bidoni, by = "id_fornitura") |>
+    dplyr::left_join(codici_testo, by = "id_fornitura") |>
+    dplyr::left_join(totali, by = "id_fornitura") |>
+    dplyr::left_join(non_associate, by = "id_fornitura") |>
+    dplyr::mutate(
+      letture_bidoni = dplyr::coalesce(.data$letture_bidoni, 0L),
+      letture_non_associate = dplyr::coalesce(.data$letture_non_associate, 0L),
+      letture_altra_fornitura = dplyr::coalesce(.data$letture_altra_fornitura, 0L)
+    ) |>
+    dplyr::arrange(.data$gruppo, .data$id_fornitura) |>
+    dplyr::select(dplyr::any_of(c(
+      "id_fornitura", "id_utenza", "gruppo", "componenti_medi", "potenziamento",
+      "contenitori", "bidoni", "volume_totale", "stato_fornitura",
+      "data_attivazione_bidoni", "data_cessazione_bidoni", "giorni_attivi",
+      "letture_bidoni", "letture_non_associate", "prima_lettura_non_associata",
+      "ultima_lettura_non_associata", "letture_altra_fornitura"
+    )))
 }
 
 #' Premio, eccedenza e classe delle forniture domestiche del secco, per scenario
@@ -273,7 +376,7 @@ forniture_senza_conferimenti <- function(unita, anagrafica) {
 #' scenario: non prende il premio massimo per zero litri (sarebbe un premio dato
 #' per mancanza di dati, e il «solo antenne» lo sovrastimerebbe per i mezzi senza
 #' antenna). Lo stesso vale per una fornitura senza letture in assoluto
-#' (`forniture_senza_conferimenti()` la segnala; con i giri le altre non si sanno
+#' (`forniture_senza_letture()` la segnala; con i giri le altre non si sanno
 #' nemmeno attribuire).
 #'
 #' Risultato: per fornitura e scenario, `conferimenti`, `litri` e le colonne di
