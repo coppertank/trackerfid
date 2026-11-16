@@ -170,3 +170,51 @@ test_that("la soglia di fatturazione di un gruppo e' quella della sua fascia", {
   # accetta anche un fattore, come `gruppo` delle forniture
   expect_equal(soglia_fatturazione_del_gruppo(factor("2 componenti", gruppi_forniture())), 960)
 })
+
+test_that("il premio e' proporzionale ai giorni di attivita' della fornitura nel periodo", {
+  f <- dplyr::tibble(
+    litri = c(0, 0, 480, 480),
+    componenti_medi = 1,
+    potenziamento = FALSE,
+    volume_contenitore = 120,
+    fattore = 1,
+    quota_attivita = c(1, 0.5, 1, 0.5)
+  )
+  r <- economia_forniture(f)
+  # senza conferimenti il premio massimo (15 euro con un componente), poi la meta' se attiva meta' periodo
+  expect_equal(r$premio_pieno_eur, c(15, 15, 5, 5))
+  expect_equal(r$premio_eur, c(15, 7.5, 5, 2.5))
+  expect_equal(r$importo_eur, -r$premio_eur)
+  # i litri annualizzati e la classe non dipendono dai giorni di attivita'
+  expect_equal(r$litri_annui, c(0, 0, 480, 480))
+  expect_identical(as.character(r$classe), rep("Premialità", 4))
+  # senza la colonna la fornitura e' attiva tutto il periodo
+  senza_quota <- economia_forniture(dplyr::select(f, -"quota_attivita"))
+  expect_equal(senza_quota$premio_eur, c(15, 15, 5, 5))
+  expect_equal(senza_quota$quota_attivita, rep(1, 4))
+  # un mese su dodici, e dieci mesi su dodici (esempi del proprietario)
+  mesi <- economia_forniture(dplyr::mutate(f[1, ], quota_attivita = 1 / 12))
+  expect_equal(mesi$premio_eur, 15 / 12)
+  dieci <- economia_forniture(dplyr::mutate(f[1, ], quota_attivita = 10 / 12))
+  expect_equal(dieci$premio_eur, 15 * 10 / 12)
+  # con 6 o piu' componenti il premio massimo e' 20 euro
+  sei <- economia_forniture(dplyr::mutate(f[1, ], componenti_medi = 6, quota_attivita = 0.5))
+  expect_equal(sei$premio_pieno_eur, 20)
+  expect_equal(sei$premio_eur, 10)
+  # l'eccedenza non si proporziona: 120 litri sopra i 720 inclusi, 10 euro, nessun premio
+  eccedente <- economia_forniture(dplyr::mutate(f[1, ], litri = 840, quota_attivita = 0.5))
+  expect_identical(as.character(eccedente$classe), "Eccedente")
+  expect_equal(eccedente$eccedenza_eur, 10)
+  expect_equal(eccedente$premio_eur, 0)
+  # una quota fuori da 0-1 si riporta nei limiti, una mancante vale 1
+  fuori <- economia_forniture(dplyr::mutate(f[1:2, ], quota_attivita = c(1.5, NA)))
+  expect_equal(fuori$premio_eur, c(15, 15))
+  # casa vuota e potenziamento restano senza premio
+  senza_premio <- economia_forniture(dplyr::mutate(
+    f[1:2, ],
+    componenti_medi = c(0, 3),
+    potenziamento = c(FALSE, TRUE),
+    quota_attivita = 0.5
+  ))
+  expect_equal(senza_premio$premio_eur, c(0, 0))
+})

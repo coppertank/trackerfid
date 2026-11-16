@@ -450,3 +450,34 @@ test_that("un doppione che cade in due finestre conta una volta nel totale dei g
   totale <- indicatori[indicatori$giro == "Totale", ]
   expect_identical(totale$letture_totali, totale$compatibili_totali + totale$scartate_totali)
 })
+
+test_that("una lettura ha una sola fornitura: se il bidone risulta in due forniture lo stesso giorno vale la piu' recente", {
+  giorno <- "2026-03-31 07:00:00"
+  con_attivazione <- function(x, attivazione) {
+    dplyr::mutate(x, data_attivazione_contenitore = as.Date(attivazione))
+  }
+  # un file prodotto prima del 16/11/2026: due righe per la stessa lettura
+  antenne <- dplyr::bind_rows(
+    con_attivazione(lettura("R1", giorno, "PIA", "F_vecchia", 120, "SECCO"), "2025-01-01"),
+    con_attivazione(lettura("R1", giorno, "PIA", "F_nuova", 120, "SECCO"), "2026-03-31"),
+    con_attivazione(lettura("R2", giorno, "PIA", "F_altra", 120, "SECCO"), "2025-01-01")
+  )
+  vuote <- leggi_letture_indicatori(NULL)
+  unita <- unita_di_lettura(antenne, vuote, vuote, vuote)
+  expect_identical(nrow(unita), 2L)
+  expect_identical(unita$id_fornitura[unita$RFID == "R1"], "F_nuova")
+  # l'ordine delle righe nel file non cambia il risultato
+  rovesciate <- unita_di_lettura(antenne[3:1, ], vuote, vuote, vuote)
+  expect_identical(rovesciate$id_fornitura[rovesciate$RFID == "R1"], "F_nuova")
+  # senza la data di attivazione (file vecchi o prove) resta una riga per lettura, senza errori
+  senza_data <- unita_di_lettura(antenne[, setdiff(names(antenne), "data_attivazione_contenitore")], vuote, vuote, vuote)
+  expect_identical(nrow(senza_data), 2L)
+  # la data si legge dal CSV come data
+  csv <- withr::local_tempfile(fileext = ".csv")
+  utils::write.csv(
+    dplyr::mutate(antenne, data_attivazione_contenitore = as.character(data_attivazione_contenitore)),
+    csv, row.names = FALSE
+  )
+  letti <- leggi_letture_indicatori(csv)
+  expect_s3_class(letti$data_attivazione_contenitore, "Date")
+})

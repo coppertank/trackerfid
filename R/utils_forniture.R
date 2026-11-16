@@ -235,7 +235,9 @@ componenti_medi_pesati <- function(attivita, componenti) {
 #' contenitori), `litri_massimi_annui`, `inizio`, `fine`,
 #' `contenitori_gratuiti`, `contenitori_non_gratuiti`, `volume_contenitore_non_gratuito`
 #' (il volume più frequente tra i contenitori non gratuiti, vuoto se sono tutti
-#' gratuiti), `giorni_attivi`, `fattore`, `componenti_medi`, `giorni_con_componenti`,
+#' gratuiti), `giorni_attivi`, `fattore`, `quota_attivita` (giorni di attività / giorni
+#' del periodo: la parte del periodo in cui la fornitura era attiva, per la
+#' proporzione del premio), `componenti_medi`, `giorni_con_componenti`,
 #' `potenziamento` e `gruppo`.
 #' @param contenitori Tabella di `importa_contenitori(categoria = TRUE)`.
 #' @param componenti Tabella di `importa_componenti()`.
@@ -330,7 +332,9 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
       contenitori_non_gratuiti = .data$contenitori - .data$contenitori_gratuiti,
       giorni_attivi = as.numeric(.data$fine - .data$inizio) + 1,
       # Il periodo, non l'attività della fornitura: vedi la documentazione.
-      fattore = (as.numeric(al - dal) + 1) / giorni_dell_anno(dal, al)
+      fattore = (as.numeric(al - dal) + 1) / giorni_dell_anno(dal, al),
+      # La parte del periodo in cui la fornitura era attiva: serve al premio.
+      quota_attivita = pmin(.data$giorni_attivi / (as.numeric(al - dal) + 1), 1)
     )
 
   attivita <- dplyr::select(per_fornitura, "id_fornitura", "inizio", "fine")
@@ -383,16 +387,20 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
 #' Funzionamento: tiene i contenitori delle forniture indicate, attivi almeno un
 #' giorno nel periodo e del servizio scelto (maiuscole e spazi ininfluenti); per
 #' ogni fornitura elenca i codici distinti con il volume tra parentesi e, per un
-#' contenitore gratuito, la parola «gratuito».
-#' Risultato: `id_fornitura` e `bidoni`, per esempio `0000012345 (120 L)` o
-#' `0000012345 (120 L, gratuito)`; i contenitori di una stessa fornitura sono
-#' separati da una virgola.
+#' contenitore gratuito, la parola «gratuito». Con `stato` tiene solo i
+#' contenitori il cui `stato_fornitura` è quello indicato (per esempio `ATTIVA`).
+#' Risultato: `id_fornitura`, `numero_bidoni` (i codici distinti) e `bidoni`, per
+#' esempio `0000012345 (120 L)` o `0000012345 (120 L, gratuito)`; i contenitori di
+#' una stessa fornitura sono separati da una virgola. Le forniture senza bidoni
+#' non compaiono.
 #' @param contenitori Tabella di `importa_contenitori()`.
 #' @param id_forniture Forniture da cercare.
 #' @param dal,al Primo e ultimo giorno del periodo.
 #' @param servizio Servizio dei contenitori, o `NULL` per tutti.
+#' @param stato Stato della fornitura dei contenitori da tenere (maiuscole e spazi
+#'   ininfluenti), o `NULL` per tutti.
 #' @noRd
-bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio = "SECCO") {
+bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio = "SECCO", stato = NULL) {
   dal <- as.Date(dal)
   al <- as.Date(al)
   attivi <- contenitori |>
@@ -406,6 +414,14 @@ bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio 
     attivi <- dplyr::filter(
       attivi,
       toupper(trimws(.data$servizio_transponder)) %in% toupper(trimws(servizio))
+    )
+  }
+  if (!is.null(stato)) {
+    # Un'associazione senza lo stato (file vecchi) non ha contenitori con quello stato.
+    attivi$stato_fornitura <- attivi[["stato_fornitura"]] %||% rep(NA_character_, nrow(attivi))
+    attivi <- dplyr::filter(
+      attivi,
+      toupper(trimws(.data$stato_fornitura)) %in% toupper(trimws(stato))
     )
   }
   attivi$contenitore_gratuito <- attivi[["contenitore_gratuito"]] %||% rep("N", nrow(attivi))
@@ -423,7 +439,11 @@ bidoni_delle_forniture <- function(contenitori, id_forniture, dal, al, servizio 
         ifelse(nzchar(.data$dettaglio), paste0(" (", .data$dettaglio, ")"), "")
       )
     ) |>
-    dplyr::summarise(bidoni = paste(.data$bidone, collapse = ", "), .by = "id_fornitura")
+    dplyr::summarise(
+      numero_bidoni = dplyr::n(),
+      bidoni = paste(.data$bidone, collapse = ", "),
+      .by = "id_fornitura"
+    )
 }
 
 #' Contenitori del servizio con un codice vero, pronti per ricalcolare i campi dell'anagrafica

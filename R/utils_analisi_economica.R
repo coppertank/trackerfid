@@ -223,10 +223,12 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
 #' ricevuto nemmeno una lettura, per fascia di componenti, e ne salva l'elenco
 #' (`elenco_forniture_senza_letture()`). Una fornitura senza letture non è una
 #' fornitura virtuosa: può avere il tag rotto o non letto, il contenitore non
-#' esposto o lo smaltimento in un altro modo; per questo non entra nell'analisi
-#' economica, che altrimenti le darebbe il premio massimo per mancanza di dati.
-#' Definizione del proprietario (15/11/2026): niente conferimenti massimi né
-#' altri controlli, solo l'attività nel periodo e le letture.
+#' esposto o lo smaltimento in un altro modo. Nell'analisi economica le domestiche
+#' tra queste ricevono il premio massimo, proporzionale ai giorni di attività
+#' (`analisi_economica()`). Definizione del proprietario (15/11/2026): niente
+#' conferimenti massimi né altri controlli, solo l'attività nel periodo e le
+#' letture (16/11/2026: le letture sono quelle di qualunque servizio, come nello
+#' script del proprietario).
 #'
 #' Funzionamento: `anagrafica` ha le forniture con almeno un contenitore del
 #' servizio attivo almeno un giorno nel periodo (`anagrafica_forniture()`), con i
@@ -365,23 +367,26 @@ elenco_forniture_senza_letture <- function(senza, contenitori, unita, dal, al, s
 #' Funzionamento: gli scenari sono quelli validi per i sistemi che hanno letture
 #' (`scenari_rilevazione()`): con un solo sistema c'è un solo scenario, la
 #' situazione reale; solo con tutti e due si aggiungono i due a sistema singolo.
-#' Il primo scenario è sempre il riferimento. **Ogni scenario ha la sua
-#' popolazione** (scelta del proprietario, 12/11/2026): le forniture domestiche
-#' del secco dell'anagrafica (condomini e non domestiche hanno regole di
-#' fatturazione diverse), con i componenti noti, che hanno almeno un conferimento
-#' **nelle letture di quello scenario**. Il riferimento ha quindi le forniture lette
-#' almeno una volta da uno dei due sistemi; «Solo saponette» e «Solo antenne»
-#' hanno solo quelle lette dal sistema indicato, e sono un sottoinsieme del
-#' riferimento. Una fornitura che un sistema non ha mai letto non compare nel suo
-#' scenario: non prende il premio massimo per zero litri (sarebbe un premio dato
-#' per mancanza di dati, e il «solo antenne» lo sovrastimerebbe per i mezzi senza
-#' antenna). Lo stesso vale per una fornitura senza letture in assoluto
-#' (`forniture_senza_letture()` la segnala; con i giri le altre non si sanno
-#' nemmeno attribuire).
+#' Il primo scenario è sempre il riferimento. **Ogni scenario è a sé stante**
+#' (regola del proprietario, 16/11/2026, che sostituisce quella del 12/11): è come
+#' se esistessero solo le letture dei suoi sistemi. **La popolazione è la stessa
+#' in tutti gli scenari**: le forniture domestiche del secco attive nel periodo
+#' (condomini e non domestiche hanno regole di fatturazione diverse), con i
+#' componenti noti e almeno un contenitore a pagamento. I litri di ogni fornitura
+#' sono quelli delle letture associate (`PIA`) dello scenario, sommate per
+#' fornitura (due bidoni della stessa fornitura sommano il volume; le letture dello
+#' stesso RFID sotto forniture diverse restano separate). **Una fornitura senza
+#' letture nello scenario ha zero litri e riceve il premio massimo della sua
+#' fascia, proporzionale ai giorni di attività** (`economia_forniture()`): è la
+#' premialità per chi non risulta letto (`senza_letture` è vero). Con le letture di
+#' un solo sistema, quindi, le forniture dei mezzi che quel sistema non copre
+#' prendono il premio massimo: è quello che quel sistema da solo darebbe. Con i
+#' giri indicati (`annualizza = FALSE`) il premio non si proporziona (le letture
+#' sono un campione).
 #'
-#' Risultato: per fornitura e scenario, `conferimenti`, `litri` e le colonne di
-#' `economia_forniture()` (litri ed euro annualizzati). Senza scenari, un tibble
-#' senza righe.
+#' Risultato: per fornitura e scenario, `conferimenti`, `litri`, `senza_letture` e
+#' le colonne di `economia_forniture()` (litri ed euro annualizzati). Senza
+#' scenari, un tibble senza righe.
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @param con_antenne,con_saponette Quali sistemi hanno letture nel periodo
@@ -415,17 +420,26 @@ analisi_economica <- function(
         )
       )
   }
+  # Il premio è proporzionale ai giorni di attività solo con l'annualizzazione.
+  popolazione$quota_attivita <- if (annualizza) {
+    popolazione[["quota_attivita"]] %||% rep(1, nrow(popolazione))
+  } else {
+    rep(1, nrow(popolazione))
+  }
   scenari <- scenari_rilevazione(con_antenne, con_saponette)
   if (length(scenari) == 0) {
     return(dplyr::tibble())
   }
-  # Ogni scenario guarda le forniture che le sue letture hanno visto almeno una
-  # volta: `inner_join()` lascia fuori quelle senza conferimenti.
   purrr::imap(scenari, function(sistemi, nome) {
     conferimenti <- conferimenti_per_fornitura(unita, popolazione, sistemi, "SECCO", TRUE)
     popolazione |>
-      dplyr::inner_join(conferimenti, by = "id_fornitura") |>
-      dplyr::mutate(scenario = nome) |>
+      dplyr::left_join(conferimenti, by = "id_fornitura") |>
+      dplyr::mutate(
+        scenario = nome,
+        senza_letture = is.na(.data$conferimenti),
+        conferimenti = dplyr::coalesce(.data$conferimenti, 0L),
+        litri = dplyr::coalesce(.data$litri, 0)
+      ) |>
       economia_forniture(annualizza)
   }) |>
     dplyr::bind_rows() |>
@@ -443,11 +457,14 @@ analisi_economica <- function(
 #' conferiti dalle forniture premiate; i litri sotto il massimo, la somma di
 #' quanto hanno conferito in meno del massimo.
 #'
-#' Risultato: un tibble con `forniture`, `premialita`, `ordinarie`, `eccedenti`, le
-#' quote corrispondenti, `litri`, `litri_in_premialita`, `litri_sotto_massimo`,
-#' `litri_eccedenti`, `premi_eur`, `eccedenze_eur` e `importo_eur`. `litri_rilevati`
-#' sono i litri conferiti nel periodo; `litri` e gli altri litri ed euro sono
-#' annualizzati (`economia_forniture()`).
+#' Risultato: un tibble con `forniture`, `senza_letture` (le forniture senza letture
+#' nello scenario), `premialita`, `ordinarie`, `eccedenti`, le quote
+#' corrispondenti, `litri`, `litri_in_premialita`, `litri_sotto_massimo`,
+#' `litri_eccedenti`, `premi_eur` (la premialità dovuta, proporzionale ai giorni di
+#' attività), `premi_con_letture_eur` e `premi_senza_letture_eur` (le sue due
+#' parti), `eccedenze_eur` e `importo_eur`. `litri_rilevati` sono i litri conferiti
+#' nel periodo; `litri` e gli altri litri ed euro sono annualizzati
+#' (`economia_forniture()`).
 #' @param economia Risultato di `analisi_economica()`.
 #' @param per_gruppo Se dividere anche per gruppo di forniture.
 #' @noRd
@@ -465,6 +482,10 @@ riepilogo_economico <- function(economia, per_gruppo = FALSE) {
       litri_sotto_massimo = sum(.data$litri_sotto_massimo, na.rm = TRUE),
       litri_eccedenti = sum(.data$litri_eccedenti, na.rm = TRUE),
       premi_eur = sum(.data$premio_eur, na.rm = TRUE),
+      premi_con_letture_eur = sum(.data$premio_eur[!.data$senza_letture], na.rm = TRUE),
+      premi_senza_letture_eur = sum(.data$premio_eur[.data$senza_letture], na.rm = TRUE),
+      # per ultimo: una colonna appena creata nasconde l'originale
+      senza_letture = sum(.data$senza_letture),
       eccedenze_eur = sum(.data$eccedenza_eur, na.rm = TRUE),
       importo_eur = sum(.data$importo_eur, na.rm = TRUE),
       .by = dplyr::all_of(chiavi)
@@ -654,28 +675,23 @@ forniture_con_piu_eccedenza <- function(
 
 #' Che cosa cambierebbe fatturando con un solo sistema
 #'
-#' Contesto: il confronto più vicino al costo reale tra saponette e antenne. Ogni
-#' scenario a sistema singolo ha solo le forniture che quel sistema ha letto
-#' (`analisi_economica()`); per ognuna si confronta la classe (premialità,
-#' ordinaria, eccedente) e l'importo con quelli del riferimento (il primo scenario,
-#' «Saponette e antenne»), che ha tutte le forniture lette da almeno un sistema.
+#' Contesto: il confronto più vicino al costo reale tra saponette e antenne. Gli
+#' scenari hanno le stesse forniture (`analisi_economica()`): per ognuna si
+#' confronta la classe (premialità, ordinaria, eccedente) e l'importo dello
+#' scenario con quelli del riferimento (il primo scenario, «Saponette e antenne»).
 #'
 #' Funzionamento: il riferimento è il primo livello di `scenario` (`scenario_riferimento()`).
-#' Per ognuno degli altri scenari conta le forniture che lo scenario ha letto, quelle
-#' del riferimento che non ha letto (`non_lette`), tra le lette quelle con la stessa
-#' classe e quelle con una classe diversa, e i premi dati che il riferimento non
-#' darebbe (di solito perché il sistema ha perso una parte delle letture di una
-#' fornitura) e quelli mancati. Gli importi (eccedenza meno premio) sono sulle sole
-#' forniture lette dallo scenario, riferimento compreso, così la differenza misura le
-#' letture perse e non la copertura; `importo_non_lette_eur` è l'importo che il
-#' riferimento ha per le forniture che lo scenario non ha letto. Una differenza
-#' positiva è più da pagare del riferimento.
+#' Per ognuno degli altri scenari, a sistema singolo, conta le forniture che lo
+#' scenario ha letto (`rilevate`) e quelle senza letture nello scenario
+#' (`senza_letture`: prendono il premio massimo proporzionale), quelle con la stessa
+#' classe e quelle con una classe diversa, i premi dati che il riferimento non
+#' darebbe (premialità solo nello scenario, di solito per letture mancanti o per
+#' una fornitura che il sistema non vede) e quelli mancati, e la differenza di
+#' importo. L'importo è l'eccedenza meno il premio: una differenza positiva è più da
+#' pagare del riferimento.
 #'
 #' Risultato: un tibble con una riga per scenario diverso dal riferimento (senza
-#' righe se lo scenario è uno solo, cioè se c'è un solo sistema): `forniture`
-#' (lette dallo scenario), `non_lette`, `stessa_classe`, `classe_diversa`,
-#' `premi_in_piu`, `premi_in_meno`, `importo_riferimento_eur`,
-#' `importo_scenario_eur`, `differenza_eur` e `importo_non_lette_eur`.
+#' righe se lo scenario è uno solo, cioè se c'è un solo sistema).
 #' @param economia Risultato di `analisi_economica()`.
 #' @noRd
 impatto_dei_sistemi <- function(economia) {
@@ -692,6 +708,8 @@ impatto_dei_sistemi <- function(economia) {
     dplyr::inner_join(riferimento, by = "id_fornitura") |>
     dplyr::summarise(
       forniture = dplyr::n(),
+      rilevate = sum(!.data$senza_letture),
+      senza_letture = sum(.data$senza_letture),
       stessa_classe = sum(.data$classe == .data$classe_riferimento),
       classe_diversa = sum(.data$classe != .data$classe_riferimento),
       premi_in_piu = sum(
@@ -706,14 +724,160 @@ impatto_dei_sistemi <- function(economia) {
       importo_scenario_eur = sum(.data$importo_eur),
       differenza_eur = .data$importo_scenario_eur - .data$importo_riferimento_eur,
       .by = "scenario"
+    )
+}
+
+#' Forniture di uno scenario in una classe, con conferimenti e volumetrie attesi a fine anno
+#'
+#' Contesto: base di `elenco_premialita()` e `elenco_eccedenza()` (richiesta del
+#' proprietario, 16/11/2026). Per ogni fornitura di uno scenario in una classe
+#' (premialità o eccedenza) servono: i componenti, i bidoni del secco attivi con
+#' i loro codici e volumi, quanto è stato conferito nel periodo, quanto ci si
+#' aspetta che manchi a fine anno e quanto ci si aspetta in tutto.
+#'
+#' Funzionamento: tiene le righe dello scenario (`analisi_economica()`) nella
+#' classe indicata. **Stima lineare** con la stessa annualizzazione del resto del
+#' report: il totale atteso è quello del periodo riportato a un anno
+#' (`/ fattore`, uguale per tutte le forniture), il mancante è la differenza.
+#' Con `dal` al 1 gennaio è esattamente la stima lineare dal giorno `al` al 31
+#' dicembre; con un `dal` successivo è l'equivalente annuo (la stessa volumetria su
+#' cui si decide la classe, quindi coerente con il premio o l'eccedenza). I
+#' conferimenti e la volumetria sono quelli del solo scenario (`conferimenti` e
+#' `litri` di `analisi_economica()`: letture associate dei bidoni del secco non
+#' gratuiti, sommate per fornitura). I **bidoni** sono i contenitori del secco della
+#' fornitura attivi almeno un giorno nel periodo con `stato_fornitura` `ATTIVA`
+#' (`bidoni_delle_forniture()`): un contenitore gratuito compare con la parola
+#' «gratuito» e non ha conferimenti; una fornitura cessata a database non ha bidoni
+#' attivi.
+#'
+#' Risultato: un tibble con una riga per fornitura: `id_fornitura`,
+#' `componenti_medi`, `fascia_componenti`, `bidoni_attivi`, `bidoni`,
+#' `conferimenti_effettuati`, `conferimenti_mancanti_attesi`,
+#' `conferimenti_attesi_fine_anno`, `volumetria_effettuata_l`,
+#' `volumetria_mancante_attesa_l`, `volumetria_attesa_fine_anno_l`, poi le colonne
+#' della classe (le aggiungono `elenco_premialita()` e `elenco_eccedenza()`) e
+#' `id_utenza`, `stato_fornitura`, `giorni_attivi`, `quota_attivita`,
+#' `senza_letture`.
+#' @param economia Risultato di `analisi_economica()`.
+#' @param scenario Nome dello scenario.
+#' @param classe `Premialità` o `Eccedente`.
+#' @param contenitori Tabella di `importa_contenitori()`.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @param servizio Servizio dei contenitori.
+#' @noRd
+forniture_di_classe_per_scenario <- function(economia, scenario, classe, contenitori, dal, al, servizio = "SECCO") {
+  nome_scenario <- scenario
+  nome_classe <- classe
+  dal <- as.Date(dal)
+  al <- as.Date(al)
+  righe <- economia |>
+    dplyr::filter(.data$scenario == nome_scenario, .data$classe %in% nome_classe) |>
+    dplyr::arrange(.data$gruppo, .data$id_fornitura)
+  bidoni <- bidoni_delle_forniture(contenitori, righe$id_fornitura, dal, al, servizio, stato = "ATTIVA")
+  # Lo stato della fornitura, anche per chi non ha bidoni attivi.
+  contenitori$stato_fornitura <- contenitori[["stato_fornitura"]] %||%
+    rep(NA_character_, nrow(contenitori))
+  stati <- contenitori |>
+    bidoni_con_codice(servizio) |>
+    dplyr::filter(
+      .data$id_fornitura %in% righe$id_fornitura,
+      (.data$data_attivazione_contenitore <= al &
+        .data$data_cessazione_contenitore >= dal) %in% TRUE
     ) |>
+    dplyr::summarise(
+      stato_fornitura = paste(sort(unique(stats::na.omit(.data$stato_fornitura))), collapse = ", "),
+      .by = "id_fornitura"
+    )
+  righe |>
+    dplyr::left_join(bidoni, by = "id_fornitura") |>
+    dplyr::left_join(stati, by = "id_fornitura") |>
     dplyr::mutate(
-      non_lette = nrow(riferimento) - .data$forniture,
-      importo_non_lette_eur = sum(riferimento$importo_riferimento) -
-        .data$importo_riferimento_eur,
-      .after = "forniture"
+      conferimenti_attesi = riporta_ad_anno(.data$conferimenti, .data$fattore)
     ) |>
-    dplyr::relocate("importo_non_lette_eur", .after = "differenza_eur")
+    dplyr::transmute(
+      .data$id_fornitura,
+      componenti_medi = round(.data$componenti_medi, 2),
+      fascia_componenti = .data$fascia,
+      bidoni_attivi = dplyr::coalesce(.data$numero_bidoni, 0L),
+      bidoni = dplyr::coalesce(.data$bidoni, ""),
+      conferimenti_effettuati = .data$conferimenti,
+      conferimenti_mancanti_attesi = round(.data$conferimenti_attesi - .data$conferimenti, 1),
+      conferimenti_attesi_fine_anno = round(.data$conferimenti_attesi, 1),
+      volumetria_effettuata_l = .data$litri,
+      volumetria_mancante_attesa_l = round(.data$litri_annui - .data$litri, 1),
+      volumetria_attesa_fine_anno_l = round(.data$litri_annui, 1),
+      .data$litri_minimi,
+      .data$litri_premialita,
+      .data$litri_limite,
+      .data$litri_eccedenti,
+      .data$premio_eur,
+      .data$eccedenza_eur,
+      .data$id_utenza,
+      stato_fornitura = dplyr::coalesce(.data$stato_fornitura, ""),
+      .data$giorni_attivi,
+      quota_attivita = round(.data$quota_attivita, 4),
+      senza_letture = dplyr::if_else(.data$senza_letture, "SI", "NO")
+    )
+}
+
+#' Elenco delle forniture di uno scenario con diritto alla premialità
+#'
+#' Contesto: richiesta del proprietario (16/11/2026): per ogni scenario (saponette,
+#' antenne, saponette e antenne) le forniture che hanno diritto alla premialità,
+#' comprese quelle senza letture nello scenario (premio massimo).
+#'
+#' Funzionamento: `forniture_di_classe_per_scenario()` per la classe «Premialità»,
+#' con in coda alle colonne della volumetria la **volumetria minima** e la
+#' **volumetria massima** di riferimento per accedere alla premialità (i litri
+#' annui della fascia: sotto il minimo il premio non cresce più, sopra il massimo
+#' non c'è premio) e la **premialità attesa** a fine anno in euro: il premio annuo
+#' sulla volumetria attesa, proporzionale ai giorni di attività
+#' (`economia_forniture()`).
+#'
+#' Risultato: le colonne di `forniture_di_classe_per_scenario()` fino alla
+#' volumetria attesa, `volumetria_minima_premialita_l`,
+#' `volumetria_massima_premialita_l`, `premialita_attesa_eur`, e in coda
+#' `id_utenza`, `stato_fornitura`, `giorni_attivi`, `quota_attivita` e
+#' `senza_letture`.
+#' @inheritParams forniture_di_classe_per_scenario
+#' @noRd
+elenco_premialita <- function(economia, scenario = scenario_riferimento(economia), contenitori, dal, al, servizio = "SECCO") {
+  forniture_di_classe_per_scenario(economia, scenario, "Premialit\u00e0", contenitori, dal, al, servizio) |>
+    dplyr::transmute(
+      dplyr::across("id_fornitura":"volumetria_attesa_fine_anno_l"),
+      volumetria_minima_premialita_l = .data$litri_minimi,
+      volumetria_massima_premialita_l = .data$litri_premialita,
+      premialita_attesa_eur = round(.data$premio_eur, 2),
+      dplyr::across("id_utenza":"senza_letture")
+    )
+}
+
+#' Elenco delle forniture di uno scenario in eccedenza
+#'
+#' Contesto: richiesta del proprietario (16/11/2026): l'equivalente di
+#' `elenco_premialita()` per le forniture che pagherebbero un'eccedenza.
+#'
+#' Funzionamento: `forniture_di_classe_per_scenario()` per la classe «Eccedente»,
+#' con in coda alle colonne della volumetria la **volumetria inclusa** nella tariffa
+#' (i litri annui della fascia: oltre si paga), i **litri eccedenti attesi** a fine
+#' anno e l'**eccedenza attesa** in euro (al litro, secondo il contenitore; non si
+#' proporziona ai giorni di attività).
+#'
+#' Risultato: le colonne di `forniture_di_classe_per_scenario()` fino alla
+#' volumetria attesa, `volumetria_inclusa_l`, `volumetria_eccedente_attesa_l`,
+#' `eccedenza_attesa_eur`, e in coda `id_utenza`, `stato_fornitura`,
+#' `giorni_attivi`, `quota_attivita` e `senza_letture`.
+#' @inheritParams forniture_di_classe_per_scenario
+#' @noRd
+elenco_eccedenza <- function(economia, scenario = scenario_riferimento(economia), contenitori, dal, al, servizio = "SECCO") {
+  forniture_di_classe_per_scenario(economia, scenario, "Eccedente", contenitori, dal, al, servizio) |>
+    dplyr::transmute(
+      dplyr::across("id_fornitura":"volumetria_attesa_fine_anno_l"),
+      volumetria_inclusa_l = .data$litri_limite,
+      volumetria_eccedente_attesa_l = round(.data$litri_eccedenti, 1),
+      eccedenza_attesa_eur = round(.data$eccedenza_eur, 2),
+      dplyr::across("id_utenza":"senza_letture")
+    )
 }
 
 #' Nome dello scenario di riferimento di un'analisi economica

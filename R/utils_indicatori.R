@@ -68,6 +68,7 @@ colonne_letture_indicatori <- function() {
     "volume",
     "servizio_transponder",
     "contenitore_gratuito",
+    "data_attivazione_contenitore",
     "servizio_atteso",
     "servizio_giro",
     "matricola_veicolo",
@@ -84,7 +85,8 @@ colonne_letture_indicatori <- function() {
 #'
 #' Funzionamento: legge il CSV (`leggi_tabella_origine()`), aggiunge come vuote
 #' le colonne che mancano e converte `data_ora_lettura` (UTC, senza fuso),
-#' `data_lettura` (se manca la ricava dall'istante) e `volume`.
+#' `data_lettura` (se manca la ricava dall'istante), `volume` e
+#' `data_attivazione_contenitore`.
 #'
 #' Risultato: un tibble con le colonne di `colonne_letture_indicatori()` più, per
 #' il registro, `motivo`.
@@ -114,7 +116,10 @@ leggi_letture_indicatori <- function(percorso = NULL) {
     dplyr::mutate(
       data_ora_lettura = istante,
       data_lettura = dplyr::coalesce(giorno, as.Date(istante)),
-      volume = suppressWarnings(as.numeric(.data$volume))
+      volume = suppressWarnings(as.numeric(.data$volume)),
+      data_attivazione_contenitore = suppressWarnings(
+        as.Date(as.character(.data$data_attivazione_contenitore))
+      )
     )
 }
 
@@ -367,6 +372,9 @@ sistemi_lettura <- function() c("Solo saponette", "Solo antenne", "Entrambe")
 letture_di_un_sistema <- function(finali, scartate) {
   # File vecchi senza il campo: nessun contenitore gratuito noto.
   finali$contenitore_gratuito <- finali[["contenitore_gratuito"]] %||% NA_character_
+  finali$data_attivazione_contenitore <- suppressWarnings(as.Date(
+    finali[["data_attivazione_contenitore"]] %||% as.Date(NA)
+  ))
   tenute <- finali |>
     dplyr::transmute(
       .data$RFID,
@@ -380,7 +388,8 @@ letture_di_un_sistema <- function(finali, scartate) {
       .data$id_fornitura,
       .data$volume,
       .data$servizio_transponder,
-      .data$contenitore_gratuito
+      .data$contenitore_gratuito,
+      .data$data_attivazione_contenitore
     )
   perse <- scartate |>
     dplyr::filter(.data$motivo %in% motivi_di_scarto()) |>
@@ -388,8 +397,12 @@ letture_di_un_sistema <- function(finali, scartate) {
   dplyr::bind_rows(tenute, perse) |>
     dplyr::filter(!is.na(.data$RFID), !is.na(.data$data_lettura)) |>
     dplyr::mutate(stato = factor(.data$stato, stati_lettura())) |>
-    dplyr::arrange(.data$stato) |>
-    dplyr::distinct(.data$RFID, .data$data_lettura, .keep_all = TRUE)
+    # Una lettura, una fornitura: se un bidone risulta in due forniture lo stesso
+    # giorno (file prodotti prima del 16/11/2026) vale quella attivata più di
+    # recente, come nella pipeline (`associa_contenitore_e_fornitura()`).
+    dplyr::arrange(.data$stato, dplyr::desc(.data$data_attivazione_contenitore)) |>
+    dplyr::distinct(.data$RFID, .data$data_lettura, .keep_all = TRUE) |>
+    dplyr::select(-"data_attivazione_contenitore")
 }
 
 #' Le letture dei due sistemi, ognuna una volta: solo saponette, solo antenne o entrambe

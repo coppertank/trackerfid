@@ -1,5 +1,5 @@
 anagrafica_economia_prova <- function() {
-  fornitura <- function(id, gruppo, componenti, tipo = "domestica", servizio = "SECCO", potenziamento = FALSE, fattore = 1, raccolte = 26) {
+  fornitura <- function(id, gruppo, componenti, tipo = "domestica", servizio = "SECCO", potenziamento = FALSE, fattore = 1, raccolte = 26, quota = 1) {
     dplyr::tibble(
       id_fornitura = id,
       servizio = servizio,
@@ -11,6 +11,9 @@ anagrafica_economia_prova <- function() {
       conferimenti_massimi_annui = raccolte,
       litri_massimi_annui = raccolte * 120,
       fattore = fattore,
+      quota_attivita = quota,
+      giorni_attivi = round(quota * 365),
+      id_utenza = paste0("U", id),
       componenti_medi = componenti,
       potenziamento = potenziamento
     )
@@ -21,7 +24,7 @@ anagrafica_economia_prova <- function() {
     # mai letta
     fornitura("F3", "1 componente", 1),
     # attiva cinque giorni: non ci si aspettava nemmeno una raccolta
-    fornitura("F4", "1 componente", 1, fattore = 5 / 365),
+    fornitura("F4", "1 componente", 1, fattore = 5 / 365, quota = 5 / 365),
     fornitura("F5", "Condomini", NA, tipo = "condominio"),
     fornitura("F6", "Potenziamento", 3, potenziamento = TRUE),
     # una domestica di un altro servizio, mai letta
@@ -380,8 +383,8 @@ test_that("l'analisi economica classifica le forniture domestiche del secco in o
     c("Saponette e antenne", "Solo saponette", "Solo antenne")
   )
   unione <- economia[economia$scenario == "Saponette e antenne", ]
-  # restano le domestiche del secco lette: F1, F2, F6, F8; non F3, F4 (mai lette), F5, F7
-  expect_setequal(unione$id_fornitura, c("F1", "F2", "F6", "F8"))
+  # tutte le domestiche del secco attive: anche F3 e F4, mai lette; non F5 (condominio) ne' F7 (carta)
+  expect_setequal(unione$id_fornitura, c("F1", "F2", "F3", "F4", "F6", "F8"))
   riga <- function(scenario, fornitura) {
     economia[economia$scenario == scenario & economia$id_fornitura == fornitura, ]
   }
@@ -397,60 +400,72 @@ test_that("l'analisi economica classifica le forniture domestiche del secco in o
   # con le sole saponette F1 ha 240 litri (premio massimo) e F2 840 (ordinaria)
   expect_equal(riga("Solo saponette", "F1")$premio_eur, 15)
   expect_identical(as.character(riga("Solo saponette", "F2")$classe), "Ordinaria")
-  # F8 non e' letta dalle antenne: non compare nello scenario delle antenne (non
-  # prende il premio massimo per zero litri), ma e' nelle saponette e nell'unione
-  expect_identical(nrow(riga("Solo antenne", "F8")), 0L)
-  expect_identical(nrow(riga("Solo saponette", "F8")), 1L)
-  expect_identical(nrow(riga("Saponette e antenne", "F8")), 1L)
+  # F8 non e' letta dalle antenne: nello scenario delle antenne ha zero litri e il premio massimo
+  f8 <- riga("Solo antenne", "F8")
+  expect_identical(nrow(f8), 1L)
+  expect_true(f8$senza_letture)
+  expect_equal(f8$litri, 0)
+  expect_equal(f8$premio_eur, 15)
+  expect_false(riga("Solo saponette", "F8")$senza_letture)
 })
 
-test_that("ogni scenario ha solo le forniture lette dai suoi sistemi", {
+test_that("ogni scenario ha le stesse forniture e le non lette prendono il premio massimo proporzionale", {
   economia <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
   per_scenario <- split(economia$id_fornitura, economia$scenario)
-  unione <- per_scenario[["Saponette e antenne"]]
-  # il riferimento e' l'unione: tutte le forniture lette da almeno un sistema
-  expect_setequal(unione, c("F1", "F2", "F6", "F8"))
-  # gli scenari a sistema singolo sono un sottoinsieme del riferimento
-  expect_true(all(per_scenario[["Solo antenne"]] %in% unione))
-  expect_true(all(per_scenario[["Solo saponette"]] %in% unione))
-  expect_lt(length(per_scenario[["Solo antenne"]]), length(unione))
-  # nessuna fornitura con zero litri: ogni riga di ogni scenario ha almeno un conferimento
-  expect_true(all(economia$conferimenti >= 1))
-  expect_true(all(economia$litri > 0))
+  tutte <- c("F1", "F2", "F3", "F4", "F6", "F8")
+  expect_setequal(per_scenario[["Saponette e antenne"]], tutte)
+  expect_setequal(per_scenario[["Solo saponette"]], tutte)
+  expect_setequal(per_scenario[["Solo antenne"]], tutte)
   expect_false("rilevata" %in% names(economia))
-  # una fornitura letta solo da un sistema compare solo nel suo scenario e nell'unione
-  unita <- unita_economia_prova()
-  letta_solo_da_antenne <- unita[unita$id_fornitura == "F8" & unita$stato %in% "PIA", ]
-  letta_solo_da_antenne$sistema <- factor("Solo antenne", sistemi_lettura())
-  senza_f8 <- unita[!(unita$id_fornitura == "F8"), ]
-  economia_antenne <- analisi_economica(dplyr::bind_rows(senza_f8, letta_solo_da_antenne), anagrafica_economia_prova())
-  quali <- split(economia_antenne$id_fornitura, economia_antenne$scenario)
-  expect_true("F8" %in% quali[["Solo antenne"]])
-  expect_true("F8" %in% quali[["Saponette e antenne"]])
-  expect_false("F8" %in% quali[["Solo saponette"]])
+  senza <- function(scenario) {
+    sort(economia$id_fornitura[economia$scenario == scenario & economia$senza_letture])
+  }
+  # F3 e F4 non sono mai state lette; F8 solo dalle saponette
+  expect_identical(senza("Saponette e antenne"), c("F3", "F4"))
+  expect_identical(senza("Solo saponette"), c("F3", "F4"))
+  expect_identical(senza("Solo antenne"), c("F3", "F4", "F8"))
+  # chi non e' letto ha zero litri e conferimenti, e il premio massimo della fascia
+  non_lette <- economia[economia$senza_letture, ]
+  expect_true(all(non_lette$litri == 0 & non_lette$conferimenti == 0))
+  expect_true(all(as.character(non_lette$classe) == "Premialità"))
+  expect_true(all(non_lette$premio_pieno_eur == 15))
+  # il premio e' proporzionale ai giorni di attivita': F3 attiva tutto il periodo, F4 cinque giorni su 365
+  f3 <- economia[economia$scenario == "Saponette e antenne" & economia$id_fornitura == "F3", ]
+  f4 <- economia[economia$scenario == "Saponette e antenne" & economia$id_fornitura == "F4", ]
+  expect_equal(f3$premio_eur, 15)
+  expect_equal(f4$premio_eur, 15 * 5 / 365)
+  expect_equal(f4$premio_pieno_eur, 15)
+  expect_equal(f4$quota_attivita, 5 / 365)
+  # con i giri indicati (senza annualizzazione) il premio non si proporziona
+  senza_quota <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova(), annualizza = FALSE)
+  expect_true(all(senza_quota$quota_attivita == 1))
 })
 
 test_that("il riepilogo conta classi, litri ed euro per scenario e per gruppo", {
   economia <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
   riepilogo <- riepilogo_economico(economia)
   unione <- riepilogo[riepilogo$scenario == "Saponette e antenne", ]
-  expect_identical(unione$forniture, 4L)
-  # F1 e F8 in premialita' (240 litri per F8), F2 eccedente, F6 ordinaria
-  expect_identical(c(unione$premialita, unione$ordinarie, unione$eccedenti), c(2L, 1L, 1L))
-  expect_equal(unione$quota_premialita, 0.5)
-  expect_equal(unione$premi_eur, 10 + 15)
+  expect_identical(unione$forniture, 6L)
+  expect_identical(unione$senza_letture, 2L)
+  # F1, F3, F4 e F8 in premialita', F2 eccedente, F6 ordinaria
+  expect_identical(c(unione$premialita, unione$ordinarie, unione$eccedenti), c(4L, 1L, 1L))
+  expect_equal(unione$quota_premialita, 4 / 6)
+  # premialita' dovuta: F1 10 + F8 15 + F3 15 + F4 15 x 5/365
+  expect_equal(unione$premi_con_letture_eur, 10 + 15)
+  expect_equal(unione$premi_senza_letture_eur, 15 + 15 * 5 / 365)
+  expect_equal(unione$premi_eur, 10 + 15 + 15 + 15 * 5 / 365)
   expect_equal(unione$eccedenze_eur, 10)
-  expect_equal(unione$importo_eur, 10 - 25)
+  expect_equal(unione$importo_eur, 10 - unione$premi_eur)
   expect_equal(unione$litri, 3 * 120 + 9 * 120 + 3 * 120 + 2 * 120)
   expect_equal(unione$litri_eccedenti, 120)
   expect_equal(unione$litri_in_premialita, 3 * 120 + 2 * 120)
-  # il massimo per 1 componente e' 480: F1 e' 120 litri sotto, F8 a 240 e' 240 sotto
-  expect_equal(unione$litri_sotto_massimo, 120 + 240)
+  # il massimo per 1 componente e' 480: F1 e' 120 litri sotto, F8 a 240 e' 240 sotto, F3 e F4 (zero litri, minimo 240) 240 sotto
+  expect_equal(unione$litri_sotto_massimo, 120 + 240 + 240 + 240)
 
   per_gruppo <- riepilogo_economico(economia, per_gruppo = TRUE)
   expect_true("gruppo" %in% names(per_gruppo))
   uno <- per_gruppo[per_gruppo$scenario == "Saponette e antenne" & per_gruppo$gruppo == "1 componente", ]
-  expect_identical(uno$forniture, 2L)
+  expect_identical(uno$forniture, 4L)
 })
 
 test_that("le forniture si dividono per fascia di eccedenza e per quota di premio", {
@@ -462,10 +477,11 @@ test_that("le forniture si dividono per fascia di eccedenza e per quota di premi
   expect_identical(sum(unione$forniture), 1L)
   premio <- forniture_per_fascia(economia, "premio")
   unione <- premio[premio$scenario == "Saponette e antenne", ]
-  # 10 euro (F1) e 15 euro (F8)
+  # F4 (15 euro per cinque giorni su 365), F1 (10 euro), F3 e F8 (15 euro)
+  expect_identical(unione$forniture[unione$intervallo == "fino a 5 €"], 1L)
   expect_identical(unione$forniture[unione$intervallo == "da 5 a 10 €"], 1L)
-  expect_identical(unione$forniture[unione$intervallo == "da 10 a 15 €"], 1L)
-  expect_equal(sum(unione$quota), 2 / 4)
+  expect_identical(unione$forniture[unione$intervallo == "da 10 a 15 €"], 2L)
+  expect_equal(sum(unione$quota), 4 / 6)
   # limiti diversi
   stretta <- forniture_per_fascia(economia, "eccedenza", limiti = c(60, 100))
   expect_identical(levels(stretta$intervallo), c("fino a 60 lt", "da 60 a 100 lt", "oltre 100 lt"))
@@ -480,29 +496,168 @@ test_that("l'impatto dei sistemi dice che cosa cambierebbe con uno solo", {
   )
   saponette <- impatto[impatto$scenario == "Solo saponette", ]
   antenne <- impatto[impatto$scenario == "Solo antenne", ]
-  # le saponette leggono tutte e quattro le forniture, le antenne tre (non F8)
-  expect_identical(saponette$forniture, 4L)
-  expect_identical(saponette$non_lette, 0L)
-  expect_identical(antenne$forniture, 3L)
-  expect_identical(antenne$non_lette, 1L)
+  # le forniture sono le stesse del riferimento; le saponette ne leggono quattro, le antenne tre
+  expect_identical(saponette$forniture, 6L)
+  expect_identical(saponette$rilevate, 4L)
+  expect_identical(saponette$senza_letture, 2L)
+  expect_identical(antenne$forniture, 6L)
+  expect_identical(antenne$rilevate, 3L)
+  expect_identical(antenne$senza_letture, 3L)
   # saponette: F1 resta in premialita' (ma 15 euro invece di 10), F2 diventa ordinaria
   expect_identical(saponette$classe_diversa, 1L)
-  expect_identical(saponette$stessa_classe, 3L)
-  expect_equal(saponette$importo_riferimento_eur, 10 - 10 - 15)
-  expect_equal(saponette$importo_scenario_eur, -15 - 0 - 15)
+  expect_identical(saponette$stessa_classe, 5L)
   expect_equal(saponette$differenza_eur, -15)
-  expect_equal(saponette$importo_non_lette_eur, 0)
-  # antenne: F8 non c'e' nello scenario, quindi niente premio per zero litri; sulle
-  # tre forniture lette gli importi sono quelli del riferimento, e l'importo di F8
-  # (premio di 15 euro nel riferimento) e' a parte
+  expect_equal(saponette$importo_scenario_eur - saponette$importo_riferimento_eur, -15)
+  # antenne: F8 non e' letta, ma il premio massimo (15 euro) e' lo stesso del riferimento
   expect_identical(antenne$classe_diversa, 0L)
   expect_identical(antenne$premi_in_piu, 0L)
   expect_equal(antenne$differenza_eur, 0)
-  expect_equal(antenne$importo_non_lette_eur, -15)
-  expect_equal(
-    antenne$importo_riferimento_eur + antenne$importo_non_lette_eur,
-    sum(economia$importo_eur[economia$scenario == "Saponette e antenne"])
+})
+
+# Contenitori delle forniture di prova: F2 ha due bidoni, F3 e' cessata a database, F8 ha un bidone gratuito.
+contenitori_economia_prova <- function() {
+  contenitore <- function(codice, fornitura, volume = 120, stato = "ATTIVA", gratuito = "N") {
+    dplyr::tibble(
+      codice_transponder = codice,
+      servizio_transponder = "SECCO",
+      volume = volume,
+      contenitore_gratuito = gratuito,
+      data_attivazione_contenitore = as.Date("2020-01-01"),
+      data_cessazione_contenitore = as.Date("2099-12-31"),
+      id_fornitura = fornitura,
+      stato_fornitura = stato
+    )
+  }
+  dplyr::bind_rows(
+    contenitore("A1", "F1"),
+    contenitore("A2", "F2"),
+    contenitore("A2B", "F2", volume = 240),
+    contenitore("A3", "F3", stato = "CESSATA"),
+    contenitore("A4", "F4"),
+    contenitore("A6", "F6"),
+    contenitore("A8", "F8"),
+    contenitore("A8G", "F8", volume = 60, gratuito = "S"),
+    # un bidone di un'altra fornitura e di un altro servizio non c'entra
+    dplyr::mutate(contenitore("A7", "F7"), servizio_transponder = "CARTA")
   )
+}
+
+test_that("l'elenco della premialita' ha le forniture con diritto, con i bidoni e le stime a fine anno", {
+  economia <- analisi_economica(unita_economia_prova(), anagrafica_economia_prova())
+  elenco <- elenco_premialita(
+    economia, "Solo antenne", contenitori_economia_prova(), "2025-01-01", "2025-12-31"
+  )
+  # i campi richiesti, nell'ordine; poi le colonne di servizio
+  expect_named(
+    elenco,
+    c(
+      "id_fornitura", "componenti_medi", "fascia_componenti", "bidoni_attivi", "bidoni",
+      "conferimenti_effettuati", "conferimenti_mancanti_attesi", "conferimenti_attesi_fine_anno",
+      "volumetria_effettuata_l", "volumetria_mancante_attesa_l", "volumetria_attesa_fine_anno_l",
+      "volumetria_minima_premialita_l", "volumetria_massima_premialita_l", "premialita_attesa_eur",
+      "id_utenza", "stato_fornitura", "giorni_attivi", "quota_attivita", "senza_letture"
+    )
+  )
+  # solo le forniture in premialita' nello scenario: F1 (360 litri con le antenne: 240 e' il minimo), F3, F4, F8
+  # non le eccedenti (F2) ne' chi non ha premio (F6, potenziamento)
+  expect_identical(elenco$id_fornitura, c("F1", "F3", "F4", "F8"))
+  expect_identical(anyDuplicated(elenco$id_fornitura), 0L)
+  riga <- function(fornitura) elenco[elenco$id_fornitura == fornitura, ]
+
+  # F1: letta dalle antenne 3 volte (360 litri); un bidone attivo
+  expect_identical(riga("F1")$componenti_medi, 1)
+  expect_identical(riga("F1")$fascia_componenti, 1L)
+  expect_identical(riga("F1")$bidoni_attivi, 1L)
+  expect_identical(riga("F1")$bidoni, "A1 (120 L)")
+  expect_identical(riga("F1")$conferimenti_effettuati, 3L)
+  expect_equal(riga("F1")$volumetria_effettuata_l, 360)
+  # il periodo e' un anno intero (fattore 1): niente di mancante
+  expect_equal(riga("F1")$conferimenti_mancanti_attesi, 0)
+  expect_equal(riga("F1")$conferimenti_attesi_fine_anno, 3)
+  expect_equal(riga("F1")$volumetria_mancante_attesa_l, 0)
+  expect_equal(riga("F1")$volumetria_attesa_fine_anno_l, 360)
+  # soglie della fascia 1: minimo 240, massimo 480
+  expect_equal(riga("F1")$volumetria_minima_premialita_l, 240)
+  expect_equal(riga("F1")$volumetria_massima_premialita_l, 480)
+  expect_equal(riga("F1")$premialita_attesa_eur, 10)
+  expect_identical(riga("F1")$senza_letture, "NO")
+
+  # F8 non e' letta dalle antenne: zero conferimenti, premio massimo; un bidone a pagamento e uno gratuito
+  expect_identical(riga("F8")$senza_letture, "SI")
+  expect_identical(riga("F8")$conferimenti_effettuati, 0L)
+  expect_equal(riga("F8")$volumetria_effettuata_l, 0)
+  expect_identical(riga("F8")$bidoni_attivi, 2L)
+  expect_identical(riga("F8")$bidoni, "A8 (120 L), A8G (60 L, gratuito)")
+  expect_equal(riga("F8")$premialita_attesa_eur, 15)
+
+  # F3 e' cessata a database: nessun bidone attivo, ma la fornitura c'e' (era attiva nel periodo)
+  expect_identical(riga("F3")$bidoni_attivi, 0L)
+  expect_identical(riga("F3")$bidoni, "")
+  expect_identical(riga("F3")$stato_fornitura, "CESSATA")
+  expect_equal(riga("F3")$premialita_attesa_eur, 15)
+  # F4: attiva cinque giorni su 365
+  expect_equal(riga("F4")$premialita_attesa_eur, round(15 * 5 / 365, 2))
+  expect_equal(riga("F4")$quota_attivita, round(5 / 365, 4))
+  expect_equal(riga("F4")$giorni_attivi, 5)
+
+  # nello scenario con entrambi i sistemi F1 ha 5 letture di cui 2 delle saponette: scenari a se' stanti
+  saponette <- elenco_premialita(economia, "Solo saponette", contenitori_economia_prova(), "2025-01-01", "2025-12-31")
+  expect_identical(saponette$conferimenti_effettuati[saponette$id_fornitura == "F1"], 2L)
+  expect_equal(saponette$volumetria_effettuata_l[saponette$id_fornitura == "F1"], 240)
+  expect_equal(saponette$premialita_attesa_eur[saponette$id_fornitura == "F1"], 15)
+  # senza forniture in premialita': un elenco vuoto con le stesse colonne
+  vuoto <- elenco_premialita(economia[0, ], "Solo antenne", contenitori_economia_prova(), "2025-01-01", "2025-12-31")
+  expect_identical(nrow(vuoto), 0L)
+  expect_identical(names(vuoto), names(elenco))
+})
+
+test_that("le stime a fine anno riportano il periodo a un anno: mancante e totale atteso", {
+  # F2 e' eccedente (9 letture, 1080 litri) e il periodo e' meta' anno: i valori attesi sono il doppio
+  anagrafica <- anagrafica_economia_prova()
+  anagrafica$fattore[anagrafica$id_fornitura == "F2"] <- 0.5
+  economia <- analisi_economica(unita_economia_prova(), anagrafica)
+  elenco <- elenco_eccedenza(
+    economia, "Saponette e antenne", contenitori_economia_prova(), "2025-01-01", "2025-06-30"
+  )
+  expect_named(
+    elenco,
+    c(
+      "id_fornitura", "componenti_medi", "fascia_componenti", "bidoni_attivi", "bidoni",
+      "conferimenti_effettuati", "conferimenti_mancanti_attesi", "conferimenti_attesi_fine_anno",
+      "volumetria_effettuata_l", "volumetria_mancante_attesa_l", "volumetria_attesa_fine_anno_l",
+      "volumetria_inclusa_l", "volumetria_eccedente_attesa_l", "eccedenza_attesa_eur",
+      "id_utenza", "stato_fornitura", "giorni_attivi", "quota_attivita", "senza_letture"
+    )
+  )
+  expect_identical(elenco$id_fornitura, "F2")
+  # due bidoni attivi (120 e 240 litri) con i loro codici
+  expect_identical(elenco$bidoni_attivi, 2L)
+  expect_identical(elenco$bidoni, "A2 (120 L), A2B (240 L)")
+  expect_identical(elenco$conferimenti_effettuati, 9L)
+  expect_equal(elenco$conferimenti_attesi_fine_anno, 18)
+  expect_equal(elenco$conferimenti_mancanti_attesi, 9)
+  expect_equal(elenco$volumetria_effettuata_l, 1080)
+  expect_equal(elenco$volumetria_attesa_fine_anno_l, 2160)
+  expect_equal(elenco$volumetria_mancante_attesa_l, 1080)
+  # con 2 componenti i litri inclusi sono 960: ne attesi 2160, 1200 eccedenti, 10 euro ogni 120 litri
+  expect_equal(elenco$volumetria_inclusa_l, 960)
+  expect_equal(elenco$volumetria_eccedente_attesa_l, 1200)
+  expect_equal(elenco$eccedenza_attesa_eur, 100)
+  # il totale atteso e' effettuato + mancante
+  expect_equal(
+    elenco$volumetria_attesa_fine_anno_l,
+    elenco$volumetria_effettuata_l + elenco$volumetria_mancante_attesa_l
+  )
+  # l'eccedenza non e' proporzionata ai giorni di attivita': quota 1 e importo pieno
+  expect_equal(elenco$quota_attivita, 1)
+  # la premialita' non include le eccedenti, e l'eccedenza non include chi ha il premio
+  premialita <- elenco_premialita(economia, "Saponette e antenne", contenitori_economia_prova(), "2025-01-01", "2025-06-30")
+  expect_false("F2" %in% premialita$id_fornitura)
+  # una fornitura senza lo stato nell'associazione (file vecchi): nessun bidone attivo, senza errori
+  vecchi <- dplyr::select(contenitori_economia_prova(), -"stato_fornitura")
+  senza_stato <- elenco_eccedenza(economia, "Saponette e antenne", vecchi, "2025-01-01", "2025-06-30")
+  expect_identical(senza_stato$bidoni_attivi, 0L)
+  expect_identical(senza_stato$stato_fornitura, "")
 })
 
 test_that("una fornitura dell'anagrafica senza letture conta nella propensione, con zero letture", {

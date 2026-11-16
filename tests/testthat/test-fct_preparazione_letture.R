@@ -383,6 +383,40 @@ test_that("un codice letto male si ripara con i tre passi, nell'ordine, e il dat
   )
 })
 
+test_that("una lettura va a una sola fornitura: nel giorno di passaggio vale quella attivata piu' di recente", {
+  # lo stesso bidone passa da una fornitura all'altra il 31 marzo: cessazione e attivazione sulla stessa data
+  contenitori <- dplyr::tibble(
+    codice_transponder = c("0000000001", "0000000001", "0000000002"),
+    servizio_transponder = "SECCO",
+    volume = 120,
+    frequenza = "QUINDICINALE",
+    numero_raccolte_annue = 26,
+    data_attivazione_contenitore = as.Date(c("2025-01-01", "2026-03-31", "2025-01-01")),
+    data_cessazione_contenitore = as.Date(c("2026-03-31", "2099-12-31", "2099-12-31")),
+    id_fornitura = c("F_vecchia", "F_nuova", "F_altra"),
+    stato_fornitura = "ATTIVA",
+    id_utenza = c("U1", "U2", "U3"),
+    comune_fornitura = "ROSÀ"
+  )
+  letture <- dplyr::tibble(
+    RFID = c("0000000001", "0000000001", "0000000001", "0000000002"),
+    data_lettura = as.Date(c("2026-03-30", "2026-03-31", "2026-04-01", "2026-03-31")),
+    n = 1:4
+  )
+  expect_message(
+    associate <- associa_contenitore_e_fornitura(letture, contenitori, sacchetti_prova),
+    "Letture di un bidone associato a due forniture lo stesso giorno: 1 \\(assegnate alla fornitura con il contenitore attivato"
+  )
+  # una riga per lettura, nello stesso ordine
+  expect_identical(nrow(associate), nrow(letture))
+  expect_identical(associate$n, 1:4)
+  # il giorno di passaggio la lettura va alla fornitura nuova; prima e dopo, a quella attiva quel giorno
+  expect_identical(associate$id_fornitura, c("F_vecchia", "F_nuova", "F_nuova", "F_altra"))
+  expect_identical(associate$presente_a_database, rep("PIA", 4))
+  # senza giorni di passaggio nessun messaggio
+  expect_no_message(associa_contenitore_e_fornitura(letture[c(1, 3, 4), ], contenitori, sacchetti_prova))
+})
+
 test_that("presente_a_database dice dove il database conosce il codice: PIA, PIT o NP", {
   letture <- dplyr::tibble(
     RFID = c("0000ABC123", "0000ABC123", "0000000001", "00FF00FF00", "0000000042", "0000ABC124", "000000000000012345678901"),

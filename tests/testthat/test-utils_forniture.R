@@ -110,6 +110,9 @@ test_that("l'anagrafica tiene le forniture attive nel periodo, con i loro conten
   expect_identical(f2$giorni_attivi, 181)
   # il fattore e' quello del periodo, non dell'attivita' (F2 e' attiva solo sei mesi)
   expect_equal(f2$fattore, 1)
+  # la quota di attivita' e' la parte del periodo in cui la fornitura era attiva: 181 giorni su 365
+  expect_equal(f2$quota_attivita, 181 / 365)
+  expect_equal(anagrafica$quota_attivita[anagrafica$id_fornitura == "F1"], 1)
   # due contenitori da 26 conferimenti massimi l'anno: il massimo della fornitura e' la somma
   expect_identical(f2$conferimenti_massimi_annui, 52)
   expect_identical(f2$litri_massimi_annui, 26 * 120 + 26 * 40)
@@ -741,4 +744,32 @@ test_that("la tabella di forniture e contenitori conta i bidoni attivi anche sol
     contenitori, componenti_forniture_prova(), manovre_forniture_prova(), "2025-06-30", "2025-06-30"
   )
   expect_setequal(un_giorno$id_fornitura, c("H1", "H2", "H4", "H8"))
+})
+
+test_that("i bidoni di una fornitura si contano e si filtrano per stato della fornitura", {
+  contenitore <- function(codice, fornitura, stato) {
+    dplyr::mutate(
+      contenitori_forniture_prova()[1, ],
+      codice_transponder = codice,
+      id_fornitura = fornitura,
+      stato_fornitura = stato
+    )
+  }
+  contenitori <- dplyr::bind_rows(
+    contenitore("B1", "G1", "ATTIVA"),
+    contenitore("B2", "G1", "ATTIVA"),
+    contenitore("B3", "G2", "CESSATA"),
+    contenitore("B4", "G3", " attiva ")
+  )
+  tutti <- bidoni_delle_forniture(contenitori, c("G1", "G2", "G3"), "2025-01-01", "2025-12-31")
+  expect_identical(tutti$numero_bidoni[tutti$id_fornitura == "G1"], 2L)
+  expect_identical(nrow(tutti), 3L)
+  # con lo stato restano i contenitori di quella fornitura (maiuscole e spazi ininfluenti)
+  attivi <- bidoni_delle_forniture(contenitori, c("G1", "G2", "G3"), "2025-01-01", "2025-12-31", stato = "ATTIVA")
+  expect_setequal(attivi$id_fornitura, c("G1", "G3"))
+  expect_identical(attivi$numero_bidoni[attivi$id_fornitura == "G1"], 2L)
+  expect_identical(attivi$bidoni[attivi$id_fornitura == "G1"], "B1 (120 L), B2 (120 L)")
+  # un'associazione senza lo stato non ha contenitori con quello stato
+  senza_stato <- bidoni_delle_forniture(dplyr::select(contenitori, -"stato_fornitura"), "G1", "2025-01-01", "2025-12-31", stato = "ATTIVA")
+  expect_identical(nrow(senza_stato), 0L)
 })

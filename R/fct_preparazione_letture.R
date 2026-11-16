@@ -632,8 +632,16 @@ pulisci_codici_rfid <- function(letture, contenitori, tag) {
 #' contenitore), `id_fornitura`, `stato_fornitura`, `id_utenza`, `comune_fornitura`. Il
 #' contenitore (o il gruppo di sacchetti) dà `PIA`; altrimenti il codice tra i
 #' tag dà `PIT`; altrimenti `NP`. L'associazione ha sempre la precedenza sui tag.
+#' **Una lettura va a una sola fornitura** (regola del proprietario, 16/11/2026):
+#' un bidone non dovrebbe essere associato a due forniture lo stesso giorno, ma
+#' nel giorno di passaggio da una fornitura all'altra le date di cessazione e di
+#' attivazione possono coincidere. In quel caso la lettura va alla fornitura con il
+#' contenitore attivato più di recente (la nuova); un messaggio conta i casi. Le
+#' letture dello stesso RFID in giorni diversi restano alla fornitura attiva quel
+#' giorno e non si sommano tra forniture diverse.
 #'
-#' Risultato: le letture con queste colonne e `presente_a_database`.
+#' Risultato: le letture, una riga ciascuna e nello stesso ordine, con queste
+#' colonne e `presente_a_database`.
 #' @param df_letture Letture con `RFID` e `data_lettura`.
 #' @param df_associazione_contenitori Tabella di `importa_contenitori()`.
 #' @param df_associazione_sacchetti Tabella di `importa_sacchetti()`.
@@ -657,7 +665,8 @@ associa_contenitore_e_fornitura <- function(
   contenitori$contenitore_gratuito <- contenitori[["contenitore_gratuito"]] %||%
     rep(NA_character_, nrow(contenitori))
 
-  df_letture |>
+  associate <- df_letture |>
+    dplyr::mutate(.riga_lettura = dplyr::row_number()) |>
     dplyr::left_join(
       contenitori,
       by = dplyr::join_by(
@@ -666,7 +675,20 @@ associa_contenitore_e_fornitura <- function(
         "data_lettura" <= "data_cessazione_contenitore"
       )
     ) |>
-    dplyr::left_join(sacchetti, by = c("RFID" = "codice_uhf")) |>
+    dplyr::left_join(sacchetti, by = c("RFID" = "codice_uhf"))
+  # Una lettura, una fornitura: se il contenitore era attivo in due forniture lo
+  # stesso giorno si tiene quella attivata più di recente.
+  doppie <- sum(duplicated(associate$.riga_lettura))
+  if (doppie > 0) {
+    message(
+      "Letture di un bidone associato a due forniture lo stesso giorno: ",
+      formatta_numero(doppie),
+      " (assegnate alla fornitura con il contenitore attivato pi\u00f9 di recente)."
+    )
+  }
+  associate |>
+    dplyr::arrange(.data$.riga_lettura, dplyr::desc(.data$data_attivazione_contenitore)) |>
+    dplyr::distinct(.data$.riga_lettura, .keep_all = TRUE) |>
     dplyr::mutate(
       # Le due tabelle possono scrivere il codice come numero o come testo.
       id_fornitura = dplyr::coalesce(
@@ -679,7 +701,7 @@ associa_contenitore_e_fornitura <- function(
         .default = "NP"
       )
     ) |>
-    dplyr::select(-"fornitura_sacchetto", -"in_associazione")
+    dplyr::select(-"fornitura_sacchetto", -"in_associazione", -".riga_lettura")
 }
 
 #' Aggiunge ai giri pianificati quelli inseriti a mano e mancanti dal calendario
