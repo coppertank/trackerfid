@@ -276,10 +276,11 @@ data-raw/      genera_sample_dataset.R, genera_dataset_grande.R, prepara_comuni.
 docs/          analisi_cluster.md; Quarto fuori dalla pipeline: indice_fiducia.qmd, conferimenti_secco.qmd, confronto_antenne.qmd, controllo_giri_saponette.qmd, indicatori_letture.qmd, associazione_giri.qmd, comune_lettura.qmd, stile.css (gli HTML dei documenti stanno accanto, quelli dei report sui dati reali in data-raw/output/)
 tests/testthat helper-dati.R (dati di prova, archivio da data frame) e un test-*.R per file
 dev/           run_dev.R, misura_prestazioni.R; 01-03 di golem, mai eseguiti
+scratch/       script R usa e getta (si possono eliminare); leggono data-raw/origine e scrivono in data-raw/output
 man/, NAMESPACE generati da roxygen2
 ```
 
-`data-raw/`, `dev/`, `docs/`, `_targets.yaml`, `.claude/` (file degli strumenti dell'assistente) e questo file sono in `.Rbuildignore`. Esportate solo `run_app()`, `genera_analisi_cluster()`, `scrivi_analisi_cluster()`.
+`data-raw/`, `dev/`, `docs/`, `scratch/`, `_targets.yaml`, `.claude/` (file degli strumenti dell'assistente) e questo file sono in `.Rbuildignore`. Esportate solo `run_app()`, `genera_analisi_cluster()`, `scrivi_analisi_cluster()`.
 
 ## Dove intervenire
 
@@ -319,6 +320,7 @@ Le funzioni hanno un titolo roxygen breve: per trovarle, `grep` sul nome. Punti 
 | Forniture senza letture (tabella per fascia ed elenco salvato dal report), premialità per scenario | `forniture_senza_letture()`, `elenco_forniture_senza_letture()`, `elenco_premialita()`, `economia_forniture()` (`quota_attivita`) (`test-utils_analisi_economica.R`) e il chunk `senza-conferimenti` di `docs/indicatori_letture.qmd` |
 | Registro delle letture scartate | `righe_scartate()`, `con_scartate()`, `pulisci_codici_rfid()`, `letture_scartate()` e i punti che scartano: `importa_letture_saponette()` (istante illeggibile), `scarta_codici_nulli()`, `filtra_codici_compatibili()`, `una_lettura_al_giorno()`; target `csv_scartate_*` |
 | Conferimenti | `R/utils_conferimenti.R` e il report, che si ferma se la simulazione non conferma il testo; periodo con i parametri `dal` e `al` del report |
+| Giri pianificati dei mezzi con l'antenna senza letture (giorni a vuoto), script usa e getta | `scratch/giri_antenne_a_vuoto.R` (18/11/2026, richiesta del proprietario): calendario dei soli pianificati, matricola pulita con `chiave_matricola()` (via anche la lettera iniziale), solo i mezzi del file dei test (AppSheet), letture del file **grezzo** delle antenne assegnate al mezzo tramite la targa; per mezzo e giorno servizi, comuni, letture e RFID distinti; `antenna_attiva` (test positivo e giorno dopo il collaudo) distingue i giri a vuoto veri; CSV in `data-raw/output/giri_antenne_*.csv` |
 | Pipeline: file, target, filtri finali, letture delle saponette | `data-raw/_targets.R`, `file_origine()`, `scarta_codici_nulli()`, `scrivi_csv_output()`, `prepara_letture_saponette()`, `colonne_letture_saponette()` |
 | Upload massimo | opzione `trackerfid.max_upload_mb` (2 GB) |
 | Favicon | `inst/app/www/favicon.png`, 192 px; l'immagine di origine non è nel repository |
