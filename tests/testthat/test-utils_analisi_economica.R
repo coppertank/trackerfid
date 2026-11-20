@@ -881,3 +881,53 @@ test_that("gli estremi delle fasce di importo si leggono dal parametro del repor
   expect_error(limiti_fasce_da_parametro(Inf), "uno o pi")
 })
 
+
+test_that("i sacchetti letti sono svuotamenti del secco da 40 litri nell'analisi economica", {
+  sacchetti <- function(fornitura, n, sistema = "Entrambe", giorno0 = 100) {
+    dplyr::tibble(
+      RFID = sprintf("00BD%020d", as.integer(substr(fornitura, 2, 3)) * 100 + seq_len(n)),
+      data_lettura = as.Date("2025-03-01") + giorno0 + seq_len(n),
+      sistema = factor(sistema, sistemi_lettura()),
+      stato = factor("PIA", stati_lettura()),
+      id_fornitura = fornitura,
+      # come li prepara letture_associate_del_secco(sacchetti = TRUE)
+      volume = volume_sacchetto_litri(),
+      servizio_transponder = "SECCO"
+    )
+  }
+  # F1 ha un bidone (3 letture da 120 litri) e 2 sacchetti; F9 ha solo sacchetti (3)
+  anagrafica <- dplyr::bind_rows(
+    anagrafica_economia_prova(),
+    dplyr::mutate(
+      anagrafica_economia_prova()[1, ],
+      id_fornitura = "F9",
+      # come lo costruisce anagrafica_con_sacchetti(): tariffa del carrellato
+      volume_contenitore = volume_tariffa_sacchetto_litri(),
+      id_utenza = "UF9"
+    )
+  )
+  unita <- dplyr::bind_rows(unita_economia_prova(), sacchetti("F1", 2), sacchetti("F9", 3))
+  economia <- analisi_economica(unita, anagrafica)
+  riferimento <- economia[economia$scenario == scenario_riferimento(economia), ]
+  f1 <- riferimento[riferimento$id_fornitura == "F1", ]
+  f9 <- riferimento[riferimento$id_fornitura == "F9", ]
+  # F1: 3 * 120 (bidone) + 2 * 40 (sacchetti) litri e 5 conferimenti
+  expect_identical(f1$conferimenti, 5L)
+  expect_equal(f1$litri, 360 + 80)
+  # 440 litri, sotto i 480 della premialita' di un componente: 5 euro piu' 5 ogni 120 litri sotto il massimo
+  expect_identical(as.character(f1$classe), "Premialità")
+  expect_equal(f1$premio_eur, 5 / 120 * (120 + (480 - 440)))
+  # F9: solo sacchetti, 3 * 40 litri, con la tariffa del carrellato (non quella del
+  # bidoncino da 40 litri): 120 litri sono sotto il minimo di 240, si addebitano 240 e
+  # restano 240 litri sotto il massimo: 5 euro piu' 10, cioe' 15 (e non 11,69)
+  expect_identical(f9$conferimenti, 3L)
+  expect_equal(f9$litri, 120)
+  expect_false(f9$senza_letture)
+  expect_equal(f9$premio_eur, 15)
+  # la sezione delle forniture senza letture ha la stessa regola: F1 e F9 hanno letture
+  senza <- forniture_senza_letture(unita, anagrafica)
+  expect_false(any(c("F1", "F9") %in% senza$id_fornitura))
+  # una lettura di sacchetto non associata non entra: non c'e' la fornitura
+  senza_sacchetti <- forniture_senza_letture(unita_economia_prova(), anagrafica)
+  expect_true("F9" %in% senza_sacchetti$id_fornitura)
+})

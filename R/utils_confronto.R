@@ -117,6 +117,26 @@ filtra_letture <- function(
   letture
 }
 
+#' Volume in litri di un sacchetto, per la fatturazione
+#'
+#' Contesto: un sacchetto (`00BD...`) letto è uno svuotamento del secco di 40 litri
+#' (regola del proprietario, 21/11/2026); non ha un volume nel database.
+#' Risultato: 40.
+#' @noRd
+volume_sacchetto_litri <- function() 40
+
+#' Volume della tariffa applicata a una fornitura con soli sacchetti
+#'
+#' Contesto: premio ed eccedenza si calcolano al litro con la riga della tariffa del
+#' volume del contenitore della fornitura (`tariffa_al_litro()`): un sacchetto da 40
+#' litri avrebbe la riga del bidoncino (premio di un conferimento 1,67 euro, e un premio
+#' massimo di 11,69 euro per un componente), un carrellato da 120 litri quella da 5 euro
+#' (premio massimo 15 euro). Scelta del proprietario, 21/11/2026: ai sacchetti si applica
+#' la tariffa del carrellato.
+#' Risultato: 120. I litri di ogni lettura restano `volume_sacchetto_litri()`.
+#' @noRd
+volume_tariffa_sacchetto_litri <- function() 120
+
 #' Letture associate del secco di un sistema
 #'
 #' Contesto: dalla propensione al conferimento in poi il report guarda solo il
@@ -133,13 +153,26 @@ filtra_letture <- function(
 #'   `SECCO` (il servizio atteso è quello del giro in cui l'antenna ha letto).
 #' Maiuscole e spazi sono ininfluenti. Le letture non associate e le scartate non
 #' passano di qui: non sono conferimenti.
+#' Con `sacchetti = TRUE` (fatturazione, regola del proprietario del 21/11/2026) si
+#' tengono anche **tutte** le letture associate dei sacchetti (`rfid_sacchetto()`,
+#' qualunque sia il giro), di entrambi i sistemi, e ognuna vale uno svuotamento del
+#' secco: `servizio_transponder` `SECCO` e `volume` di `volume_sacchetto_litri()`
+#' (40 litri). Un sacchetto non associato a una fornitura (`NP`) resta fuori: non
+#' ha una fornitura a cui fatturarlo. Senza `sacchetti` (propensione, indicatori) le
+#' letture sono quelle di sempre.
 #'
-#' Risultato: le stesse letture, solo quelle associate del secco.
+#' Risultato: le stesse letture, solo quelle associate del secco (con i sacchetti,
+#' se richiesti).
 #' @param letture Letture di un sistema, con `presente_a_database`,
 #'   `servizio_transponder` e, per le antenne, `servizio_atteso`.
 #' @param sistema `"antenne"` o `"saponette"`.
+#' @param sacchetti Se contare i sacchetti come svuotamenti del secco di 40 litri.
 #' @noRd
-letture_associate_del_secco <- function(letture, sistema = c("antenne", "saponette")) {
+letture_associate_del_secco <- function(
+  letture,
+  sistema = c("antenne", "saponette"),
+  sacchetti = FALSE
+) {
   sistema <- match.arg(sistema)
   pulisci <- function(x) toupper(trimws(as.character(x)))
   associate <- pulisci(letture$presente_a_database) %in% c("PIA", "PRESENTE")
@@ -147,7 +180,17 @@ letture_associate_del_secco <- function(letture, sistema = c("antenne", "saponet
   if (sistema == "antenne") {
     secco <- secco | pulisci(letture[["servizio_atteso"]] %||% NA_character_) %in% "SECCO"
   }
-  letture[associate & secco, ]
+  if (!sacchetti) {
+    return(letture[associate & secco, ])
+  }
+  del_sacchetto <- associate & rfid_sacchetto(letture$RFID)
+  risultato <- letture[(associate & secco) | del_sacchetto, ]
+  sacchetto <- rfid_sacchetto(risultato$RFID)
+  risultato$servizio_transponder <- as.character(risultato$servizio_transponder)
+  risultato$servizio_transponder[sacchetto] <- "SECCO"
+  risultato$volume <- as.numeric(risultato[["volume"]] %||% rep(NA_real_, nrow(risultato)))
+  risultato$volume[sacchetto] <- volume_sacchetto_litri()
+  risultato
 }
 
 #' Letture delle saponette dei giri in cui le antenne hanno letto almeno un RFID

@@ -704,6 +704,65 @@ associa_contenitore_e_fornitura <- function(
     dplyr::select(-"fornitura_sacchetto", -"in_associazione", -".riga_lettura")
 }
 
+#' Tipo di supporto del chip di ogni lettura
+#'
+#' Contesto: le antenne dei mezzi leggono solo i chip UHF; le saponette leggono
+#' sia i chip LF sia i chip UHF. Per capire se un bidone letto dalla saponetta e non
+#' dall'antenna ha un chip che l'antenna non poteva leggere, ogni lettura porta il
+#' tipo di chip del suo contenitore, `descrizione_tipo_supporto_chip` (richiesta del
+#' proprietario, 21/11/2026). Va fatto dopo tutti i tentativi di associazione
+#' (riparazione del codice, contenitore e fornitura), perché usa il codice finale.
+#'
+#' Funzionamento, per ogni lettura:
+#' 1. se il codice (`RFID`) è tra i tag dei contenitori (`importa_tag_contenitori()`)
+#'    la descrizione è quella del suo `id_tipo_supporto_chip` (vuota se il tag non
+#'    ha un tipo valido);
+#' 2. se non è tra i tag, ma il contenitore è stato attivato dal 2016 in poi
+#'    (`data_attivazione_contenitore`, `primo_anno_possibile_uhf()`), la descrizione
+#'    è `POSSIBILE UHF`;
+#' 3. altrimenti, cioè con il contenitore attivato nel 2015 o prima, o senza un
+#'    contenitore (nessuna data: per esempio un codice `NP`), resta vuota.
+#' La colonna sta dopo `passo_associazione_rfid`. Un messaggio conta le letture
+#' di ogni caso.
+#'
+#' Risultato: le stesse letture, con la colonna `descrizione_tipo_supporto_chip`.
+#' @param letture Letture dopo `associa_contenitore_e_fornitura()`, con `RFID` e
+#'   `data_attivazione_contenitore`.
+#' @param tag_contenitori Tabella di `importa_tag_contenitori()`.
+#' @noRd
+associa_tipo_supporto_chip <- function(letture, tag_contenitori) {
+  codici <- tag_contenitori$codice_transponder
+  tipo_del_tag <- tag_contenitori[["descrizione_tipo_supporto_chip"]] %||%
+    rep(NA_character_, nrow(tag_contenitori))
+  nei_tag <- letture$RFID %in% codici
+  attivazione <- as.Date(
+    letture[["data_attivazione_contenitore"]] %||% rep(NA, nrow(letture))
+  )
+  anno <- as.integer(format(attivazione, "%Y"))
+  possibile_uhf <- !nei_tag & !is.na(anno) & anno >= primo_anno_possibile_uhf()
+  descrizione <- dplyr::case_when(
+    nei_tag ~ tipo_del_tag[match(letture$RFID, codici)],
+    possibile_uhf ~ "POSSIBILE UHF",
+    .default = NA_character_
+  )
+  message(
+    "Tipo di supporto del chip: ",
+    formatta_numero(sum(nei_tag & !is.na(descrizione))), " dai tag, ",
+    formatta_numero(sum(possibile_uhf)), " POSSIBILE UHF (non nei tag, attivati dal ",
+    primo_anno_possibile_uhf(), "), ",
+    formatta_numero(sum(is.na(descrizione))), " senza tipo."
+  )
+  letture$descrizione_tipo_supporto_chip <- descrizione
+  if ("passo_associazione_rfid" %in% names(letture)) {
+    letture <- dplyr::relocate(
+      letture,
+      "descrizione_tipo_supporto_chip",
+      .after = "passo_associazione_rfid"
+    )
+  }
+  letture
+}
+
 #' Aggiunge ai giri pianificati quelli inseriti a mano e mancanti dal calendario
 #'
 #' Contesto: la query del calendario può non avere un giro che il proprietario sa
@@ -1921,16 +1980,17 @@ scarta_codici_nulli <- function(letture) {
 #' 5. calendario completo: pianificati, giri aggiunti a mano
 #'    (`aggiungi_giri_a_mano()`) e non pianificati;
 #' 6. giro, servizio atteso e coerenze (`associa_giro_e_servizio_atteso()`);
-#' 7. giri da controllare (`controllo_giri()`), nucleo e potenziamento. I
-#'    sacchetti restano.
+#' 7. giri da controllare (`controllo_giri()`), tipo di supporto del chip
+#'    (`associa_tipo_supporto_chip()`, dopo tutte le associazioni), nucleo e
+#'    potenziamento. I sacchetti restano.
 #' Messaggi e avvisi dicono quante letture ha associato ogni passo e che cosa
 #' controllare.
 #'
-#' Risultato: le 37 colonne del CSV, con gli attributi `controllo_giri`,
+#' Risultato: le 38 colonne del CSV, con gli attributi `controllo_giri`,
 #' `comuni_corretti` e `scartate` (le letture scartate dalla pulizia, vedi
 #' `righe_scartate()`); i file li scrivono i target della pipeline.
 #' @param file Percorsi di `file_origine()`.
-#' @return Le 37 colonne del CSV delle letture delle antenne, con gli attributi
+#' @return Le 38 colonne del CSV delle letture delle antenne, con gli attributi
 #'   `controllo_giri` e `comuni_corretti`.
 #' @noRd
 prepara_letture_antenne <- function(file = file_origine()) {
@@ -1987,6 +2047,7 @@ prepara_letture_antenne <- function(file = file_origine()) {
   da_controllare <- controllo_giri(con_giro, calendario, test_mezzi)
 
   con_giro |>
+    associa_tipo_supporto_chip(tag) |>
     associa_componenti(importa_componenti(file$componenti)) |>
     associa_potenziamento(importa_manovre(file$manovre)) |>
     structure(
@@ -2054,6 +2115,7 @@ colonne_letture_saponette <- function() {
     "matricola_saponetta",
     "RFID",
     "passo_associazione_rfid",
+    "descrizione_tipo_supporto_chip",
     "presente_a_database",
     "servizio_transponder",
     "volume",
@@ -2081,8 +2143,8 @@ colonne_letture_saponette <- function() {
 #' stessa pulizia dei codici delle antenne (`pulisci_codici_rfid()`): normalizza,
 #' scarta i codici nulli e quelli che non sono bidoni, ripara con associazione e
 #' tag, tiene una lettura per RFID e giorno. Poi le stesse associazioni:
-#' contenitore e fornitura (con `presente_a_database` `PIA`, `PIT` o `NP`), nucleo
-#' e potenziamento. Non ha il giro: `matricola_saponetta` non corrisponde
+#' contenitore e fornitura (con `presente_a_database` `PIA`, `PIT` o `NP`), tipo
+#' di supporto del chip (`associa_tipo_supporto_chip()`), nucleo e potenziamento. Non ha il giro: `matricola_saponetta` non corrisponde
 #' all'`id_giro` del calendario, quindi niente servizio atteso. I sacchetti
 #' restano, come per le antenne.
 #'
@@ -2103,6 +2165,7 @@ prepara_letture_saponette <- function(file = file_origine()) {
       importa_sacchetti(file$gruppi_sacchetti, file$servizi_sacchetti),
       tag
     ) |>
+    associa_tipo_supporto_chip(tag) |>
     associa_componenti(importa_componenti(file$componenti)) |>
     associa_potenziamento(importa_manovre(file$manovre)) |>
     dplyr::select(dplyr::all_of(colonne_letture_saponette())) |>

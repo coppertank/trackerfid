@@ -1,5 +1,5 @@
 # Genera inst/extdata/sample_rfid_dataset.csv: letture simulate con le
-# antenne, ottobre 2024 - dicembre 2025, con le 37 colonne e i formati della
+# antenne, ottobre 2024 - dicembre 2025, con le 38 colonne e i formati della
 # pipeline dei dati reali. Ogni contenitore è letto a cadenza fissa dal giro
 # del suo servizio, nei comuni veri del territorio, dentro il confine; ci
 # sono esempi per tutti gli indicatori dei cluster e alcuni sacchetti. Seme
@@ -1334,6 +1334,31 @@ eseguito_giro <- con_seme(2033, {
 })
 letture$eseguito <- eseguito_giro[match(giro_giorno, elenco_giri)]
 
+# Tipo di supporto del chip (`descrizione_tipo_supporto_chip`): lo hanno i bidoni
+# censiti, uno per contenitore, scelto con un seme a parte (2034) che non tocca le
+# altre estrazioni. Quasi tutti hanno una parte UHF, qualche bidone e' solo LF
+# (non lo leggerebbe un'antenna) e qualcuno e' `POSSIBILE UHF` (non e' nei tag ma
+# e' stato attivato dal 2016). Non presenti e sacchetti restano vuoti.
+tipo_chip_del_bidone <- withr::with_seed(2034, {
+  bidoni_censiti <- sort(unique(
+    letture$RFID[letture$presente_a_database == "PIA" & !rfid_sacchetto(letture$RFID)]
+  ))
+  tipi_esempio <- c(
+    "FASCETTA INTEGRATA LF + UHF", "FASCETTA METALLICA LF + UHF", "RECTANGLE LF + UHF",
+    "RECTANGLE UHF", "RECTANGLE METAL TAG LF + UHF", "BINTAG LF 125",
+    "TOKEN - PORTACHIAVI LF", "SCONOSCIUTO", "POSSIBILE UHF"
+  )
+  stats::setNames(
+    sample(
+      tipi_esempio,
+      length(bidoni_censiti),
+      replace = TRUE,
+      prob = c(0.36, 0.10, 0.10, 0.14, 0.04, 0.12, 0.03, 0.02, 0.09)
+    ),
+    bidoni_censiti
+  )
+})
+
 finale <- data.frame(
   data_ora_lettura = format(
     letture$data_ora_lettura,
@@ -1354,6 +1379,7 @@ finale <- data.frame(
     NA_character_,
     ifelse(letture$presente_a_database == "PIA", "diretto", "non_associato")
   ),
+  descrizione_tipo_supporto_chip = unname(tipo_chip_del_bidone[letture$RFID]),
   presente_a_database = letture$presente_a_database,
   servizio_transponder = letture$servizio_transponder,
   servizio_atteso = letture$servizio_atteso,
@@ -1613,9 +1639,24 @@ stopifnot(
   # nucleo e categoria: solo per le forniture dei contenitori; il nucleo solo
   # per quelle domestiche; il potenziamento per ogni fornitura, vero solo per
   # domestiche
-  ncol(finale) == 37,
-  identical(names(finale)[31:37], colonne_nucleo_manovra()),
-  identical(names(finale)[7:8], c("RFID", "passo_associazione_rfid")),
+  ncol(finale) == 38,
+  identical(names(finale)[32:38], colonne_nucleo_manovra()),
+  identical(
+    names(finale)[7:9],
+    c("RFID", "passo_associazione_rfid", "descrizione_tipo_supporto_chip")
+  ),
+  # il tipo di chip: solo i bidoni censiti, sempre lo stesso per un RFID
+  all(is.na(finale$descrizione_tipo_supporto_chip[non_presente | sacchetto])),
+  !anyNA(finale$descrizione_tipo_supporto_chip[!non_presente & !sacchetto]),
+  all(
+    stats::na.omit(finale$descrizione_tipo_supporto_chip) %in%
+      c(tipi_supporto_chip()$descrizione_tipo_supporto_chip, "POSSIBILE UHF")
+  ),
+  all(tapply(
+    finale$descrizione_tipo_supporto_chip[!non_presente & !sacchetto],
+    finale$RFID[!non_presente & !sacchetto],
+    function(x) length(unique(x))
+  ) == 1),
   all(is.na(finale$passo_associazione_rfid) == sacchetto),
   all(finale$passo_associazione_rfid[!sacchetto] %in% c("diretto", "non_associato")),
   all(is.na(finale$tipo_categoria[non_presente | sacchetto])),

@@ -262,11 +262,13 @@ anagrafica_presente <- all(file.exists(unlist(file[c("contenitori", "componenti"
 contenitori_associazione <- if (anagrafica_presente) {
   importa_contenitori(file$contenitori, categoria = TRUE)
 }
+componenti_origine <- if (anagrafica_presente) importa_componenti(file$componenti)
+manovre_origine <- if (anagrafica_presente) importa_manovre(file$manovre)
 anagrafica_servizi <- if (anagrafica_presente) {
   anagrafica_forniture_per_servizio(
     contenitori_associazione,
-    importa_componenti(file$componenti),
-    importa_manovre(file$manovre),
+    componenti_origine,
+    manovre_origine,
     dal,
     al
   )
@@ -297,12 +299,42 @@ anagrafica_analisi <- anagrafica_scelta
 if (con_giri && !is.null(anagrafica_analisi)) {
   anagrafica_analisi <- dplyr::filter(anagrafica_analisi, .data$id_fornitura %in% lette)
 }
+# Fatturazione (analisi economica e forniture senza letture): oltre ai bidoni, ogni
+# sacchetto letto (codice 00BD...) associato a una fornitura è uno svuotamento del secco
+# di 40 litri (regola del proprietario, 21/11/2026), di entrambi i sistemi e in qualunque
+# giro. Propensione e indicatori restano sui soli bidoni (`unita_secco`): i sacchetti non
+# sono contenitori.
+unita_economia <- unita_di_lettura(
+  letture_associate_del_secco(selezione$antenne, "antenne", sacchetti = TRUE),
+  letture_associate_del_secco(selezione$saponette, "saponette", sacchetti = TRUE),
+  selezione$scartate_antenne[0, ],
+  selezione$scartate_saponette[0, ]
+)
+# Le forniture che usano solo sacchetti non hanno bidoni nell'associazione dei
+# contenitori: entrano se hanno almeno una lettura di sacchetto nel periodo, attive per
+# tutto il periodo (`anagrafica_con_sacchetti()`).
+anagrafica_economia <- anagrafica_scelta
+if (!is.null(anagrafica_economia)) {
+  anagrafica_economia <- anagrafica_con_sacchetti(
+    anagrafica_economia, unita_economia, componenti_origine, manovre_origine, dal, al
+  )
+  if (!is.null(gruppo_scelto)) {
+    anagrafica_economia <- dplyr::filter(anagrafica_economia, .data$gruppo == gruppo_scelto)
+  }
+  if (con_giri) {
+    lette_economia <- unique(unita_economia$id_fornitura[unita_economia$stato %in% "PIA"])
+    anagrafica_economia <- dplyr::filter(anagrafica_economia, .data$id_fornitura %in% lette_economia)
+  }
+}
+riepilogo_dei_sacchetti <- if (!is.null(anagrafica_economia)) {
+  riepilogo_sacchetti(unita, anagrafica_economia)
+}
 economia_possibile <- !is.null(anagrafica)
 # L'analisi economica fotografa le letture che ci sono: un sistema senza conferimenti
 # del secco nel periodo non si simula (darebbe zero litri a tutte le forniture, cioè
 # il premio massimo a tutte). Gli scenari a sistema singolo e il confronto
 # compaiono solo se tutti e due i sistemi hanno letture associate del secco.
-sistemi_secco <- sistemi_con_conferimenti(unita_secco)
+sistemi_secco <- sistemi_con_conferimenti(unita_economia)
 economia_con_antenne <- con_antenne && sistemi_secco[["antenne"]]
 economia_con_saponette <- con_saponette && sistemi_secco[["saponette"]]
 economia_due_sistemi <- economia_con_antenne && economia_con_saponette
@@ -704,7 +736,7 @@ if (!vuoto(params$cartella_csv)) {
 # Propensione al conferimento
 
 ::: {.callout-note}
-**Da qui l'analisi riguarda solo il secco.** Le tabelle che seguono (propensione, analisi economica, forniture senza letture) contano le letture associate (`PIA`) con `servizio_transponder` `SECCO` e, per le antenne, anche quelle lette in un giro del secco (`servizio_atteso` `SECCO`). Il secco è l'unico servizio che l'azienda fattura. Contare anche gli altri servizi falserebbe le statistiche: le saponette leggono quasi esclusivamente i bidoni del secco, quindi i servizi come carta o plastica risulterebbero letti solo dalle antenne e il confronto tra i due sistemi, o il rapporto tra letture e bidoni, sarebbe sballato.
+**Da qui l'analisi riguarda solo il secco.** Le tabelle che seguono (propensione, analisi economica, forniture senza letture) contano le letture associate (`PIA`) con `servizio_transponder` `SECCO` e, per le antenne, anche quelle lette in un giro del secco (`servizio_atteso` `SECCO`). L'analisi economica e le forniture senza letture contano in più tutti i sacchetti letti e associati a una fornitura, ognuno uno svuotamento del secco di 40 litri; la propensione no, perché i sacchetti non sono contenitori. Il secco è l'unico servizio che l'azienda fattura. Contare anche gli altri servizi falserebbe le statistiche: le saponette leggono quasi esclusivamente i bidoni del secco, quindi i servizi come carta o plastica risulterebbero letti solo dalle antenne e il confronto tra i due sistemi, o il rapporto tra letture e bidoni, sarebbe sballato.
 :::
 
 ```{r}
@@ -775,7 +807,7 @@ if (con_giri) {
     "** (da «dal» a «al», anche solo in parte) nella tabella dell'associazione dei contenitori (`dv_cnt_associazione_contenitori`), letti o no. ",
     "Un bidone attivato dopo «al», o già cessato prima di «dal», non c'è; uno attivo che non ha nessuna lettura conta, con zero letture; una fornitura con almeno una lettura nel periodo c'è sempre, perché un bidone letto è attivo quel giorno. ",
     "Chi conferisce nelle isole ecologiche non ha un bidone associato nella tabella, quindi non entra nei conteggi. ",
-    "È la stessa base della tabella «Forniture e contenitori», ristretta ai bidoni del secco.\n\n",
+    "È la stessa base della tabella «Forniture e contenitori», ristretta ai bidoni del secco. I sacchetti non contano: non sono contenitori.\n\n",
     sep = ""
   )
 }
@@ -807,8 +839,8 @@ Le righe sono i gruppi di forniture **domestiche del secco**; «Domestiche (tota
 # Gli scenari sono quelli validi per i sistemi che hanno conferimenti del secco:
 # con un solo sistema c'è un solo scenario, la situazione reale.
 economia <- analisi_economica(
-  unita_secco,
-  anagrafica_analisi,
+  unita_economia,
+  anagrafica_economia,
   con_antenne = economia_con_antenne,
   con_saponette = economia_con_saponette,
   annualizza = annualizza
@@ -842,7 +874,7 @@ if (!economia_utile) {
   cat("\n::: {.callout-note}\nNel periodo e nella selezione non ci sono forniture domestiche del secco attive con una composizione del nucleo nota: l'analisi economica è vuota.\n:::\n")
 }
 # Contenitori gratuiti: conferimenti illimitati, non fatturati; fuori dall'analisi.
-domestiche_secco <- anagrafica_analisi[anagrafica_analisi$tipo %in% "domestica", ]
+domestiche_secco <- anagrafica_economia[anagrafica_economia$tipo %in% "domestica", ]
 n_gratuiti <- sum(domestiche_secco$contenitori_gratuiti)
 n_solo_gratuiti <- sum(domestiche_secco$contenitori_non_gratuiti == 0)
 if (n_gratuiti > 0) {
@@ -851,6 +883,20 @@ if (n_gratuiti > 0) {
     "** contenitori gratuiti (`contenitore_gratuito` `S`): c'è un accordo con il cliente che permette di conferire senza limiti con quel bidone, senza fatturazione. I loro conferimenti non entrano nell'analisi economica",
     if (n_solo_gratuiti > 0) paste0(", e le **", intero(n_solo_gratuiti), "** forniture che hanno solo contenitori gratuiti non sono analizzate") else "",
     ".\n:::\n",
+    sep = ""
+  )
+}
+# Sacchetti: svuotamenti del secco da 40 litri.
+sac <- riepilogo_dei_sacchetti
+if (!is.null(sac) && sac$letture > 0) {
+  cat(
+    "\n::: {.callout-note}\n**Sacchetti.** Ogni sacchetto letto (codice `00BD`) e associato a una fornitura è uno svuotamento del secco di **",
+    volume_sacchetto_litri(), " litri**, delle saponette e delle antenne e in qualunque giro: ",
+    intero(sac$associate), " letture associate, di ", intero(sac$forniture), " forniture",
+    if (sac$non_associate > 0) paste0("; le ", intero(sac$non_associate), " non associate a una fornitura non si possono fatturare"),
+    ". Le forniture che usano solo sacchetti, senza bidoni del secco nell'associazione dei contenitori, entrano nell'analisi se sono domestiche con la composizione del nucleo nota (**",
+    intero(sac$forniture_solo_sacchetti_analizzate), "** su ", intero(sac$forniture_solo_sacchetti),
+    "), attive per tutto il periodo; i litri sono 40 per ogni sacchetto, ma premio ed eccedenza hanno la tariffa del carrellato da 120 litri. Propensione, tabella di forniture e contenitori e coperture dei due sistemi non contano i sacchetti: non sono contenitori.\n:::\n",
     sep = ""
   )
 }
@@ -874,7 +920,7 @@ if (con_giri) {
 #| eval: !expr economia_utile
 #| results: asis
 cat(
-  "Le forniture domestiche del secco attive nel periodo, con una composizione del nucleo nota e almeno un contenitore a pagamento, comprese quelle senza letture: **",
+  "Le forniture domestiche del secco attive nel periodo, con una composizione del nucleo nota e almeno un contenitore a pagamento (o che usano sacchetti), comprese quelle senza letture: **",
   intero(nrow(economia[economia$scenario == riferimento, ])),
   "**",
   sep = ""
@@ -893,7 +939,7 @@ sistemi_attivi <- if (economia_due_sistemi) {
 } else {
   "dalle sole antenne"
 }
-cat("I conferimenti sono quelli **effettivamente registrati** nel periodo ", sistemi_attivi, ": ogni lettura associata (`PIA`) è uno svuotamento e vale il volume del suo contenitore. I litri si sommano per fornitura (due bidoni della stessa fornitura sommano il loro volume), mentre le letture dello stesso RFID sotto forniture diverse restano separate. **Una fornitura senza letture nello scenario ha zero litri e riceve il premio massimo della sua fascia**: è la premialità per chi non risulta letto.\n\n", sep = "")
+cat("I conferimenti sono quelli **effettivamente registrati** nel periodo ", sistemi_attivi, ": ogni lettura associata (`PIA`) è uno svuotamento e vale il volume del suo contenitore (un sacchetto, 40 litri). I litri si sommano per fornitura (due bidoni della stessa fornitura sommano il loro volume), mentre le letture dello stesso RFID sotto forniture diverse restano separate. **Una fornitura senza letture nello scenario ha zero litri e riceve il premio massimo della sua fascia**: è la premialità per chi non risulta letto.\n\n", sep = "")
 if (annualizza) {
   cat("**Premialità proporzionale ai giorni di attività.** Il premio (per chi conferisce poco e per chi non risulta letto) si moltiplica per la parte del periodo in cui la fornitura era attiva (giorni di attività / giorni del periodo): una fornitura attiva un mese su dodici riceve 1/12 del premio, una attiva dieci mesi su dodici 10/12. I litri e la classe non cambiano; l'eccedenza non si proporziona.\n\n")
 }
@@ -1276,13 +1322,13 @@ cat("Il confronto più vicino al costo reale di un sistema. Le forniture sono le
 
 ```{r}
 #| label: senza-conferimenti
-#| eval: !expr "!is.null(anagrafica_scelta) && !con_giri"
+#| eval: !expr "!is.null(anagrafica_economia) && !con_giri"
 #| results: asis
-secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
+secco <- anagrafica_economia[anagrafica_economia$servizio %in% "SECCO", ]
 # Lo stesso criterio dell'analisi economica: conferimenti del secco a pagamento
-# (unita_secco), con le sole forniture che hanno un contenitore a pagamento.
+# (unita_economia, con i sacchetti), con le sole forniture che hanno un contenitore a pagamento.
 a_pagamento <- con_contenitori_a_pagamento(secco)
-senza <- forniture_senza_letture(unita_secco, secco)
+senza <- forniture_senza_letture(unita_economia, secco)
 dell_economia <- forniture_dell_economia(secco)
 senza_economia <- senza[senza$id_fornitura %in% dell_economia$id_fornitura, ]
 solo_gratuiti <- nrow(secco) - nrow(a_pagamento)
@@ -1302,7 +1348,7 @@ if (economia_utile) {
 cat(
   "\nForniture del secco con almeno un contenitore associato **attivo nel periodo** (almeno un giorno tra «dal» e «al», anche solo in parte) e almeno un contenitore **a pagamento** che non hanno **nessun conferimento del secco** nel periodo: **",
   intero(nrow(senza)), "** su ", intero(nrow(a_pagamento)),
-  " (", quota(rapporto(nrow(senza), nrow(a_pagamento))), "). Il criterio è quello dell'analisi economica: conta una lettura associata (`PIA`) di un bidone del secco a pagamento, di saponette e antenne insieme; non basta la lettura di un bidone di un altro servizio né quella di un contenitore gratuito. ",
+  " (", quota(rapporto(nrow(senza), nrow(a_pagamento))), "). Il criterio è quello dell'analisi economica: conta una lettura associata (`PIA`) di un bidone del secco a pagamento, o di un sacchetto, di saponette e antenne insieme; non basta la lettura di un bidone di un altro servizio né quella di un contenitore gratuito. ",
   if (solo_gratuiti > 0) paste0("Le ", intero(solo_gratuiti), " forniture con soli contenitori gratuiti non si fatturano e non compaiono. "),
   "Sono divise per fascia di componenti (media dei residenti sul periodo, vedi sopra); condomini, non domestiche e altre forniture hanno una riga propria.\n\n",
   sep = ""
@@ -1417,7 +1463,7 @@ elenchi_scenari <- lapply(levels(economia$scenario), function(nome) {
 })
 elenchi_scenari <- dplyr::bind_rows(elenchi_scenari)
 cat(
-  "\n**Elenchi salvati** in `", params$cartella_elenchi, "`, per ogni scenario uno con le forniture che hanno diritto alla premialità e uno con quelle in eccedenza. Per ogni fornitura: componenti medi e fascia, bidoni del secco attivi (`stato_fornitura` `ATTIVA`) con codici e volumi, conferimenti e volumetria effettuati nel periodo e rilevati dallo scenario, conferimenti e volumetria mancanti e attesi a fine anno, le soglie di riferimento e la premialità o l'eccedenza attesa a fine anno.\n\n",
+  "\n**Elenchi salvati** in `", params$cartella_elenchi, "`, per ogni scenario uno con le forniture che hanno diritto alla premialità e uno con quelle in eccedenza. Per ogni fornitura: componenti medi e fascia, bidoni del secco attivi (`stato_fornitura` `ATTIVA`; zero per una fornitura con soli sacchetti) con codici e volumi, conferimenti e volumetria effettuati nel periodo e rilevati dallo scenario, conferimenti e volumetria mancanti e attesi a fine anno, le soglie di riferimento e la premialità o l'eccedenza attesa a fine anno.\n\n",
   sep = ""
 )
 print(knitr::kable(
@@ -1449,7 +1495,7 @@ cat("\n::: {.callout-note}\nL'analisi economica richiede i file delle forniture 
 - **Contenitori diversi.** I volumi si sommano in litri; eccedenza e premio si calcolano al litro, con la tariffa del contenitore più frequente della fornitura (un volume che la tabella non ha usa quella del carrellato da 120 litri). Su un anno intero il risultato è quello dei conferimenti interi.
 - **Annualizzazione.** Le soglie sono annue e costanti. `litri annualizzati = litri rilevati / fattore`, con il fattore del periodo (giorni da «dal» a «al» / giorni dell'anno, 366 solo dentro un anno bisestile; non dipende da quando la fornitura è stata attivata); classe, premio ed eccedenza si calcolano sui litri annualizzati e sono valori annui (`economia_forniture()`). Scalare le soglie al periodo darebbe la stessa classe: la scelta è del proprietario (8/11/2026). È lineare: niente stagionalità. Con i giri indicati non si annualizza (pochi giorni): si scalano le soglie.
 - **Scenari.** Con tutti e due i sistemi: «Saponette e antenne» (il riferimento, ogni lettura una volta), «Solo saponette» e «Solo antenne». **Ogni scenario è a sé stante**: è come se esistessero solo le letture dei suoi sistemi, e le forniture sono le stesse in tutti (le domestiche del secco attive nel periodo). Una fornitura senza letture nello scenario ha zero litri e prende il premio massimo della sua fascia, proporzionale ai giorni di attività. Con un solo sistema, un solo scenario («Rilevazione reale (Saponette)» o «(Antenne)»): l'altro non si simula, perché darebbe zero litri a tutte le forniture, cioè il premio massimo a tutte. Un sistema conta se ha letture associate del secco nel periodo (`sistemi_con_conferimenti()`, `scenari_rilevazione()`).
-- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. Dalla propensione in poi le letture sono quelle associate del secco (`letture_associate_del_secco()`): saponette con transponder `SECCO`, antenne con transponder `SECCO` o letta in un giro del secco (`servizio_atteso` `SECCO`). Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: una fornitura senza letture riceve il premio massimo, proporzionale ai giorni di attività. Ogni lettura va a una sola fornitura (se un bidone è associato a due forniture lo stesso giorno, a quella attivata più di recente) e le letture dello stesso RFID sotto forniture diverse non si sommano.
+- **Un conferimento è una lettura associata (`PIA`).** Il volume conferito è letture × volume del contenitore, sulle letture dei due sistemi insieme. **Un sacchetto letto** (codice `00BD`) e associato a una fornitura è uno svuotamento del secco da 40 litri, in qualunque giro e per entrambi i sistemi; le forniture che usano solo sacchetti entrano se hanno almeno una lettura nel periodo (domestiche con componenti noti, attive per tutto il periodo). Dalla propensione in poi le letture sono quelle associate del secco (`letture_associate_del_secco()`): saponette con transponder `SECCO`, antenne con transponder `SECCO` o letta in un giro del secco (`servizio_atteso` `SECCO`). Le letture non rilevate dai sistemi abbassano i litri e favoriscono il premio: una fornitura senza letture riceve il premio massimo, proporzionale ai giorni di attività. Ogni lettura va a una sola fornitura (se un bidone è associato a due forniture lo stesso giorno, a quella attivata più di recente) e le letture dello stesso RFID sotto forniture diverse non si sommano.
 - **Premialità proporzionale ai giorni di attività.** Il premio annuo (calcolato sui litri annualizzati) si moltiplica per giorni di attività della fornitura nel periodo / giorni del periodo (`quota_attivita`): una fornitura attiva un mese su dodici senza conferimenti riceve 15 € × 1/12, una attiva dieci mesi 15 € × 10/12 (15 € è il premio massimo con un carrellato da 120 litri; 20 € per «6 o più»). Vale per chi conferisce poco e per chi non risulta letto; classe, litri ed eccedenza non cambiano. Con i giri indicati non si proporziona. Il totale per scenario è la somma dei premi.
 - **Fascia di componenti.** Dai componenti medi sul periodo, arrotondati; con il potenziamento non ci sono né premio né eccedenza, qualunque sia il volume.
 - **Anagrafica.** Forniture e contenitori vengono dalle tabelle estratte (`dv_cnt_associazione_contenitori`, `dv_associazione_componenti`, `dv_potenziamento_secco`), non dalle letture (la propensione parte da tutti i bidoni del secco attivi almeno un giorno tra «dal» e «al», letti o no, e conta anche i contenitori gratuiti, che l'analisi economica esclude; l'analisi economica guarda le sole forniture domestiche con la composizione del nucleo nota e un contenitore a pagamento: per questo le forniture possono essere più numerose nella propensione. Con i giri indicati la propensione guarda i bidoni letti nei giri). Un contenitore senza codice (mancante o di soli zeri) non è un bidone e non compare.

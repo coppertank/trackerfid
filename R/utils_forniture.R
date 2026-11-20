@@ -535,6 +535,102 @@ anagrafica_con_bidoni <- function(anagrafica, bidoni) {
     dplyr::inner_join(per_fornitura, by = "id_fornitura")
 }
 
+#' Anagrafica del secco con le forniture che usano solo sacchetti
+#'
+#' Contesto: un sacchetto letto è uno svuotamento del secco di 40 litri
+#' (`volume_sacchetto_litri()`, regola del proprietario, 21/11/2026) e va
+#' fatturato alla fornitura del suo gruppo di sacchetti, con la tariffa del carrellato. L'anagrafica nasce dai
+#' bidoni (`anagrafica_forniture()`): una fornitura con solo sacchetti non ha
+#' nessun contenitore nell'associazione e non ci sarebbe, e le sue letture non
+#' avrebbero dove essere contate. Scelta del proprietario, 21/11/2026: entrano le
+#' forniture con almeno una lettura di sacchetto nel periodo.
+#'
+#' Funzionamento: dalle letture `PIA` di sacchetti di `unita` ricava le forniture
+#' che non sono già in `anagrafica`. Per ognuna costruisce un contenitore virtuale
+#' del secco non gratuito, attivo per tutto il periodo (quindi `quota_attivita` 1:
+#' scelta mia), senza il massimo di raccolte e senza utenza, con il volume della
+#' tariffa del carrellato (`volume_tariffa_sacchetto_litri()`, 120 litri, scelta del
+#' proprietario del 21/11/2026: premio ed eccedenza sono quelli di un carrellato; i litri
+#' di ogni sacchetto letto restano 40), e
+#' passa i contenitori virtuali ad `anagrafica_forniture()`: categoria, componenti,
+#' potenziamento e gruppo vengono dalla tabella dei componenti e delle manovre, come
+#' per le altre forniture. Una fornitura che ha già un bidone del secco resta com'è:
+#' i suoi sacchetti si sommano ai conferimenti dei bidoni. La colonna
+#' `solo_sacchetti` distingue le forniture aggiunte.
+#'
+#' Risultato: `anagrafica` con la colonna `solo_sacchetti` (falsa per le forniture
+#' che c'erano) e in più una riga per ogni fornitura con soli sacchetti.
+#' @param anagrafica Risultato di `anagrafica_forniture()` per il secco.
+#' @param unita Risultato di `unita_di_lettura()` con le letture dei sacchetti
+#'   (`letture_associate_del_secco(sacchetti = TRUE)`).
+#' @param componenti Tabella di `importa_componenti()`.
+#' @param manovre Tabella di `importa_manovre()`.
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @noRd
+anagrafica_con_sacchetti <- function(anagrafica, unita, componenti, manovre, dal, al) {
+  anagrafica$solo_sacchetti <- rep(FALSE, nrow(anagrafica))
+  con_sacchetti <- unique(as.character(
+    unita$id_fornitura[
+      unita$stato %in% "PIA" & rfid_sacchetto(unita$RFID) & !is.na(unita$id_fornitura)
+    ]
+  ))
+  nuove_forniture <- setdiff(con_sacchetti, as.character(anagrafica$id_fornitura))
+  if (length(nuove_forniture) == 0) {
+    return(anagrafica)
+  }
+  virtuali <- dplyr::tibble(
+    codice_transponder = paste0("SACCHETTI_", nuove_forniture),
+    servizio_transponder = "SECCO",
+    volume = volume_tariffa_sacchetto_litri(),
+    numero_raccolte_annue = NA_real_,
+    contenitore_gratuito = "N",
+    data_attivazione_contenitore = as.Date(dal),
+    data_cessazione_contenitore = as.Date(al),
+    id_fornitura = nuove_forniture,
+    id_utenza = NA_character_,
+    categoria_contenitore = NA_character_
+  )
+  nuove <- anagrafica_forniture(virtuali, componenti, manovre, dal, al, "SECCO")
+  nuove$solo_sacchetti <- rep(TRUE, nrow(nuove))
+  dplyr::bind_rows(anagrafica, nuove)
+}
+
+#' Letture dei sacchetti nel periodo e forniture che le ricevono
+#'
+#' Contesto: nel report i sacchetti letti contano come svuotamenti del secco di 40
+#' litri (`letture_associate_del_secco(sacchetti = TRUE)`); il riepilogo dice
+#' quanti sono, a quante forniture vanno e quante forniture con soli sacchetti
+#' entrano nell'analisi economica (`anagrafica_con_sacchetti()`), perché non tutte
+#' lo fanno: una fornitura non domestica o senza la composizione del nucleo non ha
+#' una tariffa.
+#' Funzionamento: conta le letture (RFID e giorno) di sacchetti di `unita`, tutte le
+#' righe, divise tra associate a una fornitura (`PIA`) e non associate (`PIT` o
+#' `NP`, che non si possono fatturare), e le forniture con almeno una lettura
+#' associata. Delle forniture con soli sacchetti dell'anagrafica conta quante sono e
+#' quante nell'analisi economica (`forniture_dell_economia()`).
+#' Risultato: un tibble con `letture`, `associate`, `non_associate`, `forniture`,
+#' `forniture_solo_sacchetti` e `forniture_solo_sacchetti_analizzate`.
+#' @param unita Risultato di `unita_di_lettura()` su **tutte** le letture.
+#' @param anagrafica_economia Risultato di `anagrafica_con_sacchetti()`.
+#' @noRd
+riepilogo_sacchetti <- function(unita, anagrafica_economia) {
+  sacchetti <- unita[rfid_sacchetto(unita$RFID), ]
+  associati <- sacchetti[
+    sacchetti$stato %in% "PIA" & !is.na(sacchetti$id_fornitura),
+  ]
+  solo_sacchetti <- anagrafica_economia[anagrafica_economia$solo_sacchetti %in% TRUE, ]
+  dplyr::tibble(
+    letture = nrow(sacchetti),
+    associate = nrow(associati),
+    non_associate = nrow(sacchetti) - nrow(associati),
+    forniture = length(unique(associati$id_fornitura)),
+    forniture_solo_sacchetti = nrow(solo_sacchetti),
+    forniture_solo_sacchetti_analizzate = sum(
+      solo_sacchetti$id_fornitura %in% forniture_dell_economia(anagrafica_economia)$id_fornitura
+    )
+  )
+}
+
 #' Forniture e contenitori attivi nel periodo: la base della propensione
 #'
 #' Contesto: la propensione al conferimento (richiesta del proprietario,

@@ -259,6 +259,113 @@ test_that("ogni tabella estratta si importa con i nomi e i tipi del progetto", {
     importa_tag_contenitori(scrivi_csv(c("altro", "1"))),
     "manca sia codice_transponder sia codice_etichetta"
   )
+  # il tipo di supporto del chip: l'id e la sua descrizione; vuoto senza il campo
+  expect_identical(tag$id_tipo_supporto_chip, c(3L, NA))
+  expect_identical(
+    tag$descrizione_tipo_supporto_chip,
+    c("FASCETTA INTEGRATA LF + UHF", NA)
+  )
+  expect_true(all(is.na(solo_etichetta$descrizione_tipo_supporto_chip)))
+})
+
+test_that("i tag hanno una riga per codice, con un tipo di supporto noto se c'e'", {
+  tipi <- tipi_supporto_chip()
+  expect_identical(nrow(tipi), 9L)
+  expect_identical(tipi$descrizione_tipo_supporto_chip[tipi$id_tipo_supporto_chip == 2], "BINTAG LF 125")
+  # solo LF: bintag (2) e token (9); SCONOSCIUTO (1) non si sa; gli altri hanno UHF
+  expect_identical(tipi$id_tipo_supporto_chip[tipi$ha_uhf %in% FALSE], c(2L, 9L))
+  expect_identical(tipi$id_tipo_supporto_chip[is.na(tipi$ha_uhf)], 1L)
+  expect_true(all(tipi$ha_uhf[3:8]))
+
+  messaggi <- character(0)
+  tag <- withCallingHandlers(
+    importa_tag_contenitori(scrivi_csv(c(
+      "codice_transponder,id_tipo_supporto_chip",
+      # lo stesso codice con SCONOSCIUTO e con un tipo noto: vale il noto
+      "A1,1",
+      "A1,7",
+      # due tipi noti diversi: vale quello con il numero piu' basso
+      "B2,9",
+      "B2,3",
+      # fuori da 1-9 e non numerico: tipo vuoto
+      "C3,12",
+      "D4,xx",
+      # solo SCONOSCIUTO
+      "E5,1"
+    ))),
+    message = function(m) {
+      messaggi <<- c(messaggi, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  # una riga per codice, nell'ordine del file
+  expect_identical(
+    tag$codice_transponder,
+    normalizza_codice_rfid(c("A1", "B2", "C3", "D4", "E5"))
+  )
+  expect_identical(tag$id_tipo_supporto_chip, c(7L, 3L, NA, NA, 1L))
+  expect_identical(
+    tag$descrizione_tipo_supporto_chip,
+    c("RECTANGLE UHF", "FASCETTA INTEGRATA LF + UHF", NA, NA, "SCONOSCIUTO")
+  )
+  expect_match(messaggi, "non è tra 1 e 9: 1 righe", all = FALSE)
+  expect_match(messaggi, "più tipi di supporto per lo stesso codice: 1 codici", all = FALSE)
+})
+
+test_that("il tipo di supporto del chip viene dai tag, altrimenti POSSIBILE UHF dal 2016", {
+  tag <- dplyr::tibble(
+    codice_transponder = c("0000000001", "0000000002", "0000000003"),
+    id_tipo_supporto_chip = c(2L, 3L, NA),
+    descrizione_tipo_supporto_chip = c("BINTAG LF 125", "FASCETTA INTEGRATA LF + UHF", NA)
+  )
+  letture <- dplyr::tibble(
+    RFID = c(
+      "0000000001", # nei tag, solo LF
+      "0000000002", # nei tag, LF + UHF
+      "0000000003", # nei tag, senza tipo: vuoto, anche se e' attivato nel 2020
+      "0000000010", # non nei tag, attivato il 1/1/2016: POSSIBILE UHF
+      "0000000011", # non nei tag, attivato il 31/12/2015: vuoto
+      "0000000012", # non nei tag, attivato nel 2020: POSSIBILE UHF
+      "0000000013", # non nei tag e senza contenitore (NP): vuoto
+      "00BD00000000000000000001", # sacchetto non nei tag, senza data: vuoto
+      "0000000001" # una seconda lettura dello stesso codice: stesso tipo
+    ),
+    passo_associazione_rfid = "diretto",
+    data_attivazione_contenitore = as.Date(c(
+      "2010-05-01", "2020-01-01", "2020-01-01", "2016-01-01", "2015-12-31",
+      "2020-01-01", NA, NA, "2010-05-01"
+    ))
+  )
+  messaggio <- character(0)
+  risultato <- withCallingHandlers(
+    associa_tipo_supporto_chip(letture, tag),
+    message = function(m) {
+      messaggio <<- c(messaggio, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_identical(
+    risultato$descrizione_tipo_supporto_chip,
+    c(
+      "BINTAG LF 125", "FASCETTA INTEGRATA LF + UHF", NA, "POSSIBILE UHF", NA,
+      "POSSIBILE UHF", NA, NA, "BINTAG LF 125"
+    )
+  )
+  # la colonna sta dopo il passo di associazione e le altre restano
+  expect_identical(
+    names(risultato),
+    c("RFID", "passo_associazione_rfid", "descrizione_tipo_supporto_chip", "data_attivazione_contenitore")
+  )
+  expect_identical(nrow(risultato), nrow(letture))
+  expect_match(messaggio, "3 dai tag, 2 POSSIBILE UHF .* dal 2016\\), 4 senza tipo", all = FALSE)
+
+  # senza la colonna delle date, o senza il tipo nei tag, nessun POSSIBILE UHF
+  senza_date <- associa_tipo_supporto_chip(
+    dplyr::select(letture, "RFID"),
+    dplyr::select(tag, "codice_transponder")
+  )
+  expect_true(all(is.na(senza_date$descrizione_tipo_supporto_chip)))
+  expect_identical(names(senza_date), c("RFID", "descrizione_tipo_supporto_chip"))
 })
 
 test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie", {
@@ -299,12 +406,25 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     "^1 giri confermati di mezzi con l'antenna non hanno nessuna lettura"
   )
   expect_identical(
-    names(letture)[31:37],
+    names(letture)[32:38],
     colonne_nucleo_manovra()
   )
-  expect_equal(ncol(letture), 37)
+  expect_equal(ncol(letture), 38)
   # il campo del contenitore resta nelle letture (vuoto per il sacchetto)
-  expect_identical(names(letture)[17], "contenitore_gratuito")
+  expect_identical(names(letture)[18], "contenitore_gratuito")
+  # il tipo di supporto del chip sta dopo il passo di associazione: dai tag
+  # (0000000128, tipo 3), POSSIBILE UHF per il contenitore attivato nel 2020 che non
+  # e' nei tag, vuoto per il tag senza tipo, per i non associati e per il sacchetto
+  expect_identical(
+    names(letture)[7:9],
+    c("RFID", "passo_associazione_rfid", "descrizione_tipo_supporto_chip")
+  )
+  tipo_chip <- function(codice) unique(letture$descrizione_tipo_supporto_chip[letture$RFID == codice])
+  expect_identical(tipo_chip("0000000128"), "FASCETTA INTEGRATA LF + UHF")
+  expect_identical(tipo_chip("0000000123"), "POSSIBILE UHF")
+  expect_true(is.na(tipo_chip("0000000999")))
+  expect_true(is.na(tipo_chip("0000000124")))
+  expect_true(is.na(tipo_chip("00BD00000000000000000001")))
   # il passo di associazione del codice sta accanto all'RFID: riconosciuto subito
   # nell'associazione o tra i tag (anche se poi e' PIT), non associato dopo i tre
   # passi, vuoto per il sacchetto
@@ -458,6 +578,18 @@ test_that("dai file estratti si arriva al CSV dell'app, senza tabelle intermedie
     }
   )
   expect_named(saponette, colonne_letture_saponette())
+  # anche le saponette hanno il tipo di supporto del chip, dopo il passo
+  expect_identical(
+    names(saponette)[4:6],
+    c("RFID", "passo_associazione_rfid", "descrizione_tipo_supporto_chip")
+  )
+  # il bidone 123 non e' nei tag ed e' attivato nel 2020; il sacchetto e il codice HERA
+  # non associato restano senza tipo
+  expect_identical(
+    unique(saponette$descrizione_tipo_supporto_chip[saponette$RFID == "0000000123"]),
+    "POSSIBILE UHF"
+  )
+  expect_true(all(is.na(saponette$descrizione_tipo_supporto_chip[saponette$presente_a_database == "NP"])))
   # il registro: i doppioni (la riga ripetuta e lo stesso bidone letto da un'altra
   # saponetta alle 9), una riga senza RFID, un codice oltre 10 cifre
   scartate_saponette <- letture_scartate(saponette)

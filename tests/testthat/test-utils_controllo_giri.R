@@ -255,3 +255,219 @@ test_that("il servizio atteso della lista si ricava dalla tabella di conversione
   giri <- giri_di_controllo(con_colonna)
   expect_identical(giri$servizio_atteso, c("CARTA", "SECCO"))
 })
+
+# ---- Tipo di chip dei bidoni letti dalle saponette e non dalle antenne ----------
+
+# Antenne dei giri (mezzi 101 e 303) e due trasmissioni delle saponette:
+# - letti da entrambi: A, B, C (101) ed E (303);
+# - solo saponette: L1 e L2 (chip solo LF), U1 e U2 (chip con UHF), P1 (possibile
+#   UHF), N1 (senza tipo) e N2 (SCONOSCIUTO);
+# - solo antenne: F.
+chip_prova <- function() {
+  antenne_giri <- dplyr::tibble(
+    data_lettura = giorno,
+    chiave_mezzo = c("101", "101", "101", "303", "303"),
+    RFID = c("A", "B", "C", "E", "F"),
+    descrizione_tipo_supporto_chip = c(
+      "RECTANGLE UHF", "FASCETTA INTEGRATA LF + UHF", "POSSIBILE UHF",
+      "RECTANGLE UHF", "RECTANGLE LF + UHF"
+    )
+  )
+  saponette_giri <- dplyr::tibble(
+    data_lettura = giorno,
+    matricola_saponetta = c(rep("T1", 6), rep("T2", 5)),
+    RFID = c("A", "B", "C", "L1", "U1", "P1", "E", "L2", "U2", "N1", "N2"),
+    descrizione_tipo_supporto_chip = c(
+      "RECTANGLE UHF", "FASCETTA INTEGRATA LF + UHF", "POSSIBILE UHF",
+      "BINTAG LF 125", "RECTANGLE UHF", "POSSIBILE UHF",
+      "RECTANGLE UHF", "TOKEN - PORTACHIAVI LF", "FASCETTA METALLICA LF + UHF",
+      NA, "SCONOSCIUTO"
+    ),
+    servizio_transponder = c(rep("SECCO", 10), NA)
+  )
+  classi <- classi_rfid(antenne_giri, saponette_giri)
+  list(
+    antenne_giri = antenne_giri,
+    saponette_giri = saponette_giri,
+    classi = classi,
+    classi_chip = classi_con_chip(classi, antenne_giri, saponette_giri),
+    abbinamenti = abbina_trasmissioni(saponette_giri, antenne_giri),
+    # U1 lo ha letto anche un'antenna fuori dai giri della lista
+    antenne_tutte = dplyr::tibble(
+      data_ora_lettura = "2026-10-20 07:00:00",
+      RFID = c("A", "U1")
+    )
+  )
+}
+
+test_that("le categorie di chip dicono se l'antenna poteva leggerlo", {
+  categoria <- categoria_chip(c(
+    "BINTAG LF 125", "TOKEN - PORTACHIAVI LF", "RECTANGLE UHF", "FASCETTA INTEGRATA LF + UHF",
+    "SACCHETTO UHF", "POSSIBILE UHF", "SCONOSCIUTO", NA, "UN TIPO MAI VISTO"
+  ))
+  expect_identical(
+    as.character(categoria),
+    c(
+      "Chip solo LF", "Chip solo LF", "Chip con UHF", "Chip con UHF", "Chip con UHF",
+      "Possibile UHF", "Tipo non determinabile", "Tipo non determinabile", "Tipo non determinabile"
+    )
+  )
+  expect_identical(levels(categoria), categorie_chip())
+  # ogni tipo della tabella ha una categoria, e solo BINTAG e TOKEN sono solo LF
+  tutti <- categoria_chip(tipi_supporto_chip()$descrizione_tipo_supporto_chip)
+  expect_identical(
+    tipi_supporto_chip()$id_tipo_supporto_chip[tutti == "Chip solo LF"],
+    c(2L, 9L)
+  )
+})
+
+test_that("l'esito di un bidone letto dalle saponette dipende dalle antenne e dal chip", {
+  esito <- esito_antenne(
+    c("Entrambi", "Solo saponette", "Solo saponette", "Solo saponette", "Solo saponette", "Solo antenne"),
+    c("Chip con UHF", "Chip solo LF", "Chip con UHF", "Possibile UHF", "Tipo non determinabile", "Chip con UHF")
+  )
+  expect_identical(as.character(esito), c(esiti_antenne()[1:5], NA))
+  expect_identical(levels(esito), esiti_antenne())
+})
+
+test_that("il tipo di chip si prende da uno dei due sistemi e si lega alle classi", {
+  dati <- chip_prova()
+  chip <- dati$classi_chip
+  tipo <- stats::setNames(chip$descrizione_tipo_supporto_chip, chip$RFID)
+  expect_identical(nrow(chip), nrow(dati$classi))
+  expect_identical(unname(tipo[c("A", "L1", "F", "N1")]), c("RECTANGLE UHF", "BINTAG LF 125", "RECTANGLE LF + UHF", NA))
+  # se un sistema non ha il tipo si usa quello dell'altro
+  senza_tipo_saponette <- dplyr::select(dati$saponette_giri, -"descrizione_tipo_supporto_chip")
+  solo_antenne <- chip_degli_rfid(dati$antenne_giri, senza_tipo_saponette)
+  expect_identical(solo_antenne$descrizione_tipo_supporto_chip[solo_antenne$RFID == "A"], "RECTANGLE UHF")
+  expect_true(is.na(solo_antenne$descrizione_tipo_supporto_chip[solo_antenne$RFID == "L1"]))
+  # esito per classe: i solo antenne non ne hanno
+  esiti <- stats::setNames(as.character(chip$esito), chip$RFID)
+  expect_identical(
+    unname(esiti[c("A", "L1", "U1", "P1", "N1", "N2", "F")]),
+    c(
+      "Letto dalle antenne", "Non letto: chip solo LF", "Non letto: chip con UHF",
+      "Non letto: possibile UHF", "Non letto: tipo non determinabile",
+      "Non letto: tipo non determinabile", NA
+    )
+  )
+})
+
+test_that("il riepilogo per chip conta i bidoni letti dalle saponette e la quota delle antenne", {
+  chip <- chip_prova()$classi_chip
+  per_categoria <- riepilogo_per_chip(chip, "categoria")
+  expect_identical(as.character(per_categoria$categoria), categorie_chip())
+  # solo LF: 2 bidoni, nessuno letto dalle antenne; con UHF: 5 (A, B, E, U1, U2) di cui
+  # 3 letti, e F letto solo dalle antenne
+  expect_identical(per_categoria$saponette, c(2L, 5L, 2L, 2L))
+  expect_identical(per_categoria$entrambi, c(0L, 3L, 1L, 0L))
+  expect_identical(per_categoria$solo_saponette, c(2L, 2L, 1L, 2L))
+  expect_identical(per_categoria$solo_antenne, c(0L, 1L, 0L, 0L))
+  expect_equal(per_categoria$quota_antenne, c(0, 3 / 5, 1 / 2, 0))
+  # i totali tornano con le classi
+  expect_identical(sum(per_categoria$saponette), sum(chip$classe != "Solo antenne"))
+
+  per_tipo <- riepilogo_per_chip(chip)
+  riga <- function(tipo) per_tipo[per_tipo$descrizione == tipo, ]
+  expect_identical(riga("BINTAG LF 125")$solo_saponette, 1L)
+  expect_identical(riga("RECTANGLE UHF")$saponette, 3L)
+  expect_identical(riga("RECTANGLE UHF")$entrambi, 2L)
+  expect_identical(riga("(nessun tipo)")$solo_saponette, 1L)
+  # l'ordine: per categoria e poi nell'ordine dei tipi, con (nessun tipo) in fondo alla sua
+  expect_identical(per_tipo$descrizione[per_tipo$categoria == "Tipo non determinabile"], c("SCONOSCIUTO", "(nessun tipo)"))
+  expect_identical(per_tipo$categoria, sort(per_tipo$categoria))
+})
+
+test_that("la sintesi dice se le antenne sono giustificate", {
+  sintesi <- sintesi_chip(chip_prova()$classi_chip)
+  expect_identical(sintesi$saponette, 11L)
+  expect_identical(sintesi$antenne, 4L)
+  expect_identical(sintesi$non_letti, 7L)
+  expect_identical(
+    c(sintesi$non_letti_solo_lf, sintesi$non_letti_con_uhf, sintesi$non_letti_possibile_uhf, sintesi$non_letti_non_determinabile),
+    c(2L, 2L, 1L, 2L)
+  )
+  # le parti tornano al totale
+  expect_identical(
+    sintesi$non_letti,
+    sintesi$non_letti_solo_lf + sintesi$non_letti_con_uhf +
+      sintesi$non_letti_possibile_uhf + sintesi$non_letti_non_determinabile
+  )
+  expect_equal(sintesi$copertura, 4 / 11)
+  # senza i non letti solo LF: 4 / (11 - 2)
+  expect_equal(sintesi$copertura_senza_lf, 4 / 9)
+  # chip con UHF noto: letti A, B, E contro 2 non letti
+  expect_equal(sintesi$copertura_con_uhf, 3 / 5)
+  # con i possibili UHF: (3 + 1) / (3 + 1 + 2 + 1)
+  expect_equal(sintesi$copertura_con_uhf_possibile, 4 / 7)
+  # nessun chip solo LF letto dalle antenne
+  expect_identical(sintesi$antenne_su_chip_solo_lf, 0L)
+
+  # se un'antenna ha letto un chip solo LF e' un dato da controllare
+  anomalo <- chip_prova()$classi_chip
+  anomalo$descrizione_tipo_supporto_chip[anomalo$RFID == "F"] <- "BINTAG LF 125"
+  anomalo$categoria <- categoria_chip(anomalo$descrizione_tipo_supporto_chip)
+  expect_identical(sintesi_chip(anomalo)$antenne_su_chip_solo_lf, 1L)
+
+  # senza bidoni letti dalle saponette le coperture sono vuote
+  vuoto <- sintesi_chip(chip_prova()$classi_chip[0, ])
+  expect_identical(vuoto$saponette, 0L)
+  expect_true(is.na(vuoto$copertura))
+})
+
+test_that("i bidoni solo delle saponette si dividono per chip e per dove li hanno letti le antenne", {
+  dati <- chip_prova()
+  conteggi <- solo_saponette_per_categoria(dati$classi_chip, dati$antenne_tutte)
+  # tutte le categorie, con letto_altrove falso e vero
+  expect_identical(nrow(conteggi), 8L)
+  n <- function(categoria, altrove) conteggi$n[conteggi$categoria == categoria & conteggi$letto_altrove == altrove]
+  # U1 lo ha letto un'antenna fuori lista; U2 nessuna
+  expect_identical(n("Chip con UHF", TRUE), 1L)
+  expect_identical(n("Chip con UHF", FALSE), 1L)
+  expect_identical(n("Chip solo LF", FALSE), 2L)
+  expect_identical(n("Chip solo LF", TRUE), 0L)
+  expect_identical(sum(conteggi$n), sum(dati$classi_chip$classe == "Solo saponette"))
+})
+
+test_that("l'esito per mezzo conta i bidoni delle saponette abbinate a ogni mezzo", {
+  dati <- chip_prova()
+  giri <- dplyr::tibble(
+    data_giro = giorno,
+    matricola_veicolo = c("0101", "303"),
+    servizio_giro = "SECCO PaP"
+  )
+  persi <- persi_per_mezzo(giri, dati$saponette_giri, dati$abbinamenti, dati$classi_chip)
+  # tutti e cinque gli esiti per ogni mezzo
+  expect_identical(nrow(persi), 10L)
+  conta <- function(mezzo, esito) persi$n[persi$matricola_veicolo == mezzo & persi$esito == esito]
+  # T1 e' del 101 (matricola 0101 nella lista): A, B, C letti; L1, U1, P1 no
+  expect_identical(conta("0101", "Letto dalle antenne"), 3L)
+  expect_identical(conta("0101", "Non letto: chip solo LF"), 1L)
+  expect_identical(conta("0101", "Non letto: chip con UHF"), 1L)
+  expect_identical(conta("0101", "Non letto: possibile UHF"), 1L)
+  # T2 e' del 303: E letto; L2 (LF), U2 (UHF), N1 e N2 (non determinabili)
+  expect_identical(conta("303", "Letto dalle antenne"), 1L)
+  expect_identical(conta("303", "Non letto: tipo non determinabile"), 2L)
+  expect_identical(sum(persi$n), sum(dati$classi_chip$classe != "Solo antenne"))
+})
+
+test_that("l'elenco dei bidoni con UHF non letti ha mezzo, tipo, servizio e dove li hanno letti", {
+  dati <- chip_prova()
+  giri <- dplyr::tibble(
+    data_giro = giorno,
+    matricola_veicolo = c("0101", "303"),
+    servizio_giro = "SECCO PaP"
+  )
+  elenco <- bidoni_uhf_non_letti(dati$classi_chip, dati$saponette_giri, dati$abbinamenti, giri, dati$antenne_tutte)
+  # U1 e U2 (con UHF) e P1 (possibile UHF); i LF e i non determinabili non ci sono
+  expect_setequal(elenco$RFID, c("U1", "U2", "P1"))
+  # prima i chip con UHF non letti da nessuna antenna: U2, poi U1 (letto altrove), poi P1
+  expect_identical(elenco$RFID, c("U2", "U1", "P1"))
+  riga <- function(rfid) elenco[elenco$RFID == rfid, ]
+  expect_identical(riga("U1")$matricola_veicolo, "0101")
+  expect_identical(riga("U2")$matricola_veicolo, "303")
+  expect_identical(riga("U2")$tipo_chip, "FASCETTA METALLICA LF + UHF")
+  expect_identical(riga("U1")$servizio, "SECCO")
+  expect_true(riga("U1")$letto_altrove)
+  expect_false(riga("U2")$letto_altrove)
+})

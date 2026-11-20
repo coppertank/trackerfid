@@ -772,3 +772,116 @@ test_that("i bidoni di una fornitura si contano e si filtrano per stato della fo
   senza_stato <- bidoni_delle_forniture(dplyr::select(contenitori, -"stato_fornitura"), "G1", "2025-01-01", "2025-12-31", stato = "ATTIVA")
   expect_identical(nrow(senza_stato), 0L)
 })
+
+test_that("le forniture con soli sacchetti entrano nell'anagrafica del secco, con la tariffa del carrellato e tutto il periodo", {
+  componenti <- dplyr::bind_rows(
+    componenti_forniture_prova(),
+    dplyr::tibble(
+      id_fornitura = c("F10", "F12"),
+      data_inizio_decorrenza = as.POSIXct("2020-01-01", tz = ""),
+      data_fine_decorrenza = as.POSIXct(NA),
+      nucleo_residenti = c(3L, 2L),
+      sottocategoria = "D",
+      categoria = "31"
+    )
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori_forniture_prova(), componenti, manovre_forniture_prova(),
+    "2025-01-01", "2025-12-31", "SECCO"
+  )
+  sacchetto <- function(n) sprintf("00BD%020d", n)
+  unita <- dplyr::tibble(
+    RFID = c(sacchetto(1), sacchetto(2), sacchetto(3), sacchetto(4), sacchetto(5), "A1"),
+    data_lettura = as.Date("2025-03-01") + 0:5,
+    stato = factor(c("PIA", "PIA", "PIA", "PIA", "NP", "PIA"), stati_lettura()),
+    # F10 e F11 hanno solo sacchetti; F1 ha anche un bidone; l'NP non ha fornitura
+    id_fornitura = c("F10", "F10", "F11", "F1", NA, "F1")
+  )
+  risultato <- anagrafica_con_sacchetti(
+    anagrafica, unita, componenti, manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  # le forniture di prima restano com'erano, con la colonna in piu'
+  expect_identical(risultato$solo_sacchetti[seq_len(nrow(anagrafica))], rep(FALSE, nrow(anagrafica)))
+  expect_identical(
+    dplyr::select(risultato[seq_len(nrow(anagrafica)), ], -"solo_sacchetti"),
+    anagrafica
+  )
+  # F1 ha un bidone: non e' una fornitura nuova; F10 e F11 si
+  nuove <- risultato[risultato$solo_sacchetti, ]
+  expect_setequal(nuove$id_fornitura, c("F10", "F11"))
+  f10 <- nuove[nuove$id_fornitura == "F10", ]
+  expect_identical(f10$tipo, "domestica")
+  expect_identical(f10$contenitori, 1L)
+  expect_identical(f10$contenitori_non_gratuiti, 1L)
+  # il volume della tariffa e' quello del carrellato; i litri di un sacchetto restano 40
+  expect_identical(f10$volume_contenitore, 120)
+  expect_identical(volume_tariffa_sacchetto_litri(), 120)
+  expect_identical(f10$giorni_attivi, 365)
+  expect_equal(f10$quota_attivita, 1)
+  expect_equal(f10$fattore, 1)
+  expect_equal(f10$componenti_medi, 3)
+  expect_identical(as.character(f10$gruppo), "3 componenti")
+  expect_identical(f10$servizio, "SECCO")
+  # senza la composizione del nucleo non c'e' nemmeno la categoria (niente bidone che la
+  # dia): non e' una domestica, fuori dall'economia
+  f11 <- nuove[nuove$id_fornitura == "F11", ]
+  expect_identical(f11$tipo, "altra")
+  expect_identical(as.character(f11$gruppo), "Altre")
+  expect_true(is.na(f11$componenti_medi))
+  # nessuna fornitura con sacchetti nuova: l'anagrafica resta com'e', con la colonna
+  solo_bidone <- anagrafica_con_sacchetti(
+    anagrafica, unita[unita$id_fornitura %in% "F1", ], componenti, manovre_forniture_prova(),
+    "2025-01-01", "2025-12-31"
+  )
+  expect_identical(nrow(solo_bidone), nrow(anagrafica))
+  expect_false(any(solo_bidone$solo_sacchetti))
+
+  # il riepilogo: 5 letture di sacchetti, 4 associate (F10 x2, F11, F1), 1 non associata
+  riepilogo <- riepilogo_sacchetti(dplyr::bind_rows(unita), risultato)
+  expect_identical(riepilogo$letture, 5L)
+  expect_identical(riepilogo$associate, 4L)
+  expect_identical(riepilogo$non_associate, 1L)
+  expect_identical(riepilogo$forniture, 3L)
+  expect_identical(riepilogo$forniture_solo_sacchetti, 2L)
+  # solo F10 ha i componenti noti: e' l'unica nell'economia
+  expect_identical(riepilogo$forniture_solo_sacchetti_analizzate, 1L)
+})
+
+test_that("una fornitura con soli sacchetti ha il premio del carrellato, dall'anagrafica all'economia", {
+  componenti <- dplyr::bind_rows(
+    componenti_forniture_prova(),
+    dplyr::tibble(
+      id_fornitura = "F10",
+      data_inizio_decorrenza = as.POSIXct("2020-01-01", tz = ""),
+      data_fine_decorrenza = as.POSIXct(NA),
+      nucleo_residenti = 3L,
+      sottocategoria = "D",
+      categoria = "31"
+    )
+  )
+  anagrafica <- anagrafica_forniture(
+    contenitori_forniture_prova(), componenti, manovre_forniture_prova(),
+    "2025-01-01", "2025-12-31", "SECCO"
+  )
+  # due sacchetti letti da F10, come li prepara letture_associate_del_secco(sacchetti = TRUE)
+  unita <- dplyr::tibble(
+    RFID = c("00BD00000000000000000001", "00BD00000000000000000002"),
+    data_lettura = as.Date(c("2025-03-01", "2025-03-02")),
+    sistema = factor("Entrambe", sistemi_lettura()),
+    stato = factor("PIA", stati_lettura()),
+    id_fornitura = "F10",
+    volume = volume_sacchetto_litri(),
+    servizio_transponder = "SECCO"
+  )
+  completa <- anagrafica_con_sacchetti(
+    anagrafica, unita, componenti, manovre_forniture_prova(), "2025-01-01", "2025-12-31"
+  )
+  economia <- analisi_economica(unita, completa)
+  f10 <- economia[economia$scenario == scenario_riferimento(economia) & economia$id_fornitura == "F10", ]
+  # 80 litri (2 sacchetti da 40), tre componenti: minimo 480, massimo 720; 240 litri
+  # sotto il massimo: 5 euro piu' 2 * 5 = 15, con tutto il periodo di attivita'
+  expect_equal(f10$litri, 80)
+  expect_identical(as.character(f10$classe), "Premialità")
+  expect_equal(f10$premio_eur, 15)
+  expect_equal(f10$quota_attivita, 1)
+})

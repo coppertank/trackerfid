@@ -344,13 +344,14 @@ scrivi_origine_prova <- function(cartella) {
       ",SECCO,120,QUINDICINALE,26,2020-01-01,,F9,ATTIVA,U9,VALSTAGNA,31,N"
     )
   )
-  # un tag con il solo codice_transponder, uno con la sola etichetta
+  # un tag con il solo codice_transponder, uno con la sola etichetta; il primo ha
+  # un chip LF + UHF (3), il secondo non ha il tipo di supporto
   scrivi(
     "tag_contenitori",
     c(
-      "codice_transponder,codice_etichetta",
-      "128,",
-      ",999"
+      "codice_transponder,codice_etichetta,id_tipo_supporto_chip",
+      "128,,3",
+      ",999,"
     )
   )
   scrivi(

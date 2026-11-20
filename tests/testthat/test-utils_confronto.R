@@ -184,3 +184,35 @@ test_that("le letture associate del secco: saponette per transponder, antenne pe
   expect_identical(nrow(letture_associate_del_secco(letture[0, ], "antenne")), 0L)
 })
 
+
+test_that("con i sacchetti ogni lettura associata di un sacchetto e' uno svuotamento del secco da 40 litri", {
+  s1 <- "00BD00000000000000000001"
+  s2 <- "00BD00000000000000000002"
+  s3 <- "00BD00000000000000000003"
+  letture <- dplyr::tibble(
+    RFID = c("A1", s1, s2, s3, "A3"),
+    presente_a_database = c("PIA", "PIA", "NP", "PIA", "PIA"),
+    servizio_transponder = c("SECCO", NA, NA, NA, "CARTA"),
+    servizio_atteso = c("SECCO", "CARTA", "SECCO", "SECCO", "CARTA"),
+    volume = c(120, NA, NA, NA, 120)
+  )
+  expect_identical(volume_sacchetto_litri(), 40)
+  # senza l'opzione le letture sono quelle di sempre: le saponette non hanno i
+  # sacchetti (nessun servizio a database), le antenne anche quello letto in un giro
+  # del secco
+  expect_identical(letture_associate_del_secco(letture, "saponette")$RFID, "A1")
+  expect_identical(letture_associate_del_secco(letture, "antenne")$RFID, c("A1", s3))
+  # con l'opzione entrano tutti i sacchetti associati, in qualunque giro e per
+  # entrambi i sistemi; il non associato (s2) e il bidone della carta no
+  for (sistema in c("saponette", "antenne")) {
+    risultato <- letture_associate_del_secco(letture, sistema, sacchetti = TRUE)
+    expect_identical(risultato$RFID, c("A1", s1, s3))
+    expect_identical(risultato$servizio_transponder, rep("SECCO", 3))
+    expect_identical(risultato$volume, c(120, 40, 40))
+  }
+  # un bidone non cambia, nemmeno il volume mancante
+  senza_volume <- dplyr::select(letture, -"volume")
+  risultato <- letture_associate_del_secco(senza_volume, "saponette", sacchetti = TRUE)
+  expect_identical(risultato$volume, c(NA, 40, 40))
+  expect_identical(nrow(letture_associate_del_secco(letture[0, ], "antenne", sacchetti = TRUE)), 0L)
+})

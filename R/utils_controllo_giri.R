@@ -487,3 +487,360 @@ fasce_di_abbinamento <- function(abbinamenti) {
     ) |>
     dplyr::count(.data$fascia, name = "trasmissioni", .drop = FALSE)
 }
+
+# ---- Tipo di chip dei bidoni letti dalle saponette e non dalle antenne ----------
+# Le antenne leggono solo i chip UHF; le saponette leggono sia i chip LF sia gli
+# UHF (richiesta del proprietario, 21/11/2026). Un bidone letto dalla saponetta e
+# non dall'antenna è giustificato se il suo chip è solo LF; se ha una parte UHF
+# l'antenna avrebbe dovuto leggerlo.
+
+#' Categorie di chip per la lettura delle antenne
+#'
+#' Contesto: i nove tipi di supporto (`tipi_supporto_chip()`) si riducono a quello
+#' che interessa al confronto: l'antenna poteva leggere il chip?
+#' Risultato: i nomi delle quattro categorie, nell'ordine del report: `Chip solo LF`
+#' (le antenne non lo leggono), `Chip con UHF` (le antenne lo leggono), `Possibile UHF`
+#' (non è nei tag ma è stato attivato dal 2016, vedi `associa_tipo_supporto_chip()`),
+#' `Tipo non determinabile` (`SCONOSCIUTO` o senza tipo).
+#' @noRd
+categorie_chip <- function() {
+  c("Chip solo LF", "Chip con UHF", "Possibile UHF", "Tipo non determinabile")
+}
+
+#' Categoria di chip di una descrizione del tipo di supporto
+#'
+#' Contesto: `categorie_chip()`.
+#' Funzionamento: la descrizione `POSSIBILE UHF` è una categoria a sé; per gli
+#' altri tipi vale la colonna `ha_uhf` di `tipi_supporto_chip()` (`TRUE` con UHF,
+#' `FALSE` solo LF). `SCONOSCIUTO`, una descrizione mancante o non riconosciuta
+#' sono «non determinabili».
+#' Risultato: un fattore con i livelli di `categorie_chip()`.
+#' @param descrizione `descrizione_tipo_supporto_chip`.
+#' @noRd
+categoria_chip <- function(descrizione) {
+  tipi <- tipi_supporto_chip()
+  ha_uhf <- tipi$ha_uhf[match(descrizione, tipi$descrizione_tipo_supporto_chip)]
+  categoria <- dplyr::case_when(
+    descrizione %in% "POSSIBILE UHF" ~ "Possibile UHF",
+    ha_uhf %in% TRUE ~ "Chip con UHF",
+    ha_uhf %in% FALSE ~ "Chip solo LF",
+    .default = "Tipo non determinabile"
+  )
+  factor(categoria, categorie_chip())
+}
+
+#' Esiti possibili per un bidone letto dalla saponetta
+#'
+#' Contesto: i grafici del report dividono i bidoni letti dalle saponette tra quelli
+#' che le antenne hanno letto e quelli che non hanno letto, questi ultimi secondo la
+#' categoria del chip.
+#' Risultato: i cinque esiti, nell'ordine dei grafici.
+#' @noRd
+esiti_antenne <- function() {
+  c(
+    "Letto dalle antenne",
+    "Non letto: chip solo LF",
+    "Non letto: chip con UHF",
+    "Non letto: possibile UHF",
+    "Non letto: tipo non determinabile"
+  )
+}
+
+#' Esito per le antenne di un bidone letto dalle saponette
+#'
+#' Contesto: `esiti_antenne()`. Funzionamento: `Entrambi` è «letto dalle antenne»;
+#' `Solo saponette` è «non letto», con la categoria del chip; `Solo antenne` non ha
+#' un esito (non è un bidone letto dalle saponette).
+#' Risultato: un fattore con i livelli di `esiti_antenne()`.
+#' @param classe Classe di `classi_rfid()`.
+#' @param categoria Categoria di `categoria_chip()`.
+#' @noRd
+esito_antenne <- function(classe, categoria) {
+  esiti <- esiti_antenne()
+  classe <- as.character(classe)
+  categoria <- as.character(categoria)
+  esito <- dplyr::case_when(
+    classe == "Entrambi" ~ esiti[1],
+    classe == "Solo saponette" & categoria == "Chip solo LF" ~ esiti[2],
+    classe == "Solo saponette" & categoria == "Chip con UHF" ~ esiti[3],
+    classe == "Solo saponette" & categoria == "Possibile UHF" ~ esiti[4],
+    classe == "Solo saponette" ~ esiti[5],
+    .default = NA_character_
+  )
+  factor(esito, esiti)
+}
+
+#' Tipo di chip di ogni RFID letto da uno dei due sistemi
+#'
+#' Contesto: il tipo di supporto del chip è nei file delle letture, antenne e
+#' saponette, come `descrizione_tipo_supporto_chip` (la pipeline lo associa dopo i
+#' tentativi di associazione). Per ogni RFID e giorno serve un solo valore.
+#' Funzionamento: unisce le due serie e tiene, per giorno e RFID, la prima
+#' descrizione non vuota. Una serie senza la colonna conta come vuota.
+#' Risultato: `data_lettura`, `RFID` e `descrizione_tipo_supporto_chip`.
+#' @param antenne_giri Risultato di `antenne_dei_giri()`.
+#' @param saponette_giri Risultato di `trasmissioni_dei_giri()`.
+#' @noRd
+chip_degli_rfid <- function(antenne_giri, saponette_giri) {
+  della_serie <- function(x) {
+    dplyr::tibble(
+      data_lettura = x$data_lettura,
+      RFID = x$RFID,
+      descrizione_tipo_supporto_chip = as.character(
+        x[["descrizione_tipo_supporto_chip"]] %||% rep(NA_character_, nrow(x))
+      )
+    )
+  }
+  dplyr::bind_rows(della_serie(saponette_giri), della_serie(antenne_giri)) |>
+    dplyr::arrange(is.na(.data$descrizione_tipo_supporto_chip)) |>
+    dplyr::distinct(.data$data_lettura, .data$RFID, .keep_all = TRUE)
+}
+
+#' Le classi di lettura (entrambi, solo saponette, solo antenne) con il tipo di chip
+#'
+#' Contesto: il punto di partenza dell'analisi del tipo di chip: a ogni RFID del
+#' confronto si aggiungono il tipo di chip, la categoria per le antenne e, per i
+#' bidoni letti dalle saponette, l'esito.
+#' Risultato: `data_lettura`, `RFID`, `classe`, `descrizione_tipo_supporto_chip`,
+#' `categoria` (`categoria_chip()`) ed `esito` (`esito_antenne()`, vuoto per i
+#' bidoni letti solo dalle antenne).
+#' @param classi Risultato di `classi_rfid()`.
+#' @inheritParams chip_degli_rfid
+#' @noRd
+classi_con_chip <- function(classi, antenne_giri, saponette_giri) {
+  classi |>
+    dplyr::left_join(
+      chip_degli_rfid(antenne_giri, saponette_giri),
+      by = c("data_lettura", "RFID")
+    ) |>
+    dplyr::mutate(
+      categoria = categoria_chip(.data$descrizione_tipo_supporto_chip),
+      esito = esito_antenne(.data$classe, .data$categoria)
+    )
+}
+
+#' Bidoni letti dalle saponette e quota letta dalle antenne, per tipo di chip
+#'
+#' Contesto: la domanda del report: i bidoni che le antenne non hanno letto hanno
+#' un chip che le antenne potevano leggere? Per ogni tipo (o categoria) di chip si
+#' vede quanti bidoni hanno letto le saponette e quanti di questi le antenne.
+#' Funzionamento: «bidoni letti dalle saponette» sono quelli `Entrambi` più i
+#' `Solo saponette`; la quota delle antenne è `Entrambi` diviso quel totale (vuota
+#' senza bidoni letti dalle saponette). Un tipo mancante diventa `(nessun tipo)`.
+#' Risultato: una riga per categoria (e per descrizione con `per = "descrizione"`)
+#' con `saponette`, `entrambi`, `solo_saponette`, `solo_antenne` e `quota_antenne`.
+#' Le righe seguono l'ordine di `categorie_chip()` e dei tipi.
+#' @param classi_chip Risultato di `classi_con_chip()`.
+#' @param per `"descrizione"` (predefinito) o `"categoria"`.
+#' @noRd
+riepilogo_per_chip <- function(classi_chip, per = c("descrizione", "categoria")) {
+  per <- match.arg(per)
+  ordine <- c(
+    tipi_supporto_chip()$descrizione_tipo_supporto_chip,
+    "POSSIBILE UHF",
+    "(nessun tipo)"
+  )
+  chiavi <- if (per == "descrizione") c("categoria", "descrizione") else "categoria"
+  classi_chip |>
+    dplyr::mutate(
+      descrizione = dplyr::coalesce(.data$descrizione_tipo_supporto_chip, "(nessun tipo)")
+    ) |>
+    dplyr::summarise(
+      saponette = sum(.data$classe %in% c("Entrambi", "Solo saponette")),
+      entrambi = sum(.data$classe %in% "Entrambi"),
+      solo_saponette = sum(.data$classe %in% "Solo saponette"),
+      solo_antenne = sum(.data$classe %in% "Solo antenne"),
+      .by = dplyr::all_of(chiavi)
+    ) |>
+    dplyr::mutate(
+      quota_antenne = rapporto(.data$entrambi, .data$saponette),
+      posizione = if (per == "descrizione") match(.data$descrizione, ordine) else 0L
+    ) |>
+    dplyr::arrange(.data$categoria, .data$posizione) |>
+    dplyr::select(-"posizione")
+}
+
+#' I numeri che dicono se le antenne sono giustificate
+#'
+#' Contesto: sintesi del report sul tipo di chip. Se i bidoni che le antenne non
+#' hanno letto sono quasi tutti solo LF, le antenne sono giustificate; se molti
+#' hanno un chip con UHF, c'è un problema.
+#' Funzionamento: parte dai bidoni letti dalle saponette. Calcola: quanti sono
+#' (`saponette`), quanti le antenne hanno letto (`antenne`) e non letto
+#' (`non_letti`), e questi ultimi per categoria di chip (`non_letti_solo_lf`,
+#' `non_letti_con_uhf`, `non_letti_possibile_uhf`, `non_letti_non_determinabile`).
+#' Tre coperture: `copertura` (letti / tutti), `copertura_senza_lf` (letti / tutti
+#' meno i non letti solo LF, cioè sui bidoni che l'antenna poteva leggere o di cui
+#' non si sa), `copertura_con_uhf` (sui soli bidoni con chip UHF noto) e
+#' `copertura_con_uhf_possibile` (aggiunge i possibili UHF). Infine
+#' `antenne_su_chip_solo_lf`: gli RFID che le antenne hanno letto pur avendo un chip
+#' solo LF (non dovrebbero esserci: sarebbe un dato da controllare).
+#' Risultato: un tibble con una riga.
+#' @inheritParams riepilogo_per_chip
+#' @noRd
+sintesi_chip <- function(classi_chip) {
+  esiti <- esiti_antenne()
+  dalle_saponette <- classi_chip[classi_chip$classe != "Solo antenne", ]
+  conta <- function(esito, categoria = NULL) {
+    sum(
+      dalle_saponette$esito %in% esito &
+        (is.null(categoria) | dalle_saponette$categoria %in% categoria)
+    )
+  }
+  letti <- conta(esiti[1])
+  letti_con_uhf <- conta(esiti[1], "Chip con UHF")
+  letti_possibile <- conta(esiti[1], "Possibile UHF")
+  non_letti_solo_lf <- conta(esiti[2])
+  non_letti_con_uhf <- conta(esiti[3])
+  non_letti_possibile <- conta(esiti[4])
+  non_letti_non_determinabile <- conta(esiti[5])
+  saponette <- nrow(dalle_saponette)
+  dplyr::tibble(
+    saponette = saponette,
+    antenne = letti,
+    non_letti = saponette - letti,
+    non_letti_solo_lf = non_letti_solo_lf,
+    non_letti_con_uhf = non_letti_con_uhf,
+    non_letti_possibile_uhf = non_letti_possibile,
+    non_letti_non_determinabile = non_letti_non_determinabile,
+    copertura = rapporto(letti, saponette),
+    copertura_senza_lf = rapporto(letti, saponette - non_letti_solo_lf),
+    copertura_con_uhf = rapporto(letti_con_uhf, letti_con_uhf + non_letti_con_uhf),
+    copertura_con_uhf_possibile = rapporto(
+      letti_con_uhf + letti_possibile,
+      letti_con_uhf + letti_possibile + non_letti_con_uhf + non_letti_possibile
+    ),
+    antenne_su_chip_solo_lf = sum(
+      classi_chip$classe %in% c("Entrambi", "Solo antenne") &
+        classi_chip$categoria %in% "Chip solo LF"
+    )
+  )
+}
+
+#' I bidoni letti solo dalle saponette, per categoria di chip e dove li hanno letti le antenne
+#'
+#' Contesto: un bidone con chip UHF letto dalla saponetta e non dalle antenne del
+#' giro può essere passato in un altro giro: se un'antenna fuori lista lo ha letto
+#' lo stesso giorno, non è una lettura mancata (`solo_saponette_altrove()`).
+#' Risultato: per ogni categoria di chip e per `letto_altrove` (vero se un'antenna
+#' fuori dai giri della lista lo ha letto lo stesso giorno) quanti bidoni, anche
+#' zero.
+#' @inheritParams riepilogo_per_chip
+#' @param antenne_tutte Letture con le antenne di tutti i mezzi, senza filtri.
+#' @return `categoria`, `letto_altrove` e `n`.
+#' @noRd
+solo_saponette_per_categoria <- function(classi_chip, antenne_tutte) {
+  antenne_del_giorno <- antenne_tutte |>
+    con_data_lettura() |>
+    dplyr::distinct(.data$data_lettura, .data$RFID) |>
+    dplyr::mutate(antenna_del_giorno = TRUE)
+  conteggi <- classi_chip |>
+    dplyr::filter(.data$classe == "Solo saponette") |>
+    dplyr::left_join(antenne_del_giorno, by = c("data_lettura", "RFID")) |>
+    dplyr::mutate(letto_altrove = .data$antenna_del_giorno %in% TRUE) |>
+    dplyr::count(.data$categoria, .data$letto_altrove)
+  expand.grid(
+    categoria = factor(categorie_chip(), categorie_chip()),
+    letto_altrove = c(FALSE, TRUE)
+  ) |>
+    dplyr::as_tibble() |>
+    dplyr::left_join(conteggi, by = c("categoria", "letto_altrove")) |>
+    dplyr::mutate(n = dplyr::coalesce(.data$n, 0L)) |>
+    dplyr::arrange(.data$categoria, .data$letto_altrove)
+}
+
+#' Esito dei bidoni letti dalle saponette, mezzo per mezzo
+#'
+#' Contesto: dice quali mezzi hanno molti bidoni con chip UHF non letti dalle antenne
+#' (un problema dell'antenna di quel mezzo) e quali solo bidoni con chip LF (atteso).
+#' Funzionamento: come in `confronto_per_mezzo()`, le saponette di un mezzo sono
+#' quelle delle trasmissioni abbinate a lui (`abbina_trasmissioni()`).
+#' Risultato: per giorno, mezzo ed esito (`esiti_antenne()`, tutti anche con zero)
+#' quanti bidoni: `data_lettura`, `matricola_veicolo` (come nella lista), `esito`, `n`.
+#' Un mezzo senza trasmissioni abbinate non compare.
+#' @param giri Risultato di `giri_di_controllo()`.
+#' @param saponette_giri Risultato di `trasmissioni_dei_giri()`.
+#' @param abbinamenti Risultato di `abbina_trasmissioni()`.
+#' @inheritParams riepilogo_per_chip
+#' @noRd
+persi_per_mezzo <- function(giri, saponette_giri, abbinamenti, classi_chip) {
+  mezzi <- giri |>
+    dplyr::distinct(data_lettura = .data$data_giro, .data$matricola_veicolo) |>
+    dplyr::mutate(chiave_mezzo = chiave_matricola(.data$matricola_veicolo)) |>
+    dplyr::distinct(.data$data_lettura, .data$chiave_mezzo, .keep_all = TRUE)
+  saponette_giri |>
+    dplyr::distinct(.data$data_lettura, .data$matricola_saponetta, .data$RFID) |>
+    dplyr::inner_join(
+      abbinamenti[c("data_lettura", "matricola_saponetta", "chiave_mezzo")],
+      by = c("data_lettura", "matricola_saponetta")
+    ) |>
+    dplyr::distinct(.data$data_lettura, .data$chiave_mezzo, .data$RFID) |>
+    dplyr::inner_join(
+      classi_chip[c("data_lettura", "RFID", "esito")],
+      by = c("data_lettura", "RFID")
+    ) |>
+    dplyr::count(.data$data_lettura, .data$chiave_mezzo, .data$esito, .drop = FALSE) |>
+    dplyr::inner_join(mezzi, by = c("data_lettura", "chiave_mezzo")) |>
+    dplyr::select("data_lettura", "matricola_veicolo", "esito", "n") |>
+    dplyr::arrange(.data$data_lettura, .data$matricola_veicolo, .data$esito)
+}
+
+#' Elenco dei bidoni con un chip che le antenne potevano leggere e non hanno letto
+#'
+#' Contesto: sono i casi da controllare uno per uno: un chip UHF (o possibile UHF)
+#' letto dalla saponetta e non dalle antenne del giro. Se un'antenna fuori lista lo
+#' ha letto lo stesso giorno, è passato in un altro giro.
+#' Risultato: per ogni bidone `data_lettura`, `RFID`, `matricola_veicolo` (il mezzo
+#' abbinato alla sua trasmissione), `tipo_chip` (la descrizione, o `(nessun tipo)`),
+#' `categoria`, `servizio` (a database, `(non censito)` se manca) e `letto_altrove`.
+#' In ordine: prima i chip con UHF, poi i possibili UHF; prima quelli non letti da
+#' nessuna antenna.
+#' @param antenne_tutte Letture con le antenne di tutti i mezzi, senza filtri.
+#' @inheritParams persi_per_mezzo
+#' @noRd
+bidoni_uhf_non_letti <- function(classi_chip, saponette_giri, abbinamenti, giri, antenne_tutte) {
+  antenne_del_giorno <- antenne_tutte |>
+    con_data_lettura() |>
+    dplyr::distinct(.data$data_lettura, .data$RFID) |>
+    dplyr::mutate(antenna_del_giorno = TRUE)
+  mezzi <- giri |>
+    dplyr::distinct(.data$matricola_veicolo) |>
+    dplyr::mutate(chiave_mezzo = chiave_matricola(.data$matricola_veicolo)) |>
+    dplyr::distinct(.data$chiave_mezzo, .keep_all = TRUE)
+  della_trasmissione <- saponette_giri |>
+    dplyr::distinct(
+      .data$data_lettura,
+      .data$matricola_saponetta,
+      .data$RFID,
+      servizio = .data$servizio_transponder
+    ) |>
+    dplyr::inner_join(
+      abbinamenti[c("data_lettura", "matricola_saponetta", "chiave_mezzo")],
+      by = c("data_lettura", "matricola_saponetta")
+    ) |>
+    dplyr::distinct(.data$data_lettura, .data$RFID, .keep_all = TRUE)
+  classi_chip |>
+    dplyr::filter(
+      .data$classe == "Solo saponette",
+      .data$categoria %in% c("Chip con UHF", "Possibile UHF")
+    ) |>
+    dplyr::left_join(della_trasmissione, by = c("data_lettura", "RFID")) |>
+    dplyr::left_join(mezzi, by = "chiave_mezzo") |>
+    dplyr::left_join(antenne_del_giorno, by = c("data_lettura", "RFID")) |>
+    dplyr::transmute(
+      .data$data_lettura,
+      .data$RFID,
+      .data$matricola_veicolo,
+      tipo_chip = dplyr::coalesce(.data$descrizione_tipo_supporto_chip, "(nessun tipo)"),
+      .data$categoria,
+      servizio = dplyr::coalesce(.data$servizio, "(non censito)"),
+      letto_altrove = .data$antenna_del_giorno %in% TRUE
+    ) |>
+    dplyr::arrange(
+      .data$categoria,
+      .data$letto_altrove,
+      .data$data_lettura,
+      .data$matricola_veicolo,
+      .data$RFID
+    )
+}

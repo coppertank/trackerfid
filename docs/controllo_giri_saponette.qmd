@@ -76,6 +76,9 @@ colori_classi <- c(
   "Solo antenne" = "#eb6834"
 )
 colori <- list(primario = "#0b0b0b", secondario = "#52514e")
+# Il sottotitolo di un grafico non va a capo da solo: se e' piu' largo della figura
+# viene tagliato. `a_capo()` lo spezza.
+a_capo <- function(x, larghezza = 85) paste(strwrap(x, width = larghezza), collapse = "\n")
 tema_grafico <- theme_minimal(base_size = 12) +
   theme(
     plot.title = element_text(face = "bold", size = 13.5, colour = colori$primario),
@@ -137,6 +140,17 @@ if (nrow(antenne_giri) == 0) {
 saponette_giri <- trasmissioni_dei_giri(saponette_tutte, antenne_giri)
 abbinamenti <- abbina_trasmissioni(saponette_giri, antenne_giri)
 classi <- classi_rfid(antenne_giri, saponette_giri)
+# Il tipo di chip dei bidoni (`descrizione_tipo_supporto_chip`) c'è nei file prodotti
+# dalla pipeline dal 21/11/2026: con file più vecchi la sezione sul tipo di chip
+# non si calcola e il report lo dice.
+tipo_chip_disponibile <- all(
+  "descrizione_tipo_supporto_chip" %in% names(antenne_tutte),
+  "descrizione_tipo_supporto_chip" %in% names(saponette_tutte)
+)
+if (tipo_chip_disponibile) {
+  classi_chip <- classi_con_chip(classi, antenne_giri, saponette_giri)
+  sintesi_chip_giri <- sintesi_chip(classi_chip)
+}
 per_mezzo <- confronto_per_mezzo(giri, antenne_giri, saponette_giri, abbinamenti)
 n_classe <- function(nome) sum(classi$classe == nome)
 giorni_giri <- sort(unique(giri$data_giro))
@@ -567,6 +581,344 @@ if (nrow(qualita) == 0) {
 }
 ```
 
+# Il tipo di chip dei bidoni letti solo dalle saponette
+
+Le antenne dei mezzi leggono solo i chip UHF; le saponette leggono sia i chip LF sia gli UHF. Un bidone letto dalla saponetta e non dall'antenna può quindi essere sfuggito all'antenna per un motivo tecnico: il suo chip non è leggibile da lei. Il tipo di chip viene dalla tabella dei tag dei contenitori (`id_tipo_supporto_chip`) e sta in ogni lettura come `descrizione_tipo_supporto_chip`, associato dopo tutti i tentativi di associazione del codice. Un bidone che non è nei tag ma è stato attivato dal 2016 in poi ha la descrizione `POSSIBILE UHF`; uno attivato nel 2015 o prima, o senza contenitore, resta senza tipo.
+
+La domanda è questa: **i bidoni che le saponette hanno letto e le antenne no hanno un chip che le antenne potevano leggere?** Se hanno quasi tutti un chip solo LF, le antenne sono giustificate; se molti hanno un chip con UHF, c'è un problema da spiegare.
+
+```{r}
+#| label: chip-assenti
+#| eval: !expr "!tipo_chip_disponibile"
+#| results: asis
+cat("\n::: {.callout-warning}\nI file delle letture non hanno il campo `descrizione_tipo_supporto_chip`: sono stati prodotti prima del 21/11/2026. Per avere questa sezione si rifà la preparazione dei dati con `targets::tar_make()` (la tabella dei tag deve avere `id_tipo_supporto_chip`) e si ricompila il report.\n:::\n")
+```
+
+```{r}
+#| label: chip-categorie
+#| eval: !expr tipo_chip_disponibile
+tipi_chip <- tipi_supporto_chip()
+tipi_chip$categoria <- as.character(categoria_chip(tipi_chip$descrizione_tipo_supporto_chip))
+elenco_tipi <- function(categoria) {
+  paste(tipi_chip$descrizione_tipo_supporto_chip[tipi_chip$categoria == categoria], collapse = "; ")
+}
+knitr::kable(
+  dplyr::tibble(
+    Categoria = categorie_chip(),
+    `Tipi di supporto` = c(
+      elenco_tipi("Chip solo LF"),
+      elenco_tipi("Chip con UHF"),
+      "POSSIBILE UHF: non è nei tag, ma il contenitore è stato attivato dal 2016",
+      "SCONOSCIUTO, oppure senza tipo (nei tag senza tipo valido, o non nei tag e attivato nel 2015 o prima)"
+    ),
+    `Le antenne potevano leggerlo?` = c("No", "Sì", "Probabilmente", "Non si sa")
+  ),
+  align = "lll"
+)
+```
+
+## Quanti bidoni hanno perso le antenne, e di che chip
+
+```{r}
+#| label: chip-diagramma
+#| eval: !expr tipo_chip_disponibile
+#| fig-height: 3.8
+sc <- sintesi_chip_giri
+DiagrammeR::grViz(paste0('
+digraph chip {
+  graph [rankdir=TB];', stile_dot, '
+  tot [label="Bidoni letti dalle saponette\\n', intero(sc$saponette), '"];
+  e [label="Letti anche dalle antenne\\n', intero(sc$antenne), ' (', quota(sc$antenne / sc$saponette, 0), ')", fillcolor="#e4f4ec", color="#1baf7a"];
+  p [label="Non letti dalle antenne\\n', intero(sc$non_letti), '", fillcolor="#fdeee6", color="#eb6834"];
+  lf [label="Chip solo LF\\n', intero(sc$non_letti_solo_lf), '\\n(le antenne non potevano leggerli)", fillcolor="#eef0ee", color="#8a948e"];
+  uhf [label="Chip con UHF\\n', intero(sc$non_letti_con_uhf), '\\n(da spiegare)", fillcolor="#fdeee6", color="#eb6834"];
+  pos [label="Possibile UHF\\n', intero(sc$non_letti_possibile_uhf), '", fillcolor="#fdf3ee", color="#f2a583"];
+  nd [label="Tipo non determinabile\\n', intero(sc$non_letti_non_determinabile), '", fillcolor="#f6f7f6", color="#c5cbc7"];
+  tot -> e; tot -> p;
+  p -> lf; p -> uhf; p -> pos; p -> nd;
+}'), width = "100%")
+```
+
+```{r}
+#| label: chip-sintesi
+#| eval: !expr tipo_chip_disponibile
+#| results: asis
+sc <- sintesi_chip_giri
+cat(
+  "\nLe saponette hanno letto **", intero(sc$saponette), "** bidoni dei giri della lista; le antenne ne hanno letti **", intero(sc$antenne),
+  "** (", quota(sc$copertura), ") e non ne hanno letti **", intero(sc$non_letti), "**. Di questi ",
+  intero(sc$non_letti_solo_lf), " hanno un chip solo LF, ", intero(sc$non_letti_con_uhf), " un chip con UHF, ",
+  intero(sc$non_letti_possibile_uhf), " un possibile UHF e ", intero(sc$non_letti_non_determinabile),
+  " un tipo non determinabile.\n\n",
+  sep = ""
+)
+print(knitr::kable(
+  dplyr::tibble(
+    Voce = c(
+      "Bidoni letti dalle saponette",
+      "letti anche dalle antenne",
+      "non letti dalle antenne",
+      "di cui con chip solo LF (le antenne non potevano leggerli)",
+      "di cui con chip con UHF (da spiegare)",
+      "di cui con possibile UHF",
+      "di cui con tipo non determinabile"
+    ),
+    Bidoni = intero(c(
+      sc$saponette, sc$antenne, sc$non_letti, sc$non_letti_solo_lf,
+      sc$non_letti_con_uhf, sc$non_letti_possibile_uhf, sc$non_letti_non_determinabile
+    )),
+    `Quota dei letti dalle saponette` = quota(
+      c(sc$saponette, sc$antenne, sc$non_letti, sc$non_letti_solo_lf, sc$non_letti_con_uhf,
+        sc$non_letti_possibile_uhf, sc$non_letti_non_determinabile) / sc$saponette,
+      1
+    )
+  ),
+  align = "lrr"
+))
+cat("\n\n**Quanto le antenne leggono di ciò che potevano leggere.** La copertura grezza conta tutti i bidoni delle saponette; le altre tolgono i bidoni che le antenne non potevano leggere (solo LF) o guardano solo i chip con UHF.\n\n")
+print(knitr::kable(
+  dplyr::tibble(
+    Copertura = c(
+      "Grezza: letti dalle antenne / letti dalle saponette",
+      "Senza i bidoni solo LF",
+      "Sui soli bidoni con chip UHF noto",
+      "Sui bidoni con chip UHF noto o possibile UHF"
+    ),
+    Valore = quota(c(sc$copertura, sc$copertura_senza_lf, sc$copertura_con_uhf, sc$copertura_con_uhf_possibile), 1)
+  ),
+  align = "lr"
+))
+if (sc$antenne_su_chip_solo_lf > 0) {
+  cat(
+    "\n::: {.callout-warning}\n**Da controllare.** Le antenne hanno letto **", intero(sc$antenne_su_chip_solo_lf),
+    "** RFID che il database dice avere un chip solo LF: o il tipo di supporto è sbagliato, o il chip ha anche una parte UHF.\n:::\n",
+    sep = ""
+  )
+}
+```
+
+```{r}
+#| label: chip-colori
+#| eval: !expr tipo_chip_disponibile
+esiti <- esiti_antenne()
+colori_esiti <- stats::setNames(
+  c("#1baf7a", "#8a948e", "#eb6834", "#f2a583", "#c5cbc7"),
+  esiti
+)
+# per ogni categoria, l'esito di un bidone letto dalle saponette e non dalle antenne
+esito_non_letto <- stats::setNames(esiti[2:5], categorie_chip())
+```
+
+## Il tipo di chip, uno per uno
+
+```{r}
+#| label: chip-grafico-tipo
+#| eval: !expr tipo_chip_disponibile
+#| fig-height: 6
+per_tipo <- riepilogo_per_chip(classi_chip)
+per_tipo <- per_tipo[per_tipo$saponette > 0, ]
+grafico_tipo <- dplyr::bind_rows(
+  dplyr::transmute(per_tipo, .data$categoria, .data$descrizione, esito = esiti[1], n = .data$entrambi),
+  dplyr::transmute(
+    per_tipo, .data$categoria, .data$descrizione,
+    esito = unname(esito_non_letto[as.character(.data$categoria)]), n = .data$solo_saponette
+  )
+) |>
+  dplyr::filter(.data$n > 0) |>
+  dplyr::mutate(
+    esito = factor(.data$esito, esiti),
+    descrizione = factor(.data$descrizione, rev(per_tipo$descrizione))
+  )
+ggplot(grafico_tipo, aes(x = .data$n, y = .data$descrizione, fill = .data$esito)) +
+  geom_col(width = 0.7, position = position_stack(reverse = TRUE)) +
+  geom_text(
+    aes(label = intero(.data$n)),
+    position = position_stack(vjust = 0.5, reverse = TRUE),
+    size = 3.4,
+    colour = colori$primario
+  ) +
+  facet_grid(rows = vars(.data$categoria), scales = "free_y", space = "free_y") +
+  scale_fill_manual(values = colori_esiti, drop = FALSE) +
+  scale_x_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    title = "Bidoni letti dalle saponette, per tipo di chip",
+    subtitle = a_capo("Verde: letti anche dalle antenne. Gli altri colori: non letti dalle antenne, secondo il chip"),
+    x = "Bidoni (RFID e giorno)",
+    y = NULL
+  ) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE)) +
+  tema_grafico +
+  theme(
+    legend.position = "bottom",
+    strip.text.y = element_text(angle = 0, hjust = 0, colour = colori$secondario),
+    panel.grid.major.y = element_blank()
+  )
+```
+
+```{r}
+#| label: chip-tabella-tipo
+#| eval: !expr tipo_chip_disponibile
+per_tipo_tabella <- riepilogo_per_chip(classi_chip)
+knitr::kable(
+  dplyr::tibble(
+    Categoria = as.character(per_tipo_tabella$categoria),
+    `Tipo di supporto` = per_tipo_tabella$descrizione,
+    `Letti dalle saponette` = intero(per_tipo_tabella$saponette),
+    `Letti anche dalle antenne` = intero(per_tipo_tabella$entrambi),
+    `Non letti dalle antenne` = intero(per_tipo_tabella$solo_saponette),
+    `Quota letta dalle antenne` = ifelse(is.na(per_tipo_tabella$quota_antenne), "–", quota(per_tipo_tabella$quota_antenne, 0)),
+    `Letti solo dalle antenne` = intero(per_tipo_tabella$solo_antenne)
+  ),
+  align = "llrrrrr"
+)
+```
+
+```{r}
+#| label: chip-grafico-quota
+#| eval: !expr tipo_chip_disponibile
+#| fig-height: 3.2
+per_categoria <- riepilogo_per_chip(classi_chip, "categoria")
+per_categoria <- dplyr::left_join(
+  dplyr::tibble(categoria = factor(categorie_chip(), categorie_chip())),
+  per_categoria,
+  by = "categoria"
+) |>
+  dplyr::mutate(
+    dplyr::across(c("saponette", "entrambi"), \(x) dplyr::coalesce(x, 0L)),
+    etichetta = dplyr::if_else(
+      .data$saponette > 0,
+      paste0(quota(.data$quota_antenne, 0), " (", intero(.data$entrambi), " su ", intero(.data$saponette), ")"),
+      "nessun bidone"
+    ),
+    quota_grafico = dplyr::coalesce(.data$quota_antenne, 0)
+  )
+ggplot(per_categoria, aes(x = .data$quota_grafico, y = .data$categoria)) +
+  geom_col(fill = colori_esiti[[1]], width = 0.6) +
+  geom_text(aes(label = .data$etichetta), hjust = -0.05, size = 3.6, colour = colori$primario) +
+  scale_y_discrete(limits = rev) +
+  scale_x_continuous(labels = scales::label_percent(), limits = c(0, 1.35), breaks = seq(0, 1, 0.25)) +
+  labs(
+    title = "Quanti bidoni delle saponette hanno letto le antenne, per chip",
+    subtitle = a_capo("Con un chip solo LF ci si aspetta zero; con un chip con UHF ci si aspetta quasi tutti"),
+    x = "Quota dei bidoni letti dalle saponette letta anche dalle antenne",
+    y = NULL
+  ) +
+  tema_grafico
+```
+
+## Chi li ha letti altrove
+
+Un bidone con chip UHF letto dalla saponetta e non dalle antenne dei giri può essere passato in un altro giro: se un'antenna fuori lista lo ha letto lo stesso giorno, non è una lettura mancata. La tabella divide i bidoni letti solo dalle saponette per categoria di chip e per questo.
+
+```{r}
+#| label: chip-altrove
+#| eval: !expr tipo_chip_disponibile
+altrove_chip <- solo_saponette_per_categoria(classi_chip, antenne_tutte)
+altrove_larga <- tidyr::pivot_wider(
+  dplyr::mutate(
+    altrove_chip,
+    letto_altrove = dplyr::if_else(.data$letto_altrove, "altrove", "mai")
+  ),
+  names_from = "letto_altrove",
+  values_from = "n"
+)
+knitr::kable(
+  dplyr::tibble(
+    Categoria = as.character(altrove_larga$categoria),
+    `Letti solo dalle saponette` = intero(altrove_larga$altrove + altrove_larga$mai),
+    `Letti da un'antenna fuori lista lo stesso giorno` = intero(altrove_larga$altrove),
+    `Non letti da nessuna antenna lo stesso giorno` = intero(altrove_larga$mai)
+  ),
+  align = "lrrr"
+)
+```
+
+## Mezzo per mezzo
+
+Il grafico mostra, per ogni mezzo, che cosa è successo ai bidoni letti dalle saponette abbinate a quel mezzo. Un mezzo con molti non letti con chip UHF ha un problema suo (l'antenna, o la posizione dei bidoni rispetto all'antenna); un mezzo con soli non letti LF no. I mezzi sono ordinati per numero di bidoni con chip UHF, o possibile UHF, non letti.
+
+```{r}
+#| label: chip-grafico-mezzi
+#| eval: !expr tipo_chip_disponibile
+#| fig-height: 6
+persi_mezzo <- persi_per_mezzo(giri, saponette_giri, abbinamenti, classi_chip)
+if (nrow(persi_mezzo) == 0) {
+  cat("Nessuna trasmissione delle saponette è stata abbinata a un mezzo della lista.")
+} else {
+  # Con più giorni nella lista si sommano i giorni di ogni mezzo: un grafico con una
+  # barra per mezzo e giorno non si leggerebbe.
+  persi_mezzo <- persi_mezzo |>
+    dplyr::summarise(n = sum(.data$n), .by = c("matricola_veicolo", "esito")) |>
+    dplyr::mutate(mezzo = .data$matricola_veicolo)
+  ordine_mezzi <- persi_mezzo |>
+    dplyr::summarise(
+      da_spiegare = sum(.data$n[.data$esito %in% esiti[3:4]]),
+      totale = sum(.data$n),
+      .by = "mezzo"
+    ) |>
+    dplyr::arrange(.data$da_spiegare, .data$totale)
+  persi_mezzo$mezzo <- factor(persi_mezzo$mezzo, ordine_mezzi$mezzo)
+  ggplot(persi_mezzo, aes(x = .data$n, y = .data$mezzo, fill = .data$esito)) +
+    geom_col(width = 0.75, position = position_stack(reverse = TRUE)) +
+    scale_fill_manual(values = colori_esiti, drop = FALSE) +
+    scale_x_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
+    labs(
+      title = "Bidoni letti dalle saponette, per mezzo",
+      subtitle = a_capo(paste0(
+        "Verde: letti anche dalle antenne. In arancione i non letti con un chip che le antenne potevano leggere",
+        if (!un_giorno) " (giorni sommati)"
+      )),
+      x = "Bidoni (RFID e giorno)",
+      y = "Mezzo"
+    ) +
+    guides(fill = guide_legend(nrow = 2, byrow = TRUE)) +
+    tema_grafico +
+    theme(legend.position = "bottom")
+}
+```
+
+## I bidoni con chip UHF che le antenne non hanno letto
+
+Sono i casi da controllare uno per uno (chip rotto o schermato, bidone fuori portata, antenna spenta in quel momento). I bidoni letti da un'antenna fuori lista lo stesso giorno sono passati in un altro giro.
+
+```{r}
+#| label: chip-elenco
+#| eval: !expr tipo_chip_disponibile
+#| results: asis
+elenco_uhf <- bidoni_uhf_non_letti(classi_chip, saponette_giri, abbinamenti, giri, antenne_tutte)
+massimo_elenco <- 30
+if (nrow(elenco_uhf) == 0) {
+  cat("Nessun bidone con chip UHF, o possibile UHF, è stato letto solo dalle saponette.\n")
+} else {
+  cat(
+    "**", intero(nrow(elenco_uhf)), "** bidoni",
+    if (nrow(elenco_uhf) > massimo_elenco) paste0(" (i primi ", massimo_elenco, ", prima quelli non letti da nessuna antenna)"),
+    ":\n\n",
+    sep = ""
+  )
+  print(knitr::kable(
+    dplyr::tibble(
+      Giorno = data_it(elenco_uhf$data_lettura),
+      Mezzo = elenco_uhf$matricola_veicolo,
+      RFID = elenco_uhf$RFID,
+      `Tipo di chip` = elenco_uhf$tipo_chip,
+      `Servizio a database` = elenco_uhf$servizio,
+      `Letto da un'antenna fuori lista` = ifelse(elenco_uhf$letto_altrove, "sì", "no")
+    ) |>
+      utils::head(massimo_elenco),
+    align = "lllllc"
+  ))
+}
+```
+
+## Come leggere questi numeri
+
+- **Solo LF e nessuna lettura delle antenne.** Se i bidoni non letti sono quasi tutti solo LF, e la quota letta per i chip con UHF è alta, le antenne fanno quello che possono: le saponette leggono anche chip che le antenne non vedono. Il confronto «grezzo» tra i due sistemi penalizza le antenne per un limite del chip.
+- **Chip con UHF non letti.** Ogni bidone con UHF letto dalla saponetta e non dall'antenna è un possibile guasto, di chip o di antenna. Se sono molti, o concentrati su pochi mezzi, il problema è dell'antenna di quei mezzi; se sono sparsi e pochi, sono letture mancate normali (portata, velocità, bidone coperto).
+- **Possibile UHF e tipo non determinabile.** Sono i bidoni di cui non si conosce il chip. «Possibile UHF» è una congettura: contenitori attivati dal 2016 che mancano nei tag. Le coperture della tabella danno i due estremi: tutti i non determinabili sono UHF (copertura più bassa) oppure nessuno lo è (copertura sui soli UHF noti).
+- **Letti da un'antenna fuori lista.** Un bidone letto solo dalle saponette ma visto da un'antenna di un altro mezzo lo stesso giorno non è sfuggito alle antenne: è passato in un altro giro.
+- **Il tipo di chip è del contenitore.** Vale per ogni lettura dello stesso RFID; non dipende dal giorno. Non dice se il chip funziona: un chip UHF rotto non si legge, e qui compare come non letto con chip UHF.
+
 # Scelte compiute e limiti
 
 - **Una lista di giri come denominatore.** Il confronto sulla lista dei giri evita di dedurre i giri dalle letture. Un mezzo in lista senza letture resta nel conteggio.
@@ -578,6 +930,7 @@ if (nrow(qualita) == 0) {
 - **Mezzo delle saponette dedotto.** Le letture delle saponette non hanno il mezzo: il mezzo di una trasmissione è dedotto dagli RFID in comune. Se il database avesse il mezzo o il dispositivo delle saponette, l'abbinamento non servirebbe.
 - **Pochi giri.** Un solo giorno dà numeri piccoli per mezzo: i totali sono più solidi dei singoli mezzi. Più giorni nella stessa lista danno stime più stabili.
 - **Nessuno dei due è la verità.** La differenza tra i due insiemi dice che i sistemi non coincidono, non quale sbaglia.
+- **Il tipo di chip viene dai tag.** `descrizione_tipo_supporto_chip` è associato dalla pipeline dopo tutti i tentativi di associazione del codice; un contenitore che non è nei tag ma è stato attivato dal 2016 in poi è `POSSIBILE UHF`, uno attivato nel 2015 o prima non ha tipo. Il tipo dice che chip c'è, non se funziona.
 
 # Come aggiornare il report
 
@@ -608,4 +961,4 @@ compila_report(
 
 # Come si cambia
 
-Le funzioni sono in `R/utils_controllo_giri.R`: `giri_di_controllo()` per la lista, `antenne_dei_giri()` e `trasmissioni_dei_giri()` per la scelta delle letture, `abbina_trasmissioni()` per il mezzo delle saponette, `classi_rfid()` e `confronto_per_mezzo()` per il confronto. I test sono in `tests/testthat/test-utils_controllo_giri.R`.
+Le funzioni sono in `R/utils_controllo_giri.R`: `giri_di_controllo()` per la lista, `antenne_dei_giri()` e `trasmissioni_dei_giri()` per la scelta delle letture, `abbina_trasmissioni()` per il mezzo delle saponette, `classi_rfid()` e `confronto_per_mezzo()` per il confronto; per il tipo di chip `classi_con_chip()`, `riepilogo_per_chip()`, `sintesi_chip()`, `solo_saponette_per_categoria()`, `persi_per_mezzo()` e `bidoni_uhf_non_letti()` (le categorie sono in `categoria_chip()`, i tipi di supporto in `tipi_supporto_chip()`). I test sono in `tests/testthat/test-utils_controllo_giri.R`.

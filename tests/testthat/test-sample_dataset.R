@@ -290,6 +290,7 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
       "eseguito",
       "RFID",
       "passo_associazione_rfid",
+      "descrizione_tipo_supporto_chip",
       "presente_a_database",
       "servizio_transponder",
       "servizio_atteso",
@@ -323,6 +324,21 @@ test_that("i servizi attesi hanno i nomi del database e hanno tutti un'icona", {
     grezzo$passo_associazione_rfid[!sacchetti_grezzi],
     ifelse(grezzo$presente_a_database[!sacchetti_grezzi] == "PIA", "diretto", "non_associato")
   )
+  # il tipo di supporto del chip: lo hanno i bidoni censiti (202 RFID), non i non
+  # presenti ne' i sacchetti; qualche chip e' solo LF e qualcuno POSSIBILE UHF
+  censiti_grezzi <- grezzo$presente_a_database == "PIA" & !sacchetti_grezzi
+  expect_false(anyNA(grezzo$descrizione_tipo_supporto_chip[censiti_grezzi]))
+  expect_true(all(is.na(grezzo$descrizione_tipo_supporto_chip[!censiti_grezzi])))
+  expect_identical(
+    length(unique(grezzo$RFID[!is.na(grezzo$descrizione_tipo_supporto_chip)])),
+    202L
+  )
+  expect_true(all(
+    grezzo$descrizione_tipo_supporto_chip[censiti_grezzi] %in%
+      c(tipi_supporto_chip()$descrizione_tipo_supporto_chip, "POSSIBILE UHF")
+  ))
+  expect_true(any(grezzo$descrizione_tipo_supporto_chip %in% c("BINTAG LF 125", "TOKEN - PORTACHIAVI LF")))
+  expect_true(any(grezzo$descrizione_tipo_supporto_chip %in% "POSSIBILE UHF"))
   # la coerenza del file è quella che l'app ricalcola al caricamento
   expect_identical(grezzo$coerenza_servizio, d$coerenza_servizio)
   expect_identical(

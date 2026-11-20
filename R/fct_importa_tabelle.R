@@ -283,20 +283,67 @@ importa_contenitori <- function(percorso, categoria = FALSE) {
   contenitori
 }
 
-#' Tag dei contenitori che l'azienda sa suoi, senza altri dati
+#' Tipi di supporto del chip dei contenitori
+#'
+#' Contesto: `dv_cnt_tag_contenitori.csv` ha il campo `id_tipo_supporto_chip`, il
+#' tipo di chip installato sul contenitore (da 1 a 9). Serve perché le antenne dei
+#' mezzi leggono solo i chip UHF, mentre le saponette leggono sia i chip LF sia i
+#' chip UHF: un bidone con un chip solo LF può essere letto dalla saponetta e non
+#' dall'antenna (richiesta del proprietario, 21/11/2026).
+#' Funzionamento: la tabella delle descrizioni data dal proprietario, con la
+#' colonna `ha_uhf`: `TRUE` se il chip ha una parte UHF (le antenne lo leggono),
+#' `FALSE` se è solo LF (non lo leggono), mancante per `SCONOSCIUTO`.
+#' Risultato: un tibble con `id_tipo_supporto_chip`, `descrizione_tipo_supporto_chip`
+#' e `ha_uhf`.
+#' @noRd
+tipi_supporto_chip <- function() {
+  dplyr::tibble(
+    id_tipo_supporto_chip = 1:9,
+    descrizione_tipo_supporto_chip = c(
+      "SCONOSCIUTO",
+      "BINTAG LF 125",
+      "FASCETTA INTEGRATA LF + UHF",
+      "FASCETTA METALLICA LF + UHF",
+      "RECTANGLE LF + UHF",
+      "SACCHETTO UHF",
+      "RECTANGLE UHF",
+      "RECTANGLE METAL TAG LF + UHF",
+      "TOKEN - PORTACHIAVI LF"
+    ),
+    ha_uhf = c(NA, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE)
+  )
+}
+
+#' Primo anno di attivazione per cui un contenitore senza tag è «POSSIBILE UHF»
+#'
+#' Contesto: `associa_tipo_supporto_chip()`. I contenitori attivati dal 2016 in poi
+#' hanno quasi certamente un chip UHF anche se mancano nella tabella dei tag; i
+#' più vecchi (2015 o prima) hanno di solito un chip LF e restano senza tipo.
+#' Scelta del proprietario, 21/11/2026.
+#' Risultato: l'anno, 2016.
+#' @noRd
+primo_anno_possibile_uhf <- function() 2016L
+
+#' Tag dei contenitori che l'azienda sa suoi, con il tipo di supporto del chip
 #'
 #' Contesto: `dv_cnt_tag_contenitori.csv` elenca i tag applicati ai contenitori
 #' di proprietà dell'azienda. Non ha una fornitura né una data di cessazione:
 #' dice solo che quel codice è un contenitore suo. Serve a distinguere un bidone
 #' non associato a una fornitura ma noto (`PIT`) da un codice sconosciuto (`NP`),
-#' e a riconoscere i codici letti male (`ripara_codici_rfid()`).
+#' a riconoscere i codici letti male (`ripara_codici_rfid()`) e, dal 21/11/2026,
+#' a dire che tipo di chip ha il contenitore (`associa_tipo_supporto_chip()`).
 #'
 #' Funzionamento: il codice è il primo valore non vuoto tra `codice_transponder`
 #' e `codice_etichetta` (`COALESCE`: in alcune righe è compilato solo uno dei
 #' due), portato al formato comune dei codici (`normalizza_codice_rfid()`).
-#' Basta uno dei due campi nel file; senza nessuno dei due è un errore.
+#' Basta uno dei due campi nel file; senza nessuno dei due è un errore. Il tipo di
+#' supporto è `id_tipo_supporto_chip` (da 1 a 9, `tipi_supporto_chip()`); un file
+#' senza quel campo, o con un valore fuori da 1-9, lascia il tipo vuoto. Se lo
+#' stesso codice compare più volte con tipi diversi si tiene un tipo noto (non
+#' `SCONOSCIUTO`) con il numero più basso, e un messaggio dice quanti sono.
 #'
-#' Risultato: una riga per codice, con la sola colonna `codice_transponder`.
+#' Risultato: una riga per codice, nell'ordine del file, con `codice_transponder`,
+#' `id_tipo_supporto_chip` (intero) e `descrizione_tipo_supporto_chip`.
 #' @param percorso Percorso del CSV dei tag.
 #' @noRd
 importa_tag_contenitori <- function(percorso) {
@@ -308,14 +355,59 @@ importa_tag_contenitori <- function(percorso) {
       call. = FALSE
     )
   }
-  tag |>
-    dplyr::transmute(
-      codice_transponder = normalizza_codice_rfid(
-        Reduce(dplyr::coalesce, unname(as.list(tag[campi])))
-      )
+  tipi <- tipi_supporto_chip()
+  id_tipo <- if ("id_tipo_supporto_chip" %in% names(tag)) {
+    suppressWarnings(as.integer(tag$id_tipo_supporto_chip))
+  } else {
+    rep(NA_integer_, nrow(tag))
+  }
+  fuori_tabella <- !is.na(id_tipo) & !id_tipo %in% tipi$id_tipo_supporto_chip
+  if (any(fuori_tabella)) {
+    message(
+      "Tag con un tipo di supporto che non \u00e8 tra 1 e 9: ",
+      formatta_numero(sum(fuori_tabella)),
+      " righe, il tipo resta vuoto."
+    )
+  }
+  id_tipo[fuori_tabella] <- NA_integer_
+  tabella <- dplyr::tibble(
+    codice_transponder = normalizza_codice_rfid(
+      Reduce(dplyr::coalesce, unname(as.list(tag[campi])))
+    ),
+    id_tipo_supporto_chip = id_tipo
+  ) |>
+    dplyr::filter(!is.na(.data$codice_transponder))
+  # Una riga per codice: prima un tipo noto, poi SCONOSCIUTO, poi nessun tipo.
+  tabella$priorita <- dplyr::case_when(
+    is.na(tabella$id_tipo_supporto_chip) ~ 3L,
+    tabella$id_tipo_supporto_chip == 1L ~ 2L,
+    .default = 1L
+  )
+  noti <- tabella[tabella$priorita == 1L, ]
+  in_conflitto <- noti |>
+    dplyr::distinct(.data$codice_transponder, .data$id_tipo_supporto_chip) |>
+    dplyr::count(.data$codice_transponder) |>
+    dplyr::filter(.data$n > 1)
+  if (nrow(in_conflitto) > 0) {
+    message(
+      "Tag con pi\u00f9 tipi di supporto per lo stesso codice: ",
+      formatta_numero(nrow(in_conflitto)),
+      " codici (si tiene il tipo noto con il numero pi\u00f9 basso)."
+    )
+  }
+  migliore <- tabella |>
+    dplyr::arrange(.data$codice_transponder, .data$priorita, .data$id_tipo_supporto_chip) |>
+    dplyr::distinct(.data$codice_transponder, .keep_all = TRUE)
+  migliore[match(unique(tabella$codice_transponder), migliore$codice_transponder), ] |>
+    dplyr::left_join(
+      dplyr::select(tipi, "id_tipo_supporto_chip", "descrizione_tipo_supporto_chip"),
+      by = "id_tipo_supporto_chip"
     ) |>
-    dplyr::filter(!is.na(.data$codice_transponder)) |>
-    dplyr::distinct()
+    dplyr::select(
+      "codice_transponder",
+      "id_tipo_supporto_chip",
+      "descrizione_tipo_supporto_chip"
+    )
 }
 
 #' Nomi delle colonne di un CSV estratto, senza leggerne le righe
