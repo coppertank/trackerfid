@@ -217,32 +217,96 @@ propensione_conferimento <- function(unita, anagrafica, servizio = NULL) {
     )
 }
 
-#' Forniture dell'anagrafica senza nessuna lettura associata nel periodo
+#' Forniture a pagamento dell'anagrafica
+#'
+#' Contesto: i contenitori gratuiti (`contenitore_gratuito` `S`) hanno un accordo
+#' che permette di conferire senza limiti e senza fatturazione: una fornitura che ha
+#' solo quelli non ha premio né eccedenza da perdere, quindi né l'analisi economica
+#' né le forniture senza letture la considerano.
+#'
+#' Funzionamento: tiene le forniture con almeno un contenitore non gratuito
+#' (`contenitori_non_gratuiti`). Un'anagrafica senza quella colonna (prima del
+#' 10/11/2026) non ha contenitori gratuiti noti e resta com'è.
+#'
+#' Risultato: le righe di `anagrafica` con un contenitore a pagamento.
+#' @param anagrafica Risultato di `anagrafica_forniture()`.
+#' @noRd
+con_contenitori_a_pagamento <- function(anagrafica) {
+  if (!"contenitori_non_gratuiti" %in% names(anagrafica)) {
+    return(anagrafica)
+  }
+  dplyr::filter(anagrafica, .data$contenitori_non_gratuiti > 0)
+}
+
+#' Forniture dell'analisi economica
+#'
+#' Contesto: l'analisi economica riguarda le sole domestiche del secco (condomini e
+#' non domestiche hanno altre regole di fatturazione). La stessa popolazione serve
+#' alla sezione «Forniture senza letture» del report, perché il numero delle senza
+#' letture dell'economia e quello della sezione coincidano.
+#'
+#' Funzionamento: tiene le forniture domestiche del secco con i componenti noti e
+#' almeno un contenitore a pagamento (`con_contenitori_a_pagamento()`); il volume
+#' della tariffa è quello dei contenitori non gratuiti
+#' (`volume_contenitore_non_gratuito`).
+#'
+#' Risultato: le righe di `anagrafica` dell'analisi economica.
+#' @param anagrafica Risultato di `anagrafica_forniture()`.
+#' @noRd
+forniture_dell_economia <- function(anagrafica) {
+  popolazione <- anagrafica |>
+    dplyr::filter(
+      .data$tipo == "domestica",
+      .data$servizio %in% "SECCO",
+      !is.na(.data$componenti_medi)
+    ) |>
+    con_contenitori_a_pagamento()
+  if ("volume_contenitore_non_gratuito" %in% names(popolazione)) {
+    popolazione <- dplyr::mutate(
+      popolazione,
+      volume_contenitore = dplyr::coalesce(
+        .data$volume_contenitore_non_gratuito,
+        .data$volume_contenitore
+      )
+    )
+  }
+  popolazione
+}
+
+#' Forniture dell'anagrafica senza conferimenti del secco nel periodo
 #'
 #' Contesto: il report segnala le forniture del secco che nel periodo non hanno
-#' ricevuto nemmeno una lettura, per fascia di componenti, e ne salva l'elenco
+#' conferito, per fascia di componenti, e ne salva l'elenco
 #' (`elenco_forniture_senza_letture()`). Una fornitura senza letture non è una
 #' fornitura virtuosa: può avere il tag rotto o non letto, il contenitore non
 #' esposto o lo smaltimento in un altro modo. Nell'analisi economica le domestiche
 #' tra queste ricevono il premio massimo, proporzionale ai giorni di attività
-#' (`analisi_economica()`). Definizione del proprietario (15/11/2026): niente
-#' conferimenti massimi né altri controlli, solo l'attività nel periodo e le
-#' letture (16/11/2026: le letture sono quelle di qualunque servizio, come nello
-#' script del proprietario).
+#' (`analisi_economica()`). Storia: definizione del proprietario del 15-16/11/2026
+#' (letture `PIA` di qualunque servizio, nessun altro controllo); il 20/11/2026 ha
+#' chiesto di adottare il criterio dell'analisi economica, perché il numero della
+#' sezione e quello del riepilogo per scenario coincidano.
 #'
-#' Funzionamento: `anagrafica` ha le forniture con almeno un contenitore del
-#' servizio attivo almeno un giorno nel periodo (`anagrafica_forniture()`), con i
-#' componenti medi e il gruppo. Una fornitura è «letta» se ha almeno una lettura
-#' associata (`PIA`) in `unita` con il suo `id_fornitura`; le altre righe di
-#' `anagrafica` sono senza letture.
+#' Funzionamento: una fornitura è «letta» se ha almeno un conferimento del secco a
+#' pagamento, cioè una lettura associata (`PIA`) con `servizio_transponder`
+#' `SECCO`, di un sistema qualunque, senza i contenitori gratuiti
+#' (`conferimenti_per_fornitura()`, la stessa funzione dell'analisi economica; lo
+#' scenario di riferimento «Saponette e antenne» ha tutti i sistemi). Una lettura
+#' di un bidone di un altro servizio, o di un contenitore gratuito, non basta. Le
+#' forniture con soli contenitori gratuiti non si considerano
+#' (`con_contenitori_a_pagamento()`). `anagrafica` ha le forniture con almeno un
+#' contenitore attivo almeno un giorno nel periodo (`anagrafica_forniture()`).
 #'
-#' Risultato: le righe di `anagrafica` senza letture, nello stesso ordine.
+#' Risultato: le righe di `anagrafica` a pagamento senza conferimenti, nello stesso
+#' ordine. Le domestiche con componenti noti tra queste sono quelle che
+#' `analisi_economica()` segnala come `senza_letture` nello scenario di riferimento
+#' (le stesse che conta `forniture_dell_economia()`).
 #' @param unita Risultato di `unita_di_lettura()`.
 #' @param anagrafica Risultato di `anagrafica_forniture()`.
 #' @noRd
 forniture_senza_letture <- function(unita, anagrafica) {
-  lette <- unique(unita$id_fornitura[unita$stato %in% "PIA"])
-  dplyr::filter(anagrafica, !.data$id_fornitura %in% lette)
+  a_pagamento <- con_contenitori_a_pagamento(anagrafica)
+  lette <- conferimenti_per_fornitura(unita, a_pagamento, sistemi_lettura(), "SECCO", TRUE)$id_fornitura
+  dplyr::filter(a_pagamento, !.data$id_fornitura %in% lette)
 }
 
 #' Elenco completo delle forniture senza letture, con i dati per capire perché
@@ -264,15 +328,19 @@ forniture_senza_letture <- function(unita, anagrafica) {
 #' attivazione e l'ultima cessazione dei bidoni (cessazione `2099-12-31` se
 #' aperta); le letture di quei codici nel periodo, di qualunque servizio, senza le
 #' scartate: quante in tutto, quante non associate (`PIT` o `NP`, con la prima e
-#' l'ultima data) e quante associate a un'altra fornitura.
+#' l'ultima data) e quante associate a un'altra fornitura; infine, delle letture
+#' associate (`PIA`) alla fornitura, quante sono di un bidone di un altro servizio
+#' e quante di un contenitore gratuito del servizio: non sono conferimenti, ma la
+#' fornitura non è «mai letta» (`forniture_senza_letture()`).
 #'
 #' Risultato: una riga per fornitura con `id_fornitura`, `id_utenza`, `gruppo`,
 #' `componenti_medi`, `potenziamento`, `contenitori`, `bidoni`, `volume_totale`,
 #' `stato_fornitura`, `data_attivazione_bidoni`, `data_cessazione_bidoni`,
 #' `giorni_attivi` (nel periodo), `letture_bidoni`, `letture_non_associate`,
 #' `prima_lettura_non_associata`, `ultima_lettura_non_associata`,
-#' `letture_altra_fornitura`. Senza forniture, un tibble senza righe con le stesse
-#' colonne.
+#' `letture_altra_fornitura`, `letture_altri_servizi`,
+#' `letture_contenitori_gratuiti`. Senza forniture, un tibble senza righe con le
+#' stesse colonne.
 #' @param senza Risultato di `forniture_senza_letture()`.
 #' @param contenitori Tabella di `importa_contenitori()`.
 #' @param unita Risultato di `unita_di_lettura()` su **tutte** le letture del
@@ -334,15 +402,45 @@ elenco_forniture_senza_letture <- function(senza, contenitori, unita, dal, al, s
       .by = "id_fornitura"
     )
 
+  # Le letture associate alla fornitura che non sono conferimenti del servizio a
+  # pagamento: di un bidone di un altro servizio o di un contenitore gratuito.
+  associate <- unita |>
+    dplyr::filter(
+      as.character(.data$stato) %in% "PIA",
+      .data$id_fornitura %in% senza$id_fornitura
+    )
+  servizio_letto <- toupper(as.character(
+    associate[["servizio_transponder"]] %||% rep(NA_character_, nrow(associate))
+  ))
+  del_servizio <- if (is.null(servizio)) {
+    rep(TRUE, nrow(associate))
+  } else {
+    servizio_letto %in% toupper(servizio)
+  }
+  gratuito <- (associate[["contenitore_gratuito"]] %||% rep(NA_character_, nrow(associate))) %in% "S"
+  non_conferimenti <- dplyr::tibble(
+    id_fornitura = as.character(associate$id_fornitura),
+    altro_servizio = !del_servizio,
+    gratuito_del_servizio = del_servizio & gratuito
+  ) |>
+    dplyr::summarise(
+      letture_altri_servizi = sum(.data$altro_servizio),
+      letture_contenitori_gratuiti = sum(.data$gratuito_del_servizio),
+      .by = "id_fornitura"
+    )
+
   senza |>
     dplyr::left_join(dei_bidoni, by = "id_fornitura") |>
     dplyr::left_join(codici_testo, by = "id_fornitura") |>
     dplyr::left_join(totali, by = "id_fornitura") |>
     dplyr::left_join(non_associate, by = "id_fornitura") |>
+    dplyr::left_join(non_conferimenti, by = "id_fornitura") |>
     dplyr::mutate(
       letture_bidoni = dplyr::coalesce(.data$letture_bidoni, 0L),
       letture_non_associate = dplyr::coalesce(.data$letture_non_associate, 0L),
-      letture_altra_fornitura = dplyr::coalesce(.data$letture_altra_fornitura, 0L)
+      letture_altra_fornitura = dplyr::coalesce(.data$letture_altra_fornitura, 0L),
+      letture_altri_servizi = dplyr::coalesce(.data$letture_altri_servizi, 0L),
+      letture_contenitori_gratuiti = dplyr::coalesce(.data$letture_contenitori_gratuiti, 0L)
     ) |>
     dplyr::arrange(.data$gruppo, .data$id_fornitura) |>
     dplyr::select(dplyr::any_of(c(
@@ -350,7 +448,8 @@ elenco_forniture_senza_letture <- function(senza, contenitori, unita, dal, al, s
       "contenitori", "bidoni", "volume_totale", "stato_fornitura",
       "data_attivazione_bidoni", "data_cessazione_bidoni", "giorni_attivi",
       "letture_bidoni", "letture_non_associate", "prima_lettura_non_associata",
-      "ultima_lettura_non_associata", "letture_altra_fornitura"
+      "ultima_lettura_non_associata", "letture_altra_fornitura",
+      "letture_altri_servizi", "letture_contenitori_gratuiti"
     )))
 }
 
@@ -401,25 +500,10 @@ analisi_economica <- function(
   con_saponette = TRUE,
   annualizza = TRUE
 ) {
-  popolazione <- anagrafica |>
-    dplyr::filter(
-      .data$tipo == "domestica",
-      .data$servizio %in% "SECCO",
-      !is.na(.data$componenti_medi)
-    )
-  # I contenitori gratuiti (`contenitore_gratuito` `S`) non si fatturano: una
-  # fornitura che ha solo quelli esce dall'analisi, e delle altre contano solo i
-  # contenitori a pagamento (il volume della tariffa è il loro).
-  if ("contenitori_non_gratuiti" %in% names(popolazione)) {
-    popolazione <- popolazione |>
-      dplyr::filter(.data$contenitori_non_gratuiti > 0) |>
-      dplyr::mutate(
-        volume_contenitore = dplyr::coalesce(
-          .data$volume_contenitore_non_gratuito,
-          .data$volume_contenitore
-        )
-      )
-  }
+  # Condomini e non domestiche hanno altre regole; i contenitori gratuiti non si
+  # fatturano: una fornitura che ha solo quelli esce dall'analisi, e delle altre
+  # contano solo i contenitori a pagamento (`forniture_dell_economia()`).
+  popolazione <- forniture_dell_economia(anagrafica)
   # Il premio è proporzionale ai giorni di attività solo con l'annualizzazione.
   popolazione$quota_attivita <- if (annualizza) {
     popolazione[["quota_attivita"]] %||% rep(1, nrow(popolazione))

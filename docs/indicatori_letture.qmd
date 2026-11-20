@@ -27,6 +27,20 @@ format:
     toc-location: left
     embed-resources: true
     fig-align: center
+  typst:
+    papersize: a4
+    margin:
+      x: 1.5cm
+      y: 1.5cm
+    fontsize: 9.5pt
+    toc: true
+    toc-depth: 2
+    toc-title: Indice
+    fig-align: center
+    fig-width: 10
+    filters:
+      - pdf_tabelle.lua
+    include-in-header: stile_pdf.typ
 execute:
   echo: false
   message: false
@@ -43,6 +57,11 @@ knitr:
 # progetto:
 #   source("data-raw/compila_report.R")
 #   compila_report("docs/indicatori_letture.qmd")                 # tutto
+#   compila_report("docs/indicatori_letture.qmd", formato = "pdf")      # PDF
+#   compila_report("docs/indicatori_letture.qmd", formato = c("html", "pdf"))
+# Il PDF (Typst, incluso in Quarto) ha la pagina A4 orizzontale, tabelle compatte
+# con le colonne dimensionate sul contenuto e, se una tabella e' troppo larga, divisa
+# in blocchi di colonne: docs/stile_pdf.typ e docs/pdf_tabelle.lua.
 #   compila_report("docs/indicatori_letture.qmd",
 #     list(dal = "2026-01-01", al = "2026-06-30", componenti = "2"))
 #   compila_report("docs/indicatori_letture.qmd",
@@ -133,6 +152,9 @@ colori_economia <- c(
   "Eccedente" = "#eb6834"
 )
 colori <- list(primario = "#0b0b0b", secondario = "#52514e", sfondo = "#fcfcfb")
+# Il sottotitolo di un grafico non va a capo da solo: se e' piu' largo della figura
+# viene tagliato (si vedeva anche nell'HTML). `a_capo()` lo spezza.
+a_capo <- function(x, larghezza = 85) paste(strwrap(x, width = larghezza), collapse = "\n")
 tema_grafico <- theme_minimal(base_size = 12) +
   theme(
     plot.title = element_text(face = "bold", size = 13.5, colour = colori$primario),
@@ -419,20 +441,6 @@ knitr::kable(
 )
 ```
 
-```{r}
-#| label: non-domestiche
-#| eval: !expr "!is.null(anagrafica_servizi) && nrow(anagrafica_servizi) > 0"
-#| results: asis
-nd <- conta_non_domestiche(dplyr::distinct(anagrafica_servizi_scelta, .data$id_fornitura, .keep_all = TRUE))
-if (nrow(nd) > 0) {
-  cat("\nForniture non domestiche per categoria:\n\n")
-  print(knitr::kable(
-    dplyr::tibble(Categoria = nd$categoria, Forniture = intero(nd$forniture)),
-    align = "lr"
-  ))
-}
-```
-
 La tabella usa **tutti i servizi** dell'associazione dei contenitori (`dv_cnt_associazione_contenitori`): le forniture con almeno un contenitore associato **attivo nel periodo**, cioè almeno un giorno tra «dal» e «al». Conta anche un contenitore attivo solo in parte (attivato o cessato a metà periodo, o attivo solo il primo o l'ultimo giorno), che si conta per intero; uno attivato dopo «al» o cessato prima di «dal» non c'è, e di una fornitura con un bidone attivo e uno no si contano solo i bidoni attivi. La tabella della propensione parte dalla stessa base, ristretta ai bidoni del secco. Per ogni gruppo la riga «Tutti i servizi» dice quante forniture ci sono (una fornitura conta una volta) e i contenitori e i volumi di tutti i servizi sommati; le righe sotto dividono i **bidoni assegnati alle forniture del gruppo per servizio** (secco, carta, plastica e metalli...), con le forniture che hanno almeno un bidone di quel servizio, i contenitori **gratuiti** e **non gratuiti**, il **volume totale** dei contenitori e il **volume medio** (volume totale diviso i contenitori). Un contenitore è gratuito (`contenitore_gratuito` `S` nell'associazione dei contenitori) quando c'è un accordo con il cliente che gli permette di conferire senza limiti con quel bidone, senza fatturazione; quelli non gratuiti (`N`) concorrono alla fatturazione. Un codice di soli zeri non è un bidone e non compare: la statistica parte dai contenitori, non dalle forniture. Le **domestiche** sono le categorie 31 e 32 (la categoria viene dal file dei contenitori), divise in casa vuota (0 componenti), con potenziamento del secco, e per fascia di componenti da 1 a 6 o più; i **condomini** sono la categoria 34; le **non domestiche** hanno `sottocategoria` `ND`. Le forniture che non sono nessuna delle tre stanno nella riga **Altre**, che resta a parte e fa parte di «Tutte le forniture». I contenitori sono la somma di quelli di ogni fornitura: un contenitore che cambia fornitura nel periodo conta in ognuna. I componenti sono la media sul tempo dei residenti (`nucleo_residenti`) pesata sui giorni di attività della fornitura nel periodo (i giorni di attività servono solo qui e al potenziamento, non al fattore), arrotondata all'intero più vicino; il potenziamento vale se una manovra sociale è in vigore per almeno metà dei giorni di attività. «Componenti non noti» sono le forniture senza una composizione del nucleo con una data di inizio. Le componenti e il potenziamento dipendono dalla fornitura, non dal servizio del bidone.
 
 # Le letture
@@ -490,7 +498,7 @@ ggplot(dati_grafico, aes(x = .data$letture, y = .data$classe, fill = .data$class
   scale_fill_manual(values = colori_classi) +
   labs(
     title = "Chi ha letto che cosa",
-    subtitle = "Ogni lettura conta una volta: «Entrambe» è lo stesso codice letto dai due sistemi nello stesso giorno",
+    subtitle = a_capo("Ogni lettura conta una volta: «Entrambe» è lo stesso codice letto dai due sistemi nello stesso giorno"),
     x = "Letture",
     y = NULL
   ) +
@@ -534,7 +542,7 @@ ggplot(
   scale_fill_manual(values = colori_stati) +
   labs(
     title = "Da che cosa dipende lo scarto",
-    subtitle = "PIA: con fornitura · PIT: contenitore dell'azienda senza fornitura · NP: codice valido non presente · Scartata: tolta dalla pulizia",
+    subtitle = a_capo("PIA: con fornitura · PIT: contenitore dell'azienda senza fornitura · NP: codice valido non presente · Scartata: tolta dalla pulizia"),
     x = NULL,
     y = NULL
   ) +
@@ -651,7 +659,7 @@ ggplot(dati_efficacia, aes(x = .data$efficacia, y = .data$sistema, fill = .data$
   )) +
   labs(
     title = "Efficacia: quante letture compatibili vede ogni sistema",
-    subtitle = "Sulle letture compatibili (tenute dalla pulizia) dei due sistemi insieme, ognuna una volta",
+    subtitle = a_capo("Sulle letture compatibili (tenute dalla pulizia) dei due sistemi insieme, ognuna una volta"),
     x = NULL,
     y = NULL
   ) +
@@ -963,10 +971,10 @@ if (un_solo_scenario) {
     scale_fill_manual(values = colori_economia) +
     labs(
       title = "Forniture per classe",
-      subtitle = paste0(
+      subtitle = a_capo(paste0(
         riferimento,
         " · Premialità: litri sotto il massimo per accedere al premio · Eccedente: oltre i litri inclusi nella tariffa"
-      ),
+      )),
       x = "Forniture",
       y = NULL
     ) +
@@ -992,7 +1000,7 @@ if (un_solo_scenario) {
     scale_fill_manual(values = colori_economia) +
     labs(
       title = "Forniture per classe e scenario",
-      subtitle = "Premialità: litri sotto il massimo per accedere al premio · Eccedente: oltre i litri inclusi nella tariffa",
+      subtitle = a_capo("Premialità: litri sotto il massimo per accedere al premio · Eccedente: oltre i litri inclusi nella tariffa"),
       x = "Forniture",
       y = NULL
     ) +
@@ -1271,11 +1279,32 @@ cat("Il confronto più vicino al costo reale di un sistema. Le forniture sono le
 #| eval: !expr "!is.null(anagrafica_scelta) && !con_giri"
 #| results: asis
 secco <- anagrafica_scelta[anagrafica_scelta$servizio %in% "SECCO", ]
-senza <- forniture_senza_letture(unita, secco)
+# Lo stesso criterio dell'analisi economica: conferimenti del secco a pagamento
+# (unita_secco), con le sole forniture che hanno un contenitore a pagamento.
+a_pagamento <- con_contenitori_a_pagamento(secco)
+senza <- forniture_senza_letture(unita_secco, secco)
+dell_economia <- forniture_dell_economia(secco)
+senza_economia <- senza[senza$id_fornitura %in% dell_economia$id_fornitura, ]
+solo_gratuiti <- nrow(secco) - nrow(a_pagamento)
+# Il numero delle domestiche senza letture deve essere quello del riepilogo per
+# scenario (nello scenario di riferimento): se non coincide c'e' un errore.
+if (economia_utile) {
+  senza_riepilogo <- riepilogo$senza_letture[riepilogo$scenario == riferimento]
+  if (nrow(senza_economia) != senza_riepilogo || nrow(dell_economia) != riepilogo$forniture[riepilogo$scenario == riferimento]) {
+    stop(
+      "Le forniture senza letture della sezione (", nrow(senza_economia), " su ", nrow(dell_economia),
+      ") non coincidono con quelle del riepilogo per scenario (", senza_riepilogo,
+      " su ", riepilogo$forniture[riepilogo$scenario == riferimento], ").",
+      call. = FALSE
+    )
+  }
+}
 cat(
-  "\nForniture del secco con almeno un contenitore associato **attivo nel periodo** (almeno un giorno tra «dal» e «al», anche solo in parte) che non compaiono in nessuna lettura associata (`PIA`) del periodo, di saponette e antenne insieme e di qualunque servizio: **",
-  intero(nrow(senza)), "** su ", intero(nrow(secco)),
-  " (", quota(rapporto(nrow(senza), nrow(secco))), "). Sono divise per fascia di componenti (media dei residenti sul periodo, vedi sopra); condomini, non domestiche e altre forniture hanno una riga propria.\n\n",
+  "\nForniture del secco con almeno un contenitore associato **attivo nel periodo** (almeno un giorno tra «dal» e «al», anche solo in parte) e almeno un contenitore **a pagamento** che non hanno **nessun conferimento del secco** nel periodo: **",
+  intero(nrow(senza)), "** su ", intero(nrow(a_pagamento)),
+  " (", quota(rapporto(nrow(senza), nrow(a_pagamento))), "). Il criterio è quello dell'analisi economica: conta una lettura associata (`PIA`) di un bidone del secco a pagamento, di saponette e antenne insieme; non basta la lettura di un bidone di un altro servizio né quella di un contenitore gratuito. ",
+  if (solo_gratuiti > 0) paste0("Le ", intero(solo_gratuiti), " forniture con soli contenitori gratuiti non si fatturano e non compaiono. "),
+  "Sono divise per fascia di componenti (media dei residenti sul periodo, vedi sopra); condomini, non domestiche e altre forniture hanno una riga propria.\n\n",
   sep = ""
 )
 if (nrow(senza) > 0) {
@@ -1285,11 +1314,17 @@ if (nrow(senza) > 0) {
     dplyr::arrange(.data$gruppo)
   print(knitr::kable(
     dplyr::tibble(
-      `Fascia di componenti` = c(as.character(per_gruppo_senza$gruppo), "Totale"),
-      `Forniture senza letture` = intero(c(per_gruppo_senza$forniture, sum(per_gruppo_senza$forniture)))
+      `Fascia di componenti` = c(
+        as.character(per_gruppo_senza$gruppo), "Totale",
+        "di cui domestiche dell'analisi economica"
+      ),
+      `Forniture senza letture` = intero(c(
+        per_gruppo_senza$forniture, sum(per_gruppo_senza$forniture), nrow(senza_economia)
+      ))
     ),
     align = "lr"
   ))
+  cat("\nL'ultima riga conta le domestiche del secco con i componenti noti e un contenitore a pagamento, cioè le forniture dell'analisi economica (**", intero(nrow(dell_economia)), "**): ", intero(nrow(senza_economia)), " sono senza letture, lo stesso numero della colonna «Senza letture» del riepilogo per scenario per «Saponette e antenne» (o per la rilevazione reale, con un solo sistema).\n", sep = "")
   cat("\nUna fornitura senza letture non è una fornitura virtuosa: può avere il tag rotto o non letto, il contenitore non esposto o lo smaltimento in un altro modo. Nell'analisi economica le domestiche tra queste ricevono il premio massimo della loro fascia, proporzionale ai giorni di attività (premialità per chi non risulta letto).\n")
 }
 # L'elenco, con i dati per capire perché le forniture sono senza letture: i bidoni,
@@ -1318,7 +1353,7 @@ if (!vuoto(params$cartella_elenchi)) {
   )
   cat(
     "\n**Elenco salvato** in `", file.path(params$cartella_elenchi, nome_elenco), "`: ",
-    intero(nrow(elenco_senza_letture)), " forniture, con i bidoni, lo stato della fornitura, le date di attivazione e cessazione dei bidoni, i giorni di attività nel periodo e le letture di quei bidoni che non sono associate alla fornitura (`letture_non_associate`, `letture_altra_fornitura`).\n",
+    intero(nrow(elenco_senza_letture)), " forniture, con i bidoni, lo stato della fornitura, le date di attivazione e cessazione dei bidoni, i giorni di attività nel periodo e le letture di quei bidoni che non sono associate alla fornitura (`letture_non_associate`, `letture_altra_fornitura`). Una fornitura può avere letture associate che non sono conferimenti del secco a pagamento: di un bidone di un altro servizio (`letture_altri_servizi`) o di un contenitore gratuito (`letture_contenitori_gratuiti`).\n",
     sep = ""
   )
 }

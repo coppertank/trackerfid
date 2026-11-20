@@ -226,19 +226,19 @@ test_that("le forniture senza letture sono quelle dell'anagrafica senza nessuna 
 # Contenitori, composizione e letture per provare l'elenco delle forniture senza
 # letture, nel periodo 1 gennaio - 31 dicembre 2026.
 dati_senza_letture <- function() {
-  contenitore <- function(codice, fornitura, da = "2020-01-01", a = "2099-12-31", stato = "ATTIVA", raccolte = 26, servizio = "SECCO") {
+  contenitore <- function(codice, fornitura, da = "2020-01-01", a = "2099-12-31", stato = "ATTIVA", raccolte = 26, servizio = "SECCO", gratuito = "N", categoria = "31") {
     dplyr::tibble(
       codice_transponder = codice,
       servizio_transponder = servizio,
       volume = 120,
       numero_raccolte_annue = raccolte,
-      contenitore_gratuito = "N",
+      contenitore_gratuito = gratuito,
       data_attivazione_contenitore = as.Date(da),
       data_cessazione_contenitore = as.Date(a),
       id_fornitura = fornitura,
       stato_fornitura = stato,
       id_utenza = paste0("U", fornitura),
-      categoria_contenitore = "31"
+      categoria_contenitore = categoria
     )
   }
   contenitori <- dplyr::bind_rows(
@@ -258,7 +258,17 @@ dati_senza_letture <- function() {
     # senza il massimo annuo di conferimenti
     contenitore("M6", "F_senza_massimo", raccolte = NA_real_),
     # un'altra fornitura, della carta: non e' del secco
-    contenitore("M7", "F_carta", servizio = "CARTA")
+    contenitore("M7", "F_carta", servizio = "CARTA"),
+    # solo contenitori gratuiti: non si fattura, quindi non e' senza letture
+    contenitore("M8", "F_gratuita", gratuito = "S"),
+    # un bidone a pagamento mai letto e uno gratuito letto
+    contenitore("M9", "F_mista"),
+    contenitore("M10", "F_mista", gratuito = "S"),
+    # un bidone del secco mai letto e uno della carta letto
+    contenitore("M11", "F_altro_servizio"),
+    contenitore("M12", "F_altro_servizio", servizio = "CARTA"),
+    # un condominio mai letto: non e' nell'analisi economica
+    contenitore("M13", "F_condominio", categoria = "34")
   )
   componenti <- dplyr::tibble(
     id_fornitura = unique(contenitori$id_fornitura),
@@ -272,7 +282,7 @@ dati_senza_letture <- function() {
     data_inizio_dichiarazione = as.Date(character(0)),
     data_fine_dichiarazione = as.Date(character(0))
   )
-  lettura <- function(codice, giorno, stato, fornitura = NA_character_) {
+  lettura <- function(codice, giorno, stato, fornitura = NA_character_, servizio = "SECCO", gratuito = "N") {
     dplyr::tibble(
       RFID = codice,
       data_lettura = as.Date(giorno),
@@ -280,7 +290,8 @@ dati_senza_letture <- function() {
       stato = factor(stato, stati_lettura()),
       id_fornitura = fornitura,
       volume = 120,
-      servizio_transponder = "SECCO"
+      servizio_transponder = servizio,
+      contenitore_gratuito = gratuito
     )
   }
   unita <- dplyr::bind_rows(
@@ -289,7 +300,11 @@ dati_senza_letture <- function() {
     # una lettura di M5 il 31 marzo: associata alla fornitura vecchia
     lettura("M5", "2026-03-31", "PIA", "F_vecchia"),
     # una lettura scartata non conta
-    lettura("M1", "2026-02-11", "Scartata")
+    lettura("M1", "2026-02-11", "Scartata"),
+    # la lettura di un contenitore gratuito non e' un conferimento
+    lettura("M10", "2026-02-12", "PIA", "F_mista", gratuito = "S"),
+    # nemmeno quella di un bidone di un altro servizio
+    lettura("M12", "2026-02-13", "PIA", "F_altro_servizio", servizio = "CARTA")
   )
   list(
     contenitori = contenitori,
@@ -305,13 +320,44 @@ test_that("le forniture senza letture comprendono quelle attive da pochi giorni 
   tutte <- forniture_senza_letture(dati$unita, dati$anagrafica)
   expect_setequal(
     tutte$id_fornitura,
-    c("F_mai", "F_corta", "F_cessata", "F_fuori_data", "F_nuova", "F_senza_massimo")
+    c(
+      "F_mai", "F_corta", "F_cessata", "F_fuori_data", "F_nuova", "F_senza_massimo",
+      "F_mista", "F_altro_servizio", "F_condominio"
+    )
   )
+  # i soli contenitori gratuiti non si fatturano: la fornitura non c'e'
+  expect_false("F_gratuita" %in% tutte$id_fornitura)
+  # una lettura di un contenitore gratuito o di un altro servizio non e' un conferimento
+  expect_true(all(c("F_mista", "F_altro_servizio") %in% tutte$id_fornitura))
   # una fornitura attiva un solo giorno e una senza massimo annuo ci sono come le altre
   expect_identical(tutte$giorni_attivi[tutte$id_fornitura == "F_corta"], 1)
   expect_true(is.na(tutte$conferimenti_massimi_annui[tutte$id_fornitura == "F_senza_massimo"]))
   # il secco e' un servizio: la carta non c'e'
   expect_false("F_carta" %in% tutte$id_fornitura)
+})
+
+test_that("le forniture senza letture della sezione sono quelle senza letture dell'analisi economica", {
+  dati <- dati_senza_letture()
+  senza <- forniture_senza_letture(dati$unita, dati$anagrafica)
+  economia <- analisi_economica(dati$unita, dati$anagrafica)
+  riferimento <- economia[economia$scenario == scenario_riferimento(economia), ]
+  popolazione <- forniture_dell_economia(dati$anagrafica)
+  # stessa popolazione e stesse forniture senza letture: i due numeri coincidono
+  expect_setequal(riferimento$id_fornitura, popolazione$id_fornitura)
+  expect_setequal(
+    senza$id_fornitura[senza$id_fornitura %in% popolazione$id_fornitura],
+    riferimento$id_fornitura[riferimento$senza_letture]
+  )
+  expect_identical(
+    sum(senza$id_fornitura %in% popolazione$id_fornitura),
+    sum(riferimento$senza_letture)
+  )
+  # la sezione ha in piu' le forniture che l'economia non analizza (il condominio)
+  expect_true("F_condominio" %in% senza$id_fornitura)
+  expect_false("F_condominio" %in% riferimento$id_fornitura)
+  expect_gt(nrow(senza), sum(riferimento$senza_letture))
+  # i contenitori gratuiti sono fuori da entrambe
+  expect_false("F_gratuita" %in% c(senza$id_fornitura, riferimento$id_fornitura))
 })
 
 test_that("l'elenco delle forniture senza letture ha i dati per capire perche' sono senza letture", {
@@ -325,7 +371,8 @@ test_that("l'elenco delle forniture senza letture ha i dati per capire perche' s
   expect_true(all(c(
     "id_fornitura", "id_utenza", "gruppo", "bidoni", "stato_fornitura", "giorni_attivi",
     "letture_bidoni", "letture_non_associate",
-    "prima_lettura_non_associata", "letture_altra_fornitura"
+    "prima_lettura_non_associata", "letture_altra_fornitura",
+    "letture_altri_servizi", "letture_contenitori_gratuiti"
   ) %in% names(elenco)))
   # niente conferimenti massimi e niente esclusioni
   expect_false(any(c("conferimenti_massimi", "contata_nel_report", "motivo_esclusione") %in% names(elenco)))
@@ -364,6 +411,14 @@ test_that("l'elenco delle forniture senza letture ha i dati per capire perche' s
 
   # una fornitura senza massimo annuo c'e' lo stesso
   expect_identical(riga("F_senza_massimo")$letture_bidoni, 0L)
+
+  # le letture associate che non sono conferimenti del secco a pagamento
+  expect_identical(riga("F_mista")$letture_contenitori_gratuiti, 1L)
+  expect_identical(riga("F_mista")$letture_altri_servizi, 0L)
+  expect_identical(riga("F_altro_servizio")$letture_altri_servizi, 1L)
+  expect_identical(riga("F_altro_servizio")$letture_contenitori_gratuiti, 0L)
+  expect_identical(mai$letture_altri_servizi, 0L)
+  expect_identical(mai$letture_contenitori_gratuiti, 0L)
 
   # file vecchi senza lo stato della fornitura: la colonna resta vuota
   vecchi <- dplyr::select(dati$contenitori, -"stato_fornitura")

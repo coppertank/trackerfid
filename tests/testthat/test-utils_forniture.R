@@ -174,7 +174,6 @@ test_that("i conteggi di forniture e contenitori sommano le domestiche e le altr
   expect_identical(forniture[["Domestiche (totale)"]], 5L)
   expect_identical(forniture[["Tutte le forniture"]], 7L)
   expect_identical(forniture[["Tutte le forniture"]], sum(forniture[gruppi_forniture()]))
-  expect_equal(conta_non_domestiche(anagrafica_prova())$categoria, "44")
 })
 
 test_that("l'anagrafica si legge dai file estratti, con la categoria del contenitore", {

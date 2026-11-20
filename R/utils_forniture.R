@@ -779,16 +779,3 @@ conta_forniture <- function(anagrafica) {
     )
   )
 }
-
-#' Forniture non domestiche per categoria
-#'
-#' Contesto: gli indicatori `F_ND[c]`: quante non domestiche ci sono per categoria.
-#' Risultato: per categoria, il numero di forniture non domestiche.
-#' @param anagrafica Tabella di `anagrafica_forniture()`.
-#' @noRd
-conta_non_domestiche <- function(anagrafica) {
-  anagrafica |>
-    dplyr::filter(.data$tipo == "non domestica") |>
-    dplyr::count(categoria = dplyr::coalesce(.data$categoria, "(senza)"), name = "forniture") |>
-    dplyr::arrange(dplyr::desc(.data$forniture))
-}
