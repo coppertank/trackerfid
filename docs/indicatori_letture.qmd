@@ -95,8 +95,11 @@ knitr:
 #                       c(100, 500), o un testo "100, 500"
 #   cartella_csv        se indicata, vi scrive i CSV dell'economia per fornitura e degli indicatori per giro
 #   cartella_elenchi    dove salvare gli elenchi CSV (predefinito data-raw/output;
-#                       vuoto: non si salva): le forniture senza letture e, per ogni
-#                       scenario, le forniture con la premialità dovuta. Il nome dei
+#                       vuoto: non si salva): le forniture senza letture, per ogni
+#                       scenario le forniture con la premialità dovuta e i bidoni per
+#                       tipo di chip e comune con l'elenco dei bidoni con UHF non
+#                       letti dalle antenne (serve dv_cnt_tag_contenitori con
+#                       id_tipo_supporto_chip in cartella_origine). Il nome dei
 #                       file porta il periodo, così gli elenchi di periodi diversi
 #                       restano uno accanto all'altro
 
@@ -328,6 +331,15 @@ if (!is.null(anagrafica_economia)) {
 }
 riepilogo_dei_sacchetti <- if (!is.null(anagrafica_economia)) {
   riepilogo_sacchetti(unita, anagrafica_economia)
+}
+# Tipo di chip e copertura (tutti i servizi dell'associazione dei contenitori): serve il
+# file dei tag con `id_tipo_supporto_chip`; con i giri indicati non si calcola.
+tag_presente <- anagrafica_presente && file.exists(file$tag_contenitori)
+tag_contenitori <- if (tag_presente) importa_tag_contenitori(file$tag_contenitori)
+tipo_nei_tag <- tag_presente && any(!is.na(tag_contenitori$id_tipo_supporto_chip))
+chip_possibile <- tipo_nei_tag && !con_giri
+bidoni_chip <- if (chip_possibile) {
+  bidoni_letti(bidoni_con_chip(contenitori_associazione, tag_contenitori, dal, al), unita)
 }
 economia_possibile <- !is.null(anagrafica)
 # L'analisi economica fotografa le letture che ci sono: un sistema senza conferimenti
@@ -732,6 +744,401 @@ if (!vuoto(params$cartella_csv)) {
   )
 }
 ```
+
+# Tipo di chip e copertura dei bidoni
+
+Le antenne dei mezzi leggono solo i chip UHF; le saponette leggono anche gli LF. Questa sezione guarda **tutti i bidoni dell'azienda**, di ogni servizio (tabella `dv_cnt_associazione_contenitori`): quelli attivi almeno un giorno tra «dal» e «al», anche solo in parte, perché un bidone chiuso prima del periodo non poteva essere letto. Il tipo di chip viene dai tag (`id_tipo_supporto_chip`); un bidone che non è nei tag e ha l'associazione attivata dal 2016 in poi è `POSSIBILE UHF`, uno attivato nel 2015 o prima non ha tipo. Il parametro `componenti` non si applica: la sezione guarda i bidoni, non le forniture. Le categorie sono quelle del report sui giri di controllo: **solo LF** (le antenne non lo leggono), **con UHF**, **possibile UHF** e **tipo non determinabile** (`SCONOSCIUTO` o senza tipo).
+
+```{r}
+#| label: chip-assenti
+#| results: asis
+if (!chip_possibile) {
+  motivo <- if (con_giri) {
+    "Con i giri indicati questa sezione non si calcola: non si sa quali bidoni dovevano essere letti da quei mezzi."
+  } else if (!anagrafica_presente) {
+    "Mancano i file dei contenitori, dei componenti o delle manovre nella cartella indicata da `cartella_origine`."
+  } else if (!tag_presente) {
+    "Manca il file dei tag dei contenitori (`dv_cnt_tag_contenitori.csv`) nella cartella indicata da `cartella_origine`."
+  } else {
+    "Il file dei tag dei contenitori non ha il campo `id_tipo_supporto_chip`, o è vuoto: si riestrae la tabella `dv_cnt_tag_contenitori`."
+  }
+  cat("\n::: {.callout-note}\n", motivo, "\n:::\n", sep = "")
+}
+```
+
+## Quanti chip ci sono, per tipo, servizio e comune
+
+```{r}
+#| label: chip-sintesi
+#| eval: !expr chip_possibile
+#| results: asis
+categorie <- categorie_chip()
+per_categoria <- dplyr::count(bidoni_chip, .data$categoria, .drop = FALSE)
+n_categoria <- stats::setNames(per_categoria$n, as.character(per_categoria$categoria))
+n_bidoni <- nrow(bidoni_chip)
+cat(
+  "\nI bidoni attivi nel periodo sono **", intero(n_bidoni), "**: ",
+  intero(n_categoria[["Chip solo LF"]]), " (", quota(n_categoria[["Chip solo LF"]] / n_bidoni), ") hanno un chip solo LF, che le antenne non leggono; ",
+  intero(n_categoria[["Chip con UHF"]]), " (", quota(n_categoria[["Chip con UHF"]] / n_bidoni), ") un chip con UHF; ",
+  intero(n_categoria[["Possibile UHF"]]), " (", quota(n_categoria[["Possibile UHF"]] / n_bidoni), ") un possibile UHF; ",
+  intero(n_categoria[["Tipo non determinabile"]]), " (", quota(n_categoria[["Tipo non determinabile"]] / n_bidoni), ") un tipo non determinabile. ",
+  "Per ogni tipo di supporto e servizio:\n\n",
+  sep = ""
+)
+# tipo di supporto per servizio, SECCO per primo
+servizi_chip <- unique(bidoni_chip$servizio)
+servizi_chip <- c(intersect("SECCO", servizi_chip), sort(setdiff(servizi_chip, "SECCO")))
+tipo_servizio <- bidoni_chip |>
+  dplyr::count(.data$categoria, .data$tipo_chip, .data$servizio) |>
+  tidyr::pivot_wider(names_from = "servizio", values_from = "n", values_fill = 0L) |>
+  dplyr::arrange(.data$categoria, .data$tipo_chip)
+tipo_servizio$Totale <- rowSums(tipo_servizio[servizi_chip])
+totale_servizi <- c(colSums(tipo_servizio[c(servizi_chip, "Totale")]))
+tabella_tipo_servizio <- dplyr::bind_rows(
+  dplyr::tibble(
+    Categoria = as.character(tipo_servizio$categoria),
+    `Tipo di supporto` = as.character(tipo_servizio$tipo_chip),
+    !!!stats::setNames(lapply(c(servizi_chip, "Totale"), function(x) intero(tipo_servizio[[x]])), c(servizi_chip, "Totale"))
+  ),
+  dplyr::tibble(
+    Categoria = "Totale",
+    `Tipo di supporto` = "",
+    !!!stats::setNames(lapply(c(servizi_chip, "Totale"), function(x) intero(totale_servizi[[x]])), c(servizi_chip, "Totale"))
+  )
+)
+print(knitr::kable(tabella_tipo_servizio, align = paste0("ll", strrep("r", length(servizi_chip) + 1))))
+cat("\n")
+```
+
+### Per comune
+
+Quanti chip le antenne non leggeranno quando i mezzi con l'antenna passeranno da ogni comune: la colonna **solo LF**. I bidoni con possibile UHF o tipo non determinabile sono incerti. I comuni sono quelli della fornitura del bidone.
+
+```{r}
+#| label: chip-comuni
+#| eval: !expr chip_possibile
+per_comune_chip <- bidoni_chip |>
+  dplyr::count(.data$cantiere, .data$comune, .data$categoria, .drop = FALSE) |>
+  tidyr::pivot_wider(names_from = "categoria", values_from = "n", values_fill = 0L)
+for (nome in categorie) {
+  if (!nome %in% names(per_comune_chip)) per_comune_chip[[nome]] <- 0L
+}
+per_comune_chip <- dplyr::arrange(per_comune_chip, .data$cantiere, .data$comune)
+per_comune_chip$totale <- rowSums(per_comune_chip[categorie])
+totale_chip <- colSums(per_comune_chip[c(categorie, "totale")])
+knitr::kable(
+  dplyr::bind_rows(
+    dplyr::tibble(
+      Cantiere = per_comune_chip$cantiere,
+      Comune = per_comune_chip$comune,
+      Bidoni = intero(per_comune_chip$totale),
+      `Solo LF` = intero(per_comune_chip[["Chip solo LF"]]),
+      `Quota solo LF` = quota(rapporto(per_comune_chip[["Chip solo LF"]], per_comune_chip$totale), 1),
+      `Con UHF` = intero(per_comune_chip[["Chip con UHF"]]),
+      `Possibile UHF` = intero(per_comune_chip[["Possibile UHF"]]),
+      `Non determinabile` = intero(per_comune_chip[["Tipo non determinabile"]])
+    ),
+    dplyr::tibble(
+      Cantiere = "Totale",
+      Comune = "",
+      Bidoni = intero(totale_chip[["totale"]]),
+      `Solo LF` = intero(totale_chip[["Chip solo LF"]]),
+      `Quota solo LF` = quota(rapporto(totale_chip[["Chip solo LF"]], totale_chip[["totale"]]), 1),
+      `Con UHF` = intero(totale_chip[["Chip con UHF"]]),
+      `Possibile UHF` = intero(totale_chip[["Possibile UHF"]]),
+      `Non determinabile` = intero(totale_chip[["Tipo non determinabile"]])
+    )
+  ),
+  align = "llrrrrrr"
+)
+```
+
+### Per comune e servizio
+
+La tabella completa: i bidoni di ogni comune divisi per servizio e per categoria di chip. Con il tipo di supporto al posto della categoria è nel CSV salvato in `cartella_elenchi` (vedi sotto).
+
+```{r}
+#| label: chip-comune-servizio
+#| eval: !expr chip_possibile
+per_comune_servizio <- bidoni_chip |>
+  dplyr::count(.data$cantiere, .data$comune, .data$servizio, .data$categoria, .drop = FALSE) |>
+  tidyr::pivot_wider(names_from = "categoria", values_from = "n", values_fill = 0L)
+for (nome in categorie) {
+  if (!nome %in% names(per_comune_servizio)) per_comune_servizio[[nome]] <- 0L
+}
+per_comune_servizio <- per_comune_servizio |>
+  dplyr::mutate(
+    totale = rowSums(dplyr::pick(dplyr::all_of(categorie))),
+    ordine_servizio = match(.data$servizio, servizi_chip)
+  ) |>
+  dplyr::arrange(.data$cantiere, .data$comune, .data$ordine_servizio)
+knitr::kable(
+  dplyr::tibble(
+    Cantiere = per_comune_servizio$cantiere,
+    Comune = per_comune_servizio$comune,
+    Servizio = per_comune_servizio$servizio,
+    Bidoni = intero(per_comune_servizio$totale),
+    `Solo LF` = intero(per_comune_servizio[["Chip solo LF"]]),
+    `Con UHF` = intero(per_comune_servizio[["Chip con UHF"]]),
+    `Possibile UHF` = intero(per_comune_servizio[["Possibile UHF"]]),
+    `Non determinabile` = intero(per_comune_servizio[["Tipo non determinabile"]])
+  ),
+  align = "lllrrrrr"
+)
+```
+
+## La copertura nel periodo
+
+Un bidone è **letto** se il suo codice compare in una lettura del periodo (associata a una fornitura o no: se il chip si legge, il bidone c'è). Le coperture sono tre, come gli scenari dell'analisi economica: **saponette e antenne insieme**, **solo saponette** e **solo antenne**. Un bidone **mai letto** in uno scenario non ha nessuna lettura di quel sistema nel periodo.
+
+```{r}
+#| label: chip-copertura-testo
+#| eval: !expr chip_possibile
+#| results: asis
+cop_totale <- copertura_bidoni(dplyr::mutate(bidoni_chip, tutti = "Totale"), "tutti")
+cat(
+  "\nSu **", intero(cop_totale$bidoni), "** bidoni: **", intero(cop_totale$non_letti), "** (", quota(cop_totale$non_letti / cop_totale$bidoni),
+  ") non sono mai stati letti da nessun sistema, **", intero(cop_totale$non_letti_saponette), "** (", quota(cop_totale$non_letti_saponette / cop_totale$bidoni),
+  ") mai dalle saponette e **", intero(cop_totale$non_letti_antenne), "** (", quota(cop_totale$non_letti_antenne / cop_totale$bidoni),
+  ") mai dalle antenne.\n",
+  sep = ""
+)
+```
+
+### Per tipo di chip
+
+```{r}
+#| label: chip-copertura-tipo
+#| eval: !expr chip_possibile
+# Le tabelle di copertura hanno la stessa forma: bidoni, e per ogni scenario i mai letti.
+tabella_copertura <- function(cop, etichette) {
+  tab <- dplyr::tibble(
+    Bidoni = intero(cop$bidoni),
+    `Mai letti (saponette e antenne)` = paste0(intero(cop$non_letti), " (", quota(rapporto(cop$non_letti, cop$bidoni), 0), ")"),
+    `Mai letti dalle saponette` = paste0(intero(cop$non_letti_saponette), " (", quota(rapporto(cop$non_letti_saponette, cop$bidoni), 0), ")"),
+    `Mai letti dalle antenne` = paste0(intero(cop$non_letti_antenne), " (", quota(rapporto(cop$non_letti_antenne, cop$bidoni), 0), ")")
+  )
+  dplyr::bind_cols(etichette, tab)
+}
+cop_tipo <- copertura_bidoni(bidoni_chip, c("categoria", "tipo_chip"))
+knitr::kable(
+  tabella_copertura(
+    dplyr::bind_rows(cop_tipo, dplyr::mutate(cop_totale, tutti = NULL)),
+    dplyr::tibble(
+      Categoria = c(as.character(cop_tipo$categoria), "Totale"),
+      `Tipo di supporto` = c(as.character(cop_tipo$tipo_chip), "")
+    )
+  ),
+  align = "llrrrr"
+)
+```
+
+```{r}
+#| label: chip-copertura-grafico
+#| eval: !expr chip_possibile
+#| fig-height: 3.6
+stati <- stati_di_lettura_bidone()
+colori_stati <- stats::setNames(c("#1baf7a", "#2a78d6", "#eb6834", "#c5cbc7"), stati)
+per_stato <- bidoni_chip |>
+  dplyr::count(.data$categoria, .data$lettura, .drop = FALSE) |>
+  dplyr::mutate(
+    frazione = rapporto(.data$n, sum(.data$n)),
+    .by = "categoria"
+  )
+ggplot(per_stato, aes(x = .data$n, y = .data$categoria, fill = .data$lettura)) +
+  geom_col(width = 0.7, position = position_fill(reverse = TRUE)) +
+  geom_text(
+    aes(label = ifelse(.data$frazione >= 0.07, quota(.data$frazione, 0), "")),
+    position = position_fill(vjust = 0.5, reverse = TRUE),
+    size = 3.4,
+    colour = colori$primario
+  ) +
+  scale_fill_manual(values = colori_stati, drop = FALSE) +
+  scale_x_continuous(labels = scales::label_percent(), expand = expansion(mult = c(0, 0.02))) +
+  scale_y_discrete(limits = rev) +
+  labs(
+    title = "Come sono stati letti i bidoni, per tipo di chip",
+    subtitle = a_capo("Quota dei bidoni attivi letti da entrambi i sistemi, solo dalle saponette, solo dalle antenne o da nessuno"),
+    x = NULL,
+    y = NULL
+  ) +
+  guides(fill = guide_legend(nrow = 1)) +
+  tema_grafico +
+  theme(legend.position = "bottom")
+```
+
+### Per servizio
+
+```{r}
+#| label: chip-copertura-servizio
+#| eval: !expr chip_possibile
+cop_servizio <- copertura_bidoni(bidoni_chip, "servizio")
+cop_servizio <- cop_servizio[order(match(cop_servizio$servizio, servizi_chip)), ]
+knitr::kable(
+  tabella_copertura(
+    dplyr::bind_rows(cop_servizio, dplyr::mutate(cop_totale, tutti = NULL)),
+    dplyr::tibble(Servizio = c(cop_servizio$servizio, "Totale"))
+  ),
+  align = "lrrrr"
+)
+```
+
+### Per comune
+
+```{r}
+#| label: chip-copertura-comuni
+#| eval: !expr chip_possibile
+cop_comune <- copertura_bidoni(bidoni_chip, c("cantiere", "comune"))
+knitr::kable(
+  tabella_copertura(
+    dplyr::bind_rows(cop_comune, dplyr::mutate(cop_totale, tutti = NULL)),
+    dplyr::tibble(
+      Cantiere = c(cop_comune$cantiere, "Totale"),
+      Comune = c(cop_comune$comune, "")
+    )
+  ),
+  align = "llrrrr"
+)
+```
+
+## I bidoni con chip UHF che le antenne non hanno letto
+
+Un bidone con chip UHF (o possibile UHF) che le antenne non hanno letto nel periodo può avere il chip manomesso o danneggiato. **Prudenza**: le antenne sono su una parte dei mezzi e dal 5 agosto 2026; in un comune dove non è passato nessun mezzo con l'antenna i bidoni non sono letti senza che il chip sia guasto. Il segnale più forte è un bidone **letto dalle saponette** (c'è, e il chip si legge) e non dalle antenne; un bidone **mai letto** da nessuno può non essere stato svuotato.
+
+```{r}
+#| label: chip-uhf-comuni
+#| eval: !expr chip_possibile
+#| results: asis
+uhf <- bidoni_chip[bidoni_chip$categoria %in% c("Chip con UHF", "Possibile UHF"), ]
+if (nrow(uhf) == 0) {
+  cat("Nessun bidone con chip UHF o possibile UHF.\n")
+} else {
+  uhf_comune <- uhf |>
+    dplyr::summarise(
+      con_uhf = dplyr::n(),
+      lette_antenne = sum(.data$letto_antenne),
+      non_lette_antenne = sum(!.data$letto_antenne),
+      non_lette_ma_saponette = sum(!.data$letto_antenne & .data$letto_saponette),
+      mai_letti = sum(.data$lettura == "Nessuno"),
+      .by = c("cantiere", "comune")
+    ) |>
+    dplyr::arrange(dplyr::desc(.data$non_lette_ma_saponette), dplyr::desc(.data$non_lette_antenne), .data$cantiere, .data$comune)
+  uhf_totale <- uhf_comune |>
+    dplyr::summarise(dplyr::across(c("con_uhf", "lette_antenne", "non_lette_antenne", "non_lette_ma_saponette", "mai_letti"), sum))
+  cat(
+    "\nI bidoni con UHF o possibile UHF sono **", intero(uhf_totale$con_uhf), "**: le antenne ne hanno letti ", intero(uhf_totale$lette_antenne),
+    " (", quota(uhf_totale$lette_antenne / uhf_totale$con_uhf), ") e non ne hanno letti **", intero(uhf_totale$non_lette_antenne),
+    "**, di cui **", intero(uhf_totale$non_lette_ma_saponette), "** letti dalle saponette e **", intero(uhf_totale$mai_letti),
+    "** mai letti. I comuni sono in ordine di bidoni letti dalle saponette e non dalle antenne.\n\n",
+    sep = ""
+  )
+  print(knitr::kable(
+    dplyr::bind_rows(
+      dplyr::tibble(
+        Cantiere = uhf_comune$cantiere,
+        Comune = uhf_comune$comune,
+        `Bidoni con UHF` = intero(uhf_comune$con_uhf),
+        `Letti dalle antenne` = intero(uhf_comune$lette_antenne),
+        `Quota letta dalle antenne` = quota(rapporto(uhf_comune$lette_antenne, uhf_comune$con_uhf), 0),
+        `Non letti dalle antenne` = intero(uhf_comune$non_lette_antenne),
+        `di cui letti dalle saponette` = intero(uhf_comune$non_lette_ma_saponette),
+        `di cui mai letti` = intero(uhf_comune$mai_letti)
+      ),
+      dplyr::tibble(
+        Cantiere = "Totale",
+        Comune = "",
+        `Bidoni con UHF` = intero(uhf_totale$con_uhf),
+        `Letti dalle antenne` = intero(uhf_totale$lette_antenne),
+        `Quota letta dalle antenne` = quota(rapporto(uhf_totale$lette_antenne, uhf_totale$con_uhf), 0),
+        `Non letti dalle antenne` = intero(uhf_totale$non_lette_antenne),
+        `di cui letti dalle saponette` = intero(uhf_totale$non_lette_ma_saponette),
+        `di cui mai letti` = intero(uhf_totale$mai_letti)
+      )
+    ),
+    align = "llrrrrrr"
+  ))
+}
+```
+
+```{r}
+#| label: chip-uhf-grafico
+#| eval: !expr chip_possibile
+#| fig-height: 6
+if (nrow(uhf) > 0 && uhf_totale$non_lette_antenne > 0) {
+  primi <- utils::head(uhf_comune[uhf_comune$non_lette_antenne > 0, ], 20)
+  grafico_uhf <- dplyr::bind_rows(
+    dplyr::transmute(primi, .data$comune, esito = "Letti dalle saponette", n = .data$non_lette_ma_saponette),
+    dplyr::transmute(primi, .data$comune, esito = "Mai letti", n = .data$mai_letti)
+  ) |>
+    dplyr::filter(.data$n > 0) |>
+    dplyr::mutate(
+      esito = factor(.data$esito, c("Letti dalle saponette", "Mai letti")),
+      comune = factor(.data$comune, rev(primi$comune))
+    )
+  ggplot(grafico_uhf, aes(x = .data$n, y = .data$comune, fill = .data$esito)) +
+    geom_col(width = 0.7, position = position_stack(reverse = TRUE)) +
+    geom_text(
+      aes(label = intero(.data$n)),
+      position = position_stack(vjust = 0.5, reverse = TRUE),
+      size = 3.4,
+      colour = colori$primario
+    ) +
+    scale_fill_manual(values = c("Letti dalle saponette" = "#2a78d6", "Mai letti" = "#c5cbc7")) +
+    scale_x_continuous(labels = intero, expand = expansion(mult = c(0, 0.05))) +
+    labs(
+      title = "Bidoni con UHF non letti dalle antenne, per comune",
+      subtitle = a_capo("I venti comuni con più bidoni non letti dalle antenne: in blu i letti dalle saponette, in grigio i mai letti"),
+      x = "Bidoni",
+      y = NULL
+    ) +
+    tema_grafico +
+    theme(legend.position = "bottom", panel.grid.major.y = element_blank())
+}
+```
+
+```{r}
+#| label: chip-elenchi
+#| eval: !expr "chip_possibile && !vuoto(params$cartella_elenchi)"
+#| results: asis
+# Due CSV: i bidoni per comune, servizio e tipo di supporto con la copertura dei tre
+# scenari, e l'elenco dei bidoni con UHF non letti dalle antenne. Il nome porta il periodo.
+dir.create(percorso_progetto(params$cartella_elenchi), recursive = TRUE, showWarnings = FALSE)
+suffisso_chip <- paste0("_dal-", format(dal), "_al-", format(al), ".csv")
+scrivi_chip <- function(x, prefisso) {
+  nome_file <- paste0(prefisso, suffisso_chip)
+  utils::write.table(
+    x,
+    file.path(percorso_progetto(params$cartella_elenchi), nome_file),
+    sep = ";", dec = ",", row.names = FALSE, na = ""
+  )
+  nome_file
+}
+dettaglio_chip <- copertura_bidoni(
+  dplyr::mutate(bidoni_chip, categoria = as.character(.data$categoria), tipo_chip = as.character(.data$tipo_chip)),
+  c("cantiere", "comune", "servizio", "categoria", "tipo_chip")
+)
+file_dettaglio <- scrivi_chip(dettaglio_chip, "bidoni_chip_comune_servizio")
+elenco_uhf_antenne <- bidoni_uhf_non_letti_dalle_antenne(bidoni_chip)
+elenco_uhf_antenne$categoria <- as.character(elenco_uhf_antenne$categoria)
+elenco_uhf_antenne$tipo_chip <- as.character(elenco_uhf_antenne$tipo_chip)
+elenco_uhf_antenne$lettura <- as.character(elenco_uhf_antenne$lettura)
+file_uhf <- scrivi_chip(elenco_uhf_antenne, "bidoni_uhf_non_letti_dalle_antenne")
+cat(
+  "\n**Elenchi salvati** in `", params$cartella_elenchi, "`: `", file_dettaglio, "` (", intero(nrow(dettaglio_chip)),
+  " righe: per cantiere, comune, servizio, categoria e tipo di chip i bidoni e, per ogni scenario, quanti sono stati letti e quanti no) e `",
+  file_uhf, "` (", intero(nrow(elenco_uhf_antenne)),
+  " bidoni con UHF o possibile UHF non letti dalle antenne: codice, comune, servizio, fornitura, tipo di chip e se li hanno letti le saponette).\n",
+  sep = ""
+)
+```
+
+## Come leggere questi numeri
+
+- **Solo LF.** Sono i bidoni che le antenne non leggeranno mai: nei comuni con una quota alta, la copertura delle antenne sarà bassa anche con i mezzi che passano. Le saponette li leggono.
+- **Possibile UHF e tipo non determinabile.** Il chip non è noto: «possibile UHF» è una congettura (non è nei tag e l'associazione è del 2016 o dopo). Il tipo noto si migliora con la tabella dei tag.
+- **Mai letti.** Un bidone mai letto nel periodo può non essere stato svuotato, o non essere stato raggiunto dal mezzo, oltre ad avere un chip guasto. Le saponette e le antenne vedono il bidone solo se passa un operatore o un mezzo con l'antenna.
+- **UHF letti dalle saponette e non dalle antenne.** È il caso più utile: il bidone c'è e il chip si legge con la saponetta, ma l'antenna del mezzo non lo ha rilevato. Va confrontato con i mezzi con l'antenna passati nel comune (vedi il report sui giri di controllo).
+- **Periodo e base.** I bidoni sono quelli attivi almeno un giorno tra «dal» e «al»; le letture sono quelle del periodo. Con un periodo corto o con le antenne in funzione da poco molti bidoni risultano non letti dalle antenne senza che ci sia un problema.
 
 # Propensione al conferimento
 
