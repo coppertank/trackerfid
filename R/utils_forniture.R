@@ -19,6 +19,39 @@ giorni_dell_anno <- function(dal, al) {
   if (stesso_anno && lubridate::leap_year(dal)) 366 else 365
 }
 
+#' Parte dell'anno in cui una fornitura è attiva
+#'
+#' Contesto: regola del proprietario del 25/11/2026: limite dell'eccedenza,
+#' minimo e massimo della premialità si ridimensionano per il periodo di attività
+#' della fornitura nell'anno (una fornitura attivata o cessata durante l'anno non
+#' ha diritto alle soglie di un anno intero). La parte dell'anno serve anche a
+#' riportare i litri alla fine dell'anno (`riporta_ad_anno()`).
+#' Funzionamento: i giorni dall'attivazione (la prima del contenitore, non tagliata
+#' sul periodo) alla cessazione, tagliati sull'anno di `al`, diviso i giorni di
+#' quell'anno; una cessazione dopo `al` conta (è nota dall'estrazione) e una
+#' cessazione aperta (`2099-12-31`) arriva a fine anno. Il proprietario analizza un
+#' anno alla volta (25/11/2026), quindi un periodo su più anni non si pone; se
+#' capita, non c'è un anno di riferimento e vale la parte del periodo in cui la
+#' fornitura era attiva (`quota_attivita`), un ripiego senza altro significato.
+#' Risultato: un vettore da 0 a 1.
+#' @param attivazione,cessazione Prima attivazione e ultima cessazione dei
+#'   contenitori della fornitura (date).
+#' @param dal,al Primo e ultimo giorno del periodo.
+#' @param quota_attivita Parte del periodo in cui la fornitura era attiva.
+#' @noRd
+quota_attivita_nell_anno <- function(attivazione, cessazione, dal, al, quota_attivita) {
+  dal <- as.Date(dal)
+  al <- as.Date(al)
+  if (lubridate::year(dal) != lubridate::year(al)) {
+    return(quota_attivita)
+  }
+  anno <- lubridate::year(al)
+  primo <- as.Date(sprintf("%d-01-01", anno))
+  ultimo <- as.Date(sprintf("%d-12-31", anno))
+  giorni <- as.numeric(pmin(cessazione, ultimo) - pmax(attivazione, primo)) + 1
+  pmin(pmax(giorni, 0), as.numeric(ultimo - primo) + 1) / (as.numeric(ultimo - primo) + 1)
+}
+
 #' Tipo di una fornitura dalla categoria: domestica, condominio o non domestica
 #'
 #' Contesto: le tre famiglie hanno regole di fatturazione diverse. La
@@ -236,8 +269,11 @@ componenti_medi_pesati <- function(attivita, componenti) {
 #' `contenitori_gratuiti`, `contenitori_non_gratuiti`, `volume_contenitore_non_gratuito`
 #' (il volume più frequente tra i contenitori non gratuiti, vuoto se sono tutti
 #' gratuiti), `giorni_attivi`, `fattore`, `quota_attivita` (giorni di attività / giorni
-#' del periodo: la parte del periodo in cui la fornitura era attiva, per la
-#' proporzione del premio), `componenti_medi`, `giorni_con_componenti`,
+#' del periodo: la parte del periodo in cui la fornitura era attiva), `quota_anno`
+#' (la parte dell'anno in cui è attiva, `quota_attivita_nell_anno()`: serve a
+#' ridimensionare limite dell'eccedenza, minimo e massimo della premialità e ai
+#' litri attesi a fine anno),
+#' `componenti_medi`, `giorni_con_componenti`,
 #' `potenziamento` e `gruppo`.
 #' @param contenitori Tabella di `importa_contenitori(categoria = TRUE)`.
 #' @param componenti Tabella di `importa_componenti()`.
@@ -333,8 +369,16 @@ anagrafica_forniture <- function(contenitori, componenti, manovre, dal, al, serv
       giorni_attivi = as.numeric(.data$fine - .data$inizio) + 1,
       # Il periodo, non l'attività della fornitura: vedi la documentazione.
       fattore = (as.numeric(al - dal) + 1) / giorni_dell_anno(dal, al),
-      # La parte del periodo in cui la fornitura era attiva: serve al premio.
-      quota_attivita = pmin(.data$giorni_attivi / (as.numeric(al - dal) + 1), 1)
+      # La parte del periodo in cui la fornitura era attiva: serve ai litri attesi.
+      quota_attivita = pmin(.data$giorni_attivi / (as.numeric(al - dal) + 1), 1),
+      # La parte dell'anno in cui lo è: serve a minimo e massimo della premialità.
+      quota_anno = quota_attivita_nell_anno(
+        as.Date(attivazione$minimo, origin = "1970-01-01"),
+        as.Date(cessazione$massimo, origin = "1970-01-01"),
+        dal,
+        al,
+        .data$quota_attivita
+      )
     )
 
   attivita <- dplyr::select(per_fornitura, "id_fornitura", "inizio", "fine")
@@ -547,10 +591,13 @@ anagrafica_con_bidoni <- function(anagrafica, bidoni) {
 #'
 #' Funzionamento: dalle letture `PIA` di sacchetti di `unita` ricava le forniture
 #' che non sono già in `anagrafica`. Per ognuna costruisce un contenitore virtuale
-#' del secco non gratuito, attivo per tutto il periodo (quindi `quota_attivita` 1:
-#' scelta mia), senza il massimo di raccolte e senza utenza, con il volume della
+#' del secco non gratuito, attivo da sempre e per sempre (quindi `quota_attivita` e
+#' `quota_anno` 1: un sacchetto non ha data di attivazione e ogni lettura lo
+#' conta attivo per tutto l'anno, scelta del proprietario del 25/11/2026), senza il
+#' massimo di raccolte e senza utenza, con il volume della
 #' tariffa del carrellato (`volume_tariffa_sacchetto_litri()`, 120 litri, scelta del
-#' proprietario del 21/11/2026: premio ed eccedenza sono quelli di un carrellato; i litri
+#' proprietario del 21/11/2026: l'eccedenza è quella di un carrellato; il premio non
+#' dipende dal contenitore; i litri
 #' di ogni sacchetto letto restano 40), e
 #' passa i contenitori virtuali ad `anagrafica_forniture()`: categoria, componenti,
 #' potenziamento e gruppo vengono dalla tabella dei componenti e delle manovre, come
@@ -584,8 +631,8 @@ anagrafica_con_sacchetti <- function(anagrafica, unita, componenti, manovre, dal
     volume = volume_tariffa_sacchetto_litri(),
     numero_raccolte_annue = NA_real_,
     contenitore_gratuito = "N",
-    data_attivazione_contenitore = as.Date(dal),
-    data_cessazione_contenitore = as.Date(al),
+    data_attivazione_contenitore = as.Date("1900-01-01"),
+    data_cessazione_contenitore = as.Date("2099-12-31"),
     id_fornitura = nuove_forniture,
     id_utenza = NA_character_,
     categoria_contenitore = NA_character_

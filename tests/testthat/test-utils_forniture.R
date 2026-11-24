@@ -435,6 +435,50 @@ test_that("il fattore dipende solo dal periodo, non da quando la fornitura e' st
   expect_equal(unique(due_anni$fattore), 731 / 365)
 })
 
+test_that("la parte dell'anno di attivita' segue attivazione e cessazione dei contenitori, non il periodo", {
+  contenitori <- dplyr::bind_rows(
+    contenitori_forniture_prova(),
+    # attivata il 1 aprile 2025 e mai cessata
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "N1", id_fornitura = "FA", data_attivazione_contenitore = as.Date("2025-04-01")),
+    # attiva da sempre, cessata il 30 settembre 2025 (dopo la fine di un semestre)
+    dplyr::mutate(contenitori_forniture_prova()[1, ], codice_transponder = "N2", id_fornitura = "FC", data_cessazione_contenitore = as.Date("2025-09-30"))
+  )
+  quota <- function(dal, al, fornitura, colonna = "quota_anno") {
+    anagrafica <- anagrafica_forniture(contenitori, componenti_forniture_prova(), manovre_forniture_prova(), dal, al)
+    anagrafica[[colonna]][anagrafica$id_fornitura == fornitura]
+  }
+  # anno intero: attivazione e cessazione coincidono con l'attivita' nel periodo
+  expect_equal(quota("2025-01-01", "2025-12-31", "F1"), 1)
+  expect_equal(quota("2025-01-01", "2025-12-31", "FA"), 275 / 365)
+  expect_equal(quota("2025-01-01", "2025-12-31", "FC"), 273 / 365)
+  expect_equal(quota("2025-01-01", "2025-12-31", "F2"), 181 / 365)
+  # un semestre: la parte dell'anno non cambia (attivita' futura e cessazioni note), quella del periodo si'
+  expect_equal(quota("2025-01-01", "2025-06-30", "FA"), 275 / 365)
+  expect_equal(quota("2025-01-01", "2025-06-30", "FA", "quota_attivita"), 91 / 181)
+  expect_equal(quota("2025-01-01", "2025-06-30", "FC"), 273 / 365)
+  expect_equal(quota("2025-01-01", "2025-06-30", "FC", "quota_attivita"), 1)
+  expect_equal(quota("2025-01-01", "2025-06-30", "F2"), 181 / 365)
+  # un periodo che non comincia a gennaio: l'anno e' sempre quello di `al`
+  expect_equal(quota("2025-03-01", "2025-06-30", "FA"), 275 / 365)
+  # un anno bisestile ha 366 giorni
+  expect_equal(
+    quota_attivita_nell_anno(as.Date("2020-01-01"), as.Date("2099-12-31"), "2024-01-01", "2024-06-30", 1),
+    1
+  )
+  expect_equal(
+    quota_attivita_nell_anno(as.Date("2024-07-01"), as.Date("2099-12-31"), "2024-01-01", "2024-12-31", 0.5),
+    184 / 366
+  )
+  # un periodo su due anni non ha un anno di riferimento: vale la parte del periodo attiva
+  expect_equal(quota("2024-01-01", "2025-12-31", "FA"), 275 / 731)
+  expect_equal(quota("2024-01-01", "2025-12-31", "F1"), 1)
+  # una fornitura non ancora attiva nell'anno ha zero giorni
+  expect_equal(
+    quota_attivita_nell_anno(as.Date("2026-02-01"), as.Date("2099-12-31"), "2025-01-01", "2025-12-31", 0),
+    0
+  )
+})
+
 test_that("i contenitori gratuiti si contano a parte, e un codice nullo non e' un bidone", {
   contenitore <- function(codice, fornitura, gratuito, volume = 120) {
     dplyr::tibble(
@@ -818,6 +862,8 @@ test_that("le forniture con soli sacchetti entrano nell'anagrafica del secco, co
   expect_identical(volume_tariffa_sacchetto_litri(), 120)
   expect_identical(f10$giorni_attivi, 365)
   expect_equal(f10$quota_attivita, 1)
+  # la data di attivazione non si conosce: attiva tutto l'anno, anche con un periodo corto
+  expect_equal(f10$quota_anno, 1)
   expect_equal(f10$fattore, 1)
   expect_equal(f10$componenti_medi, 3)
   expect_identical(as.character(f10$gruppo), "3 componenti")
@@ -878,10 +924,11 @@ test_that("una fornitura con soli sacchetti ha il premio del carrellato, dall'an
   )
   economia <- analisi_economica(unita, completa)
   f10 <- economia[economia$scenario == scenario_riferimento(economia) & economia$id_fornitura == "F10", ]
-  # 80 litri (2 sacchetti da 40), tre componenti: minimo 480, massimo 720; 240 litri
-  # sotto il massimo: 5 euro piu' 2 * 5 = 15, con tutto il periodo di attivita'
+  # 80 litri (2 sacchetti da 40), tre componenti: minimo 480, massimo 720; si addebita
+  # il minimo, 240 litri sotto il massimo: 240 x 5/120 = 10 euro, attiva da sempre e per sempre
   expect_equal(f10$litri, 80)
   expect_identical(as.character(f10$classe), "Premialità")
-  expect_equal(f10$premio_eur, 15)
+  expect_equal(f10$premio_eur, 10)
   expect_equal(f10$quota_attivita, 1)
+  expect_equal(f10$quota_anno, 1)
 })

@@ -127,12 +127,12 @@ volume_sacchetto_litri <- function() 40
 
 #' Volume della tariffa applicata a una fornitura con soli sacchetti
 #'
-#' Contesto: premio ed eccedenza si calcolano al litro con la riga della tariffa del
-#' volume del contenitore della fornitura (`tariffa_al_litro()`): un sacchetto da 40
-#' litri avrebbe la riga del bidoncino (premio di un conferimento 1,67 euro, e un premio
-#' massimo di 11,69 euro per un componente), un carrellato da 120 litri quella da 5 euro
-#' (premio massimo 15 euro). Scelta del proprietario, 21/11/2026: ai sacchetti si applica
-#' la tariffa del carrellato.
+#' Contesto: l'eccedenza si calcola al litro con la riga della tariffa del volume del
+#' contenitore della fornitura (`tariffa_al_litro()`): un sacchetto da 40 litri avrebbe
+#' la riga del bidoncino (3,34 euro per conferimento eccedente), un carrellato da 120
+#' litri quella da 10 euro. Scelta del proprietario, 21/11/2026: ai sacchetti si applica
+#' la tariffa del carrellato. Il premio non dipende dal contenitore (regola del
+#' 25/11/2026, `premio_al_litro()`).
 #' Risultato: 120. I litri di ogni lettura restano `volume_sacchetto_litri()`.
 #' @noRd
 volume_tariffa_sacchetto_litri <- function() 120

@@ -6,12 +6,15 @@
 # - ogni fascia di componenti ha un volume annuo incluso nella tariffa; oltre si
 #   paga un'eccedenza sul volume eccedente;
 # - sotto il volume minimo addebitato non si riduce più niente;
-# - fino al volume massimo per la premialità c'è un premio, di 5 euro ogni 120 litri
-#   (per un carrellato) che si aggiungono quanto meno si conferisce;
+# - fino al volume massimo per la premialità c'è un premio: (massimo - litri) ×
+#   5/120 euro, dove i litri sono quelli conferiti o attesi a fine anno e non
+#   scendono sotto il minimo (regola del proprietario, 25/11/2026: con un
+#   componente il premio va da 0 euro a 480 litri a 10 euro a 240 litri o meno);
 # - casa vuota non ha né minimo né premio; il potenziamento del secco non ha
 #   premio e non paga eccedenza (litri infiniti: il beneficio è già pagato).
-# I litri conferiti nel periodo si riportano a un anno (litri / giorni del periodo
-# × giorni dell'anno) e si confrontano con le soglie annue (8/11/2026).
+# I litri conferiti nel periodo si riportano alla fine dell'anno e per chi è
+# attivo solo una parte dell'anno si ridimensionano tutte le soglie: minimo e
+# massimo della premialità e limite dell'eccedenza (25/11/2026).
 
 #' Tariffa annua del secco per fascia di componenti
 #'
@@ -36,10 +39,10 @@ tariffe_secco <- function() {
 #' Penalità per l'eccedenza e premi, per volume del contenitore
 #'
 #' Contesto: tabella aggiornata dell'azienda. Un «eccedente» è un conferimento
-#' oltre la soglia, e il premio è quello riconosciuto al volume massimo per la
-#' premialità: cresce di pari importo per ogni conferimento in meno.
-#' Risultato: un tibble con `volume` (litri), `contenitore`, `eccedenza` (euro per
-#' conferimento eccedente) e `premio` (euro per conferimento in meno).
+#' oltre la soglia. Il premio non dipende più dal contenitore (regola del
+#' proprietario, 25/11/2026): vedi `premio_al_litro()`.
+#' Risultato: un tibble con `volume` (litri), `contenitore` ed `eccedenza` (euro
+#' per conferimento eccedente).
 #' @noRd
 tariffe_contenitori <- function() {
   dplyr::tibble(
@@ -50,30 +53,40 @@ tariffe_contenitori <- function() {
       "bidoncino",
       "monoperatori stradali"
     ),
-    eccedenza = c(10, 5, 3.34, 2.5),
-    premio = c(5, 2.5, 1.67, 1.25)
+    eccedenza = c(10, 5, 3.34, 2.5)
   )
 }
 
-#' Euro per litro di eccedenza e di premio di un contenitore
+#' Euro di premio per ogni litro in meno del massimo per la premialità
+#'
+#' Contesto: regola del proprietario del 25/11/2026: il premio di una fornitura è
+#' `(massimo per la premialità - litri) × 0,0416667`, il costo di un litro
+#' conferito (5 euro ogni 120 litri). Vale per tutte le fasce e per ogni
+#' contenitore, sacchetti compresi.
+#' Funzionamento: 5/120, esatto (il proprietario scrive 0,0416667: con quel valore
+#' arrotondato 240 litri sotto il massimo darebbero 10,000008 euro).
+#' Risultato: un numero, euro per litro.
+#' @noRd
+premio_al_litro <- function() {
+  5 / 120
+}
+
+#' Euro per litro di eccedenza di un contenitore
 #'
 #' Contesto: un volume si somma in litri anche quando i contenitori sono diversi,
-#' quindi le tariffe per conferimento si portano a euro per litro. A un anno
+#' quindi la tariffa per conferimento eccedente si porta a euro per litro. A un anno
 #' intero il calcolo coincide con quello per conferimenti interi.
 #' Funzionamento: euro per conferimento diviso il volume del contenitore. Un
 #' volume che la tabella non ha (per esempio un contenitore da 240 litri) usa la
 #' riga del carrellato da 120 litri.
-#' Risultato: una lista con `eccedenza` e `premio`, in euro per litro.
+#' Risultato: una lista con `eccedenza`, in euro per litro.
 #' @param volume Volume del contenitore, in litri (un vettore).
 #' @noRd
 tariffa_al_litro <- function(volume) {
   tabella <- tariffe_contenitori()
   riga <- match(volume, tabella$volume)
   riga[is.na(riga)] <- 1L
-  list(
-    eccedenza = tabella$eccedenza[riga] / tabella$volume[riga],
-    premio = tabella$premio[riga] / tabella$volume[riga]
-  )
+  list(eccedenza = tabella$eccedenza[riga] / tabella$volume[riga])
 }
 
 #' Fascia di componenti dai componenti medi
@@ -96,67 +109,80 @@ fascia_componenti <- function(medi) {
 #' ordinaria o paga un'eccedenza, e a quanto ammontano.
 #'
 #' Funzionamento:
-#' 1. **annualizzazione** (scelta del proprietario, 8/11/2026): le soglie della
-#'    tabella sono annue e restano costanti; i litri del periodo si riportano a un
-#'    anno intero, `litri_annui = litri / fattore`, dove `fattore` è la parte di
-#'    anno che occupa il periodo (giorni da `dal` a `al` / giorni dell'anno): non
-#'    guarda quando la fornitura è stata attivata, così una fornitura attivata a
-#'    fine periodo non gonfia la stima (scelta del proprietario, 10/11/2026;
-#'    `anagrafica_forniture()` lo calcola uguale per tutte). Tutto il resto si calcola su `litri_annui` con le soglie annue
-#'    intere. È una stima lineare: con l'andamento del periodo, senza
-#'    stagionalità. Con `annualizza = FALSE` (giri indicati: litri di pochi giorni)
-#'    si lascia `litri` com'è e si scalano le soglie e il premio di un
-#'    conferimento per `fattore`;
+#' 1. **litri attesi a fine anno** (regola del proprietario, 25/11/2026, che
+#'    precisa l'annualizzazione dell'8/11): i litri del periodo si riportano alla
+#'    fine dell'anno, `litri_annui = litri × quota_anno / (fattore ×
+#'    quota_attivita)`, cioè i litri per giorno di attività della fornitura nel
+#'    periodo, per i giorni di attività che la fornitura ha nell'anno. Il numero di
+#'    bidoni non conta: i litri sono quelli della fornitura. Una fornitura attiva
+#'    tutto l'anno ha `litri / fattore`, con `fattore` la parte di anno che occupa
+#'    il periodo (giorni da `dal` a `al` / giorni dell'anno); una attivata o
+#'    cessata durante l'anno prevede solo i litri dei suoi giorni di attività. È
+#'    una stima lineare, senza stagionalità. Con `annualizza = FALSE` (giri
+#'    indicati: litri di pochi giorni) si lascia `litri` com'è e si scalano le
+#'    soglie per `fattore`;
 #' 2. con il potenziamento non ci sono né premio né eccedenza (come se i litri
 #'    consentiti fossero infiniti: la fornitura paga già il beneficio; il limite di
 #'    6240 litri resta nel risultato solo come riferimento); altrimenti si usa la
 #'    fascia di `componenti_medi` (`fascia_componenti()`); la casa vuota ha un
 #'    limite di 240 litri, senza minimo né premio;
-#' 3. se i litri superano il limite la fornitura è «Eccedente» e paga
+#' 3. se i litri attesi superano il limite la fornitura è «Eccedente» e paga
 #'    `litri_eccedenti` per l'eccedenza al litro (`tariffa_al_litro()`);
-#' 4. se sono al più il volume massimo per la premialità è in «Premialità»: i
-#'    litri contano almeno quanto il minimo addebitato, e il premio è quello di un
-#'    conferimento (al volume massimo) più quello dei litri in meno, sempre al
-#'    litro; fino al minimo aumenta, sotto non cresce più. Con un carrellato da
-#'    120 litri e un componente: 480 litri annui danno 5 euro, 360 danno 10, 300
-#'    danno 12,50, 240 (il minimo) danno 15;
-#' 5. nei casi in mezzo la classe è «Ordinaria»;
-#' 6. **il premio è proporzionale ai giorni di attività della fornitura nel
-#'    periodo** (regola del proprietario, 16/11/2026): il premio calcolato ai punti
-#'    precedenti (`premio_pieno_eur`, annuo) si moltiplica per `quota_attivita`, i
-#'    giorni di attività nel periodo / i giorni del periodo. Vale anche per chi non
-#'    ha nessun conferimento (litri zero, premio massimo): una fornitura attiva un
-#'    mese su dodici riceve 15 euro × 1/12. I litri e la classe non cambiano
-#'    (l'annualizzazione resta quella del periodo, uguale per tutte); l'eccedenza
-#'    non si moltiplica.
+#' 4. il **limite dell'eccedenza e il minimo e il massimo per la premialità si
+#'    ridimensionano per i giorni di attività della fornitura nell'anno**
+#'    (`quota_anno`, regola del proprietario, 25/11/2026: forniture attivate o
+#'    cessate durante l'anno). La classe dipende così dal solo ritmo di
+#'    conferimento della fornitura. Se i litri attesi
+#'    sono al più il massimo ridimensionato la fornitura è in «Premialità» e il
+#'    premio è `(massimo - litri addebitati) × 5/120` euro (`premio_al_litro()`):
+#'    i litri addebitati sono quelli attesi ma non meno del minimo ridimensionato,
+#'    quindi il premio cresce fino al minimo e sotto non cresce più. Per una
+#'    fornitura attiva tutto l'anno con un componente (minimo 240, massimo 480):
+#'    480 litri danno 0 euro, 360 danno 5, 240 o meno danno 10; con 6 o più
+#'    (840-1200) il premio massimo è 15 euro. Non dipende dal volume del
+#'    contenitore. Una fornitura senza letture ha zero litri e prende il premio
+#'    massimo, ridimensionato come le soglie;
+#' 5. nei casi in mezzo la classe è «Ordinaria».
 #' L'importo è l'eccedenza meno il premio: positivo è da pagare, negativo da
-#' accreditare. Euro e litri del risultato sono **annui** (con `annualizza = TRUE`);
-#' `litri` resta il conferito nel periodo.
+#' accreditare. Euro e litri del risultato sono **annui** (con `annualizza = TRUE`),
+#' quelli della premialità riferiti ai giorni di attività nell'anno; `litri`
+#' resta il conferito nel periodo.
 #'
-#' Risultato: le stesse righe con `litri_annui`, `fascia`, `regime` (`casa vuota`,
-#' `potenziamento` o `tariffa per fascia`), `litri_limite`, `litri_minimi`,
-#' `litri_premialita`, `litri_addebitati`, `classe`, `litri_eccedenti`,
+#' Risultato: le stesse righe con `litri_annui` (i litri attesi a fine anno),
+#' `fascia`, `regime` (`casa vuota`, `potenziamento` o `tariffa per fascia`),
+#' `litri_limite`, `litri_minimi` e `litri_premialita` (limite dell'eccedenza,
+#' minimo e massimo per la premialità, già ridimensionati), `litri_addebitati`, `classe`, `litri_eccedenti`,
 #' `litri_sotto_massimo` (rispetto al massimo per la premialità), `eccedenza_eur`,
-#' `quota_attivita`, `premio_pieno_eur` (premio annuo, prima della proporzione),
-#' `premio_eur` (dovuto, proporzionale ai giorni di attività) e `importo_eur`. Senza fattore (non positivo
-#' o mancante) l'annualizzazione e la classe mancano.
+#' `quota_attivita`, `quota_anno`, `premio_eur` e `importo_eur`. Senza fattore (non
+#' positivo o mancante) o senza giorni di attività nel periodo i litri attesi e la
+#' classe mancano.
 #' @param forniture Data frame con `litri` (conferiti nel periodo),
 #'   `componenti_medi`, `potenziamento` (logico), `fattore` e, facoltative,
-#'   `volume_contenitore` (litri) e `quota_attivita` (da 0 a 1, predefinita 1: la
-#'   parte del periodo in cui la fornitura era attiva).
-#' @param annualizza Se riportare i litri a un anno (predefinito) o scalare le
-#'   soglie al periodo.
+#'   `volume_contenitore` (litri, per l'eccedenza), `quota_attivita` (da 0 a 1,
+#'   predefinita 1: la parte del periodo in cui la fornitura era attiva) e
+#'   `quota_anno` (da 0 a 1, predefinita 1: la parte dell'anno in cui la fornitura
+#'   è attiva).
+#' @param annualizza Se riportare i litri alla fine dell'anno (predefinito) o
+#'   scalare le soglie al periodo.
 #' @noRd
 economia_forniture <- function(forniture, annualizza = TRUE) {
   tariffe <- tariffe_secco()
   fattore <- forniture$fattore
-  # Annualizzando i litri crescono e le soglie restano annue (fattore 1).
-  litri <- if (annualizza) {
-    riporta_ad_anno(forniture$litri, fattore)
+  giorni_periodo <- quota_da_colonna(forniture[["quota_attivita"]], nrow(forniture))
+  giorni_anno <- quota_da_colonna(forniture[["quota_anno"]], nrow(forniture))
+  # Annualizzando, tutte le soglie (limite dell'eccedenza, minimo e massimo della
+  # premialità) seguono i giorni di attività nell'anno; senza, seguono il periodo.
+  if (annualizza) {
+    litri <- riporta_ad_anno(forniture$litri, fattore, giorni_periodo, giorni_anno)
+    scala_limite <- giorni_anno
+    scala_premialita <- giorni_anno
   } else {
-    forniture$litri
+    litri <- forniture$litri
+    scala_limite <- fattore
+    scala_premialita <- fattore
+    giorni_periodo <- rep(1, nrow(forniture))
+    giorni_anno <- rep(1, nrow(forniture))
   }
-  scala <- if (annualizza) rep(1, nrow(forniture)) else fattore
   potenziamento <- forniture$potenziamento %in% TRUE
   fascia <- fascia_componenti(forniture$componenti_medi)
   riga <- match(fascia, tariffe$componenti)
@@ -173,14 +199,14 @@ economia_forniture <- function(forniture, annualizza = TRUE) {
     .default = NA_character_
   )
   limite <- dplyr::case_when(
-    potenziamento ~ litri_potenziamento() * scala,
-    !is.na(riga) ~ tariffe$litri_inclusi[riga] * scala,
+    potenziamento ~ litri_potenziamento() * scala_limite,
+    !is.na(riga) ~ tariffe$litri_inclusi[riga] * scala_limite,
     .default = NA_real_
   )
-  minimi <- ifelse(con_premio, tariffe$litri_minimi[riga] * scala, NA_real_)
+  minimi <- ifelse(con_premio, tariffe$litri_minimi[riga] * scala_premialita, NA_real_)
   premialita <- ifelse(
     con_premio,
-    tariffe$litri_premialita[riga] * scala,
+    tariffe$litri_premialita[riga] * scala_premialita,
     NA_real_
   )
   litri_valutati <- litri
@@ -196,16 +222,8 @@ economia_forniture <- function(forniture, annualizza = TRUE) {
     .default = "Ordinaria"
   )
   sotto_massimo <- ifelse(in_premialita, premialita - addebitati, NA_real_)
-  premio <- ifelse(
-    in_premialita,
-    al_litro$premio * (volume * scala + sotto_massimo),
-    0
-  )
+  premio <- ifelse(in_premialita, premio_al_litro() * sotto_massimo, 0)
   eccedenza <- ifelse(eccedente, al_litro$eccedenza * eccedenti, 0)
-  # Il premio dei giorni di attività: una fornitura attiva solo una parte del periodo
-  # riceve la stessa parte del premio.
-  quota <- forniture[["quota_attivita"]] %||% rep(1, nrow(forniture))
-  quota <- dplyr::coalesce(pmin(pmax(quota, 0), 1), 1)
 
   dplyr::mutate(
     forniture,
@@ -223,24 +241,40 @@ economia_forniture <- function(forniture, annualizza = TRUE) {
     litri_eccedenti = ifelse(eccedente, eccedenti, 0),
     litri_sotto_massimo = sotto_massimo,
     eccedenza_eur = eccedenza,
-    quota_attivita = quota,
-    premio_pieno_eur = premio,
-    premio_eur = premio * quota,
-    importo_eur = eccedenza - premio * quota
+    quota_attivita = giorni_periodo,
+    quota_anno = giorni_anno,
+    premio_eur = premio,
+    importo_eur = eccedenza - premio
   )
 }
 
-#' Riporta un valore del periodo a un anno intero
+#' Quota da 0 a 1 di una colonna facoltativa (mancante vale 1)
+#' @noRd
+quota_da_colonna <- function(x, n) {
+  x <- x %||% rep(1, n)
+  dplyr::coalesce(pmin(pmax(x, 0), 1), 1)
+}
+
+#' Riporta i litri del periodo alla fine dell'anno
 #'
-#' Contesto: annualizzazione dei litri (`economia_forniture()`).
-#' Funzionamento: divide per `fattore`, la parte di anno che occupa il periodo
-#' (giorni da `dal` a `al` / giorni dell'anno).
-#' Risultato: il valore annuo; `NA` dove `fattore` non è positivo o manca.
+#' Contesto: annualizzazione dei litri (`economia_forniture()`) e dei
+#' conferimenti attesi (`forniture_di_classe_per_scenario()`).
+#' Funzionamento: `x × quota_anno / (fattore × quota_attivita)`. `fattore` è la
+#' parte di anno che occupa il periodo (giorni da `dal` a `al` / giorni dell'anno),
+#' `quota_attivita` la parte del periodo in cui la fornitura era attiva e
+#' `quota_anno` la parte dell'anno in cui lo è: il rapporto è il consumo per
+#' giorno di attività, moltiplicato per i giorni di attività dell'anno. Con
+#' fornitura attiva tutto il periodo e tutto l'anno vale `x / fattore`.
+#' Risultato: il valore atteso a fine anno; `NA` dove `fattore` o `quota_attivita`
+#' non sono positivi o mancano.
 #' @param x Valore del periodo (un vettore).
 #' @param fattore Parte di anno, dello stesso vettore o di lunghezza 1.
+#' @param quota_attivita,quota_anno Parti del periodo e dell'anno in cui la
+#'   fornitura è attiva (predefinite 1).
 #' @noRd
-riporta_ad_anno <- function(x, fattore) {
-  ifelse(fattore > 0, x / fattore, NA_real_)
+riporta_ad_anno <- function(x, fattore, quota_attivita = 1, quota_anno = 1) {
+  giorni <- fattore * quota_attivita
+  ifelse(giorni > 0, x * quota_anno / giorni, NA_real_)
 }
 
 #' Soglia massima di fatturazione di un gruppo di forniture, in litri all'anno
