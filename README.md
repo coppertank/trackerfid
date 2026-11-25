@@ -609,6 +609,7 @@ docs/
   controllo_giri_saponette.qmd  controllo di una lista di giri con antenne e saponette insieme
   indicatori_letture.qmd        indicatori di antenne e saponette e analisi economica del secco
   associazione_giri.qmd, comune_lettura.qmd   come si ricavano il giro e il comune di una lettura
+  associazione_codici.qmd       come si normalizzano, riparano e associano alla fornitura i codici RFID
 tests/testthat/
 ```
 

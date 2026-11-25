@@ -1,0 +1,354 @@
+---
+title: "Dal codice RFID alla fornitura"
+subtitle: "Normalizzazione e passi di associazione dei codici, con esempi calcolati dal codice"
+date: today
+date-format: DD/MM/YYYY
+lang: it
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    toc-location: left
+    embed-resources: true
+    fig-align: center
+    css: stile.css
+execute:
+  echo: false
+  message: false
+  warning: false
+knitr:
+  opts_chunk:
+    fig.retina: 2
+---
+
+```{r}
+#| label: setup
+#| include: false
+# Per compilare il documento, dalla radice del progetto:
+#   quarto::quarto_render("docs/associazione_codici.qmd")
+# Servono i pacchetti quarto, DiagrammeR e pkgload.
+#
+# Non fa parte della pipeline: `targets::tar_make()` non lo compila. Si
+# ricompila a mano quando cambiano la pulizia dei codici (`pulisci_codici_rfid()`)
+# o l'associazione alla fornitura (`associa_contenitore_e_fornitura()`). Gli
+# esempi sono codici inventati, passati alle funzioni del pacchetto: la
+# compilazione si ferma se un esito non torna più con il testo.
+
+if (!file.exists("../DESCRIPTION")) {
+  stop("Compila questo file dalla cartella docs/ del progetto trackerfid.")
+}
+pkgload::load_all("..", quiet = TRUE)
+
+colori <- c(
+  verde = "#2f7d4f",
+  verde_chiaro = "#dcefe3",
+  arancio = "#e08a2e",
+  arancio_chiaro = "#fbf1dd",
+  grigio_chiaro = "#f3f4f2"
+)
+stile_dot <- '
+  graph [fontname="Helvetica", nodesep=0.4, ranksep=0.32];
+  node [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled",
+        fillcolor="#ffffff", color="#8a948e", margin="0.14,0.08"];
+  edge [fontname="Helvetica", fontsize=11, color="#5b655f"];'
+```
+
+Una lettura arriva dal lettore con un codice RFID e un giorno: niente altro dice a quale bidone, e quindi a quale fornitura, appartiene. La pipeline pulisce il codice e lo cerca nelle tabelle del database (contenitori attivi e tag). Il percorso è lo stesso per le letture delle antenne e per quelle delle saponette (`pulisci_codici_rfid()`, poi `associa_contenitore_e_fornitura()`), così i due sistemi si confrontano sullo stesso terreno.
+
+# Il percorso
+
+```{r}
+#| label: percorso
+#| fig-height: 7.5
+DiagrammeR::grViz(
+  paste0(
+    '
+digraph percorso {
+  graph [rankdir=TB];',
+    stile_dot,
+    '
+  inizio [label="Lettura grezza:\\ncodice RFID e giorno", style="rounded", fillcolor="',
+    colori[["grigio_chiaro"]],
+    '"];
+  norm [label="1. Normalizzazione\\nformato unico del codice"];
+  scarto [label="2. Scarto\\ncodici nulli e non compatibili"];
+  d [label="3. Il database riconosce\\nil codice?", shape=diamond, style="filled", fillcolor="',
+    colori[["grigio_chiaro"]],
+    '"];
+  prova [label="Si prova a ripararlo:\\ntrasposizione, coppie, entrambe"];
+  ok [label="Codice riconosciuto", fillcolor="',
+    colori[["verde_chiaro"]],
+    '", color="',
+    colori[["verde"]],
+    '"];
+  na [label="Resta il codice normalizzato\\n(non_associato)", fillcolor="',
+    colori[["arancio_chiaro"]],
+    '", color="',
+    colori[["arancio"]],
+    '"];
+  uno [label="4. Una lettura\\nper RFID e giorno"];
+  ass [label="5. Associazione:\\ncontenitore attivo nel giorno, fornitura"];
+  res [label="presente_a_database\\nPIA, PIT o NP", fillcolor="',
+    colori[["verde_chiaro"]],
+    '", color="',
+    colori[["verde"]],
+    '"];
+  inizio -> norm -> scarto -> d;
+  d -> ok [label=" sì (diretto)"];
+  d -> prova [label=" no"];
+  prova -> ok [label=" riconosciuto"];
+  prova -> na [label=" mai riconosciuto"];
+  ok -> uno; na -> uno;
+  uno -> ass -> res;
+}'
+  ),
+  width = "100%"
+)
+```
+
+I passi da 1 a 4 sono `pulisci_codici_rfid()` (`R/fct_preparazione_letture.R`); il passo 5 è `associa_contenitore_e_fornitura()`. Il campo `passo_associazione_rfid`, accanto a `RFID` nei CSV, dice che cosa è successo al passo 3.
+
+# 1. Normalizzazione e scarto
+
+`normalizza_codice_rfid()` porta ogni codice al formato dei bidoni, 10 caratteri esadecimali in maiuscolo:
+
+- maiuscolo e senza spazi;
+- se i primi 14 caratteri hanno 13 zeri e un carattere diverso, quel carattere è considerato letto male (*bit flip*) e si rimette lo zero;
+- via gli zeri iniziali, poi si riempie a sinistra fino a 10 caratteri (a 24 se ne restano più di 10);
+- fanno eccezione i **sacchetti** (prefisso `00BD`, 24 caratteri), che restano come sono, e i bidoni **HERA** (prefisso `48455241`), che non si riempiono.
+
+Dopo la normalizzazione si scartano, perché non sono bidoni dell'azienda, i codici **nulli** (soli zeri) e quelli **non compatibili**: più di 10 caratteri con due o più cifre diverse da zero nei primi 14, a meno che siano sacchetti o HERA. Con una sola cifra diversa da zero il codice resta.
+
+```{r}
+#| label: normalizzazione
+letti <- c(
+  "a1b2c3d4e5",
+  "1B2C3D4E5",
+  "00A1B2C3D4E5",
+  "00000000000800A1B2C3D4E5",
+  "00000000010200A1B2C3D4E5",
+  "0000000000",
+  "00BD00000000000000000042",
+  "484552410000AB12"
+)
+spiegazione <- c(
+  "maiuscole",
+  "riempito a 10 caratteri",
+  "zeri iniziali tolti",
+  "un carattere letto male tra i primi 14 corretto, poi zeri tolti",
+  "lungo, con due cifre diverse da zero tra i primi 14",
+  "codice nullo",
+  "sacchetto: resta com'è",
+  "HERA: resta senza riempimento"
+)
+normalizzati <- normalizza_codice_rfid(letti)
+nullo <- grepl("^0+$", normalizzati)
+compatibile <- codice_compatibile(normalizzati)
+esito <- dplyr::case_when(
+  nullo ~ "scartato (nullo)",
+  !compatibile ~ "scartato (non compatibile)",
+  .default = "tenuto"
+)
+atteso <- c(
+  "A1B2C3D4E5", "01B2C3D4E5", "A1B2C3D4E5", "A1B2C3D4E5",
+  "00000000010200A1B2C3D4E5", "0000000000",
+  "00BD00000000000000000042", "484552410000AB12"
+)
+if (!identical(normalizzati, atteso) ||
+  !identical(esito, c(rep("tenuto", 4), "scartato (non compatibile)", "scartato (nullo)", "tenuto", "tenuto"))) {
+  stop("La normalizzazione degli esempi non torna più con il testo.")
+}
+knitr::kable(
+  dplyr::tibble(
+    `Codice letto` = paste0("`", letti, "`"),
+    `Dopo la normalizzazione` = paste0("`", normalizzati, "`"),
+    Esito = esito,
+    `Che cosa è successo` = spiegazione
+  )
+)
+```
+
+# 2. Riconoscere il codice: i passi di associazione
+
+Un codice è **riconosciuto** se compare nell'associazione dei contenitori con il contenitore *attivo nel giorno della lettura* (tra attivazione e cessazione), oppure tra i tag dei contenitori (che non hanno date). Il lettore però sbaglia a volte il modo di scrivere il codice, quindi un codice non riconosciuto si prova con tre trasformazioni, **in quest'ordine**, e si tiene la prima che lo fa riconoscere:
+
+```{r}
+#| label: passi
+vero <- "3F5A7C9E12"
+letto_t <- trasponi_codice(vero)
+letto_c <- scambia_coppie(vero)
+letto_tc <- scambia_coppie(trasponi_codice(vero))
+if (!identical(letto_t, "CFA5E39784") ||
+  !identical(trasponi_codice(letto_t), vero) ||
+  !identical(scambia_coppie(letto_c), vero) ||
+  !identical(scambia_coppie(trasponi_codice(letto_tc)), vero) ||
+  !identical(names(passi_riparazione_codici()), c("trasposizione", "coppie", "trasposizione_e_coppie"))) {
+  stop("I passi di riparazione non tornano più con il testo.")
+}
+knitr::kable(
+  dplyr::tibble(
+    `passo_associazione_rfid` = paste0("`", c(
+      "diretto", "trasposizione", "coppie", "trasposizione_e_coppie", "non_associato"
+    ), "`"),
+    `Quando` = c(
+      "il codice è già riconosciuto: non cambia",
+      "i quattro bit di ogni cifra sono invertiti (`1` diventa `8`, `2` diventa `4`, `3` diventa `C`…; `0`, `6`, `9`, `F` restano)",
+      "i due caratteri di ogni coppia sono scambiati (`A1B2` diventa `1A2B`)",
+      "tutte e due le cose",
+      "nessuna trasformazione lo riconosce: resta il codice normalizzato"
+    ),
+    `Esempio: codice letto → codice del database` = c(
+      paste0("`", vero, "` → `", vero, "`"),
+      paste0("`", letto_t, "` → `", vero, "`"),
+      paste0("`", letto_c, "` → `", vero, "`"),
+      paste0("`", letto_tc, "` → `", vero, "`"),
+      "`1234567890` → `1234567890`"
+    )
+  )
+)
+```
+
+- La trasposizione è la funzione di trasposizione del database aziendale. Trasposizione e scambio a coppie sono simmetrici: applicati al codice letto restituiscono quello del database.
+- I **sacchetti non si provano**: non hanno un contenitore, e il passo resta vuoto.
+- «Riconosciuto» vuol dire presente nell'associazione attiva o tra i tag: un codice solo tra i tag è `diretto` anche se poi la lettura risulta `PIT`. Il campo non dice se la lettura è `PIA`: per quello c'è `presente_a_database`.
+- Dopo la riparazione resta **una lettura per RFID e giorno** (la prima in ordine di tempo): due codici scritti in modo diverso possono diventare lo stesso RFID, e il secondo è un doppione.
+
+# 3. Dal codice alla fornitura
+
+`associa_contenitore_e_fornitura()` cerca il codice finale nell'associazione, con il contenitore attivo nel giorno della lettura, e ne ricava `servizio_transponder`, volume, `id_fornitura`, `id_utenza` e comune della fornitura. L'esito è `presente_a_database`:
+
+- **`PIA`** (presente in associazione): c'è un contenitore attivo nel giorno, quindi una fornitura. È il bidone *censito*. Un sacchetto è `PIA` con la fornitura del suo gruppo.
+- **`PIT`** (presente in tag): il codice è tra i tag, quindi è un contenitore dell'azienda, ma non ha un contenitore attivo né una fornitura.
+- **`NP`** (non presente): il codice non è né nell'associazione né tra i tag.
+
+L'associazione vince sempre sui tag. Se un bidone risulta in due forniture lo stesso giorno (cessazione e attivazione sulla stessa data, nel passaggio da una fornitura all'altra), la lettura va **a una sola fornitura**: quella con il contenitore attivato più di recente.
+
+# Un esempio completo
+
+Undici letture inventate, passate alla pulizia e all'associazione del pacchetto. Le tabelle del database contengono cinque contenitori (uno è attivato il 1 giugno 2025), un tag senza contenitore e un sacchetto. «Passo» è il campo `passo_associazione_rfid`.
+
+```{r}
+#| label: esempio
+#| column: page
+contenitore <- function(codice, fornitura, servizio, da = "2025-01-01") {
+  dplyr::tibble(
+    codice_transponder = codice,
+    servizio_transponder = servizio,
+    volume = 120,
+    frequenza = "QUINDICINALE",
+    numero_raccolte_annue = 26,
+    data_attivazione_contenitore = as.Date(da),
+    data_cessazione_contenitore = as.Date("2099-12-31"),
+    contenitore_gratuito = "N",
+    id_fornitura = fornitura,
+    stato_fornitura = "ATTIVA",
+    id_utenza = paste0("U", fornitura),
+    comune_fornitura = "BASSANO DEL GRAPPA"
+  )
+}
+contenitori <- dplyr::bind_rows(
+  contenitore("A1B2C3D4E5", "100001", "SECCO"),
+  contenitore("3F5A7C9E12", "100002", "CARTA"),
+  contenitore("BC12DE34F5", "100003", "SECCO"),
+  contenitore("9A8B7C6D5E", "100004", "UMIDO"),
+  contenitore("C0FFEE1234", "100005", "SECCO", da = "2025-06-01")
+)
+tag <- dplyr::tibble(codice_transponder = "0F0F0F0F0A")
+sacchetti <- dplyr::tibble(codice_uhf = "00BD00000000000000000042", id_fornitura = "200001")
+
+letture <- dplyr::tribble(
+  ~RFID_letto, ~data_ora_lettura, ~nota,
+  "a1b2c3d4e5", "2025-03-10 08:00:00", "minuscole: basta la normalizzazione",
+  "CFA5E39784", "2025-03-10 08:05:00", "bit invertiti",
+  "CB21ED435F", "2025-03-10 08:10:00", "coppie scambiate",
+  "59D13EB67A", "2025-03-10 08:15:00", "bit invertiti e coppie scambiate",
+  "0F0F0F0F0A", "2025-03-10 08:20:00", "solo tra i tag",
+  "1234567890", "2025-03-10 08:25:00", "sconosciuto",
+  "C0FFEE1234", "2025-05-20 09:00:00", "il contenitore sarà attivo solo dal 1 giugno",
+  "00BD00000000000000000042", "2025-03-10 08:30:00", "sacchetto",
+  "58D43CB27A", "2025-03-10 09:30:00", "stesso bidone della prima riga, bit invertiti",
+  "0000000000", "2025-03-10 09:40:00", "codice nullo",
+  "00000000010200A1B2C3D4E5", "2025-03-10 09:50:00", "codice lungo non compatibile"
+) |>
+  dplyr::mutate(
+    data_ora_lettura = as.POSIXct(.data$data_ora_lettura),
+    data_lettura = as.Date(.data$data_ora_lettura),
+    RFID = .data$RFID_letto
+  )
+
+pulite <- suppressMessages(pulisci_codici_rfid(letture, contenitori, tag))
+scartate <- attr(pulite, "scartate")
+attr(pulite, "scartate") <- NULL
+associate <- suppressMessages(
+  associa_contenitore_e_fornitura(pulite, contenitori, sacchetti, tag)
+)
+
+risultato <- letture |>
+  dplyr::select("RFID_letto", "data_ora_lettura", "nota") |>
+  dplyr::left_join(
+    dplyr::transmute(
+      associate,
+      .data$data_ora_lettura,
+      codice_finale = .data$RFID,
+      passo = .data$passo_associazione_rfid,
+      stato = .data$presente_a_database,
+      fornitura = .data$id_fornitura,
+      servizio = .data$servizio_transponder
+    ),
+    by = "data_ora_lettura"
+  ) |>
+  dplyr::left_join(
+    dplyr::transmute(scartate, .data$data_ora_lettura, motivo = .data$motivo),
+    by = "data_ora_lettura"
+  )
+
+# Gli esiti devono essere quelli descritti dal testo.
+atteso_stato <- c("PIA", "PIA", "PIA", "PIA", "PIT", "NP", "NP", "PIA", NA, NA, NA)
+atteso_passo <- c(
+  "diretto", "trasposizione", "coppie", "trasposizione_e_coppie", "diretto",
+  "non_associato", "non_associato", NA, NA, NA, NA
+)
+atteso_motivo <- c(rep(NA, 8), "doppione", "codice_nullo", "codice_non_compatibile")
+if (!identical(risultato$stato, atteso_stato) ||
+  !identical(risultato$passo, atteso_passo) ||
+  !identical(risultato$motivo, atteso_motivo) ||
+  !identical(risultato$fornitura[c(1:4, 8)], c("100001", "100002", "100003", "100004", "200001"))) {
+  stop("Gli esiti dell'esempio non tornano più con il testo.")
+}
+
+knitr::kable(
+  dplyr::tibble(
+    `Codice letto` = paste0("`", risultato$RFID_letto, "`"),
+    Nota = risultato$nota,
+    `Codice finale` = ifelse(is.na(risultato$codice_finale), "", paste0("`", risultato$codice_finale, "`")),
+    Passo = ifelse(is.na(risultato$passo), "", paste0("`", risultato$passo, "`")),
+    `Esito` = dplyr::case_when(
+      !is.na(risultato$motivo) ~ paste0("scartata: `", risultato$motivo, "`"),
+      !is.na(risultato$fornitura) ~ paste0(
+        "`", risultato$stato, "`, fornitura ", risultato$fornitura,
+        ifelse(is.na(risultato$servizio), "", paste0(" (", risultato$servizio, ")"))
+      ),
+      .default = paste0("`", risultato$stato, "`")
+    )
+  )
+)
+```
+
+# Da ricordare
+
+- **La riparazione non è una garanzia**: un codice è «riparato» solo perché il database lo riconosce. Un codice letto male che corrisponde per caso a un altro contenitore attivo non si distingue da una lettura giusta.
+- **Il giorno conta**: un contenitore non ancora attivato, o già cessato, non riconosce il codice (nell'esempio `C0FFEE1234`, letto prima dell'attivazione: `NP`). Una lettura prima dell'attivazione non è associata alla fornitura, anche se il bidone è dell'azienda.
+- **Una lettura sola al giorno** per RFID: di un bidone letto da due saponette nello stesso giorno resta la prima.
+- **Dopo il riconoscimento** la pipeline aggiunge ancora il tipo di supporto del chip (`descrizione_tipo_supporto_chip`), il comune e il giro; qui ci si ferma all'associazione del codice.
+
+# Dove sta nel codice
+
+| Passo | Funzione |
+|---|---|
+| 1 | `normalizza_codice_rfid()`, `formatta_rfid()` |
+| 2 | `scarta_codici_nulli()`, `filtra_codici_compatibili()`, `codice_compatibile()` |
+| 3 | `ripara_codici_rfid()`, `passi_riparazione_codici()`, `codici_riconosciuti()`, `trasponi_codice()`, `scambia_coppie()` |
+| 4 | `una_lettura_al_giorno()` |
+| 5 | `associa_contenitore_e_fornitura()` |
+
+Tutte in `R/fct_preparazione_letture.R`. I test sono in `test-fct_preparazione_letture.R`. Quando la logica cambia vanno aggiornati questo file (gli esiti degli esempi si ricalcolano da soli, il testo no) e `CLAUDE.md`, e il documento va ricompilato.
